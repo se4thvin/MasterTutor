@@ -22,6 +22,34 @@ def texts(path):
             if text.strip():
                 yield rec.get("type"), text.strip()
 
+def prompt_and_final(path):
+    """Return (first user prompt, final reply). The final reply may span several
+    consecutive assistant messages (output-length continuation), so collect every
+    assistant text block after the last tool call/result."""
+    brief, tail = None, []
+    with open(path) as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            msg = rec.get("message") or {}
+            content = msg.get("content")
+            blocks = [{"type": "text", "text": content}] if isinstance(content, str) else (content or [])
+            kinds = {b.get("type") for b in blocks if isinstance(b, dict)}
+            if rec.get("type") == "user":
+                if brief is None and "text" in kinds:
+                    brief = "".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
+                if "tool_result" in kinds:
+                    tail = []
+            elif rec.get("type") == "assistant":
+                if "tool_use" in kinds:
+                    tail = []
+                text = "".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+                if text.strip():
+                    tail.append(text)
+    return brief, ("".join(tail).strip() or None)
+
 def frontmatter(run_id, args, status):
     deps = f"[{', '.join(args.depends_on.split(','))}]" if args.depends_on else "[]"
     return (f"---\nrun_id: {run_id}\ndate: {run_id[:10]}\nagent_type: {args.agent_type}\n"
@@ -36,9 +64,7 @@ def main():
     p.add_argument("--brief-only", action="store_true")
     args = p.parse_args()
 
-    msgs = list(texts(args.transcript))
-    brief = next((t for kind, t in msgs if kind == "user"), None)
-    report = next((t for kind, t in reversed(msgs) if kind == "assistant"), None)
+    brief, report = prompt_and_final(args.transcript)
     if not brief:
         sys.exit(f"no prompt found in {args.transcript}")
 
