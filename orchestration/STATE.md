@@ -8,7 +8,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 
 ## Current phase
 
-**Brainstorming (architectural path)**. **Planning → build (goal D32).** The spec draft is saved (`docs/superpowers/specs/2026-10-05-agentic-notes-design.md`) and being revised for n.eko, `motion` and verified IDs (run 17 resumed). The Phase 0 plan is being written (run 19). The 3D hero (run 16) is pending.
+**Planning → build (goal D32).** The spec is final and committed (7186eef), with no pending items. The Phase 0 plan is being written (run 19); the other phase plans follow and will reference Phase 0's exact contract names. The 3D hero is finalized (run 16).
 
 ## Decisions (user-confirmed)
 
