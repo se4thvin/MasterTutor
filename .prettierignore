@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+packages/db/migrations/
+apps/browser-slot/seccomp/chromium.json
+orchestration/
+design/
+docs/
+CLAUDE.md
+ts.md
+.superpowers/
+**/.next/
