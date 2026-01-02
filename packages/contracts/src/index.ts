@@ -7,3 +7,6 @@ export * from "./note.ts";
 export * from "./agent-turn.ts";
 export * from "./tools.ts";
 export * from "./approval.ts";
+export * from "./events.ts";
+export * from "./notify.ts";
+export * from "./live.ts";
