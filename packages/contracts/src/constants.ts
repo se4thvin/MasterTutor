@@ -37,10 +37,22 @@ export const DEFAULT_BROWSER_SLOTS = [
   "browser-6",
 ] as const;
 
-/** Parses a comma-separated slot list such as "browser-1,browser-2"; at least one valid slot. */
+/** Comma-separated slot names ("browser-1,browser-2") parsed to a unique, non-empty list. */
+export const SlotList = z
+  .string()
+  .transform((value) =>
+    value
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0),
+  )
+  .pipe(
+    z
+      .array(SlotName)
+      .min(1, "List at least one slot")
+      .refine((names) => new Set(names).size === names.length, "Slot names must be unique"),
+  );
+
 export function parseBrowserSlots(csv: string): string[] {
-  return z
-    .array(SlotName)
-    .min(1)
-    .parse(csv.split(",").map((name) => name.trim()));
+  return SlotList.parse(csv);
 }
