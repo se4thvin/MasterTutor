@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CREDENTIAL_FIELDS, VAULT_SECRET_FIELDS } from "../enums.ts";
 import { createLogger } from "./logger.ts";
 
 function capture() {
@@ -34,6 +35,28 @@ describe("createLogger", () => {
     expect(entry.service).toBe("test");
     for (const secret of ["p1", "p2", "123456", "654321", "Bearer x"]) {
       expect(lines.join("\n")).not.toContain(secret);
+    }
+  });
+
+  it("redacts every credential and vault secret field plus token, cookie headers", () => {
+    const keys = [
+      ...new Set([
+        ...CREDENTIAL_FIELDS,
+        ...VAULT_SECRET_FIELDS,
+        "token",
+        "cookie",
+        "set-cookie",
+        "authorization",
+      ]),
+    ];
+    for (const key of keys) {
+      const { lines, destination } = capture();
+      const log = createLogger({ service: "test", destination });
+      log.info({ [key]: "top-secret-value", nested: { [key]: "top-secret-value" } }, "x");
+      const entry = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+      expect(entry[key], key).toBe("[redacted]");
+      expect((entry.nested as Record<string, unknown>)[key], key).toBe("[redacted]");
+      expect(lines.join("\n")).not.toContain("top-secret-value");
     }
   });
 });

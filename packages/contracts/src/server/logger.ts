@@ -1,21 +1,33 @@
 import pino, { type DestinationStream, type Logger } from "pino";
+import { CREDENTIAL_FIELDS, VAULT_SECRET_FIELDS } from "../enums.ts";
 import type { LogLevel } from "../env.ts";
 
-/** Spec §9: redact secrets wherever they appear at the top level or one level down. */
-export const REDACT_PATHS = [
-  "password",
-  "secret",
-  "sealed",
-  "code",
-  "authorization",
-  "*.password",
-  "*.secret",
-  "*.sealed",
-  "*.code",
-  "*.authorization",
-  "req.headers.authorization",
-  "req.headers.cookie",
-] as const;
+/** Keys whose values are secret wherever they appear, derived from the credential contracts. */
+const SECRET_KEYS = [
+  ...new Set<string>([
+    ...CREDENTIAL_FIELDS,
+    ...VAULT_SECRET_FIELDS,
+    "secret",
+    "sealed",
+    "code",
+    "token",
+    "cookie",
+    "set-cookie",
+    "authorization",
+  ]),
+];
+
+/** pino needs bracket notation for keys that are not valid identifiers (e.g. set-cookie). */
+const accessor = (key: string) => (/^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `["${key}"]`);
+
+/** Spec §9: redact secrets at the top level or one level down, plus request/response headers. */
+export const REDACT_PATHS: readonly string[] = [
+  ...SECRET_KEYS.flatMap((key) => [accessor(key).replace(/^\./, ""), `*${accessor(key)}`]),
+  ...["authorization", "cookie", "set-cookie"].flatMap((key) => [
+    `req.headers${accessor(key)}`,
+    `res.headers${accessor(key)}`,
+  ]),
+];
 
 export interface LoggerOptions {
   service: string;
