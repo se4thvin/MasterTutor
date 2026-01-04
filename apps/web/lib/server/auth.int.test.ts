@@ -40,7 +40,34 @@ describe("Better Auth wiring", () => {
     const owners =
       await handle.sql`select count(*)::int as n from workspace_members where role = 'owner'`;
     const members = await handle.sql`select count(*)::int as n from workspace_members`;
+    const sessions = await handle.sql`select count(*)::int as n from session`;
+    const accounts = await handle.sql`select count(*)::int as n from account`;
     expect([users[0]?.n, workspaces[0]?.n, owners[0]?.n, members[0]?.n]).toEqual([1, 1, 1, 1]);
+    expect([sessions[0]?.n, accounts[0]?.n]).toEqual([1, 1]);
+  });
+
+  it("removes the user and lets a later sign-up succeed when the bootstrap hook fails", async () => {
+    const before = await handle.sql`select count(*)::int as n from "user"`;
+    const failing = createAuth({
+      db: handle.db,
+      secret,
+      baseURL,
+      signupOpen: true,
+      ensureMember: async () => {
+        throw new Error("simulated database failure");
+      },
+    });
+    await expect(
+      failing.api.signUpEmail({
+        body: { email: "orphan@example.test", password: "correct-horse-battery-staple", name: "O" },
+      }),
+    ).rejects.toThrow();
+    const gone = await handle.sql`select 1 from "user" where email = 'orphan@example.test'`;
+    expect(gone).toHaveLength(0);
+    const after = await handle.sql`select count(*)::int as n from "user"`;
+    expect(after[0]?.n).toBe(before[0]?.n);
+    await expect(signUp(true, "after-failure@example.test")).resolves.toBeDefined();
+    await handle.sql`delete from "user" where email = 'after-failure@example.test'`;
   });
 
   it("made the winner the workspace owner with slot-clamped concurrency", async () => {

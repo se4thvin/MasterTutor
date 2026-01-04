@@ -31,6 +31,9 @@ describe("objectKeys", () => {
     expect(objectKeys.transcriptImage(run, 7, 2)).toBe(`runs/${run}/transcript/7-2.png`);
     expect(objectKeys.download(run, "../x.pdf")).toBe(`downloads/${run}/x.pdf`);
   });
+  it("lowercases an uppercase UUID in the key", () => {
+    expect(objectKeys.stepScreenshot(run.toUpperCase(), 1)).toBe(`runs/${run}/steps/1.png`);
+  });
   it("refuses malformed ids", () => {
     expect(() => objectKeys.asset("../../", "a".repeat(64))).toThrow(TypeError);
     expect(() => objectKeys.asset(run, "ABC")).toThrow(TypeError);
