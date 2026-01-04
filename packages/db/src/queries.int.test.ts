@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "./client.ts";
 import { getMaxConcurrency } from "./queries/settings.ts";
 import { listBrowserSlots } from "./queries/slots.ts";
-import { ensureWorkspaceMember, hasAnyUser } from "./queries/workspace.ts";
+import { ensureWorkspaceMember, hasAnyUser, WorkspaceClosedError } from "./queries/workspace.ts";
 import { startTestDatabase, type TestDatabase } from "./testing.ts";
 
 let db: TestDatabase;
@@ -50,6 +50,15 @@ describe("workspace bootstrap", () => {
     const members =
       await owner`select count(*)::int as n from workspace_members where user_id = 'u1'`;
     expect(members[0]?.n).toBe(1);
+  });
+
+  it("refuses a new member when joining is closed", async () => {
+    await createUser("u4");
+    await expect(ensureWorkspaceMember(web.db, "u4", { joinExisting: false })).rejects.toThrow(
+      WorkspaceClosedError,
+    );
+    const rows = await owner`select 1 from workspace_members where user_id = 'u4'`;
+    expect(rows).toHaveLength(0);
   });
 });
 

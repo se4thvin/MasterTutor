@@ -8,6 +8,14 @@ export async function hasAnyUser(db: Database): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Thrown inside the bootstrap lock when joining is not allowed and the workspace already exists. */
+export class WorkspaceClosedError extends Error {
+  constructor() {
+    super("The workspace already exists and joining is closed");
+    this.name = "WorkspaceClosedError";
+  }
+}
+
 export interface Membership {
   workspaceId: string;
   role: MemberRole;
@@ -15,9 +23,14 @@ export interface Membership {
 
 /**
  * v1 has one workspace (D4). The first user becomes its owner and creates its settings;
- * later users join as members. Serialized with an advisory lock so racing sign-ups agree.
+ * later users join as members unless `joinExisting` is false (then they get WorkspaceClosedError).
+ * Serialized with an advisory lock so racing sign-ups agree.
  */
-export async function ensureWorkspaceMember(db: Database, userId: string): Promise<Membership> {
+export async function ensureWorkspaceMember(
+  db: Database,
+  userId: string,
+  options: { joinExisting?: boolean } = {},
+): Promise<Membership> {
   return db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('mastertutor.workspace_bootstrap'))`,
@@ -35,6 +48,7 @@ export async function ensureWorkspaceMember(db: Database, userId: string): Promi
       .orderBy(asc(workspaces.createdAt))
       .limit(1);
     if (workspace) {
+      if (options.joinExisting === false) throw new WorkspaceClosedError();
       await tx
         .insert(workspaceMembers)
         .values({ workspaceId: workspace.id, userId, role: "member" });
