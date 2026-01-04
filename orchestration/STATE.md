@@ -48,7 +48,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 | D32 | **/goal set by user**: build frontend + backend end to end with full UI, functionality and business-logic validation; benchmark computer-use and browser-use performance; initial benchmark suite = MT agent logs into zyBooks (`https://learn.zybooks.com/zybook/UTDALLASCE2310EE2310AkourFall2026`) and completes the already-completed reading assignments 1–5; document failures, fix, validate and loop until it fully completes. The spec and plans count as accepted, but must still be written in full. Stop and report on any blocking issue. | User |
 | D33 | Benchmark mode: per-run `approvalMode: ask \| auto_within_allowlist` (auto decisions still recorded, `decided_by='policy'`); `benchmarks` + `benchmark_runs` tables. | Orchestrator (for D32) |
 | D34 | zyBooks credentials are never written to repo files or plans (a `.env` write was denied). They enter the product through the Vault UI at benchmark time. Login is the direct zyBooks email/password form at `https://learn.zybooks.com/signin` (no UTD SSO/MFA, per the user); vault item origin `https://learn.zybooks.com`. | Orchestrator |
-| D35 | Execution: subagent-driven development. Plans are written per phase into `docs/superpowers/plans/`. Environment: pnpm is not installed (use corepack); about 22GB disk free, so keep Docker images lean. | Orchestrator |
+| D35 | Execution: subagent-driven development. Plans are written per phase into `docs/superpowers/plans/`. Environment: the worktree branch is `agentic-notes-browser-agent`. pnpm 10.34.6 via corepack, pinned in `packageManager`; about 22GB disk free, so keep Docker images lean. | Orchestrator |
 
 ## Proposals awaiting user answer
 
