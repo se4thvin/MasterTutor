@@ -7,7 +7,3237 @@ status: completed
 depends_on: []
 ---
 
+# Phase B2 + B4 + B5: Capture, Notes, Video and PDF Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build the agent's faithful-capture pipeline and its note layer:
+- **Web capture:** snapshot, page preparation, Defuddle with a Readability fallback, assets, and verification.
+- **Tools:** `capture`, `annotate` and `video`.
+- **Notes:** `NoteWriter`, folders and auto-filing.
+- **Search:** embeddings and the hybrid search API, the object proxy and Obsidian export in `web`.
+- **Video:** YouTube captions, chapters, keyframes and remote-PulseAudio transcription.
+- **PDF:** a pdf.js path and a docling-serve path.
+
+**Architecture:**
+- **Capture runs in CDP isolated worlds of the slot's own Chromium.**
+  - Page scripts never run in the page's main world, and they never mutate the live DOM. The two exceptions are forcing `loading="eager"` and scrolling, which spec §7.2 allows.
+  - Defuddle runs on a *flattened, detached clone* of the page. The clone has shadow roots inlined, hidden nodes dropped, media replaced by placeholder tokens and complex tables kept as raw HTML.
+- **Every byte the agent stores is fetched by the browser** through CDP `Network.loadNetworkResource`, so the slot's egress filter applies. The agent never fetches page URLs itself.
+- **Notes are written through `NoteWriter`** into B1's step transaction (`StepWriter.defer`). Content-addressed objects and asset rows are the exception: they are written immediately.
+- **`web` serves objects by proxying Garage.** Each request is checked against the session and the workspace and gets hardened headers.
+- **Search** fuses block full-text, note title full-text and pgvector cosine with reciprocal-rank fusion.
+
+**Tech Stack:**
+- Already pinned in Phase 0: Node 24, TypeScript 6.0.3, Zod 4.6.5, Drizzle 0.45.3, postgres.js 3.4.9 and Vitest 5.0.3.
+- Owned by B1: `playwright-core` (`connectOverCDP`) and `openai` 7.x.
+- New exact pins:
+
+  | Package | Version | Licence |
+  |---|---|---|
+  | `defuddle` | 0.19.4 | MIT |
+  | `@mozilla/readability` | 0.6.0 | Apache-2.0 |
+  | `sharp` | 0.35.5 | Apache-2.0 |
+  | `fractional-indexing` | 4.0.0 | CC0 |
+  | `fflate` | 0.8.3 | MIT |
+  | `pdfjs-dist` | 6.4.299 | Apache-2.0; brings `@napi-rs/canvas` 1.0.10 (MIT) as an optional dependency |
+  | `pdf-lib` | 1.17.1 | MIT; root devDependency, used only to generate fixtures |
+
+- **Images:** `quay.io/docling-project/docling-serve-cpu:v1.36.0` (profile `pdf`). Debian `ffmpeg` is added to a new `agent` image target.
+
+**Spec:** `docs/superpowers/specs/2026-10-05-agentic-notes-design.md` (§3.3, §4, §6, §7, §8, §12, §16 rows B2/B4/B5).
+- `orchestration/STATE.md` D1–D35 override the spec.
+- `CLAUDE.md` is mandatory.
+- Phase 0 (`docs/superpowers/plans/2026-10-05-phase-0-foundations.md`) is the source of truth for every package, table, env and contract name used here.
+- Research: `orchestration/runs/2026-10-05-02-research-web-capture/report.md` and `orchestration/runs/2026-10-05-03-research-video-extraction/report.md`.
+
+**Done when (spec §16):**
+- **B2:** the `capture` tool reaches coverage ≥ 0.98 with fidelity `verified` on the article and docs fixtures (Task 8).
+- **B4:** the YouTube fixture produces a chaptered note: chapter headings with transcript blocks and keyframes interleaved by time (Task 21).
+- **B5:** the PDF fixture is verified on the pdf.js path and on the docling path (Task 24).
+
+---
+
+## Planning-time verification (proven on this machine on 2026-10-05; do not re-litigate)
+
+1. **pdf.js in Node:**
+   - `pdfjs-dist@6.4.299` (`pdfjs-dist/legacy/build/pdf.mjs`) parses a pdf-lib PDF in Node 24.4 with no worker configuration.
+   - `getTextContent()` returns items with `transform[4..5]` as the baseline x/y in PDF points (bottom-left origin), plus `height` and `hasEOL`. EOL markers arrive as empty-string items.
+   - `page.render({ canvas, canvasContext, viewport })` with an `@napi-rs/canvas` canvas renders to PNG. In v6, `canvas` is a required render parameter.
+   - `OPS.paintImageXObject` exists.
+2. **n.eko slot audio:**
+   - The n.eko image's PulseAudio runs as user `neko` (supervisord `[program:pulseaudio]` in `/etc/neko/supervisord.conf`, with `--disallow-module-loading`).
+   - It loads `/etc/pulse/default.pa`, which defines `module-null-sink sink_name=audio_output`.
+   - Chromium plays into `audio_output`, so the capture source is **`audio_output.monitor`**.
+   - Because module loading is disallowed at runtime, the TCP module **must** be in `default.pa` before PulseAudio starts.
+3. **Defuddle:**
+   - `defuddle/full` resolves to `dist/index.full.js`. This UMD bundle sets the global `Defuddle` to the class when there is no `module`.
+   - Options include `markdown`, `useAsync`, `debug` (which returns `debug.contentSelector`), `contentSelector` and the removal toggles.
+   - With `useAsync: false` it never calls `fetch`.
+4. **Readability:** `@mozilla/readability@0.6.0` has no `exports` map, so `Readability.js` can be resolved directly. Evaluated as a script, it defines a global `Readability`.
+5. **fractional-indexing 4.0.0:**
+   - It exports `generateKeyBetween` and `generateNKeysBetween` (ESM).
+   - The digits are base62 in ASCII order (`0-9A-Za-z`). **Postgres must compare positions with `COLLATE "C"`.**
+
+---
+
+## Global Constraints
+
+Every task implicitly includes all of these and all of Phase 0's Global Constraints: toolchain, exact pins, ESM with `.ts` relative imports, no TypeScript `enum`/`namespace`/parameter properties, `import type`, `parseEnv`, secrets never printed, `docker builder prune -f` after builds, and never `docker system prune -a`.
+
+**Models (D1):**
+
+| Model | Use |
+|---|---|
+| `MODELS.filing` = `gpt-6-luna` | Auto-filing |
+| `MODELS.agentPrimary` = `gpt-6-astra` | Opaque-content OCR |
+| `MODELS.transcription` = `gpt-4o-transcribe-diarize` | ASR, with `response_format: "diarized_json"` and `chunking_strategy: "auto"` |
+| `MODELS.embeddings` = `text-embedding-3-small` | Embeddings, 1536 dimensions |
+
+**Thresholds (spec §7–§8, each defined once as a named constant):**
+
+| Constant | Value | Defined in |
+|---|---|---|
+| `VERIFIED_COVERAGE` | 0.98 | contracts |
+| `MAX_SCROLL_VIEWPORTS` | 50 | |
+| Network-idle quiet window | 500 ms (300 ms between scroll steps) | |
+| Network-idle cap | 10 s (3 s between scroll steps) | |
+| Element-screenshot `clip.scale` | 2 | |
+| `MAX_ASSET_BYTES` | 25 MiB | |
+| `MAX_PDF_BYTES` | 100 MiB | |
+| `MAX_FULLPAGE_HEIGHT` | 16 384 px | |
+| `KEYFRAME_INTERVAL_S` | 2 | |
+| `PHASH_DUPLICATE_DISTANCE` | 6 | |
+| `DRM_LUMINANCE` | 0.03 | |
+| `DRM_PROBE_FRAMES` | 5 | |
+| `CHUNK_SECONDS` | 600 | |
+| `RRF_K` | 60 | |
+
+**Hard rules for this phase:**
+1. **Fetching page content.** The agent never fetches a page-supplied URL with Node's `fetch`. Every page resource goes through `fetchInBrowser`, which uses CDP `Network.loadNetworkResource`. Only `http:` and `https:` are allowed; `data:` URIs are decoded locally, with the same size cap.
+2. **Captured text.** It comes only from the DOM, the PDF text layer, docling's PDF parse or captions. Model output is either `origin: "model"` (`annotate`) or `origin: "ocr_model"` / `"asr"` with `verified: false`.
+3. **No live-page injection.** No Playwright `mask`, `caret`, `evaluate` or `addScriptTag` in capture code. Page scripts run only through `IsolatedWorld.call`. Every screenshot goes through B1's masked `BrowserSession.captureScreenshot`.
+4. **Ordering.** Every SQL ordering by `note_blocks.position` uses `COLLATE "C"`, via `positionOrder` from `apps/agent/src/notes/positions.ts` or the same literal SQL in `web`/`db`.
+5. **Untrusted text to models.** Page-derived strings sent to a model are wrapped in `<untrusted_page_content origin="…">`, with `<` and `>` stripped from the payload.
+6. **Logs** carry IDs, counts and error names only. They never carry page text, URLs with query strings or model output.
+7. **Commits:** one commit per task. End each commit message with the attribution lines your session's system reminder specifies. Never push.
+
+## Review Focus
+
+Each line names a failure mode the spec implies but does not spell out, and the test that pins it.
+
+1. **Hostile asset URLs.** A page's `srcset` or `<img>` can point at `http://garage:3900/…`, `http://169.254.169.254/`, `file:///etc/passwd`, `javascript:` or `chrome://`. The agent must never issue that request from its own container, which sits on `backend` next to Postgres and Garage. Requests go through the browser (slot egress filter) or are refused.
+   - *Test:* Task 7, `fetch-resource.test.ts` (non-http(s) refused, global `fetch` never called, size cap) and `media.test.ts`.
+2. **Stored SVG is an XSS vector.** An SVG holding `<script>` or `onload=` must never execute, whether it is opened directly from `/api/assets/:id` or exported.
+   - *Tests:* Task 7, `images.test.ts` (unsafe SVG is rejected and falls back to a screenshot); Task 11, `objects.int.test.ts` (CSP `sandbox`, `nosniff`, `Content-Disposition`, workspace isolation).
+3. **The model names another run's note.** `annotate` with a `noteId` from another run or workspace, or an `afterBlockId` from a different note, must be refused with a `ToolError`.
+   - *Test:* Task 9, `annotate-tool.int.test.ts`.
+4. **The filing model answers garbage.** It may name non-existent multi-level paths, more than one new folder, names with `/`, depth over 8, an empty path, or case-variant names. The agent creates at most one leaf, never an invalid name, and otherwise files into the deepest existing prefix or leaves the note unfiled.
+   - *Test:* Task 10, `filing.test.ts`.
+5. **Export of hostile titles and sources.** A title like `"x: y" --- #tag ../../a` and source URLs containing quotes must still produce valid YAML front matter, a safe zip file name and no path traversal in zip entries.
+   - *Test:* Task 13, `export.test.ts`.
+
+---
+
+## B1 seams this plan consumes (exact names; B1 owns these files)
+
+B2, B4 and B5 depend on B1 (spec §16). Each name and shape below is required. If B1 landed a different name, adapt **only the import line** and keep the shape; if a shape differs, stop and reconcile with B1's owner before continuing.
+
 ```ts
+// apps/agent/src/browser/session.ts (B1)
+import type { CDPSession, Page } from "playwright-core";
+export interface MaskedCaptureOptions {
+  /** CSS px. Document coordinates when captureBeyondViewport is true, viewport coordinates otherwise. */
+  clip?: { x: number; y: number; width: number; height: number };
+  scale?: number;                 // clip.scale; default 1
+  captureBeyondViewport?: boolean;
+}
+export interface BrowserSession {
+  readonly slotName: string;       // "browser-N"
+  readonly page: Page;             // foreground tab of the slot's default context
+  /** CDP session for `page` (B1 guards Input.* and screenshots against runs.controller). */
+  cdp(): Promise<CDPSession>;
+  /** Masked PNG via CDP Page.captureScreenshot (spec §9). Throws ControlHeld or FrameDropped. */
+  captureScreenshot(options?: MaskedCaptureOptions): Promise<Uint8Array>;
+  /** True when the page has any element B1's masker would cover (secret inputs, executor-filled fields). */
+  hasMaskTargets(): Promise<boolean>;
+}
+
+// apps/agent/src/browser/errors.ts (B1)
+export class ControlHeld extends Error {}
+export class FrameDropped extends Error {}
+
+// apps/agent/src/tools/types.ts (B1)
+import type { DbTx } from "@mastertutor/db";      // defined by Task 1 of THIS plan if B1 has not
+export interface StepWriter {
+  /** Runs inside the step's single commit transaction, in call order, before events are inserted. */
+  defer(write: (tx: DbTx) => Promise<void>): void;
+  /** Inserts a run_events row (+ NOTIFY run_event) in the same transaction, after all deferred writes. */
+  emit(event: RunEvent): void;
+  /** Runs after a successful commit (best effort; errors are logged, not thrown). */
+  afterCommit(task: () => Promise<void>): void;
+}
+export interface ToolContext {
+  readonly runId: string;
+  readonly workspaceId: string;
+  readonly session: BrowserSession;
+  readonly step: StepWriter;
+  readonly signal: AbortSignal;
+}
+export interface Tool<A, R> {
+  readonly name: FunctionToolName;
+  readonly args: z.ZodType<A>;
+  readonly result: z.ZodType<R>;
+  run(ctx: ToolContext, args: A): Promise<R>;
+}
+/** Its `code` + `message` are returned to the model as the function_call_output error. */
+export class ToolError extends Error { readonly code: string; constructor(code: string, message: string) }
+
+// apps/agent/src/deps.ts (B1)
+export interface AgentDeps { db: Database; storage: Storage; openai: OpenAI; log: Logger; env: AgentEnv }
+
+// apps/agent/src/tools/index.ts (B1): the single list of function-tool implementations
+export function createFunctionTools(deps: AgentDeps): Tool<unknown, unknown>[];
+
+// apps/agent/src/loop/hooks.ts (B1): called by the loop when AgentTurn.status = "done"
+export interface RunHooks {
+  /** Throwing keeps the run `running` and emits an `error` event; resolving lets it complete. */
+  onDone(run: { runId: string; workspaceId: string }, step: StepWriter): Promise<void>;
+}
+
+// apps/agent/src/testing/browser-harness.ts (B1): test-only
+export interface BrowserHarness {
+  /** Base URL of the fixtures server *as seen from the slot*; serves tests/fixtures/sites/ at its root,
+   *  sets MIME by extension (.webm video/webm, .pdf application/pdf, .svg image/svg+xml,
+   *  extensionless application/octet-stream) and supports HTTP Range requests. */
+  readonly fixturesUrl: string;
+  /** A session on a fresh slot; always agent-controlled; page.route allows fixturesUrl. */
+  openSession(options: { runId: string; workspaceId: string }): Promise<BrowserSession>;
+  stop(): Promise<void>;
+}
+export function startBrowserHarness(): Promise<BrowserHarness>;
+
+// tests/llm-mock (B1): a route table the mock server dispatches on "METHOD /path"
+export type MockHandler = (request: { body: unknown; headers: Record<string, string> }) =>
+  Promise<{ status: number; json: unknown }>;
+// tests/llm-mock/src/routes.ts exports `ROUTES: Record<string, MockHandler>`
+```
+
+Phase 0 names used directly:
+- **From `@mastertutor/contracts`:** `MODELS`, `EMBEDDING_DIMENSIONS`, `PULSE_TCP_PORT`, the enums, `Anchor`, `NoteBlock`, `CaptureArgs`, `CaptureResult`, `AnnotateArgs`, `AnnotateResult`, `VideoArgs`, `VideoResult`, `FilingDecision`, `RunEvent`, `toOrigin`, `FolderName`, `Uuid`, the DTOs, `AgentEnv` and `parseEnv`.
+- **From `@mastertutor/contracts/server`:** `createLogger`.
+- **From `@mastertutor/db`:** `createDb`, `Database`, `DbHandle`, the tables, `ensureWorkspaceMember`.
+- **From `@mastertutor/db/testing`:** `startTestDatabase`.
+- **From `@mastertutor/storage`:** `createStorage`, `Storage`, `objectKeys`, `safeFilename`, `bootstrapGarage`.
+- **From `@mastertutor/storage/testing`:** `startTestGarage`.
+- **From the agent:** `slotCdpBaseUrl` (`apps/agent/src/slots/probe.ts`).
+- **From the web app:** `getAuth`, `getDb` and `getWebEnv`.
+
+---
+
+## Decisions made in this plan (recorded deviations and resolutions)
+
+1. **Object reads are proxied through `web` (Phase 0 note 5).** `GET /api/assets/:assetId` and `GET /api/sources/:sourceId/snapshot/:name` authenticate the Better Auth session, check workspace membership, read Garage with the read-only key, and respond with `nosniff`, `CSP: default-src 'none'; …; sandbox` and `Cache-Control: private` headers.
+   - `assets.url` returns `{url: "/api/assets/<id>", expiresAt: now+1h}`. The URL is **not** a bearer capability, because the session cookie is required. `expiresAt` is the client cache horizon.
+   - `notes.export` returns `/api/notes/<id>/export`, which also requires the session.
+   - There is no public S3 endpoint and no presigned URL leaves `web`.
+2. **Block full-text search.** `note_blocks.search` is a generated `tsvector` with a GIN index, added in migration `0003_block_search` (Phase 0 note 6).
+3. **Assets fetch via `Network.loadNetworkResource`,** not `page.request`. This deviates from spec §7.4's wording. `page.request` runs in the agent's Node process on `backend`, which would bypass the slot's egress filter: an SSRF route to Postgres and Garage.
+4. **Order of steps.** The order is prepare → snapshot → extract, so the full-page snapshot contains the lazily loaded images. Spec §7 lists the snapshot first; it still happens before any extraction.
+5. **MHTML is skipped** (`meta.snapshot.skipped: ["mhtml:secret_fields"]`) when `hasMaskTargets()` is true. MHTML serializes form state, and stored objects must pass the §12 secret-canary test.
+6. **Assets are content-addressed and written immediately,** to Garage and the `assets` row with `ON CONFLICT DO NOTHING`, outside the step transaction. That way their IDs can go into block Markdown before commit. An orphaned asset left by an aborted step is harmless and deduplicated. Everything else (notes, sources, blocks, quality, events) is staged into the step transaction.
+7. **Asset references in Markdown** are written as `asset:<assetId>`, inside link and image targets only, using `assetUri`/`replaceAssetUris` in contracts. The UI maps them to `/api/assets/<id>`; export maps them to `assets/<sha256>.<ext>`.
+8. **ASR blocks** (`origin: "asr"`) are `verified: false` and, like `ocr_model`, make the note `needs_review` (`REVIEW_ORIGINS` in contracts).
+9. **Per-block `verified`** for DOM, PDF and docling blocks means block precision ≥ 0.98: the block's tokens are present in the source text. A block can therefore never carry text the source lacks.
+10. **Cross-site (out-of-process) iframes are skipped,** and their content is excluded from coverage. Same-process frames are captured in their own isolated world. This is YAGNI until a fixture or a user needs more.
+11. **`AgentEnv` gains `DOCLING_URL` (optional).** Compose gains the `docling` service under profile `pdf`, and the `agent` service gets its own image target with `ffmpeg`.
+
+---
+
+## File Structure
+
+```
+packages/contracts/src/
+  asset-uri.ts (+test)        assetUri, replaceAssetUris, assetIdsIn               (Task 2)
+  fidelity.ts (+test)         VERIFIED_COVERAGE, REVIEW_ORIGINS, noteFidelity       (Task 2)
+  server/embeddings.ts (+test) EmbeddingsClient, embedTexts, embeddingText          (Task 2)
+  testing/index.ts, testing/embedding.ts  hashEmbedding, fakeEmbeddingsClient (subpath ./testing) (Task 2)
+  env.ts                      + DOCLING_URL? in AgentEnv                            (Task 24)
+packages/db/
+  src/schema/library.ts       + note_blocks.search generated tsvector + GIN         (Task 1)
+  migrations/0003_block_search.sql (generated)                                      (Task 1)
+  src/client.ts               + DbTx, DbLike                                        (Task 1)
+  src/queries/folders.ts      folder tree queries, FolderError, moveNote            (Task 1)
+  src/queries/membership.ts   getMembership                                         (Task 11)
+  src/queries/search.ts       hybridSearch (RRF)                                    (Task 12)
+apps/agent/
+  tsconfig.json               + dom libs (page scripts)                             (Task 5)
+  src/library.ts              LibraryServices, createLibraryServices                (Task 8; extended 10, 20, 24)
+  src/notes/hash.ts, positions.ts, assets.ts, embedder.ts, note-writer.ts           (Task 4)
+  src/notes/filing.ts         FilingModel, planFiling, fileRunNote, createRunHooks  (Task 10)
+  src/testing/notes.ts        RecordingStep, seedRun, startTestStorage, testLogger  (Task 4)
+  src/testing/capture-env.ts  startCaptureEnv (DB + Garage + harness + fakes)       (Task 8)
+  src/capture/text.ts, text-fragment.ts, markdown-blocks.ts                         (Task 3)
+  src/capture/cdp-world.ts, network-idle.ts, prepare.ts, page/{types,lib,prepare}.ts (Task 5)
+  src/capture/shadow.ts, page/extract.ts, page/locate.ts                            (Task 6)
+  src/capture/snapshot.ts, fetch-resource.ts, images.ts, media.ts                   (Task 7)
+  src/capture/opaque.ts, web-capture.ts, capture-tool.ts                            (Task 8)
+  src/capture/annotate-tool.ts                                                      (Task 9)
+  src/video/timecode.ts, page/player.ts, source.ts                                  (Task 16)
+  src/video/chapters.ts                                                             (Task 17)
+  src/video/json3.ts, transcript-blocks.ts, captions.ts                             (Task 18)
+  src/video/phash.ts, keyframes.ts                                                  (Task 19)
+  src/video/audio-recorder.ts, transcriber.ts, transcribe.ts                        (Task 20)
+  src/video/video-tool.ts                                                           (Task 21)
+  src/pdf/pdfjs.ts, layout.ts                                                       (Task 22)
+  src/pdf/pdf-capture.ts                                                            (Task 23)
+  src/pdf/docling.ts                                                                (Task 24)
+apps/web/
+  lib/server/session.ts, storage.ts, openai.ts                                      (Tasks 11, 12)
+  lib/server/library/{errors,context,objects,search,export,folders}.ts              (Tasks 11–14)
+  app/api/assets/[assetId]/route.ts                                                 (Task 11)
+  app/api/sources/[sourceId]/snapshot/[name]/route.ts                               (Task 11)
+  app/api/notes/[noteId]/export/route.ts                                            (Task 13)
+apps/browser-slot/
+  Dockerfile, bin/slot-entrypoint  PulseAudio TCP module with agent-only ACL        (Task 20)
+  test/verify-pulse.sh                                                              (Task 20)
+Dockerfile, compose.yml, .env.example   agent target (ffmpeg), DOCLING_URL, docling (Tasks 16, 24)
+tests/fixtures/sites/
+  article/, docs/, lazy/, infinite/, opaque/                                        (Tasks 5, 6, 8)
+  youtube/ (watch.html, watch-nocc.html, drm.html, player.js, api/timedtext,
+            make-video.ts, video.webm, black.webm)                                  (Task 16)
+  pdf/ (make-pdf.ts, paper.pdf)                                                     (Task 22)
+tests/llm-mock/src/routes/embeddings.ts, transcriptions.ts                         (Tasks 15, 20)
+```
+
+---
+
+### Task 1: Block search column, `DbTx`, and folder queries
+
+**Files:**
+- Modify: `packages/db/src/schema/library.ts` (the `noteBlocks` table)
+- Modify: `packages/db/src/client.ts`
+- Create: `packages/db/migrations/0003_block_search.sql` (generated) and its drizzle-kit snapshot
+- Create: `packages/db/src/queries/folders.ts`
+- Modify: `packages/db/src/index.ts`
+- Test: `packages/db/src/queries/folders.int.test.ts`, `packages/db/src/block-search.int.test.ts`
+
+**Interfaces:**
+- Consumes: Phase 0's `folders`, `notes`, `noteBlocks`, `workspaces` tables, `createDb`, `Database`, `startTestDatabase`, and `FolderName`/`FiledBy` from contracts.
+- Produces:
+  - `type DbTx` (a Drizzle transaction) and `type DbLike = PgDatabase<PostgresJsQueryResultHKT, typeof schema>`, accepted by every query helper in this plan.
+  - `note_blocks.search` (a generated `tsvector`) and the index `note_blocks_search_idx`.
+  - `FolderRow {id, parentId, name, sort}`.
+  - `listFolders(db: DbLike, workspaceId): Promise<FolderRow[]>`.
+  - `folderPaths(rows): Map<string, string[]>`.
+  - `resolveFolderPath(rows, path: readonly string[]): {folderId: string | null; matched: number}`.
+  - `createFolder(db, workspaceId, {name, parentId, id?}): Promise<FolderRow>`.
+  - `renameFolder(db, workspaceId, folderId, name): Promise<FolderRow>`.
+  - `moveFolder(db, workspaceId, folderId, parentId): Promise<FolderRow>`.
+  - `deleteFolder(db, workspaceId, folderId): Promise<void>`.
+  - `moveNote(db, workspaceId, noteId, folderId: string | null, filedBy: FiledBy): Promise<void>`.
+  - `FolderError {code: "not_found" | "conflict" | "invalid"}`.
+
+- [ ] **Step 1: Write the failing tests.**
+
+`packages/db/src/block-search.int.test.ts`:
+```ts
+import { readFile } from "node:fs/promises";
+import { sql } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDb, type DbHandle } from "./client.ts";
+import { noteBlocks, notes, workspaces } from "./schema/index.ts";
+import { startTestDatabase, type TestDatabase } from "./testing.ts";
+
+let tdb: TestDatabase;
+let h: DbHandle;
+beforeAll(async () => {
+  tdb = await startTestDatabase({ slots: ["browser-1"] });
+  h = createDb(tdb.agentUrl);
+});
+afterAll(async () => {
+  await h?.close();
+  await tdb?.stop();
+});
+
+describe("note_blocks.search", () => {
+  it("is generated from markdown and GIN-indexed", async () => {
+    const migration = await readFile(new URL("../migrations/0003_block_search.sql", import.meta.url), "utf8");
+    expect(migration).toMatch(/ADD COLUMN "search" tsvector GENERATED ALWAYS AS/);
+    expect(migration).toMatch(/CREATE INDEX "note_blocks_search_idx" ON "note_blocks" USING gin/);
+
+    const [ws] = await h.db.insert(workspaces).values({ name: "W" }).returning({ id: workspaces.id });
+    const [note] = await h.db.insert(notes).values({ workspaceId: ws!.id, title: "Plants" }).returning({ id: notes.id });
+    await h.db.insert(noteBlocks).values({
+      noteId: note!.id,
+      position: "a0",
+      type: "paragraph",
+      markdown: "Chlorophyll absorbs **red** and blue light.",
+      origin: "dom",
+    });
+    const rows = await h.db.execute(
+      sql`select markdown from note_blocks where search @@ websearch_to_tsquery('english', 'chlorophyll absorbs')`,
+    );
+    expect(rows).toHaveLength(1);
+  });
+});
+```
+
+`packages/db/src/queries/folders.int.test.ts`:
+```ts
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDb, type DbHandle } from "../client.ts";
+import { notes, workspaces } from "../schema/index.ts";
+import { startTestDatabase, type TestDatabase } from "../testing.ts";
+import {
+  createFolder,
+  deleteFolder,
+  FolderError,
+  folderPaths,
+  listFolders,
+  moveFolder,
+  moveNote,
+  renameFolder,
+  resolveFolderPath,
+} from "./folders.ts";
+
+let tdb: TestDatabase;
+let h: DbHandle;
+beforeAll(async () => {
+  tdb = await startTestDatabase({ slots: ["browser-1"] });
+  h = createDb(tdb.webUrl);
+});
+afterAll(async () => {
+  await h?.close();
+  await tdb?.stop();
+});
+
+async function workspace(): Promise<string> {
+  const [row] = await h.db.insert(workspaces).values({ name: "W" }).returning({ id: workspaces.id });
+  return row!.id;
+}
+
+describe("folder queries", () => {
+  it("creates a tree and resolves paths exactly, then case-insensitively", async () => {
+    const ws = await workspace();
+    const bio = await createFolder(h.db, ws, { name: "  Biology ", parentId: null });
+    const cells = await createFolder(h.db, ws, { name: "Cells", parentId: bio.id });
+    expect(bio.name).toBe("Biology");
+    const rows = await listFolders(h.db, ws);
+    expect(folderPaths(rows).get(cells.id)).toEqual(["Biology", "Cells"]);
+    expect(resolveFolderPath(rows, ["Biology", "Cells"])).toEqual({ folderId: cells.id, matched: 2 });
+    expect(resolveFolderPath(rows, ["biology", "CELLS"])).toEqual({ folderId: cells.id, matched: 2 });
+    expect(resolveFolderPath(rows, ["Biology", "Plants", "Leaves"])).toEqual({ folderId: bio.id, matched: 1 });
+    expect(resolveFolderPath(rows, ["Chemistry"])).toEqual({ folderId: null, matched: 0 });
+  });
+
+  it("maps database rule violations to FolderError codes", async () => {
+    const ws = await workspace();
+    const a = await createFolder(h.db, ws, { name: "A", parentId: null });
+    const b = await createFolder(h.db, ws, { name: "B", parentId: a.id });
+    await expect(createFolder(h.db, ws, { name: "A", parentId: null })).rejects.toMatchObject({ code: "conflict" });
+    await expect(moveFolder(h.db, ws, a.id, b.id)).rejects.toMatchObject({ code: "invalid" });
+    await expect(createFolder(h.db, ws, { name: "a/b", parentId: null })).rejects.toBeInstanceOf(FolderError);
+    const other = await workspace();
+    await expect(createFolder(h.db, other, { name: "X", parentId: a.id })).rejects.toMatchObject({ code: "invalid" });
+    await expect(renameFolder(h.db, other, a.id, "Z")).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("renames, deletes and moves notes only within the workspace", async () => {
+    const ws = await workspace();
+    const f = await createFolder(h.db, ws, { name: "Inbox", parentId: null });
+    expect((await renameFolder(h.db, ws, f.id, "Reading")).name).toBe("Reading");
+    const [note] = await h.db.insert(notes).values({ workspaceId: ws, title: "N" }).returning({ id: notes.id });
+    await moveNote(h.db, ws, note!.id, f.id, "user");
+    const foreign = await createFolder(h.db, await workspace(), { name: "Other", parentId: null });
+    await expect(moveNote(h.db, ws, note!.id, foreign.id, "user")).rejects.toMatchObject({ code: "not_found" });
+    await deleteFolder(h.db, ws, f.id);
+    await expect(deleteFolder(h.db, ws, f.id)).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+```
+
+- [ ] **Step 2: Run the tests to verify they fail.**
+
+Run: `pnpm exec vitest run --project integration packages/db/src/queries/folders.int.test.ts packages/db/src/block-search.int.test.ts`
+Expected: FAIL. `./folders.ts` is missing, and `0003_block_search.sql` does not exist.
+
+- [ ] **Step 3: Add the column and generate the migration.**
+
+In `packages/db/src/schema/library.ts`, inside `noteBlocks`, add after `embedding`:
+```ts
+    /** Full-text over block Markdown (B2; Phase 0 note 6). Generated, never written. */
+    search: tsvector("search").generatedAlwaysAs(sql`to_tsvector('english'::regconfig, "markdown")`),
+```
+Add to the `noteBlocks` index list:
+```ts
+    index("note_blocks_search_idx").using("gin", t.search),
+```
+
+Run: `pnpm --filter @mastertutor/db exec drizzle-kit generate --name=block_search`
+Expected: `packages/db/migrations/0003_block_search.sql` contains `ALTER TABLE "note_blocks" ADD COLUMN "search" tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, "markdown")) STORED;` and `CREATE INDEX "note_blocks_search_idx" ON "note_blocks" USING gin ("search");`.
+
+If drizzle-kit quotes the type as `"tsvector"`, keep its output as is and change the regex in `block-search.int.test.ts` to `/ADD COLUMN "search" "?tsvector"? GENERATED ALWAYS AS/`.
+
+- [ ] **Step 4: Add `DbTx`/`DbLike` and the folder queries.**
+
+Append to `packages/db/src/client.ts`:
+```ts
+import type { PgDatabase } from "drizzle-orm/pg-core";
+import type { PostgresJsQueryResultHKT } from "drizzle-orm/postgres-js";
+
+/** A Drizzle transaction handle (what StepWriter.defer receives). */
+export type DbTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** Anything query helpers accept: the pool or a transaction. */
+export type DbLike = PgDatabase<PostgresJsQueryResultHKT, typeof schema>;
+```
+
+`packages/db/src/queries/folders.ts`:
+```ts
+import { FolderName, type FiledBy } from "@mastertutor/contracts";
+import { and, asc, eq } from "drizzle-orm";
+import type { DbLike } from "../client.ts";
+import { folders, notes } from "../schema/index.ts";
+
+export interface FolderRow {
+  id: string;
+  parentId: string | null;
+  name: string;
+  sort: number;
+}
+
+export type FolderErrorCode = "not_found" | "conflict" | "invalid";
+
+export class FolderError extends Error {
+  readonly code: FolderErrorCode;
+  constructor(code: FolderErrorCode, message: string) {
+    super(message);
+    this.name = "FolderError";
+    this.code = code;
+  }
+}
+
+const columns = { id: folders.id, parentId: folders.parentId, name: folders.name, sort: folders.sort };
+
+function pgCode(error: unknown): string | undefined {
+  const direct = (error as { code?: unknown }).code;
+  if (typeof direct === "string") return direct;
+  const cause = (error as { cause?: { code?: unknown } }).cause?.code;
+  return typeof cause === "string" ? cause : undefined;
+}
+
+function toFolderError(error: unknown): unknown {
+  switch (pgCode(error)) {
+    case "23505":
+      return new FolderError("conflict", "A folder with that name already exists here");
+    case "23503":
+    case "23514":
+      return new FolderError("invalid", "That folder change breaks the tree rules");
+    default:
+      return error;
+  }
+}
+
+function parseName(name: string): string {
+  const parsed = FolderName.safeParse(name);
+  if (!parsed.success) throw new FolderError("invalid", "Folder names are 1-120 chars without '/'");
+  return parsed.data;
+}
+
+export async function listFolders(db: DbLike, workspaceId: string): Promise<FolderRow[]> {
+  return db
+    .select(columns)
+    .from(folders)
+    .where(eq(folders.workspaceId, workspaceId))
+    .orderBy(asc(folders.sort), asc(folders.name));
+}
+
+/** Folder id → names from the root. */
+export function folderPaths(rows: readonly FolderRow[]): Map<string, string[]> {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const memo = new Map<string, string[]>();
+  const pathOf = (id: string, guard: number): string[] => {
+    const cached = memo.get(id);
+    if (cached) return cached;
+    const row = byId.get(id);
+    if (!row || guard > 8) return [];
+    const path = row.parentId ? [...pathOf(row.parentId, guard + 1), row.name] : [row.name];
+    memo.set(id, path);
+    return path;
+  };
+  for (const row of rows) pathOf(row.id, 0);
+  return memo;
+}
+
+const fold = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase("en");
+
+/** Walks `path` from the root; returns the deepest existing folder (exact name first, then case-insensitive). */
+export function resolveFolderPath(
+  rows: readonly FolderRow[],
+  path: readonly string[],
+): { folderId: string | null; matched: number } {
+  let parentId: string | null = null;
+  let matched = 0;
+  for (const name of path) {
+    const siblings = rows.filter((row) => row.parentId === parentId);
+    const hit = siblings.find((row) => row.name === name) ?? siblings.find((row) => fold(row.name) === fold(name));
+    if (!hit) break;
+    parentId = hit.id;
+    matched++;
+  }
+  return { folderId: parentId, matched };
+}
+
+export async function createFolder(
+  db: DbLike,
+  workspaceId: string,
+  input: { name: string; parentId: string | null; id?: string },
+): Promise<FolderRow> {
+  const name = parseName(input.name);
+  try {
+    const [row] = await db
+      .insert(folders)
+      .values({ ...(input.id ? { id: input.id } : {}), workspaceId, name, parentId: input.parentId })
+      .returning(columns);
+    return row!;
+  } catch (error) {
+    throw toFolderError(error);
+  }
+}
+
+async function updateFolder(
+  db: DbLike,
+  workspaceId: string,
+  folderId: string,
+  set: Partial<{ name: string; parentId: string | null }>,
+): Promise<FolderRow> {
+  try {
+    const [row] = await db
+      .update(folders)
+      .set(set)
+      .where(and(eq(folders.id, folderId), eq(folders.workspaceId, workspaceId)))
+      .returning(columns);
+    if (!row) throw new FolderError("not_found", "Folder not found");
+    return row;
+  } catch (error) {
+    throw toFolderError(error);
+  }
+}
+
+export function renameFolder(db: DbLike, workspaceId: string, folderId: string, name: string): Promise<FolderRow> {
+  return updateFolder(db, workspaceId, folderId, { name: parseName(name) });
+}
+
+export function moveFolder(
+  db: DbLike,
+  workspaceId: string,
+  folderId: string,
+  parentId: string | null,
+): Promise<FolderRow> {
+  if (parentId === folderId) throw new FolderError("invalid", "A folder cannot contain itself");
+  return updateFolder(db, workspaceId, folderId, { parentId });
+}
+
+/** Deletes the folder and its subtree (FK cascade); notes inside become unfiled (FK set null). */
+export async function deleteFolder(db: DbLike, workspaceId: string, folderId: string): Promise<void> {
+  const deleted = await db
+    .delete(folders)
+    .where(and(eq(folders.id, folderId), eq(folders.workspaceId, workspaceId)))
+    .returning({ id: folders.id });
+  if (deleted.length === 0) throw new FolderError("not_found", "Folder not found");
+}
+
+export async function moveNote(
+  db: DbLike,
+  workspaceId: string,
+  noteId: string,
+  folderId: string | null,
+  filedBy: FiledBy,
+): Promise<void> {
+  if (folderId !== null) {
+    const owned = await db
+      .select({ id: folders.id })
+      .from(folders)
+      .where(and(eq(folders.id, folderId), eq(folders.workspaceId, workspaceId)));
+    if (owned.length === 0) throw new FolderError("not_found", "Folder not found");
+  }
+  const moved = await db
+    .update(notes)
+    .set({ folderId, filedBy, updatedAt: new Date() })
+    .where(and(eq(notes.id, noteId), eq(notes.workspaceId, workspaceId)))
+    .returning({ id: notes.id });
+  if (moved.length === 0) throw new FolderError("not_found", "Note not found");
+}
+```
+
+Append to `packages/db/src/index.ts`:
+```ts
+export * from "./queries/folders.ts";
+```
+Make sure `index.ts` also exports `DbTx` and `DbLike`. It already re-exports `client.ts`; if it lists names instead, add `type DbTx, type DbLike`.
+
+- [ ] **Step 5: Run the tests to verify they pass.**
+
+Run: `pnpm exec vitest run --project integration packages/db/src && pnpm test && pnpm typecheck && pnpm lint`
+Expected: PASS, including Phase 0's `migrate.int.test.ts`. The table count is still 27, because this adds only a column.
+
+- [ ] **Step 6: Commit.**
+```bash
+git add packages/db
+git commit -m "feat(db): block full-text column, DbTx/DbLike, folder tree queries"
+```
+
+---
+
+### Task 2: Contracts for asset URIs, fidelity, embeddings and the test embedder
+
+**Files:**
+- Create: `packages/contracts/src/asset-uri.ts`, `packages/contracts/src/fidelity.ts`
+- Create: `packages/contracts/src/server/embeddings.ts`
+- Create: `packages/contracts/src/testing/embedding.ts`, `packages/contracts/src/testing/index.ts`
+- Modify: `packages/contracts/src/index.ts`, `packages/contracts/src/server/index.ts`, `packages/contracts/package.json` (add the `"./testing"` export)
+- Test: `packages/contracts/src/{asset-uri,fidelity}.test.ts`, `packages/contracts/src/server/embeddings.test.ts`
+
+**Interfaces:**
+- Consumes: `EMBEDDING_DIMENSIONS`, `MODELS`, `BlockOrigin`, `Fidelity`.
+- Produces:
+  - **Asset URIs:**
+    - `ASSET_URI_PREFIX = "asset:"`;
+    - `assetUri(assetId): string`;
+    - `replaceAssetUris(markdown, replace: (assetId) => string): string`, which rewrites only `](asset:<uuid>)` link and image targets;
+    - `assetIdsIn(markdown): string[]`.
+  - **Fidelity:** `VERIFIED_COVERAGE = 0.98`, `REVIEW_ORIGINS = ["ocr_model", "asr"]`, `noteFidelity({coverage, unverifiedReviewBlocks}): Fidelity`.
+  - **From `/server`:** `EmbeddingsClient` (structural; the `openai` client satisfies it), `EMBED_MAX_CHARS = 8000`, `EMBED_BATCH_SIZE = 128`, `embeddingText(markdown): string` and `embedTexts(client, texts, {signal?}): Promise<number[][]>`.
+  - **From `/testing`:** `hashEmbedding(text): number[]` and `fakeEmbeddingsClient({fail?}): EmbeddingsClient & {calls: string[][]}`.
+
+- [ ] **Step 1: Write the failing tests.**
+
+`packages/contracts/src/asset-uri.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { assetIdsIn, assetUri, replaceAssetUris } from "./asset-uri.ts";
+
+const id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+describe("asset URIs", () => {
+  it("builds and rewrites only link and image targets", () => {
+    expect(assetUri(id)).toBe(`asset:${id}`);
+    const md = `![Fig](asset:${id}) and [file](asset:${id}) but not asset:${id} in prose`;
+    expect(replaceAssetUris(md, (a) => `/api/assets/${a}`)).toBe(
+      `![Fig](/api/assets/${id}) and [file](/api/assets/${id}) but not asset:${id} in prose`,
+    );
+    expect(assetIdsIn(md)).toEqual([id]);
+  });
+  it("rejects malformed ids", () => {
+    expect(() => assetUri("../../x")).toThrow(TypeError);
+  });
+});
+```
+
+`packages/contracts/src/fidelity.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { noteFidelity, VERIFIED_COVERAGE } from "./fidelity.ts";
+
+describe("noteFidelity", () => {
+  it("applies review blocks first, then the coverage threshold", () => {
+    expect(noteFidelity({ coverage: 1, unverifiedReviewBlocks: 1 })).toBe("needs_review");
+    expect(noteFidelity({ coverage: VERIFIED_COVERAGE - 0.001, unverifiedReviewBlocks: 0 })).toBe("partial");
+    expect(noteFidelity({ coverage: VERIFIED_COVERAGE, unverifiedReviewBlocks: 0 })).toBe("verified");
+    expect(noteFidelity({ coverage: null, unverifiedReviewBlocks: 0 })).toBe("verified");
+  });
+});
+```
+
+`packages/contracts/src/server/embeddings.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { EMBEDDING_DIMENSIONS } from "../constants.ts";
+import { fakeEmbeddingsClient, hashEmbedding } from "../testing/embedding.ts";
+import { EMBED_BATCH_SIZE, embeddingText, embedTexts } from "./embeddings.ts";
+
+describe("embeddingText", () => {
+  it("drops asset links, keeps alt text and truncates", () => {
+    expect(embeddingText("![Leaf cell](asset:3f2504e0-4f89-41d3-9a0c-0305e82c3301)  photo\n\nsynthesis")).toBe(
+      "Leaf cell photo synthesis",
+    );
+    expect(embeddingText("x".repeat(10_000))).toHaveLength(8_000);
+  });
+});
+
+describe("embedTexts", () => {
+  it("batches, keeps input order and validates dimensions", async () => {
+    const client = fakeEmbeddingsClient();
+    const texts = Array.from({ length: EMBED_BATCH_SIZE + 3 }, (_, i) => `text ${i}`);
+    const vectors = await embedTexts(client, texts);
+    expect(client.calls.map((c) => c.length)).toEqual([EMBED_BATCH_SIZE, 3]);
+    expect(vectors[5]).toEqual(hashEmbedding("text 5"));
+    expect(vectors[0]).toHaveLength(EMBEDDING_DIMENSIONS);
+  });
+  it("refuses empty inputs", async () => {
+    await expect(embedTexts(fakeEmbeddingsClient(), [""])).rejects.toThrow(/empty/);
+  });
+});
+
+describe("hashEmbedding", () => {
+  it("is unit-length and closer for overlapping words", () => {
+    const dot = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * (b[i] ?? 0), 0);
+    const a = hashEmbedding("chlorophyll absorbs light");
+    expect(dot(a, a)).toBeCloseTo(1, 6);
+    expect(dot(a, hashEmbedding("light absorbs chlorophyll strongly"))).toBeGreaterThan(
+      dot(a, hashEmbedding("tax law reform")),
+    );
+    expect(dot(hashEmbedding(""), hashEmbedding(""))).toBeCloseTo(1, 6);
+  });
+});
+```
+
+- [ ] **Step 2: Run the tests to verify they fail.**
+
+Run: `pnpm exec vitest run --project unit packages/contracts/src/asset-uri.test.ts packages/contracts/src/fidelity.test.ts packages/contracts/src/server/embeddings.test.ts`
+Expected: FAIL with module-not-found errors.
+
+- [ ] **Step 3: Implement.**
+
+`packages/contracts/src/asset-uri.ts`:
+```ts
+const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const UUID_RE = new RegExp(`^${UUID_SOURCE}$`);
+
+/** Notes reference stored assets as `asset:<assetId>` inside Markdown link/image targets. */
+export const ASSET_URI_PREFIX = "asset:";
+
+export function assetUri(assetId: string): string {
+  if (!UUID_RE.test(assetId)) throw new TypeError("assetId must be a lowercase UUID");
+  return `${ASSET_URI_PREFIX}${assetId}`;
+}
+
+/** Rewrites `](asset:<uuid>)` targets only; the word "asset:" in prose is left alone. */
+export function replaceAssetUris(markdown: string, replace: (assetId: string) => string): string {
+  const pattern = new RegExp(`\\]\\(${ASSET_URI_PREFIX}(${UUID_SOURCE})\\)`, "g");
+  return markdown.replace(pattern, (_match, assetId: string) => `](${replace(assetId)})`);
+}
+
+export function assetIdsIn(markdown: string): string[] {
+  const ids = new Set<string>();
+  replaceAssetUris(markdown, (assetId) => {
+    ids.add(assetId);
+    return assetId;
+  });
+  return [...ids];
+}
+```
+
+`packages/contracts/src/fidelity.ts`:
+```ts
+import type { BlockOrigin, Fidelity } from "./enums.ts";
+
+/** Note coverage at or above this is `verified` (spec §7.5). */
+export const VERIFIED_COVERAGE = 0.98;
+
+/** Origins whose unverified blocks force `needs_review`: model OCR and speech recognition. */
+export const REVIEW_ORIGINS = ["ocr_model", "asr"] as const satisfies readonly BlockOrigin[];
+
+/** The single fidelity rule, used by the agent when writing and by web on "Mark verified". */
+export function noteFidelity(input: { coverage: number | null; unverifiedReviewBlocks: number }): Fidelity {
+  if (input.unverifiedReviewBlocks > 0) return "needs_review";
+  if (input.coverage !== null && input.coverage < VERIFIED_COVERAGE) return "partial";
+  return "verified";
+}
+```
+
+`packages/contracts/src/server/embeddings.ts`:
+```ts
+import { replaceAssetUris } from "../asset-uri.ts";
+import { EMBEDDING_DIMENSIONS, MODELS } from "../constants.ts";
+
+/** The subset of the OpenAI client used for embeddings; the `openai` client satisfies it structurally. */
+export interface EmbeddingsClient {
+  embeddings: {
+    create(
+      body: { model: string; input: string[]; encoding_format?: "float" },
+      options?: { signal?: AbortSignal },
+    ): Promise<{ data: Array<{ index: number; embedding: number[] }> }>;
+  };
+}
+
+export const EMBED_MAX_CHARS = 8_000;
+export const EMBED_BATCH_SIZE = 128;
+
+/** Text sent for a block: asset links removed, image alt kept, whitespace collapsed, truncated. */
+export function embeddingText(markdown: string): string {
+  return replaceAssetUris(markdown, () => "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, EMBED_MAX_CHARS);
+}
+
+export async function embedTexts(
+  client: EmbeddingsClient,
+  texts: readonly string[],
+  options: { signal?: AbortSignal } = {},
+): Promise<number[][]> {
+  if (texts.some((text) => text.trim().length === 0)) throw new Error("cannot embed empty text");
+  const batches: { start: number; input: string[] }[] = [];
+  for (let start = 0; start < texts.length; start += EMBED_BATCH_SIZE) {
+    batches.push({ start, input: texts.slice(start, start + EMBED_BATCH_SIZE) });
+  }
+  const out: (number[] | undefined)[] = new Array(texts.length).fill(undefined);
+  await Promise.all(
+    batches.map(async ({ start, input }) => {
+      const response = await client.embeddings.create(
+        { model: MODELS.embeddings, input, encoding_format: "float" },
+        { signal: options.signal },
+      );
+      for (const item of response.data) {
+        if (item.embedding.length !== EMBEDDING_DIMENSIONS) {
+          throw new Error(`unexpected embedding size ${item.embedding.length}`);
+        }
+        out[start + item.index] = item.embedding;
+      }
+    }),
+  );
+  return out.map((vector, index) => {
+    if (!vector) throw new Error(`missing embedding for input ${index}`);
+    return vector;
+  });
+}
+```
+
+Add to `packages/contracts/src/server/index.ts`:
+```ts
+export * from "./embeddings.ts";
+```
+
+`packages/contracts/src/testing/embedding.ts`:
+```ts
+import { EMBEDDING_DIMENSIONS } from "../constants.ts";
+
+/** Deterministic bag-of-words unit vector: texts sharing words are close in cosine space. */
+export function hashEmbedding(text: string): number[] {
+  const vector = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
+  for (const word of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+    let hash = 2166136261;
+    for (const char of word) {
+      hash ^= char.codePointAt(0) ?? 0;
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    const slot = hash % EMBEDDING_DIMENSIONS;
+    vector[slot] = (vector[slot] ?? 0) + 1;
+  }
+  if (vector.every((value) => value === 0)) vector[0] = 1;
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  return vector.map((value) => value / norm);
+}
+
+export function fakeEmbeddingsClient(options: { fail?: boolean } = {}) {
+  const calls: string[][] = [];
+  return {
+    calls,
+    embeddings: {
+      async create(body: { model: string; input: string[] }) {
+        calls.push(body.input);
+        if (options.fail) throw new Error("embeddings unavailable");
+        return { data: body.input.map((text, index) => ({ index, embedding: hashEmbedding(text) })) };
+      },
+    },
+  };
+}
+```
+
+`packages/contracts/src/testing/index.ts`:
+```ts
+export * from "./embedding.ts";
+export * from "./strict-schema.ts";
+```
+
+In `packages/contracts/package.json`, set `exports` to:
+```json
+{ ".": "./src/index.ts", "./server": "./src/server/index.ts", "./testing": "./src/testing/index.ts" }
+```
+
+Append to `packages/contracts/src/index.ts`:
+```ts
+export * from "./asset-uri.ts";
+export * from "./fidelity.ts";
+```
+
+- [ ] **Step 4: Run the tests to verify they pass.**
+
+Run: `pnpm test && pnpm typecheck && pnpm lint`
+Expected: PASS.
+
+- [ ] **Step 5: Commit.**
+```bash
+git add packages/contracts
+git commit -m "feat(contracts): asset URIs, fidelity rule, embeddings helper and test embedder"
+```
+
+---
+
+### Task 3: Text normalization, coverage, text fragments and Markdown blocks
+
+**Files:**
+- Create: `apps/agent/src/notes/hash.ts`
+- Create: `apps/agent/src/capture/text.ts`, `apps/agent/src/capture/text-fragment.ts`, `apps/agent/src/capture/markdown-blocks.ts`
+- Test: `apps/agent/src/capture/{text,text-fragment,markdown-blocks}.test.ts`
+
+**Interfaces:**
+- Consumes: `NoteBlock` (for the Markdown size limit).
+- Produces:
+  - `sha256Hex(data: string | Uint8Array): string`.
+  - `normalizeText(text): string`, which applies NFKC, removes soft hyphens and zero-widths, straightens quotes and collapses whitespace.
+  - `tokens(text): string[]`.
+  - `Coverage {coverage, sourceTokens, matchedTokens}`.
+  - `coverageOf(source, captured): Coverage` and `combineCoverage(parts: Coverage[]): Coverage`.
+  - `blockPrecision(blockText, source): number`.
+  - `textFragment(text): string | null`.
+  - `MarkdownBlock {type: "heading" | "paragraph" | "list" | "quote" | "code" | "table" | "math" | "image"; markdown}`.
+  - `splitMarkdown(markdown): MarkdownBlock[]`.
+  - `blockPlainText(block): string`.
+  - `MAX_BLOCK_CHARS` and `limitBlockSize(block): MarkdownBlock[]`.
+  - `escapeMarkdownText(text): string` and `textToMarkdown(text): string` (paragraphs separated by blank lines).
+
+- [ ] **Step 1: Write the failing tests.**
+
+`apps/agent/src/capture/text.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { sha256Hex } from "../notes/hash.ts";
+import { blockPrecision, combineCoverage, coverageOf, normalizeText, tokens } from "./text.ts";
+
+describe("normalizeText", () => {
+  it("applies NFKC, strips invisible characters and straightens quotes", () => {
+    expect(normalizeText("ﬁ\u00ADne\u200B “quoted”  ‘x’\n\tend")).toBe(`fine "quoted" 'x' end`);
+    expect(tokens("Don't stop—ATP₂!")).toEqual(["don", "t", "stop", "atp2"]);
+  });
+});
+
+describe("coverageOf", () => {
+  it("counts source tokens present in the capture (multiset)", () => {
+    const c = coverageOf("the cell the cell divides", "The cell divides");
+    expect(c).toEqual({ coverage: 3 / 5, sourceTokens: 5, matchedTokens: 3 });
+    expect(coverageOf("", "anything").coverage).toBe(1);
+  });
+  it("combines parts by token totals", () => {
+    expect(
+      combineCoverage([
+        { coverage: 1, sourceTokens: 10, matchedTokens: 10 },
+        { coverage: 0, sourceTokens: 10, matchedTokens: 0 },
+      ]).coverage,
+    ).toBe(0.5);
+  });
+  it("measures block precision against the source", () => {
+    expect(blockPrecision("cell divides", "the cell divides twice")).toBe(1);
+    expect(blockPrecision("cell explodes", "the cell divides")).toBe(0.5);
+  });
+});
+
+describe("sha256Hex", () => {
+  it("hashes strings and bytes alike", () => {
+    expect(sha256Hex("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    expect(sha256Hex(new TextEncoder().encode("abc"))).toBe(sha256Hex("abc"));
+  });
+});
+```
+
+`apps/agent/src/capture/text-fragment.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { textFragment } from "./text-fragment.ts";
+
+describe("textFragment", () => {
+  it("uses the whole text when short and start,end otherwise", () => {
+    expect(textFragment("Light reactions")).toBe("#:~:text=Light%20reactions");
+    expect(textFragment("one two three four five six seven eight nine ten")).toBe(
+      "#:~:text=one%20two%20three%20four,seven%20eight%20nine%20ten",
+    );
+  });
+  it("percent-encodes the directive delimiters", () => {
+    expect(textFragment("a-b, c&d")).toBe("#:~:text=a%2Db%2C%20c%26d");
+    expect(textFragment("   ")).toBeNull();
+  });
+});
+```
+
+`apps/agent/src/capture/markdown-blocks.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { blockPlainText, limitBlockSize, splitMarkdown, textToMarkdown } from "./markdown-blocks.ts";
+
+const md = [
+  "# Title",
+  "",
+  "Intro with **bold**, a [link](https://x.test) and $E=mc^2$ costs $5 and $10.",
+  "Second line of the same paragraph.",
+  "",
+  "- one",
+  "- two",
+  "  continued",
+  "",
+  "1. first",
+  "",
+  "> quoted",
+  "> more",
+  "",
+  "```python",
+  "def f():",
+  "",
+  "    return 1",
+  "```",
+  "",
+  "$$",
+  "C_6H_{12}O_6",
+  "$$",
+  "",
+  "| A | B |",
+  "| --- | --- |",
+  "| 1 | 2 |",
+  "",
+  '<table><tr><td rowspan="2">x</td></tr>',
+  "<tr><td>y</td></tr></table>",
+  "",
+  "![Alt](https://mt-media.invalid/0)",
+].join("\n");
+
+describe("splitMarkdown", () => {
+  it("splits every block type", () => {
+    expect(splitMarkdown(md).map((b) => b.type)).toEqual([
+      "heading",
+      "paragraph",
+      "list",
+      "list",
+      "quote",
+      "code",
+      "math",
+      "table",
+      "table",
+      "image",
+    ]);
+    expect(splitMarkdown(md)[5]!.markdown).toBe("```python\ndef f():\n\n    return 1\n```");
+  });
+});
+
+describe("blockPlainText", () => {
+  it("keeps visible text and drops syntax, math and image alt", () => {
+    const [heading, paragraph, list] = splitMarkdown(md);
+    expect(blockPlainText(heading!)).toBe("Title");
+    expect(blockPlainText(paragraph!)).toBe(
+      "Intro with bold , a link and costs $5 and $10. Second line of the same paragraph.",
+    );
+    expect(blockPlainText(list!)).toBe("one two continued");
+    expect(blockPlainText(splitMarkdown(md).at(-1)!)).toBe("");
+  });
+});
+
+describe("limitBlockSize", () => {
+  it("splits oversize code blocks and re-fences each part", () => {
+    const body = Array.from({ length: 4 }, (_, i) => `line ${i} ${"x".repeat(60)}`).join("\n");
+    const parts = limitBlockSize({ type: "code", markdown: "```js\n" + body + "\n```" }, 150);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const part of parts) {
+      expect(part.markdown.startsWith("```js\n")).toBe(true);
+      expect(part.markdown.endsWith("\n```")).toBe(true);
+      expect(part.markdown.length).toBeLessThanOrEqual(150);
+    }
+  });
+});
+
+describe("textToMarkdown", () => {
+  it("escapes Markdown syntax in plain text", () => {
+    expect(textToMarkdown("# not heading\n\n- not list *x*")).toBe("\\# not heading\n\n\\- not list \\*x\\*");
+  });
+});
+```
+
+- [ ] **Step 2: Run the tests to verify they fail.**
+
+Run: `pnpm exec vitest run --project unit apps/agent/src/capture`
+Expected: FAIL with module-not-found errors.
+
+- [ ] **Step 3: Implement.**
+
+`apps/agent/src/notes/hash.ts`:
+```ts
+import { createHash } from "node:crypto";
+
+export function sha256Hex(data: string | Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+```
+
+`apps/agent/src/capture/text.ts`:
+```ts
+/** Verification text rules (spec §7.5): NFKC, invisible characters removed, quotes straightened. */
+export function normalizeText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\u00AD\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[\u2018\u2019\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201F]/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function tokens(text: string): string[] {
+  return normalizeText(text).toLocaleLowerCase("en").match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function counts(words: readonly string[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const word of words) map.set(word, (map.get(word) ?? 0) + 1);
+  return map;
+}
+
+export interface Coverage {
+  coverage: number;
+  sourceTokens: number;
+  matchedTokens: number;
+}
+
+/** Share of source tokens (as a multiset) present in the captured text. */
+export function coverageOf(source: string, captured: string): Coverage {
+  const want = counts(tokens(source));
+  const have = counts(tokens(captured));
+  let sourceTokens = 0;
+  let matchedTokens = 0;
+  for (const [word, n] of want) {
+    sourceTokens += n;
+    matchedTokens += Math.min(n, have.get(word) ?? 0);
+  }
+  return { coverage: sourceTokens === 0 ? 1 : matchedTokens / sourceTokens, sourceTokens, matchedTokens };
+}
+
+export function combineCoverage(parts: readonly Coverage[]): Coverage {
+  const sourceTokens = parts.reduce((sum, part) => sum + part.sourceTokens, 0);
+  const matchedTokens = parts.reduce((sum, part) => sum + part.matchedTokens, 0);
+  return { coverage: sourceTokens === 0 ? 1 : matchedTokens / sourceTokens, sourceTokens, matchedTokens };
+}
+
+/** Share of a block's tokens found in the source: 1 means nothing in the block is foreign to the page. */
+export function blockPrecision(blockText: string, source: string): number {
+  return coverageOf(blockText, source).coverage;
+}
+```
+
+`apps/agent/src/capture/text-fragment.ts`:
+```ts
+import { normalizeText } from "./text.ts";
+
+const encode = (value: string) => encodeURIComponent(value).replace(/-/g, "%2D");
+
+/** A scroll-to-text fragment (`#:~:text=start,end`) for a block; null when there is no text. */
+export function textFragment(text: string): string | null {
+  const words = normalizeText(text).split(" ").filter((word) => word.length > 0);
+  if (words.length === 0) return null;
+  const fragment =
+    words.length <= 8
+      ? `#:~:text=${encode(words.join(" "))}`
+      : `#:~:text=${encode(words.slice(0, 4).join(" "))},${encode(words.slice(-4).join(" "))}`;
+  return fragment.length <= 2_000 ? fragment : null;
+}
+```
+
+`apps/agent/src/capture/markdown-blocks.ts`:
+```ts
+import { NoteBlock } from "@mastertutor/contracts";
+import { normalizeText } from "./text.ts";
+
+export type MarkdownBlockType = "heading" | "paragraph" | "list" | "quote" | "code" | "table" | "math" | "image";
+export interface MarkdownBlock {
+  type: MarkdownBlockType;
+  markdown: string;
+}
+
+/** One source of truth for the block size limit: the NoteBlock contract. */
+export const MAX_BLOCK_CHARS = NoteBlock.shape.markdown.maxLength ?? 200_000;
+
+const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+const HEADING = /^\s{0,3}#{1,6}\s/;
+const QUOTE = /^\s{0,3}>/;
+const LIST_ITEM = /^\s{0,3}([-*+]|\d{1,9}[.)])\s+/;
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const RAW_TABLE = /^\s*<table[\s>]/i;
+const IMAGES_ONLY = /^(\s*(\[\s*)?!\[[^\]]*\]\([^)]+\)(\s*\]\([^)]+\))?\s*)+$/;
+
+function startsBlock(line: string, next: string | undefined): boolean {
+  return (
+    FENCE.test(line) ||
+    HEADING.test(line) ||
+    QUOTE.test(line) ||
+    LIST_ITEM.test(line) ||
+    RAW_TABLE.test(line) ||
+    line.trim().startsWith("$$") ||
+    (line.includes("|") && next !== undefined && TABLE_SEPARATOR.test(next))
+  );
+}
+
+export function splitMarkdown(markdown: string): MarkdownBlock[] {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const blocks: MarkdownBlock[] = [];
+  const push = (type: MarkdownBlockType, from: number, to: number) => {
+    const text = lines.slice(from, to).join("\n").replace(/\s+$/, "");
+    if (text.trim()) blocks.push({ type, markdown: text });
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+    const start = i;
+    const fence = FENCE.exec(line);
+    if (fence) {
+      const marker = fence[1]!;
+      const close = new RegExp(`^\\s{0,3}${marker[0] === "`" ? "`" : "~"}{${marker.length},}\\s*$`);
+      i++;
+      while (i < lines.length && !close.test(lines[i]!)) i++;
+      push("code", start, Math.min(i + 1, lines.length));
+      i++;
+      continue;
+    }
+    if (line.trim().startsWith("$$")) {
+      const single = line.trim().length > 4 && line.trim().endsWith("$$");
+      if (!single) {
+        i++;
+        while (i < lines.length && !lines[i]!.trim().endsWith("$$")) i++;
+      }
+      push("math", start, Math.min(i + 1, lines.length));
+      i++;
+      continue;
+    }
+    if (RAW_TABLE.test(line)) {
+      while (i < lines.length && !/<\/table>/i.test(lines[i]!)) i++;
+      push("table", start, Math.min(i + 1, lines.length));
+      i++;
+      continue;
+    }
+    if (HEADING.test(line)) {
+      push("heading", start, start + 1);
+      i++;
+      continue;
+    }
+    if (line.includes("|") && TABLE_SEPARATOR.test(lines[i + 1] ?? "")) {
+      i += 2;
+      while (i < lines.length && lines[i]!.trim() !== "" && lines[i]!.includes("|")) i++;
+      push("table", start, i);
+      continue;
+    }
+    if (QUOTE.test(line)) {
+      while (i < lines.length && QUOTE.test(lines[i]!)) i++;
+      push("quote", start, i);
+      continue;
+    }
+    if (LIST_ITEM.test(line)) {
+      i++;
+      while (i < lines.length) {
+        const current = lines[i]!;
+        if (current.trim() === "") {
+          const next = lines[i + 1] ?? "";
+          if (/^\s{2,}\S/.test(next)) {
+            i++;
+            continue;
+          }
+          break;
+        }
+        if (LIST_ITEM.test(current) || /^\s{2,}\S/.test(current)) {
+          i++;
+          continue;
+        }
+        break;
+      }
+      push("list", start, i);
+      continue;
+    }
+    i++;
+    while (i < lines.length && lines[i]!.trim() !== "" && !startsBlock(lines[i]!, lines[i + 1])) i++;
+    const text = lines.slice(start, i).join("\n");
+    push(IMAGES_ONLY.test(text) ? "image" : "paragraph", start, i);
+  }
+  return blocks;
+}
+
+const ENTITIES: Record<string, string> = { "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+
+/** Visible text of a block, matching what innerText shows (no syntax, no math, no image alt). */
+export function blockPlainText(block: MarkdownBlock): string {
+  if (block.type === "math" || block.type === "image") return "";
+  if (block.type === "code") return normalizeText(block.markdown.replace(/^\s{0,3}(`{3,}|~{3,}).*$/gm, ""));
+  const text = block.markdown
+    .replace(/<[^>]+>/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\$\$[\s\S]*?\$\$/g, " ")
+    .replace(/(?<![\\$\w])\$(?=\S)([^$\n]+?)(?<=\S)\$(?![\d$])/g, " ")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}>\s?/gm, "")
+    .replace(/^\s*([-*+]|\d{1,9}[.)])\s+/gm, "")
+    .replace(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/gm, " ")
+    .replace(/\\([\\`*_{}[\]()#+\-.!|$])/g, "$1")
+    .replace(/&(nbsp|amp|lt|gt|quot|#39);/g, (entity) => ENTITIES[entity] ?? entity)
+    .replace(/[|*_`~]/g, " ");
+  return normalizeText(text);
+}
+
+/** Splits a block that exceeds the contract limit at line boundaries; code parts are re-fenced. */
+export function limitBlockSize(block: MarkdownBlock, max: number = MAX_BLOCK_CHARS): MarkdownBlock[] {
+  if (block.markdown.length <= max) return [block];
+  const fenced = block.type === "code" ? /^(\s*(`{3,}|~{3,})[^\n]*)\n([\s\S]*?)\n\s*\2\s*$/.exec(block.markdown) : null;
+  const open = fenced?.[1] ?? "";
+  const close = fenced?.[2] ?? "";
+  const body = fenced ? fenced[3]! : block.markdown;
+  const budget = fenced ? max - open.length - close.length - 2 : max;
+  const parts: string[] = [];
+  let current = "";
+  for (const line of body.split("\n")) {
+    for (let offset = 0; offset < Math.max(line.length, 1); offset += budget) {
+      const piece = line.slice(offset, offset + budget);
+      const candidate = current === "" ? piece : `${current}\n${piece}`;
+      if (candidate.length > budget && current !== "") {
+        parts.push(current);
+        current = piece;
+      } else {
+        current = candidate;
+      }
+    }
+  }
+  if (current !== "") parts.push(current);
+  return parts.map((part) => ({ type: block.type, markdown: fenced ? `${open}\n${part}\n${close}` : part }));
+}
+
+/** Escapes text so Markdown renders it literally. */
+export function escapeMarkdownText(text: string): string {
+  return text
+    .replace(/[\\`*_[\]<>]/g, (char) => `\\${char}`)
+    .replace(/^(\s{0,3})([#>+-]|\d{1,9}[.)])(?=\s)/gm, (_m, space: string, mark: string) =>
+      /\d/.test(mark) ? `${space}${mark.slice(0, -1)}\\${mark.slice(-1)}` : `${space}\\${mark}`,
+    );
+}
+
+/** Plain text (paragraphs separated by blank lines) to escaped Markdown paragraphs. */
+export function textToMarkdown(text: string): string {
+  return text
+    .split(/\n\s*\n/)
+    .map((paragraph) => escapeMarkdownText(paragraph.replace(/\s*\n\s*/g, " ").trim()))
+    .filter((paragraph) => paragraph.length > 0)
+    .join("\n\n");
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass.**
+
+Run: `pnpm exec vitest run --project unit apps/agent/src/capture && pnpm typecheck && pnpm lint`
+Expected: PASS.
+
+- [ ] **Step 5: Commit.**
+```bash
+git add apps/agent/src/notes/hash.ts apps/agent/src/capture
+git commit -m "feat(agent): capture text normalization, coverage, text fragments and Markdown block splitter"
+```
+
+---
+
+### Task 4: `NoteWriter`, asset store, embedder and test helpers
+
+**Files:**
+- Modify: `apps/agent/package.json` (add `fractional-indexing`)
+- Create: `apps/agent/src/notes/positions.ts`, `apps/agent/src/notes/assets.ts`, `apps/agent/src/notes/embedder.ts`, `apps/agent/src/notes/note-writer.ts`
+- Create: `apps/agent/src/testing/notes.ts`
+- Test: `apps/agent/src/notes/positions.test.ts`, `apps/agent/src/notes/note-writer.int.test.ts`
+
+**Interfaces:**
+- Consumes:
+  - Task 1: `DbLike`, `DbTx`.
+  - Task 2: `embedTexts`, `embeddingText`, `fakeEmbeddingsClient`, `noteFidelity`, `REVIEW_ORIGINS`.
+  - Task 3: `sha256Hex`, `MAX_BLOCK_CHARS`.
+  - B1: `StepWriter`.
+  - Phase 0: `objectKeys`, `createStorage`, `bootstrapGarage`, `startTestGarage`, `startTestDatabase`.
+- Produces:
+  - `keysBetween(before, after, n): string[]` and `positionOrder` (a SQL fragment, `position COLLATE "C"`).
+  - `AssetInput`, `StoredAsset {assetId, sha256, mime, bytes, width, height}`, `AssetStore {put(workspaceId, input)}` and `createAssetStore({db, storage})`.
+  - `Embedder {embed(markdowns, signal?): Promise<(number[] | null)[]>}` and `createEmbedder(client, log)`.
+  - `RunScope {runId, workspaceId}`.
+  - `BlockDraft {type, markdown, origin, assetId, anchor, verified}`.
+  - `NoteDraft {title, lede}`.
+  - `SourceDraft {noteId, kind, url, canonicalUrl, title, faviconAssetId, mhtmlKey, screenshotKey, snapshotSha256, meta}`.
+  - `ExistingSource {sourceId, meta, blockIds}`.
+  - `NoteWriteError {code}`.
+  - `class NoteWriter`, constructed with `{db, embedder}`. Its methods:
+
+    | Method | Returns |
+    |---|---|
+    | `ensureNote(scope, step, draft)` | `Promise<string>` |
+    | `findSource(scope, noteId, kind, url)` | `Promise<ExistingSource \| null>` |
+    | `stageSource(scope, step, draft, id?)` | `string` |
+    | `stageSourceMeta(step, sourceId, patch)` | `void` |
+    | `appendBlocks(scope, step, {noteId, sourceId, blocks, afterBlockId, signal?})` | `Promise<string[]>` |
+    | `stageQuality(step, noteId, coverage: number \| null)` | `void` |
+    | `backfillEmbeddings(noteId, signal?)` | `Promise<number>` |
+    | `assertRunNote(scope, noteId)` | `Promise<void>` |
+
+  - Protected for B4: `stageBlockRows(scope, step, noteId, sourceId, items: {draft, position}[], signal?)`.
+  - **Test helpers:**
+    - `RecordingStep implements StepWriter`, with `commit(db, runId)`, `events` and `afterTasks`;
+    - `seedRun(db, {targetFolderId?}): Promise<RunScope>`;
+    - `startTestStorage(): Promise<{storage; stop}>`;
+    - `testLogger`.
+
+- [ ] **Step 1: Install the dependency.**
+
+Run: `pnpm --filter @mastertutor/agent add --save-exact fractional-indexing@4.0.0`
+
+- [ ] **Step 2: Write the failing tests.**
+
+`apps/agent/src/notes/positions.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { keysBetween } from "./positions.ts";
+
+describe("keysBetween", () => {
+  it("produces ordered keys under byte (C) ordering", () => {
+    const keys = keysBetween(null, null, 70);
+    const sorted = [...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    expect(sorted).toEqual(keys);
+    const middle = keysBetween(keys[0]!, keys[1]!, 3);
+    expect(middle.every((k) => k > keys[0]! && k < keys[1]!)).toBe(true);
+    expect(keysBetween("a0", null, 0)).toEqual([]);
+  });
+});
+```
+
+`apps/agent/src/notes/note-writer.int.test.ts`:
+```ts
+import { fakeEmbeddingsClient } from "@mastertutor/contracts/testing";
+import { createDb, type DbHandle, noteBlocks, notes, runEvents, runs, sources } from "@mastertutor/db";
+import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import type { Storage } from "@mastertutor/storage";
+import { asc, eq, sql } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { RecordingStep, seedRun, startTestStorage, testLogger } from "../testing/notes.ts";
+import { createAssetStore } from "./assets.ts";
+import { createEmbedder } from "./embedder.ts";
+import { type BlockDraft, NoteWriter } from "./note-writer.ts";
+
+let tdb: TestDatabase;
+let h: DbHandle;
+let storage: Storage;
+let stopStorage: () => Promise<void>;
+beforeAll(async () => {
+  tdb = await startTestDatabase({ slots: ["browser-1"] });
+  h = createDb(tdb.agentUrl);
+  ({ storage, stop: stopStorage } = await startTestStorage());
+});
+afterAll(async () => {
+  await h?.close();
+  await stopStorage?.();
+  await tdb?.stop();
+});
+
+const block = (markdown: string, extra: Partial<BlockDraft> = {}): BlockDraft => ({
+  type: "paragraph",
+  markdown,
+  origin: "dom",
+  assetId: null,
+  anchor: null,
+  verified: true,
+  ...extra,
+});
+
+describe("NoteWriter", () => {
+  it("creates one note per run and appends ordered, embedded blocks in the step transaction", async () => {
+    const scope = await seedRun(h.db);
+    const writer = new NoteWriter({ db: h.db, embedder: createEmbedder(fakeEmbeddingsClient(), testLogger) });
+    const step = new RecordingStep();
+    const noteId = await writer.ensureNote(scope, step, { title: "Plants", lede: "How leaves work" });
+    const sourceId = writer.stageSource(scope, step, {
+      noteId,
+      kind: "web",
+      url: "https://example.com/a",
+      canonicalUrl: null,
+      title: "A",
+      faviconAssetId: null,
+      mhtmlKey: null,
+      screenshotKey: null,
+      snapshotSha256: null,
+      meta: { coverage: 1 },
+    });
+    const ids = await writer.appendBlocks(scope, step, {
+      noteId,
+      sourceId,
+      afterBlockId: null,
+      blocks: [block("First"), block("Second")],
+    });
+    writer.stageQuality(step, noteId, 0.99);
+    expect(await h.db.select().from(notes).where(eq(notes.id, noteId))).toHaveLength(0);
+    await step.commit(h.db, scope.runId);
+
+    const [run] = await h.db.select({ noteId: runs.noteId }).from(runs).where(eq(runs.id, scope.runId));
+    expect(run?.noteId).toBe(noteId);
+    expect(await writer.ensureNote(scope, new RecordingStep(), { title: "x", lede: null })).toBe(noteId);
+
+    const rows = await h.db
+      .select({ id: noteBlocks.id, embedded: sql<boolean>`${noteBlocks.embedding} is not null` })
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, noteId))
+      .orderBy(sql`${noteBlocks.position} collate "C"`);
+    expect(rows.map((r) => r.id)).toEqual(ids);
+    expect(rows.every((r) => r.embedded)).toBe(true);
+
+    const [note] = await h.db.select().from(notes).where(eq(notes.id, noteId));
+    expect(note).toMatchObject({ fidelity: "verified", coverage: 0.99 });
+    const events = await h.db.select({ type: runEvents.type }).from(runEvents).where(eq(runEvents.runId, scope.runId));
+    expect(events.map((e) => e.type)).toEqual(["block_added", "block_added"]);
+
+    const existing = await writer.findSource(scope, noteId, "web", "https://example.com/a");
+    expect(existing).toMatchObject({ sourceId, blockIds: ids });
+  });
+
+  it("inserts after a given block, stays ordered and flags review-origin blocks", async () => {
+    const scope = await seedRun(h.db);
+    const writer = new NoteWriter({ db: h.db, embedder: createEmbedder(fakeEmbeddingsClient(), testLogger) });
+    const s1 = new RecordingStep();
+    const noteId = await writer.ensureNote(scope, s1, { title: "N", lede: null });
+    const [a, b] = await writer.appendBlocks(scope, s1, {
+      noteId,
+      sourceId: null,
+      afterBlockId: null,
+      blocks: [block("A"), block("B")],
+    });
+    await s1.commit(h.db, scope.runId);
+    const s2 = new RecordingStep();
+    const [m] = await writer.appendBlocks(scope, s2, {
+      noteId,
+      sourceId: null,
+      afterBlockId: a!,
+      blocks: [block("OCR text", { origin: "ocr_model", verified: false })],
+    });
+    writer.stageQuality(s2, noteId, 1);
+    await s2.commit(h.db, scope.runId);
+    const order = await h.db
+      .select({ id: noteBlocks.id })
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, noteId))
+      .orderBy(sql`${noteBlocks.position} collate "C"`);
+    expect(order.map((r) => r.id)).toEqual([a, m, b]);
+    const [note] = await h.db.select({ fidelity: notes.fidelity }).from(notes).where(eq(notes.id, noteId));
+    expect(note?.fidelity).toBe("needs_review");
+    await expect(
+      writer.appendBlocks(scope, new RecordingStep(), {
+        noteId,
+        sourceId: null,
+        afterBlockId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        blocks: [block("x")],
+      }),
+    ).rejects.toMatchObject({ code: "unknown_block" });
+  });
+
+  it("stores blocks without vectors when embeddings fail, then backfills", async () => {
+    const scope = await seedRun(h.db);
+    const failing = new NoteWriter({
+      db: h.db,
+      embedder: createEmbedder(fakeEmbeddingsClient({ fail: true }), testLogger),
+    });
+    const step = new RecordingStep();
+    const noteId = await failing.ensureNote(scope, step, { title: "N", lede: null });
+    await failing.appendBlocks(scope, step, { noteId, sourceId: null, afterBlockId: null, blocks: [block("Leaf")] });
+    await step.commit(h.db, scope.runId);
+    const working = new NoteWriter({ db: h.db, embedder: createEmbedder(fakeEmbeddingsClient(), testLogger) });
+    expect(await working.backfillEmbeddings(noteId)).toBe(1);
+    expect(await working.backfillEmbeddings(noteId)).toBe(0);
+  });
+
+  it("stores assets once per workspace (content-addressed)", async () => {
+    const scope = await seedRun(h.db);
+    const store = createAssetStore({ db: h.db, storage });
+    const bytes = new TextEncoder().encode("<svg xmlns='http://www.w3.org/2000/svg'/>");
+    const one = await store.put(scope.workspaceId, { bytes, mime: "image/svg+xml", width: 1, height: 1, sourceUrl: null });
+    const two = await store.put(scope.workspaceId, { bytes, mime: "image/svg+xml", width: 1, height: 1, sourceUrl: null });
+    expect(two.assetId).toBe(one.assetId);
+    expect(await storage.head(`assets/${scope.workspaceId}/${one.sha256}`)).not.toBeNull();
+  });
+
+  it("rejects notes of other runs", async () => {
+    const mine = await seedRun(h.db);
+    const theirs = await seedRun(h.db);
+    const writer = new NoteWriter({ db: h.db, embedder: createEmbedder(fakeEmbeddingsClient(), testLogger) });
+    const step = new RecordingStep();
+    const noteId = await writer.ensureNote(theirs, step, { title: "Theirs", lede: null });
+    await step.commit(h.db, theirs.runId);
+    await expect(writer.assertRunNote(mine, noteId)).rejects.toMatchObject({ code: "foreign_note" });
+    await expect(writer.assertRunNote(theirs, noteId)).resolves.toBeUndefined();
+  });
+
+  it("merges source meta in the transaction", async () => {
+    const scope = await seedRun(h.db);
+    const writer = new NoteWriter({ db: h.db, embedder: createEmbedder(fakeEmbeddingsClient(), testLogger) });
+    const step = new RecordingStep();
+    const noteId = await writer.ensureNote(scope, step, { title: "V", lede: null });
+    const sourceId = writer.stageSource(scope, step, {
+      noteId,
+      kind: "youtube",
+      url: "https://www.youtube.com/watch?v=x",
+      canonicalUrl: null,
+      title: null,
+      faviconAssetId: null,
+      mhtmlKey: null,
+      screenshotKey: null,
+      snapshotSha256: null,
+      meta: { a: 1 },
+    });
+    writer.stageSourceMeta(step, sourceId, { b: 2 });
+    await step.commit(h.db, scope.runId);
+    const [row] = await h.db.select({ meta: sources.meta }).from(sources).where(eq(sources.id, sourceId));
+    expect(row?.meta).toEqual({ a: 1, b: 2, noteId });
+    void asc;
+  });
+});
+```
+
+- [ ] **Step 3: Run the tests to verify they fail.**
+
+Run: `pnpm exec vitest run --project unit apps/agent/src/notes/positions.test.ts && pnpm exec vitest run --project integration apps/agent/src/notes`
+Expected: FAIL with module-not-found errors.
+
+- [ ] **Step 4: Implement.**
+
+`apps/agent/src/notes/positions.ts`:
+```ts
+import { noteBlocks } from "@mastertutor/db";
+import { sql } from "drizzle-orm";
+import { generateNKeysBetween } from "fractional-indexing";
+
+/** n fractional keys strictly between `before` and `after` (null = open end). */
+export function keysBetween(before: string | null, after: string | null, n: number): string[] {
+  return n === 0 ? [] : generateNKeysBetween(before, after, n);
+}
+
+/** Fractional keys are base62 in ASCII order; Postgres must compare them bytewise. */
+export const positionOrder = sql`${noteBlocks.position} collate "C"`;
+```
+
+`apps/agent/src/notes/assets.ts`:
+```ts
+import { assets, type DbLike } from "@mastertutor/db";
+import { objectKeys, type Storage } from "@mastertutor/storage";
+import { and, eq } from "drizzle-orm";
+import { sha256Hex } from "./hash.ts";
+
+export interface AssetInput {
+  bytes: Uint8Array;
+  mime: string;
+  width: number | null;
+  height: number | null;
+  sourceUrl: string | null;
+}
+export interface StoredAsset {
+  assetId: string;
+  sha256: string;
+  mime: string;
+  bytes: number;
+  width: number | null;
+  height: number | null;
+}
+export interface AssetStore {
+  put(workspaceId: string, input: AssetInput): Promise<StoredAsset>;
+}
+
+/** Content-addressed and written immediately (plan decision 6): orphans from aborted steps are harmless. */
+export function createAssetStore(deps: { db: DbLike; storage: Storage }): AssetStore {
+  return {
+    async put(workspaceId, input) {
+      const sha256 = sha256Hex(input.bytes);
+      const key = objectKeys.asset(workspaceId, sha256);
+      if ((await deps.storage.head(key)) === null) {
+        await deps.storage.put(key, input.bytes, { contentType: input.mime, sha256 });
+      }
+      const sourceUrl =
+        input.sourceUrl && /^https?:/i.test(input.sourceUrl) ? input.sourceUrl.slice(0, 2_048) : null;
+      const inserted = await deps.db
+        .insert(assets)
+        .values({
+          workspaceId,
+          sha256,
+          bucket: deps.storage.bucket,
+          key,
+          mime: input.mime,
+          bytes: input.bytes.byteLength,
+          width: input.width,
+          height: input.height,
+          sourceUrl,
+        })
+        .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
+        .returning({ id: assets.id });
+      const assetId =
+        inserted[0]?.id ??
+        (
+          await deps.db
+            .select({ id: assets.id })
+            .from(assets)
+            .where(and(eq(assets.workspaceId, workspaceId), eq(assets.sha256, sha256)))
+        )[0]?.id;
+      if (!assetId) throw new Error("asset row missing after upsert");
+      return { assetId, sha256, mime: input.mime, bytes: input.bytes.byteLength, width: input.width, height: input.height };
+    },
+  };
+}
+```
+
+`apps/agent/src/notes/embedder.ts`:
+```ts
+import { type createLogger, embeddingText, embedTexts, type EmbeddingsClient } from "@mastertutor/contracts/server";
+
+type Logger = ReturnType<typeof createLogger>;
+export const EMBED_TIMEOUT_MS = 15_000;
+
+export interface Embedder {
+  /** One vector per input; null for empty text or when the API fails (blocks are stored anyway). */
+  embed(markdowns: readonly string[], signal?: AbortSignal): Promise<(number[] | null)[]>;
+}
+
+export function createEmbedder(client: EmbeddingsClient, log: Logger): Embedder {
+  return {
+    async embed(markdowns, signal) {
+      const texts = markdowns.map(embeddingText);
+      const out: (number[] | null)[] = texts.map(() => null);
+      const indexes = texts.flatMap((text, index) => (text.length > 0 ? [index] : []));
+      if (indexes.length === 0) return out;
+      const timeout = AbortSignal.timeout(EMBED_TIMEOUT_MS);
+      try {
+        const vectors = await embedTexts(
+          client,
+          indexes.map((index) => texts[index]!),
+          { signal: signal ? AbortSignal.any([signal, timeout]) : timeout },
+        );
+        indexes.forEach((index, k) => {
+          out[index] = vectors[k] ?? null;
+        });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        log.warn({ errName: (error as Error).name, count: indexes.length }, "embedding failed; stored without vectors");
+      }
+      return out;
+    },
+  };
+}
+```
+
+`apps/agent/src/notes/note-writer.ts`:
+```ts
+import { randomUUID } from "node:crypto";
+import {
+  Anchor,
+  noteFidelity,
+  REVIEW_ORIGINS,
+  type BlockOrigin,
+  type BlockType,
+  type SourceKind,
+  toOrigin,
+} from "@mastertutor/contracts";
+import { type DbLike, noteBlocks, notes, runs, sources } from "@mastertutor/db";
+import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { StepWriter } from "../tools/types.ts";
+import { MAX_BLOCK_CHARS } from "../capture/markdown-blocks.ts";
+import type { Embedder } from "./embedder.ts";
+import { sha256Hex } from "./hash.ts";
+import { keysBetween, positionOrder } from "./positions.ts";
+
+export interface RunScope {
+  runId: string;
+  workspaceId: string;
+}
+export interface BlockDraft {
+  type: BlockType;
+  markdown: string;
+  origin: BlockOrigin;
+  assetId: string | null;
+  anchor: Anchor | null;
+  verified: boolean;
+}
+export interface NoteDraft {
+  title: string;
+  lede: string | null;
+}
+export interface SourceDraft {
+  noteId: string;
+  kind: SourceKind;
+  url: string;
+  canonicalUrl: string | null;
+  title: string | null;
+  faviconAssetId: string | null;
+  mhtmlKey: string | null;
+  screenshotKey: string | null;
+  snapshotSha256: string | null;
+  meta: Record<string, unknown>;
+}
+export interface ExistingSource {
+  sourceId: string;
+  meta: Record<string, unknown>;
+  blockIds: string[];
+}
+export interface AppendOptions {
+  noteId: string;
+  sourceId: string | null;
+  blocks: readonly BlockDraft[];
+  /** null appends at the end; a block id inserts right after that block. */
+  afterBlockId: string | null;
+  signal?: AbortSignal;
+}
+
+export type NoteWriteErrorCode = "unknown_block" | "foreign_note" | "block_too_large" | "unsupported_url" | "run_missing";
+export class NoteWriteError extends Error {
+  readonly code: NoteWriteErrorCode;
+  constructor(code: NoteWriteErrorCode, message: string) {
+    super(message);
+    this.name = "NoteWriteError";
+    this.code = code;
+  }
+}
+
+const clip = (value: string, max: number) => (value.length > max ? value.slice(0, max) : value);
+
+/** spec §3.3 `notes`: the only module that writes notes, sources and blocks. */
+export class NoteWriter {
+  protected readonly db: DbLike;
+  protected readonly embedder: Embedder;
+
+  constructor(deps: { db: DbLike; embedder: Embedder }) {
+    this.db = deps.db;
+    this.embedder = deps.embedder;
+  }
+
+  /** The run's note; stages a new one (and runs.note_id) when the run has none yet. */
+  async ensureNote(scope: RunScope, step: StepWriter, draft: NoteDraft): Promise<string> {
+    const [run] = await this.db
+      .select({ noteId: runs.noteId, targetFolderId: runs.targetFolderId })
+      .from(runs)
+      .where(and(eq(runs.id, scope.runId), eq(runs.workspaceId, scope.workspaceId)));
+    if (!run) throw new NoteWriteError("run_missing", "run not found");
+    if (run.noteId) return run.noteId;
+    const noteId = randomUUID();
+    const title = clip(draft.title.trim(), 500) || "Untitled";
+    const lede = draft.lede?.trim() ? clip(draft.lede.trim(), 1_000) : null;
+    step.defer(async (tx) => {
+      await tx.insert(notes).values({
+        id: noteId,
+        workspaceId: scope.workspaceId,
+        runId: scope.runId,
+        title,
+        lede,
+        folderId: run.targetFolderId,
+        filedBy: "agent",
+      });
+      await tx.update(runs).set({ noteId }).where(eq(runs.id, scope.runId));
+    });
+    return noteId;
+  }
+
+  /** Throws `foreign_note` unless the note belongs to this run and workspace. */
+  async assertRunNote(scope: RunScope, noteId: string): Promise<void> {
+    const rows = await this.db
+      .select({ id: notes.id })
+      .from(notes)
+      .where(and(eq(notes.id, noteId), eq(notes.runId, scope.runId), eq(notes.workspaceId, scope.workspaceId)));
+    if (rows.length === 0) throw new NoteWriteError("foreign_note", "note does not belong to this run");
+  }
+
+  async findSource(scope: RunScope, noteId: string, kind: SourceKind, url: string): Promise<ExistingSource | null> {
+    const [source] = await this.db
+      .select({ id: sources.id, meta: sources.meta })
+      .from(sources)
+      .where(
+        and(
+          eq(sources.workspaceId, scope.workspaceId),
+          eq(sources.kind, kind),
+          eq(sources.url, url),
+          sql`${sources.meta}->>'noteId' = ${noteId}`,
+        ),
+      )
+      .orderBy(sql`${sources.createdAt} desc`)
+      .limit(1);
+    if (!source) return null;
+    const blocks = await this.db
+      .select({ id: noteBlocks.id })
+      .from(noteBlocks)
+      .where(and(eq(noteBlocks.noteId, noteId), eq(noteBlocks.sourceId, source.id)))
+      .orderBy(positionOrder);
+    return { sourceId: source.id, meta: source.meta, blockIds: blocks.map((b) => b.id) };
+  }
+
+  stageSource(scope: RunScope, step: StepWriter, draft: SourceDraft, id: string = randomUUID()): string {
+    const origin = toOrigin(draft.url);
+    if (!origin || !/^https?:/.test(draft.url)) throw new NoteWriteError("unsupported_url", "only http(s) sources");
+    step.defer(async (tx) => {
+      await tx.insert(sources).values({
+        id,
+        workspaceId: scope.workspaceId,
+        kind: draft.kind,
+        url: clip(draft.url, 4_096),
+        canonicalUrl: draft.canonicalUrl ? clip(draft.canonicalUrl, 4_096) : null,
+        origin,
+        title: draft.title ? clip(draft.title, 1_000) : null,
+        faviconAssetId: draft.faviconAssetId,
+        mhtmlKey: draft.mhtmlKey,
+        screenshotKey: draft.screenshotKey,
+        snapshotSha256: draft.snapshotSha256,
+        meta: { ...draft.meta, noteId: draft.noteId },
+      });
+    });
+    return id;
+  }
+
+  stageSourceMeta(step: StepWriter, sourceId: string, patch: Record<string, unknown>): void {
+    step.defer(async (tx) => {
+      await tx
+        .update(sources)
+        .set({ meta: sql`${sources.meta} || ${JSON.stringify(patch)}::jsonb` })
+        .where(eq(sources.id, sourceId));
+    });
+  }
+
+  async appendBlocks(scope: RunScope, step: StepWriter, options: AppendOptions): Promise<string[]> {
+    const ordered = await this.db
+      .select({ id: noteBlocks.id, position: noteBlocks.position })
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, options.noteId))
+      .orderBy(positionOrder);
+    let before: string | null = ordered.at(-1)?.position ?? null;
+    let after: string | null = null;
+    if (options.afterBlockId !== null) {
+      const index = ordered.findIndex((row) => row.id === options.afterBlockId);
+      if (index < 0) throw new NoteWriteError("unknown_block", "afterBlockId is not in this note");
+      before = ordered[index]!.position;
+      after = ordered[index + 1]?.position ?? null;
+    }
+    const keys = keysBetween(before, after, options.blocks.length);
+    return this.stageBlockRows(
+      scope,
+      step,
+      options.noteId,
+      options.sourceId,
+      options.blocks.map((draft, i) => ({ draft, position: keys[i]! })),
+      options.signal,
+    );
+  }
+
+  /** Embeds, then stages the inserts and one block_added event per block. */
+  protected async stageBlockRows(
+    _scope: RunScope,
+    step: StepWriter,
+    noteId: string,
+    sourceId: string | null,
+    items: readonly { draft: BlockDraft; position: string }[],
+    signal?: AbortSignal,
+  ): Promise<string[]> {
+    for (const { draft } of items) {
+      if (draft.markdown.length > MAX_BLOCK_CHARS) throw new NoteWriteError("block_too_large", "block too large");
+    }
+    const vectors = await this.embedder.embed(items.map((item) => item.draft.markdown), signal);
+    const rows = items.map(({ draft, position }, k) => ({
+      id: randomUUID(),
+      noteId,
+      position,
+      type: draft.type,
+      markdown: draft.markdown,
+      assetId: draft.assetId,
+      sourceId,
+      origin: draft.origin,
+      anchor: draft.anchor === null ? null : Anchor.parse(draft.anchor),
+      contentSha256: sha256Hex(draft.markdown),
+      verified: draft.verified,
+      embedding: vectors[k] ?? null,
+    }));
+    if (rows.length > 0) {
+      step.defer(async (tx) => {
+        for (let i = 0; i < rows.length; i += 500) await tx.insert(noteBlocks).values(rows.slice(i, i + 500));
+      });
+    }
+    for (const row of rows) {
+      step.emit({ type: "block_added", noteId, blockId: row.id, blockType: row.type, origin: row.origin });
+    }
+    return rows.map((row) => row.id);
+  }
+
+  /** Coverage = min over captures; fidelity from the shared contracts rule. Runs after the block inserts. */
+  stageQuality(step: StepWriter, noteId: string, coverage: number | null): void {
+    step.defer(async (tx) => {
+      const [note] = await tx.select({ coverage: notes.coverage }).from(notes).where(eq(notes.id, noteId));
+      const merged = coverage === null ? (note?.coverage ?? null) : Math.min(note?.coverage ?? 1, coverage);
+      const [review] = await tx
+        .select({ n: count() })
+        .from(noteBlocks)
+        .where(
+          and(
+            eq(noteBlocks.noteId, noteId),
+            inArray(noteBlocks.origin, [...REVIEW_ORIGINS]),
+            eq(noteBlocks.verified, false),
+          ),
+        );
+      await tx
+        .update(notes)
+        .set({
+          coverage: merged,
+          fidelity: noteFidelity({ coverage: merged, unverifiedReviewBlocks: review?.n ?? 0 }),
+          updatedAt: new Date(),
+        })
+        .where(eq(notes.id, noteId));
+    });
+  }
+
+  /** Embeds blocks stored without vectors (API outage at capture time). Idempotent. */
+  async backfillEmbeddings(noteId: string, signal?: AbortSignal): Promise<number> {
+    const rows = await this.db
+      .select({ id: noteBlocks.id, markdown: noteBlocks.markdown })
+      .from(noteBlocks)
+      .where(and(eq(noteBlocks.noteId, noteId), isNull(noteBlocks.embedding)));
+    if (rows.length === 0) return 0;
+    const vectors = await this.embedder.embed(rows.map((row) => row.markdown), signal);
+    let updated = 0;
+    for (const [i, row] of rows.entries()) {
+      const vector = vectors[i];
+      if (!vector) continue;
+      await this.db.update(noteBlocks).set({ embedding: vector }).where(eq(noteBlocks.id, row.id));
+      updated++;
+    }
+    return updated;
+  }
+}
+```
+
+`apps/agent/src/testing/notes.ts`:
+```ts
+import { randomBytes } from "node:crypto";
+import type { RunEvent } from "@mastertutor/contracts";
+import { createLogger } from "@mastertutor/contracts/server";
+import { type Database, type DbTx, runEvents, runs, workspaces } from "@mastertutor/db";
+import { bootstrapGarage, createStorage, type Storage } from "@mastertutor/storage";
+import { startTestGarage } from "@mastertutor/storage/testing";
+import type { RunScope } from "../notes/note-writer.ts";
+import type { StepWriter } from "../tools/types.ts";
+
+export const testLogger = createLogger({ service: "test", level: "silent" });
+
+/** A StepWriter double that commits like B1's step transaction: writes, then events, then after-commit tasks. */
+export class RecordingStep implements StepWriter {
+  readonly writes: ((tx: DbTx) => Promise<void>)[] = [];
+  readonly events: RunEvent[] = [];
+  readonly afterTasks: (() => Promise<void>)[] = [];
+  defer(write: (tx: DbTx) => Promise<void>): void {
+    this.writes.push(write);
+  }
+  emit(event: RunEvent): void {
+    this.events.push(event);
+  }
+  afterCommit(task: () => Promise<void>): void {
+    this.afterTasks.push(task);
+  }
+  async commit(db: Database, runId: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      for (const write of this.writes) await write(tx);
+      for (const event of this.events) await tx.insert(runEvents).values({ runId, type: event.type, payload: event });
+    });
+    for (const task of this.afterTasks) await task();
+    this.writes.length = 0;
+    this.events.length = 0;
+    this.afterTasks.length = 0;
+  }
+}
+
+export async function seedRun(db: Database, options: { targetFolderId?: string; workspaceId?: string } = {}): Promise<RunScope> {
+  const workspaceId =
+    options.workspaceId ?? (await db.insert(workspaces).values({ name: "Test" }).returning({ id: workspaces.id }))[0]!.id;
+  const [run] = await db
+    .insert(runs)
+    .values({
+      workspaceId,
+      goal: "test",
+      allowedOrigins: ["https://example.com"],
+      targetFolderId: options.targetFolderId ?? null,
+    })
+    .returning({ id: runs.id });
+  return { runId: run!.id, workspaceId };
+}
+
+export async function startTestStorage(): Promise<{ storage: Storage; stop: () => Promise<void> }> {
+  const garage = await startTestGarage();
+  const accessKeyId = `GK${randomBytes(12).toString("hex")}`;
+  const secretAccessKey = randomBytes(32).toString("hex");
+  const bucket = "mastertutor-test";
+  await bootstrapGarage({
+    adminUrl: garage.adminUrl,
+    adminToken: garage.adminToken,
+    bucket,
+    keys: [{ name: "agent-test", accessKeyId, secretAccessKey, read: true, write: true }],
+  });
+  const storage = createStorage({ endpoint: garage.s3Endpoint, region: "garage", bucket, accessKeyId, secretAccessKey });
+  return { storage, stop: () => garage.stop() };
+}
+```
+
+- [ ] **Step 5: Run the tests to verify they pass.**
+
+Run: `pnpm exec vitest run --project unit apps/agent/src/notes && pnpm exec vitest run --project integration apps/agent/src/notes && pnpm typecheck && pnpm lint`
+Expected: PASS.
+
+- [ ] **Step 6: Commit.**
+```bash
+git add apps/agent pnpm-lock.yaml
+git commit -m "feat(agent): NoteWriter, content-addressed asset store, embedder and step test double"
+```
+
+---
+
+### Task 5: Isolated worlds, page preparation and network idle
+
+**Files:**
+- Modify: `apps/agent/tsconfig.json`, setting `"compilerOptions": {"lib": ["es2024", "dom", "dom.iterable"]}`. Page scripts are typed against the DOM. Keep it if B1 already added this.
+- Modify: `apps/agent/package.json` (add `defuddle`, `@mozilla/readability`)
+- Create: `apps/agent/src/capture/cdp-world.ts`, `apps/agent/src/capture/network-idle.ts`, `apps/agent/src/capture/prepare.ts`
+- Create: `apps/agent/src/capture/page/types.ts`, `apps/agent/src/capture/page/lib.ts`, `apps/agent/src/capture/page/prepare.ts`
+- Create: `tests/fixtures/sites/lazy/index.html`, `tests/fixtures/sites/lazy/img/{a,b,c}.svg`, `tests/fixtures/sites/infinite/index.html`
+- Test: `apps/agent/src/capture/cdp-world.test.ts`, `apps/agent/src/capture/prepare.int.test.ts`
+
+**Interfaces:**
+- Consumes: B1's `BrowserSession.cdp()` and `startBrowserHarness`.
+- Produces:
+  - **`IsolatedWorld`:**
+    - `static create(cdp, frameId, {libraries: boolean}): Promise<IsolatedWorld>`;
+    - `readonly contextId`;
+    - `evaluate(expression)`;
+    - `call(fn, ...args)`, with JSON-serializable arguments and result.
+  - `PageScriptError`.
+  - `mainFrameId(cdp): Promise<string>` and `childFrames(cdp): Promise<{frameId; url; name}[]>`.
+  - `captureLibrarySource(): Promise<string>`.
+  - `assertSelfContained(fn): void`.
+  - `waitForNetworkIdle(cdp, {quietMs?, timeoutMs?, signal?}): Promise<boolean>`.
+  - `MAX_SCROLL_VIEWPORTS = 50` and `preparePage(world, cdp, signal): Promise<{viewports; idle; heightStable}>`.
+  - **Page types:** `Rect`, `MtLib`, `PageMedia`, `PageFrame`, `PageExtract`, `ExtractOptions`, `BlockSnippet`, `LocatedBlock`.
+  - **Page functions:** `pageInstallLib`, `pageForceEager`, `pageScrollMetrics`, `pageScrollTo`, `pageContentType`.
+
+- [ ] **Step 1: Install the dependencies and write the fixtures.**
+
+Run: `pnpm --filter @mastertutor/agent add --save-exact defuddle@0.19.4 @mozilla/readability@0.6.0`
+
+`tests/fixtures/sites/lazy/img/a.svg` (repeat for `b.svg` with `fill="#2a6"` and `c.svg` with `fill="#a26"`):
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect width="300" height="200" fill="#26a"/></svg>
+```
+
+`tests/fixtures/sites/lazy/index.html`:
+```html
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Lazy feed</title>
+<style>.batch{min-height:900px;border-bottom:1px solid #ccc} img{display:block;width:300px;height:200px}</style></head>
+<body>
+<main id="feed"><section class="batch"><img loading="lazy" src="img/a.svg" alt="A"><p>Batch 1.</p></section></main>
+<p id="end" hidden>End of feed</p>
+<script>
+  const feed = document.getElementById("feed");
+  let batches = 1;
+  const io = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting || batches >= 3) continue;
+      batches++;
+      const section = document.createElement("section");
+      section.className = "batch";
+      section.innerHTML = `<img loading="lazy" src="img/${batches === 2 ? "b" : "c"}.svg" alt="Batch ${batches}"><p>Batch ${batches}.</p>`;
+      feed.append(section);
+      io.unobserve(entry.target);
+      io.observe(section);
+      if (batches === 3) document.getElementById("end").hidden = false;
+    }
+  });
+  io.observe(feed.lastElementChild);
+</script>
+</body>
+</html>
+```
+
+`tests/fixtures/sites/infinite/index.html`:
+```html
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Infinite</title><style>.chunk{height:1000px;border-bottom:1px solid #ddd}</style></head>
+<body>
+<div id="list"><div class="chunk">Chunk 0</div></div>
+<script>
+  let n = 1;
+  addEventListener("scroll", () => {
+    if (innerHeight + scrollY < document.documentElement.scrollHeight - 1200) return;
+    const chunk = document.createElement("div");
+    chunk.className = "chunk";
+    chunk.textContent = `Chunk ${n++}`;
+    document.getElementById("list").append(chunk);
+  });
+</script>
+</body>
+</html>
+```
+
+- [ ] **Step 2: Write the failing tests.**
+
+`apps/agent/src/capture/cdp-world.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+import { assertSelfContained, captureLibrarySource } from "./cdp-world.ts";
+import { pageInstallLib } from "./page/lib.ts";
+import { pageContentType, pageForceEager, pageScrollMetrics, pageScrollTo } from "./page/prepare.ts";
+
+describe("page functions", () => {
+  it.each([pageInstallLib, pageForceEager, pageScrollMetrics, pageScrollTo, pageContentType])(
+    "%o is self-contained after transpilation",
+    (fn) => {
+      expect(() => assertSelfContained(fn)).not.toThrow();
+    },
+  );
+  it("rejects functions that reference module scope", () => {
+    const helper = () => 1;
+    expect(() => assertSelfContained(() => `${import.meta.url}${helper()}`)).toThrow(/self-contained/);
+  });
+});
+
+describe("captureLibrarySource", () => {
+  it("bundles Defuddle and Readability as globals", async () => {
+    const source = await captureLibrarySource();
+    expect(source).toContain("Defuddle");
+    expect(source).toContain("function Readability(");
+  });
+});
+```
+
+`apps/agent/src/capture/prepare.int.test.ts`:
+```ts
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { BrowserSession } from "../browser/session.ts";
+import { type BrowserHarness, startBrowserHarness } from "../testing/browser-harness.ts";
+import { IsolatedWorld, mainFrameId } from "./cdp-world.ts";
+import { MAX_SCROLL_VIEWPORTS, preparePage } from "./prepare.ts";
+
+let harness: BrowserHarness;
+let session: BrowserSession;
+const ids = { runId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301", workspaceId: "3f2504e0-4f89-41d3-9a0c-0305e82c3302" };
+
+beforeAll(async () => {
+  harness = await startBrowserHarness();
+  session = await harness.openSession(ids);
+});
+afterAll(async () => {
+  await harness?.stop();
+});
+
+async function world(): Promise<{ world: IsolatedWorld; cdp: Awaited<ReturnType<BrowserSession["cdp"]>> }> {
+  const cdp = await session.cdp();
+  return { world: await IsolatedWorld.create(cdp, await mainFrameId(cdp), { libraries: false }), cdp };
+}
+
+describe("preparePage", () => {
+  it("loads lazy batches until the height is stable and restores scroll", async () => {
+    await session.page.goto(`${harness.fixturesUrl}/lazy/index.html`);
+    const { world: w, cdp } = await world();
+    const result = await preparePage(w, cdp, new AbortController().signal);
+    expect(result.heightStable).toBe(true);
+    const state = await session.page.evaluate(() => ({
+      batches: document.querySelectorAll(".batch").length,
+      imagesLoaded: [...document.images].every((img) => img.complete && img.naturalWidth > 0),
+      scrollY,
+    }));
+    expect(state).toEqual({ batches: 3, imagesLoaded: true, scrollY: 0 });
+  });
+
+  it("caps infinite scroll at MAX_SCROLL_VIEWPORTS", async () => {
+    await session.page.goto(`${harness.fixturesUrl}/infinite/index.html`);
+    const { world: w, cdp } = await world();
+    const result = await preparePage(w, cdp, new AbortController().signal);
+    expect(result).toMatchObject({ viewports: MAX_SCROLL_VIEWPORTS, heightStable: false });
+  }, 120_000);
+
+  it("stops between scroll steps when aborted", async () => {
+    await session.page.goto(`${harness.fixturesUrl}/infinite/index.html`);
+    const { world: w, cdp } = await world();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(preparePage(w, cdp, controller.signal)).rejects.toThrow(/abort/i);
+  });
+});
+```
+
+- [ ] **Step 3: Run the tests to verify they fail.**
+
+Run: `pnpm exec vitest run --project unit apps/agent/src/capture/cdp-world.test.ts`
+Expected: FAIL with module-not-found errors.
+
+- [ ] **Step 4: Implement.**
+
+`apps/agent/src/capture/page/types.ts`:
+```ts
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Helpers installed once per isolated world by pageInstallLib (shared by every page function). */
+export interface MtLib {
+  SKIP_TAGS: Set<string>;
+  MATH_SELECTOR: string;
+  BLOCK_SELECTOR: string;
+  shadowOf(el: Element): ShadowRoot | null;
+  visible(el: Element): boolean;
+  docRect(el: Element): Rect | null;
+  cssPath(el: Element): string | null;
+  xpathOf(el: Element): string | null;
+  /** Rendered text in flat-tree order (open+closed shadow, slots); math, media and form UI skipped. */
+  walkRendered(root: Node, range: Range | null, onText: (node: Text, text: string) => void, onBreak: () => void): void;
+}
+
+declare global {
+  var __mtLib: MtLib | undefined;
+  var __mtClosedRoots: WeakMap<Element, ShadowRoot> | undefined;
+  var __mtCapture: { root: Element; range: Range | null } | undefined;
+}
+
+export interface PageMedia {
+  index: number;
+  kind: "img" | "svg" | "canvas";
+  url: string | null;
+  svg: string | null;
+  dataUrl: string | null;
+  alt: string;
+  /** Document coordinates (CSS px); null when not rendered. */
+  rect: Rect | null;
+  selector: string | null;
+  /** Charts and diagrams: also kept as an element screenshot (spec §7.4). */
+  figure: boolean;
+}
+export interface PageFrame {
+  index: number;
+  url: string | null;
+  name: string | null;
+}
+export interface ExtractOptions {
+  scope: "page" | "selection" | "element";
+  selector: string | null;
+}
+export interface PageExtract {
+  engine: "defuddle" | "readability" | "text" | "none";
+  title: string;
+  description: string | null;
+  canonicalUrl: string | null;
+  faviconUrl: string | null;
+  language: string | null;
+  markdown: string;
+  /** Rendered text of the capture root; blocks separated by "\n". */
+  sourceText: string;
+  media: PageMedia[];
+  rawTables: string[];
+  frames: PageFrame[];
+}
+export interface BlockSnippet {
+  head: string;
+  tail: string;
+}
+export interface LocatedBlock {
+  selector: string | null;
+  xpath: string | null;
+  /** Offsets into the root's normalized rendered text (NFKC, lower-case, single spaces). */
+  start: number | null;
+  end: number | null;
+}
+```
+
+`apps/agent/src/capture/page/lib.ts`:
+```ts
+import type { MtLib, Rect } from "./types.ts";
+
+/** Runs inside the isolated world. Must stay self-contained (no imports, no outer references). */
+export function pageInstallLib(): void {
+  const SKIP_TAGS = new Set([
+    "SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "LINK", "META", "HEAD",
+    "BUTTON", "SELECT", "INPUT", "TEXTAREA", "IFRAME", "VIDEO", "AUDIO", "OBJECT", "EMBED", "CANVAS",
+  ]);
+  const MATH_SELECTOR = "math, .katex, .katex-display, mjx-container, .MathJax, .MathJax_Display";
+  const BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, pre, blockquote, table, figure, figcaption, dt, dd";
+  const closedRoots = (globalThis.__mtClosedRoots ??= new WeakMap<Element, ShadowRoot>());
+  const shadowOf = (el: Element): ShadowRoot | null => el.shadowRoot ?? closedRoots.get(el) ?? null;
+  const visible = (el: Element): boolean =>
+    el.tagName === "COL" || el.tagName === "COLGROUP" || el.checkVisibility({ visibilityProperty: true });
+  const docRect = (el: Element): Rect | null => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    return { x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height };
+  };
+  const cssPath = (el: Element): string | null => {
+    if (el.getRootNode() !== document) return null;
+    const parts: string[] = [];
+    let current: Element | null = el;
+    while (current && current !== document.documentElement) {
+      if (current.id && document.querySelectorAll(`#${CSS.escape(current.id)}`).length === 1) {
+        parts.unshift(`#${CSS.escape(current.id)}`);
+        return parts.join(" > ");
+      }
+      const tag = current.tagName.toLowerCase();
+      const parent: Element | null = current.parentElement;
+      if (!parent) break;
+      const same = [...parent.children].filter((child) => child.tagName === current!.tagName);
+      parts.unshift(same.length > 1 ? `${tag}:nth-of-type(${same.indexOf(current) + 1})` : tag);
+      current = parent;
+    }
+    return parts.length ? `html > ${parts.join(" > ")}` : null;
+  };
+  const xpathOf = (el: Element): string | null => {
+    if (el.getRootNode() !== document) return null;
+    const parts: string[] = [];
+    for (let current: Element | null = el; current; current = current.parentElement) {
+      const parent: Element | null = current.parentElement;
+      const same = parent ? [...parent.children].filter((child) => child.tagName === current!.tagName) : [current];
+      parts.unshift(`${current.tagName.toLowerCase()}[${same.indexOf(current) + 1}]`);
+    }
+    return `/${parts.join("/")}`;
+  };
+  const walkRendered: MtLib["walkRendered"] = (root, range, onText, onBreak) => {
+    const visit = (node: Node): void => {
+      if (range && !range.intersectsNode(node)) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const textNode = node as Text;
+        let text = textNode.data;
+        if (range) {
+          const start = textNode === range.startContainer ? range.startOffset : 0;
+          const end = textNode === range.endContainer ? range.endOffset : text.length;
+          text = text.slice(start, end);
+        }
+        if (text) onText(textNode, text);
+        return;
+      }
+      if (node instanceof Element) {
+        if (SKIP_TAGS.has(node.tagName) || node instanceof SVGElement || node.matches(MATH_SELECTOR)) return;
+        if (!visible(node)) return;
+        if (node.tagName === "BR") {
+          onBreak();
+          return;
+        }
+        const inline = getComputedStyle(node).display.startsWith("inline");
+        if (!inline) onBreak();
+        if (node.tagName === "SLOT") {
+          const assigned = (node as HTMLSlotElement).assignedNodes({ flatten: true });
+          for (const child of assigned.length ? assigned : [...node.childNodes]) visit(child);
+        } else {
+          for (const child of [...(shadowOf(node) ?? node).childNodes]) visit(child);
+        }
+        if (!inline) onBreak();
+        return;
+      }
+      for (const child of [...node.childNodes]) visit(child);
+    };
+    visit(root);
+  };
+  globalThis.__mtLib = { SKIP_TAGS, MATH_SELECTOR, BLOCK_SELECTOR, shadowOf, visible, docRect, cssPath, xpathOf, walkRendered };
+}
+```
+
+`apps/agent/src/capture/page/prepare.ts`:
+```ts
+/** Isolated-world functions; each must stay self-contained. */
+export function pageForceEager(): number {
+  let changed = 0;
+  for (const el of document.querySelectorAll('img[loading="lazy"], iframe[loading="lazy"]')) {
+    el.setAttribute("loading", "eager");
+    changed++;
+  }
+  return changed;
+}
+
+export function pageScrollMetrics(): { x: number; y: number; height: number; viewport: number } {
+  const root = document.scrollingElement ?? document.documentElement;
+  return { x: scrollX, y: scrollY, height: root.scrollHeight, viewport: innerHeight };
+}
+
+export function pageScrollTo(x: number, y: number): void {
+  scrollTo({ left: x, top: y, behavior: "instant" });
+}
+
+export function pageContentType(): string {
+  return document.contentType;
+}
+```
+
+`apps/agent/src/capture/cdp-world.ts`:
+```ts
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import type { CDPSession } from "playwright-core";
+
+const require = createRequire(import.meta.url);
+let librarySource: Promise<string> | undefined;
+
+/** Defuddle's full UMD bundle (defines `Defuddle`) and Readability (defines `Readability`). */
+export function captureLibrarySource(): Promise<string> {
+  librarySource ??= Promise.all([
+    readFile(require.resolve("defuddle/full"), "utf8"),
+    readFile(require.resolve("@mozilla/readability/Readability.js"), "utf8"),
+  ]).then(([defuddle, readability]) => `${defuddle}\n;\n${readability}\n;true;`);
+  return librarySource;
+}
+
+export class PageScriptError extends Error {
+  constructor(message: string) {
+    super(message.slice(0, 500));
+    this.name = "PageScriptError";
+  }
+}
+
+/** Page functions are sent as source text; they must compile on their own. */
+export function assertSelfContained(fn: (...args: never[]) => unknown): void {
+  const source = fn.toString();
+  if (/\b(import\s*\(|import\.meta|require\s*\(|__vite|__name\()/.test(source)) {
+    throw new Error(`page function ${fn.name} is not self-contained`);
+  }
+  new Function(`return (${source});`);
+}
+
+export async function mainFrameId(cdp: CDPSession): Promise<string> {
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  return frameTree.frame.id;
+}
+
+export async function childFrames(cdp: CDPSession): Promise<{ frameId: string; url: string; name: string | null }[]> {
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  return (frameTree.childFrames ?? []).map((child) => ({
+    frameId: child.frame.id,
+    url: child.frame.url,
+    name: child.frame.name ?? null,
+  }));
+}
+
+/** A CDP isolated world: page JS cannot see or tamper with what runs here (spec §6 read_page, §7.3). */
+export class IsolatedWorld {
+  readonly contextId: number;
+  readonly #cdp: CDPSession;
+
+  private constructor(cdp: CDPSession, contextId: number) {
+    this.#cdp = cdp;
+    this.contextId = contextId;
+  }
+
+  static async create(cdp: CDPSession, frameId: string, options: { libraries: boolean }): Promise<IsolatedWorld> {
+    const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+      frameId,
+      worldName: "mastertutor-capture",
+    });
+    const world = new IsolatedWorld(cdp, executionContextId);
+    if (options.libraries) await world.evaluate(await captureLibrarySource());
+    return world;
+  }
+
+  async evaluate(expression: string): Promise<unknown> {
+    const result = await this.#cdp.send("Runtime.evaluate", {
+      expression,
+      contextId: this.contextId,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (result.exceptionDetails) {
+      throw new PageScriptError(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+    }
+    return result.result.value;
+  }
+
+  async call<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): Promise<Awaited<R>> {
+    const result = await this.#cdp.send("Runtime.callFunctionOn", {
+      functionDeclaration: fn.toString(),
+      executionContextId: this.contextId,
+      arguments: args.map((value) => ({ value })),
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (result.exceptionDetails) {
+      throw new PageScriptError(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+    }
+    return result.result.value as Awaited<R>;
+  }
+}
+```
+
+`apps/agent/src/capture/network-idle.ts`:
+```ts
+import type { CDPSession } from "playwright-core";
+
+/** Resolves true after `quietMs` with no in-flight requests, or false at `timeoutMs` (never throws for time). */
+export async function waitForNetworkIdle(
+  cdp: CDPSession,
+  options: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<boolean> {
+  const quietMs = options.quietMs ?? 500;
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  options.signal?.throwIfAborted();
+  await cdp.send("Network.enable");
+  const inflight = new Set<string>();
+  return new Promise<boolean>((resolve, reject) => {
+    let quiet: ReturnType<typeof setTimeout> | undefined;
+    const onStart = (event: { requestId: string; type?: string }) => {
+      if (event.type === "WebSocket" || event.type === "EventSource") return;
+      inflight.add(event.requestId);
+      clearTimeout(quiet);
+    };
+    const onEnd = (event: { requestId: string }) => {
+      if (inflight.delete(event.requestId)) arm();
+    };
+    const cleanup = () => {
+      clearTimeout(quiet);
+      clearTimeout(deadline);
+      cdp.off("Network.requestWillBeSent", onStart);
+      cdp.off("Network.loadingFinished", onEnd);
+      cdp.off("Network.loadingFailed", onEnd);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+    const finish = (idle: boolean) => {
+      cleanup();
+      resolve(idle);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(options.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    const arm = () => {
+      clearTimeout(quiet);
+      if (inflight.size === 0) quiet = setTimeout(() => finish(true), quietMs);
+    };
+    cdp.on("Network.requestWillBeSent", onStart);
+    cdp.on("Network.loadingFinished", onEnd);
+    cdp.on("Network.loadingFailed", onEnd);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const deadline = setTimeout(() => finish(false), timeoutMs);
+    arm();
+  });
+}
+```
+
+`apps/agent/src/capture/prepare.ts`:
+```ts
+import type { CDPSession } from "playwright-core";
+import type { IsolatedWorld } from "./cdp-world.ts";
+import { waitForNetworkIdle } from "./network-idle.ts";
+import { pageForceEager, pageScrollMetrics, pageScrollTo } from "./page/prepare.ts";
+
+export const MAX_SCROLL_VIEWPORTS = 50;
+
+/** Spec §7.2: eager loading, stepwise scroll until the height is stable (cap 50 viewports), network idle. */
+export async function preparePage(
+  world: IsolatedWorld,
+  cdp: CDPSession,
+  signal: AbortSignal,
+): Promise<{ viewports: number; idle: boolean; heightStable: boolean }> {
+  signal.throwIfAborted();
+  await world.call(pageForceEager);
+  const start = await world.call(pageScrollMetrics);
+  let viewports = 0;
+  let lastHeight = start.height;
+  let heightStable = false;
+  try {
+    let y = 0;
+    await world.call(pageScrollTo, start.x, 0);
+    while (viewports < MAX_SCROLL_VIEWPORTS) {
+      signal.throwIfAborted();
+      y += start.viewport;
+      viewports++;
+      await world.call(pageScrollTo, start.x, y);
+      await waitForNetworkIdle(cdp, { quietMs: 300, timeoutMs: 3_000, signal });
+      await world.call(pageForceEager);
+      const now = await world.call(pageScrollMetrics);
+      const atBottom = now.y + now.viewport >= now.height - 2;
+      if (atBottom && now.height === lastHeight) {
+        heightStable = true;
+        break;
+      }
+      lastHeight = now.height;
+    }
+    const idle = await waitForNetworkIdle(cdp, { signal });
+    return { viewports, idle, heightStable };
+  } finally {
+    await world.call(pageScrollTo, start.x, start.y).catch(() => undefined);
+  }
+}
+```
+
+- [ ] **Step 5: Run the tests to verify they pass.**
+
+Run: `pnpm exec vitest run --project unit apps/agent/src/capture/cdp-world.test.ts && pnpm exec vitest run --project integration apps/agent/src/capture/prepare.int.test.ts && pnpm typecheck && pnpm lint`
+Expected: PASS.
+
+If `assertSelfContained` fails on a page function only under Vitest because of an injected `__name(` helper, set `test.server.deps` / `esbuild.keepNames: false` in `vitest.config.ts` for both projects. Never weaken the assertion.
+
+- [ ] **Step 6: Commit.**
+```bash
+git add apps/agent tests/fixtures/sites/lazy tests/fixtures/sites/infinite pnpm-lock.yaml
+git commit -m "feat(agent): CDP isolated worlds, page preparation with scroll cap and network idle"
+```
+
+---
+
+### Task 6: In-page extraction (flatten + Defuddle/Readability) and block location
+
+**Files:**
+- Create: `apps/agent/src/capture/shadow.ts`, `apps/agent/src/capture/page/extract.ts`, `apps/agent/src/capture/page/locate.ts`
+- Create: `tests/fixtures/sites/docs/index.html`, `tests/fixtures/sites/docs/frame.html`, `tests/fixtures/sites/docs/img/{diagram-400,diagram-1200,lazy}.svg`
+- Create: `tests/fixtures/sites/article/index.html`, `tests/fixtures/sites/article/img/{hero-640,hero-1280}.svg`
+- Modify: `apps/agent/src/capture/cdp-world.test.ts` (add `pageExtract` and `pageLocateBlocks` to the self-contained list)
+- Test: `apps/agent/src/capture/extract.int.test.ts`
+
+**Interfaces:**
+- Consumes: Task 5's world, `pageInstallLib` and the types.
+- Produces:
+  - `registerClosedShadowRoots(cdp, world): Promise<number>`.
+  - `pageExtract(options: ExtractOptions): PageExtract`, which throws `"selector_not_found"` or `"no_selection"`.
+  - `pageLocateBlocks(snippets: BlockSnippet[]): LocatedBlock[]`.
+  - **Placeholders inside `PageExtract.markdown`:**
+    - images are written as `https://mt-media.invalid/<n>`;
+    - complex tables as a paragraph `MTRAWTABLE<n>`;
+    - iframes as a paragraph `MTFRAME<n>`.
+
+- [ ] **Step 1: Write the fixtures.**
+
+`tests/fixtures/sites/docs/img/diagram-400.svg`:
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240" viewBox="0 0 400 240"><rect width="400" height="240" fill="#eef"/><ellipse cx="200" cy="120" rx="160" ry="80" fill="#9c6"/></svg>
+```
+`tests/fixtures/sites/docs/img/diagram-1200.svg`: the same content with `width="1200" height="720"`.
+
+`tests/fixtures/sites/docs/img/lazy.svg`:
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200"><circle cx="160" cy="100" r="80" fill="#c96"/></svg>
+```
+
+`tests/fixtures/sites/docs/frame.html`:
+```html
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Worksheet</title></head>
+<body><h3>Worksheet</h3><p>Count the carbon atoms entering and leaving the Krebs cycle for one acetyl group.</p></body></html>
+```
+
+`tests/fixtures/sites/docs/index.html`:
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cellular Respiration Reference</title>
+<meta name="description" content="Reference notes on cellular respiration with tables, code, math and figures.">
+<link rel="canonical" href="https://fixtures.example/docs/">
+<style>
+  body { font-family: sans-serif; max-width: 860px; margin: 0 auto; padding: 24px; }
+  .katex-mathml { position: absolute; clip: rect(1px, 1px, 1px, 1px); height: 1px; width: 1px; overflow: hidden; }
+  .spacer { height: 1400px; }
+</style>
+</head>
+<body>
+<nav><a href="/">Home</a> <a href="/docs/">Docs</a></nav>
+<article id="content">
+<h1>Cellular Respiration Reference</h1>
+<p>Cellular respiration converts glucose and oxygen into carbon dioxide, water and usable energy stored as adenosine triphosphate. Every living cell depends on a steady supply of that energy, so the pathway is among the most conserved processes in biology.</p>
+<p>The process runs in three linked stages. Glycolysis happens in the cytoplasm, while the Krebs cycle and the electron transport chain take place inside the mitochondrion. Each stage hands its products to the next one.</p>
+<h2>Stages at a glance</h2>
+<table id="stages">
+<thead><tr><th>Stage</th><th>Location</th><th>Net ATP</th></tr></thead>
+<tbody>
+<tr><td>Glycolysis</td><td>Cytoplasm</td><td>2</td></tr>
+<tr><td>Krebs cycle</td><td>Mitochondrial matrix</td><td>2</td></tr>
+<tr><td>Electron transport chain</td><td>Inner membrane</td><td>about 26</td></tr>
+</tbody>
+</table>
+<h2>Electron carriers</h2>
+<table id="carriers">
+<thead><tr><th>Carrier</th><th>Produced in</th><th>Electrons delivered to</th></tr></thead>
+<tbody>
+<tr><td rowspan="2">NADH</td><td>Glycolysis</td><td rowspan="3">Electron transport chain</td></tr>
+<tr><td>Krebs cycle</td></tr>
+<tr><td>FADH2</td><td>Krebs cycle</td></tr>
+</tbody>
+</table>
+<h2>Energy yield formula</h2>
+<p>The overall reaction balances six carbon atoms on each side of the equation.</p>
+<p><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>C</mi><mn>6</mn></msub><msub><mi>H</mi><mn>12</mn></msub><msub><mi>O</mi><mn>6</mn></msub><mo>+</mo><mn>6</mn><msub><mi>O</mi><mn>2</mn></msub><mo>→</mo><mn>6</mn><mi>C</mi><msub><mi>O</mi><mn>2</mn></msub><mo>+</mo><mn>6</mn><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></mrow><annotation encoding="application/x-tex">C_6H_{12}O_6 + 6O_2 \rightarrow 6CO_2 + 6H_2O</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">C6H12O6 + 6O2 → 6CO2 + 6H2O</span></span></span></p>
+<h2>Simulating ATP yield</h2>
+<p>The helper below estimates the ATP produced from a number of glucose molecules.</p>
+<pre><code class="language-python">def atp_yield(glucose: int) -&gt; int:
+    """Approximate ATP produced per glucose molecule."""
+    return glucose * 30
+</code></pre>
+<h2>Mitochondrion diagram</h2>
+<figure>
+<img src="img/diagram-400.svg" srcset="img/diagram-400.svg 400w, img/diagram-1200.svg 1200w" sizes="400px" width="400" height="240" alt="Labelled mitochondrion diagram">
+<figcaption>Figure 1. The inner membrane folds into cristae that enlarge its surface.</figcaption>
+</figure>
+<h2>Pathway sketch</h2>
+<svg id="pathway" width="480" height="160" viewBox="0 0 480 160" role="img" aria-label="Pathway sketch from glucose to ATP">
+  <rect x="10" y="50" width="120" height="60" fill="#9cf"/><text x="70" y="85" text-anchor="middle">Glucose</text>
+  <rect x="180" y="50" width="120" height="60" fill="#fc9"/><text x="240" y="85" text-anchor="middle">Pyruvate</text>
+  <rect x="350" y="50" width="120" height="60" fill="#9f9"/><text x="410" y="85" text-anchor="middle">ATP</text>
+</svg>
+<h2>ATP by stage</h2>
+<p>The chart compares the net ATP each stage contributes.</p>
+<canvas id="chart" width="480" height="200" aria-label="Bar chart of ATP by stage"></canvas>
+<script>
+  const ctx = document.getElementById("chart").getContext("2d");
+  [[2, "#69c"], [2, "#c96"], [26, "#6c9"]].forEach(([v, c], i) => { ctx.fillStyle = c; ctx.fillRect(40 + i * 140, 190 - v * 6, 100, v * 6); });
+</script>
+<h2>Embedded worksheet</h2>
+<iframe id="worksheet" src="frame.html" width="640" height="220" title="Worksheet"></iframe>
+<h2>Component notes</h2>
+<open-note></open-note>
+<closed-note></closed-note>
+<script>
+  customElements.define("open-note", class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<p>Open shadow note: NADH carries high energy electrons to the transport chain.</p>"; }
+  });
+  customElements.define("closed-note", class extends HTMLElement {
+    constructor() { super(); const root = this.attachShadow({ mode: "closed" }); root.innerHTML = "<p>Closed shadow note: oxygen is the final electron acceptor of the chain.</p>"; }
+  });
+</script>
+<div class="spacer"></div>
+<h2>Late figure</h2>
+<img src="img/lazy.svg" loading="lazy" width="320" height="200" alt="Lazily loaded Krebs cycle figure">
+<p>The Krebs cycle turns twice for each glucose molecule, releasing carbon dioxide on every turn and refilling the pool of electron carriers.</p>
+<p hidden>This hidden paragraph must never appear in the note.</p>
+</article>
+<footer>Fixture site footer</footer>
+</body>
+</html>
+```
+
+`tests/fixtures/sites/article/img/hero-640.svg` and `hero-1280.svg` follow the same pattern as the diagrams: `width="640" height="360"` and `width="1280" height="720"`, with a rect and a circle.
+
+`tests/fixtures/sites/article/index.html`:
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How Leaves Capture Light</title>
+<meta name="description" content="A plain-language walk through the light reactions of photosynthesis.">
+<link rel="canonical" href="https://fixtures.example/article/">
+<link rel="icon" href="img/hero-640.svg">
+<style>body{font-family:Georgia,serif;max-width:720px;margin:0 auto;padding:24px;line-height:1.6}</style>
+</head>
+<body>
+<header><a href="/">Fixture Journal</a></header>
+<main>
+<article>
+<h1>How Leaves Capture Light</h1>
+<p><em>By A. Botanist</em></p>
+<img src="img/hero-640.svg" srcset="img/hero-640.svg 640w, img/hero-1280.svg 1280w" sizes="640px" width="640" height="360" alt="Cross-section of a leaf">
+<p>Every green leaf is a solar panel that builds itself. Inside its cells, thousands of chloroplasts collect sunlight and use it to split water, releasing the oxygen we breathe and storing energy in chemical bonds.</p>
+<h2>Pigments do the catching</h2>
+<p>Chlorophyll a and chlorophyll b absorb red and blue light strongly but reflect green light, which is why leaves look green to us. Accessory pigments called carotenoids widen the range of usable light and protect the cell from damage when the light is too intense.</p>
+<blockquote><p>A single leaf can hold more than a million chloroplasts in one square millimetre.</p></blockquote>
+<h2>The light reactions step by step</h2>
+<ol>
+<li>Photons excite electrons in photosystem II.</li>
+<li>Water is split to replace those electrons, and oxygen is released.</li>
+<li>Excited electrons travel along a transport chain that pumps protons.</li>
+<li>Photosystem I re-energizes the electrons, which reduce <code>NADP+</code> to NADPH.</li>
+<li>The proton gradient drives ATP synthase, which makes ATP.</li>
+</ol>
+<h2>Why it matters</h2>
+<p>The ATP and NADPH made here power the Calvin cycle, which fixes carbon dioxide into sugar. Without the light reactions there would be no food chain on land and almost no oxygen in the atmosphere. Read more in the <a href="https://example.org/calvin">Calvin cycle primer</a>.</p>
+<ul>
+<li>Light reactions happen in the thylakoid membranes.</li>
+<li>The Calvin cycle happens in the stroma.</li>
+<li>Both stages are needed to build glucose.</li>
+</ul>
+<p>Scientists still study how plants balance light capture against damage, because better control could raise crop yields in a warming climate.</p>
+</article>
+</main>
+<footer>Fixture Journal footer</footer>
+</body>
+</html>
+```
+
+- [ ] **Step 2: Write the failing test.**
+
+`apps/agent/src/capture/extract.int.test.ts`:
+```ts
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { BrowserSession } from "../browser/session.ts";
+import { type BrowserHarness, startBrowserHarness } from "../testing/browser-harness.ts";
+import { IsolatedWorld, mainFrameId } from "./cdp-world.ts";
+import { pageExtract } from "./page/extract.ts";
+import { pageInstallLib } from "./page/lib.ts";
+import { pageLocateBlocks } from "./page/locate.ts";
+import { preparePage } from "./prepare.ts";
+import { registerClosedShadowRoots } from "./shadow.ts";
+
+let harness: BrowserHarness;
+let session: BrowserSession;
+beforeAll(async () => {
+  harness = await startBrowserHarness();
+  session = await harness.openSession({
+    runId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+    workspaceId: "3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+  });
+});
+afterAll(async () => {
+  await harness?.stop();
+});
+
+async function extractDocs() {
+  await session.page.goto(`${harness.fixturesUrl}/docs/index.html`);
+  const cdp = await session.cdp();
+  const world = await IsolatedWorld.create(cdp, await mainFrameId(cdp), { libraries: true });
+  await world.call(pageInstallLib);
+  await preparePage(world, cdp, new AbortController().signal);
+  expect(await registerClosedShadowRoots(cdp, world)).toBe(1);
+  const before = await session.page.content();
+  const extract = await world.call(pageExtract, { scope: "page", selector: null });
+  expect(await session.page.content()).toBe(before);
+  return { world, extract };
+}
+
+describe("pageExtract", () => {
+  it("flattens shadow DOM, tokenizes media, keeps complex tables raw and skips hidden text", async () => {
+    const { extract } = await extractDocs();
+    expect(extract.engine).toBe("defuddle");
+    expect(extract.title).toBe("Cellular Respiration Reference");
+    expect(extract.markdown).toContain("Open shadow note");
+    expect(extract.markdown).toContain("Closed shadow note");
+    expect(extract.markdown).not.toContain("hidden paragraph");
+    expect(extract.markdown).toMatch(/```python/);
+    expect(extract.markdown).toMatch(/\$\$?\s*C_6H_\{12\}O_6/);
+    expect(extract.markdown).toMatch(/\| Glycolysis \| Cytoplasm \| 2 \|/);
+    expect(extract.markdown).toContain("MTRAWTABLE0");
+    expect(extract.rawTables[0]).toMatch(/^<table><thead><tr><th>Carrier<\/th>/);
+    expect(extract.rawTables[0]).toContain('rowspan="2"');
+    expect(extract.markdown).toContain("MTFRAME0");
+    expect(extract.frames[0]?.url).toMatch(/\/docs\/frame\.html$/);
+    const kinds = extract.media.map((m) => [m.kind, m.figure]);
+    expect(kinds).toEqual(
+      expect.arrayContaining([
+        ["img", false],
+        ["svg", true],
+        ["canvas", true],
+      ]),
+    );
+    const diagram = extract.media.find((m) => m.alt === "Labelled mitochondrion diagram");
+    expect(diagram?.url).toMatch(/diagram-1200\.svg$/);
+    const svg = extract.media.find((m) => m.kind === "svg");
+    expect(svg?.svg).toMatch(/^<svg[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+    expect(svg?.svg).toContain("fill:");
+    expect(extract.media.find((m) => m.kind === "canvas")?.dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(extract.sourceText).toContain("Closed shadow note");
+    expect(extract.sourceText).not.toContain("C6H12O6");
+    expect(extract.sourceText).not.toContain("Glucose");
+  });
+
+  it("locates blocks in document order with selectors and offsets", async () => {
+    const { world } = await extractDocs();
+    const located = await world.call(pageLocateBlocks, [
+      { head: "Cellular respiration converts glucose", tail: "conserved processes in biology." },
+      { head: "The Krebs cycle turns twice", tail: "pool of electron carriers." },
+      { head: "Closed shadow note", tail: "acceptor of the chain." },
+      { head: "nonexistent text here", tail: "" },
+    ]);
+    expect(located[0]?.selector).toMatch(/#content > p/);
+    expect(located[0]?.xpath).toMatch(/^\/html\[1\]\/body\[1\]\/article\[1\]\/p\[1\]$/);
+    expect(located[1]!.start!).toBeGreaterThan(located[0]!.end!);
+    expect(located[2]).toMatchObject({ selector: null, xpath: null });
+    expect(located[2]?.start).not.toBeNull();
+    expect(located[3]).toEqual({ selector: null, xpath: null, start: null, end: null });
+  });
+
+  it("captures an element scope and a selection scope", async () => {
+    await session.page.goto(`${harness.fixturesUrl}/article/index.html`);
+    const cdp = await session.cdp();
+    const world = await IsolatedWorld.create(cdp, await mainFrameId(cdp), { libraries: true });
+    await world.call(pageInstallLib);
+    const element = await world.call(pageExtract, { scope: "element", selector: "article ol" });
+    expect(element.markdown).toMatch(/1\.\s+Photons excite electrons/);
+    expect(element.markdown).not.toContain("Pigments do the catching");
+    await session.page.evaluate(() => {
+      const p = document.querySelectorAll("article p")[2]!;
+      const range = document.createRange();
+      range.setStart(p.firstChild!, 0);
+      range.setEnd(p.firstChild!, 22);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(range);
+    });
+    const selection = await world.call(pageExtract, { scope: "selection", selector: null });
+    expect(selection.sourceText.trim()).toBe("Chlorophyll a and chlo");
+    await expect(world.call(pageExtract, { scope: "element", selector: "#nope" })).rejects.toThrow(/selector_not_found/);
+  });
+});
+```
+
+- [ ] **Step 3: Run the test to verify it fails.**
+
+Run: `pnpm exec vitest run --project integration apps/agent/src/capture/extract.int.test.ts`
+Expected: FAIL with module-not-found errors.
+
+- [ ] **Step 4: Implement.**
+
+`apps/agent/src/capture/shadow.ts`:
+```ts
+import type { CDPSession } from "playwright-core";
+import type { IsolatedWorld } from "./cdp-world.ts";
+
+interface DomNode {
+  backendNodeId: number;
+  children?: DomNode[];
+  shadowRoots?: DomNode[];
+  shadowRootType?: string;
+}
+
+/** Closed shadow roots are invisible to page JS; CDP pierces them and hands them to our world (spec §7.2). */
+export async function registerClosedShadowRoots(cdp: CDPSession, world: IsolatedWorld): Promise<number> {
+  await cdp.send("DOM.enable");
+  const { root } = (await cdp.send("DOM.getDocument", { depth: -1, pierce: true })) as unknown as { root: DomNode };
+  const pairs: { host: number; shadow: number }[] = [];
+  const visit = (node: DomNode) => {
+    for (const shadow of node.shadowRoots ?? []) {
+      if (shadow.shadowRootType === "closed") pairs.push({ host: node.backendNodeId, shadow: shadow.backendNodeId });
+      visit(shadow);
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(root);
+  const objectGroup = "mt-shadow";
+  try {
+    for (const pair of pairs) {
+      const host = await cdp.send("DOM.resolveNode", {
+        backendNodeId: pair.host,
+        executionContextId: world.contextId,
+        objectGroup,
+      });
+      const shadow = await cdp.send("DOM.resolveNode", {
+        backendNodeId: pair.shadow,
+        executionContextId: world.contextId,
+        objectGroup,
+      });
+      if (!host.object.objectId || !shadow.object.objectId) continue;
+      await cdp.send("Runtime.callFunctionOn", {
+        objectId: host.object.objectId,
+        functionDeclaration:
+          "function (root) { (globalThis.__mtClosedRoots ??= new WeakMap()).set(this, root); }",
+        arguments: [{ objectId: shadow.object.objectId }],
+      });
+    }
+  } finally {
+    await cdp.send("Runtime.releaseObjectGroup", { objectGroup }).catch(() => undefined);
+  }
+  return pairs.length;
+}
+```
+
+`apps/agent/src/capture/page/extract.ts`:
+```ts
+import type { ExtractOptions, PageExtract, PageFrame, PageMedia } from "./types.ts";
+
+declare const Defuddle: new (
+  doc: Document,
+  options: Record<string, unknown>,
+) => {
+  parse(): {
+    content: string;
+    title: string;
+    description: string;
+    language: string;
+    debug?: { contentSelector?: string };
+  };
+};
+declare const Readability: new (doc: Document, options?: Record<string, unknown>) => {
+  parse(): { content: string | null } | null;
+};
+
+/** Isolated-world extraction (spec §7.3): flatten into a detached document, then Defuddle → Readability → text. */
+export function pageExtract(options: ExtractOptions): PageExtract {
+  const lib = globalThis.__mtLib;
+  if (!lib) throw new Error("lib_missing");
+  const media: PageMedia[] = [];
+  const rawTables: string[] = [];
+  const frames: PageFrame[] = [];
+  const out = document.implementation.createHTMLDocument(document.title);
+
+  const abs = (value: string | null | undefined, schemes = ["http:", "https:", "data:", "blob:"]): string | null => {
+    if (!value) return null;
+    try {
+      const url = new URL(value, document.baseURI);
+      return schemes.includes(url.protocol) ? url.href : null;
+    } catch {
+      return null;
+    }
+  };
+  const bestSrc = (img: HTMLImageElement): string | null => {
+    let best: { url: string; weight: number } | null = null;
+    for (const part of (img.getAttribute("srcset") ?? "").split(/,\s+/)) {
+      const [url, descriptor] = part.trim().split(/\s+/);
+      if (!url) continue;
+      const match = /^(\d+(?:\.\d+)?)([wx])$/.exec(descriptor ?? "1x");
+      const weight = match ? Number(match[1]) * (match[2] === "x" ? 10_000 : 1) : 1;
+      if (!best || weight > best.weight) best = { url, weight };
+    }
+    return abs(best?.url) ?? abs(img.currentSrc) ?? abs(img.getAttribute("src")) ?? abs(img.getAttribute("data-src"));
+  };
+  const SVG_PROPS = [
+    "fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity", "stroke-dasharray", "opacity",
+    "font-family", "font-size", "font-weight", "font-style", "text-anchor", "dominant-baseline", "visibility", "display",
+  ];
+  const serializeSvg = (svg: SVGSVGElement): string | null => {
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    const source = [svg, ...svg.querySelectorAll("*")];
+    const target = [clone, ...clone.querySelectorAll("*")];
+    source.forEach((el, i) => {
+      const style = getComputedStyle(el);
+      target[i]?.setAttribute("style", SVG_PROPS.map((p) => `${p}:${style.getPropertyValue(p)}`).join(";"));
+    });
+    clone.querySelectorAll("script, foreignObject").forEach((node) => node.remove());
+    for (const el of [clone, ...clone.querySelectorAll("*")]) {
+      for (const attr of [...el.attributes]) {
+        if (/^on/i.test(attr.name) || (/href$/i.test(attr.name) && /^\s*javascript:/i.test(attr.value))) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const r = svg.getBoundingClientRect();
+    if (!clone.getAttribute("width")) clone.setAttribute("width", String(Math.round(r.width)));
+    if (!clone.getAttribute("height")) clone.setAttribute("height", String(Math.round(r.height)));
+    const text = new XMLSerializer().serializeToString(clone);
+    return text.length <= 2_000_000 ? text : null;
+  };
+  const tableIsComplex = (table: HTMLTableElement) =>
+    table.querySelector(
+      "[rowspan]:not([rowspan='1']), [colspan]:not([colspan='1']), table, td ul, td ol, td pre, th ul, td p + p",
+    ) !== null;
+  const cleanTable = (table: HTMLTableElement): string => {
+    const allowed = new Set([
+      "TABLE", "CAPTION", "COLGROUP", "COL", "THEAD", "TBODY", "TFOOT", "TR", "TH", "TD",
+      "UL", "OL", "LI", "P", "BR", "CODE", "PRE", "STRONG", "EM", "B", "I", "SUB", "SUP", "A",
+    ]);
+    const keep = new Set(["rowspan", "colspan", "scope", "span", "href"]);
+    const escape = (text: string) => text.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+    const walk = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) return escape(node.textContent ?? "");
+      if (!(node instanceof Element) || !lib.visible(node)) return "";
+      const inner = [...node.childNodes].map(walk).join("");
+      if (!allowed.has(node.tagName)) return inner;
+      const tag = node.tagName.toLowerCase();
+      const attrs = [...node.attributes]
+        .filter((a) => keep.has(a.name) && (a.name !== "href" || /^https?:/i.test(a.value)))
+        .map((a) => ` ${a.name}="${a.value.replace(/"/g, "&quot;")}"`)
+        .join("");
+      return tag === "br" || tag === "col" ? `<${tag}${attrs}>` : `<${tag}${attrs}>${inner}</${tag}>`;
+    };
+    return walk(table).replace(/>\s+</g, "><");
+  };
+  const placeholder = (parent: Node, text: string) => {
+    const p = out.createElement("p");
+    p.textContent = text;
+    parent.appendChild(p);
+  };
+  const mediaImg = (parent: Node, item: PageMedia, el: Element) => {
+    media.push(item);
+    const img = out.createElement("img");
+    img.setAttribute("src", `https://mt-media.invalid```ts
 /${item.index}`);
     img.setAttribute("alt", item.alt);
     const r = el.getBoundingClientRect();
