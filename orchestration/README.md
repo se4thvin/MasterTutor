@@ -39,3 +39,4 @@ orchestration/
 1. `STATE.md`: where we are and what's decided.
 2. `INDEX.md`: find the relevant run by topic/takeaway.
 3. `runs/<id>/report.md`: full detail.
+- **Long outputs (plans, big reports):** tell the subagent to write them to `.superpowers/plan-drafts/<name>.md` (subagents can write there) and reply with a ≤150-word summary. Long replies land in the orchestrator's context via task notifications, so only short replies are allowed.
