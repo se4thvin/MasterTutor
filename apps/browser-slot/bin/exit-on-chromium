@@ -8,7 +8,10 @@ while true; do
   len=$(printf '%s' "$header" | sed -n 's/.*len:\([0-9]*\).*/\1/p')
   payload=$(head -c "${len:-0}")
   case "$payload" in
-    *processname:chromium*) kill -TERM "$(cat /var/run/supervisord.pid)" ;;
+    *processname:chromium*)
+      supervisord_pid="$(cat /var/run/supervisord.pid)" || { echo "exit-on-chromium: cannot read supervisord pid" >&2; exit 1; }
+      kill -TERM "$supervisord_pid" || { echo "exit-on-chromium: cannot signal supervisord" >&2; exit 1; }
+      ;;
   esac
   printf 'RESULT 2\nOK'
 done
