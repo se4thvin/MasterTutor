@@ -2,6 +2,7 @@ import {
   DEFAULT_BUDGET,
   EMPTY_USAGE,
   MODELS,
+  SLOT_NAME_PATTERN,
   type ApprovalEdit,
   type ApprovalRequest,
   type Budget,
@@ -55,7 +56,7 @@ export const browserSlots = pgTable(
   },
   (t) => [
     unique("browser_slots_run_uq").on(t.runId),
-    check("browser_slots_name_valid", sql`${t.name} ~ '^browser-[1-9][0-9]?$'`),
+    check("browser_slots_name_valid", sql`${t.name} ~ ${sql.raw(`'${SLOT_NAME_PATTERN.source}'`)}`),
   ],
 );
 
