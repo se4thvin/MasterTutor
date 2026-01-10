@@ -1,8 +1,8 @@
 # MasterTutor: one Compose app (spec §3.1, §13). Local: `pnpm env:init`, then use compose.test.yml.
 name: mastertutor
 
-# Only `migrate` builds this image; agent and garage-init depend on it, which orders the build
-# (several services building one tag fails on Docker Desktop with "image already exists").
+# Only `migrate` builds this image; agent and garage-init reuse the tag (several services building
+# one tag fails on Docker Desktop with "image already exists"). Always start with `--build`.
 x-node-runtime: &node-runtime
   image: mastertutor/node-runtime:local
   networks:

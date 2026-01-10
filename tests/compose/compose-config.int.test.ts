@@ -77,12 +77,7 @@ describe("compose.yml", () => {
   it("places secrets with least privilege (spec §12 key placement)", () => {
     const web = Object.keys(env(base.services.web!));
     const agent = Object.keys(env(base.services.agent!));
-    for (const key of [
-      "VAULT_PRIVATE_KEY",
-      "NEKO_ADMIN_SECRET",
-      "OPENAI_API_KEY",
-      "S3_AGENT_SECRET_ACCESS_KEY",
-    ]) {
+    for (const key of ["VAULT_PRIVATE_KEY", "NEKO_ADMIN_SECRET", "OPENAI_API_KEY"]) {
       expect(web).not.toContain(key);
     }
     for (const key of [
@@ -110,6 +105,18 @@ describe("compose.yml", () => {
       .filter(([, service]) => service.image === "mastertutor/node-runtime:local" && service.build)
       .map(([name]) => name);
     expect(builders).toEqual(["migrate"]);
+  });
+
+  it("gives web and agent their own distinct S3 keys", () => {
+    const init = env(base.services["garage-init"]!);
+    const web = env(base.services.web!);
+    const agent = env(base.services.agent!);
+    expect(web.S3_ACCESS_KEY_ID).toBe(init.S3_WEB_ACCESS_KEY_ID);
+    expect(web.S3_SECRET_ACCESS_KEY).toBe(init.S3_WEB_SECRET_ACCESS_KEY);
+    expect(agent.S3_ACCESS_KEY_ID).toBe(init.S3_AGENT_ACCESS_KEY_ID);
+    expect(agent.S3_SECRET_ACCESS_KEY).toBe(init.S3_AGENT_SECRET_ACCESS_KEY);
+    expect(web.S3_ACCESS_KEY_ID).not.toBe(agent.S3_ACCESS_KEY_ID);
+    expect(web.S3_SECRET_ACCESS_KEY).not.toBe(agent.S3_SECRET_ACCESS_KEY);
   });
 
   it("isolates networks", () => {
