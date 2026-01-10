@@ -65,6 +65,10 @@ pass "slot CDP blocked for web (refused or timed out)"
   || fail "web cannot reach n.eko"
 pass "n.eko reachable from web"
 
+"${DC[@]}" exec -T agent node -e "fetch('http://browser-1:8080/health').then((r) => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))" \
+  || fail "agent cannot reach n.eko"
+pass "n.eko reachable from agent"
+
 # curl exit 7 = connection refused, 28 = timed out. Anything else (6 = DNS, 127 = no curl) fails.
 expect_blocked() {
   local label="$1" url="$2" rc=0
