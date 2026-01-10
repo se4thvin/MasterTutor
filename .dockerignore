@@ -1,0 +1,12 @@
+**/node_modules
+**/.next
+**/coverage
+.git
+.env
+.env.*
+.superpowers
+orchestration
+design
+docs
+apps/browser-slot
+*.md

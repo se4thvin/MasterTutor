@@ -1,0 +1,273 @@
+# MasterTutor: one Compose app (spec §3.1, §13). Local: `pnpm env:init`, then use compose.test.yml.
+name: mastertutor
+
+# Only `migrate` builds this image; agent and garage-init depend on it, which orders the build
+# (several services building one tag fails on Docker Desktop with "image already exists").
+x-node-runtime: &node-runtime
+  image: mastertutor/node-runtime:local
+  networks:
+    - backend
+
+x-node-health: &node-health
+  interval: 5s
+  timeout: 3s
+  retries: 20
+  start_period: 10s
+
+x-slot-env: &slot-env
+  NEKO_WEBRTC_NAT1TO1: ${PUBLIC_IP:?set PUBLIC_IP}
+  NEKO_ADMIN_SECRET: ${NEKO_ADMIN_SECRET:?set NEKO_ADMIN_SECRET}
+  NEKO_MEMBER_SECRET: ${NEKO_MEMBER_SECRET:?set NEKO_MEMBER_SECRET}
+  CDP_ALLOWED_IP: ${CDP_SUBNET_PREFIX:-172.30.231}.10
+  NEKO_ALLOWED_IPS: ${CDP_SUBNET_PREFIX:-172.30.231}.11,${CDP_SUBNET_PREFIX:-172.30.231}.12
+  SLOT_EGRESS_ALLOW_CIDRS: ${SLOT_EGRESS_ALLOW_CIDRS:-}
+
+x-browser-slot: &browser-slot
+  image: mastertutor/browser-slot:local
+  build:
+    context: ./apps/browser-slot
+  restart: always
+  shm_size: 2gb
+  cap_add:
+    - NET_ADMIN
+  # IPv6 is closed twice: here and by the entrypoint's ip6tables fallback.
+  sysctls:
+    net.ipv6.conf.all.disable_ipv6: 1
+    net.ipv6.conf.default.disable_ipv6: 1
+  security_opt:
+    - seccomp=./apps/browser-slot/seccomp/chromium.json
+  tmpfs:
+    - /tmp/chromium-profile:uid=1000,gid=1000,mode=0700
+  volumes:
+    - downloads:/downloads
+  networks:
+    cdp: {}
+    egress: {}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: mastertutor
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U owner -d mastertutor"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - backend
+
+  garage:
+    image: dxflrs/garage:v2.3.0
+    restart: unless-stopped
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?set GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?set GARAGE_ADMIN_TOKEN}
+    volumes:
+      - ./infra/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks:
+      - backend
+
+  garage-init:
+    <<: *node-runtime
+    restart: "no"
+    command: ["node", "packages/storage/src/bin/garage-init.ts"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      GARAGE_ADMIN_URL: http://garage:3903
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?set GARAGE_ADMIN_TOKEN}
+      S3_BUCKET: mastertutor
+      S3_WEB_ACCESS_KEY_ID: ${S3_WEB_ACCESS_KEY_ID:?set S3_WEB_ACCESS_KEY_ID}
+      S3_WEB_SECRET_ACCESS_KEY: ${S3_WEB_SECRET_ACCESS_KEY:?set S3_WEB_SECRET_ACCESS_KEY}
+      S3_AGENT_ACCESS_KEY_ID: ${S3_AGENT_ACCESS_KEY_ID:?set S3_AGENT_ACCESS_KEY_ID}
+      S3_AGENT_SECRET_ACCESS_KEY: ${S3_AGENT_SECRET_ACCESS_KEY:?set S3_AGENT_SECRET_ACCESS_KEY}
+    depends_on:
+      garage:
+        condition: service_healthy
+
+  migrate:
+    <<: *node-runtime
+    build:
+      context: .
+      target: node-runtime
+    restart: "no"
+    command: ["node", "packages/db/src/bin/migrate.ts"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://owner:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/mastertutor
+      WEB_DB_PASSWORD: ${WEB_DB_PASSWORD:?set WEB_DB_PASSWORD}
+      AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD}
+      BROWSER_SLOTS: ${BROWSER_SLOTS:-browser-1,browser-2,browser-3,browser-4,browser-5,browser-6}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: mastertutor/web:local
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://web_role:${WEB_DB_PASSWORD:?set WEB_DB_PASSWORD}@postgres:5432/mastertutor
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${PUBLIC_URL:?set PUBLIC_URL}
+      AUTH_SIGNUP_OPEN: ${AUTH_SIGNUP_OPEN:-0}
+      VAULT_PUBLIC_KEY: ${VAULT_PUBLIC_KEY:?set VAULT_PUBLIC_KEY}
+      NEKO_MEMBER_SECRET: ${NEKO_MEMBER_SECRET:?set NEKO_MEMBER_SECRET}
+      LIVE_COOKIE_SECRET: ${LIVE_COOKIE_SECRET:?set LIVE_COOKIE_SECRET}
+      TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET}
+      OPENAI_EMBEDDINGS_KEY: ${OPENAI_EMBEDDINGS_KEY:?set OPENAI_EMBEDDINGS_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      S3_ENDPOINT: http://garage:3900
+      S3_REGION: garage
+      S3_BUCKET: mastertutor
+      S3_ACCESS_KEY_ID: ${S3_WEB_ACCESS_KEY_ID:?set S3_WEB_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_WEB_SECRET_ACCESS_KEY:?set S3_WEB_SECRET_ACCESS_KEY}
+    healthcheck:
+      <<: *node-health
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      garage-init:
+        condition: service_completed_successfully
+    networks:
+      edge: {}
+      backend: {}
+      cdp:
+        ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.11
+
+  agent:
+    <<: *node-runtime
+    restart: unless-stopped
+    command: ["node", "apps/agent/src/main.ts"]
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://agent_role:${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD}@postgres:5432/mastertutor
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      VAULT_PRIVATE_KEY: ${VAULT_PRIVATE_KEY:?set VAULT_PRIVATE_KEY}
+      NEKO_ADMIN_SECRET: ${NEKO_ADMIN_SECRET:?set NEKO_ADMIN_SECRET}
+      S3_ENDPOINT: http://garage:3900
+      S3_REGION: garage
+      S3_BUCKET: mastertutor
+      S3_ACCESS_KEY_ID: ${S3_AGENT_ACCESS_KEY_ID:?set S3_AGENT_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_AGENT_SECRET_ACCESS_KEY:?set S3_AGENT_SECRET_ACCESS_KEY}
+      BROWSER_SLOTS: ${BROWSER_SLOTS:-browser-1,browser-2,browser-3,browser-4,browser-5,browser-6}
+      AGENT_TEST_MODE: ${AGENT_TEST_MODE:-0}
+      AGENT_HEALTH_PORT: "8787"
+    volumes:
+      - downloads:/downloads
+    healthcheck:
+      <<: *node-health
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      garage-init:
+        condition: service_completed_successfully
+    networks:
+      backend: {}
+      cdp:
+        ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.10
+
+  browser-1:
+    <<: *browser-slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-1
+      NEKO_WEBRTC_UDPMUX: "59001"
+      NEKO_WEBRTC_TCPMUX: "59001"
+    ports: ["59001:59001/udp", "59001:59001/tcp"]
+
+  browser-2:
+    <<: *browser-slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-2
+      NEKO_WEBRTC_UDPMUX: "59002"
+      NEKO_WEBRTC_TCPMUX: "59002"
+    ports: ["59002:59002/udp", "59002:59002/tcp"]
+
+  browser-3:
+    <<: *browser-slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-3
+      NEKO_WEBRTC_UDPMUX: "59003"
+      NEKO_WEBRTC_TCPMUX: "59003"
+    ports: ["59003:59003/udp", "59003:59003/tcp"]
+
+  browser-4:
+    <<: *browser-slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-4
+      NEKO_WEBRTC_UDPMUX: "59004"
+      NEKO_WEBRTC_TCPMUX: "59004"
+    ports: ["59004:59004/udp", "59004:59004/tcp"]
+
+  browser-5:
+    <<: *browser-slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-5
+      NEKO_WEBRTC_UDPMUX: "59005"
+      NEKO_WEBRTC_TCPMUX: "59005"
+    ports: ["59005:59005/udp", "59005:59005/tcp"]
+
+  browser-6:
+    <<: *browser-slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-6
+      NEKO_WEBRTC_UDPMUX: "59006"
+      NEKO_WEBRTC_TCPMUX: "59006"
+    ports: ["59006:59006/udp", "59006:59006/tcp"]
+
+networks:
+  edge: {}
+  backend: {}
+  egress: {}
+  cdp:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${CDP_SUBNET_PREFIX:-172.30.231}.0/24
+          ip_range: ${CDP_SUBNET_PREFIX:-172.30.231}.128/25
+
+volumes:
+  pgdata: {}
+  garage-meta: {}
+  garage-data: {}
+  downloads: {}

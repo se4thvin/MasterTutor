@@ -1,0 +1,38 @@
+# Test overlay. Run: pnpm compose:test up -d --build --wait
+# Production Traefik is Dokploy's; B6 adds the per-slot /live routers.
+services:
+  traefik:
+    image: traefik:v3.7.13
+    command:
+      - --entrypoints.web.address=:80
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --ping=true
+      - --log.level=WARN
+    volumes:
+      - ./infra/traefik/test-dynamic.yml:/etc/traefik/dynamic.yml:ro
+    ports:
+      - "127.0.0.1:${TEST_HTTP_PORT:-18080}:80"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      edge: {}
+      cdp:
+        ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.12
+
+  # Phase 0 runs a single slot to save memory and disk. Later E2E phases re-enable browser-2.
+  browser-2:
+    profiles: !override ["extra-slots"]
+  browser-3:
+    profiles: !override ["extra-slots"]
+  browser-4:
+    profiles: !override ["extra-slots"]
+  browser-5:
+    profiles: !override ["extra-slots"]
+  browser-6:
+    profiles: !override ["extra-slots"]

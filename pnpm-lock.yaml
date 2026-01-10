@@ -11,6 +11,9 @@ importers:
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.12.0)
+      '@mastertutor/contracts':
+        specifier: workspace:*
+        version: link:packages/contracts
       '@types/node':
         specifier: 24.19.1
         version: 24.19.1
