@@ -8,7 +8,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 
 ## Current phase
 
-**Planning → build (goal D32).** The spec is final and committed (7186eef), with no pending items. The Phase 0 plan is being written (run 19); the other phase plans follow and will reference Phase 0's exact contract names. The 3D hero is finalized (run 16).
+**Build (goal D32).** All plans are written (docs/superpowers/plans/). Phase 0 is COMPLETE (8e8152d..3448ce1; final review running). Backend track runs in the main worktree (next: B1, then B3, B6, B2/4/5). The frontend track runs in `.worktrees/fe` (branch fe-track; F1/F2/F4 then F3/F5) and merges back per phase. Ledgers live in each worktree's `.superpowers/sdd/<plan>/progress.md`. After that: Phase 7 integration, then Phase 10 benchmark.
 
 ## Decisions (user-confirmed)
 
