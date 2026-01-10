@@ -11,6 +11,11 @@
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
     "@mastertutor/storage": "workspace:*",
+    "drizzle-orm": "0.45.3",
+    "openai": "7.28.0",
+    "playwright-core": "1.63.0",
+    "postgres": "3.4.9",
+    "sharp": "0.35.5",
     "zod": "4.6.5"
   }
 }
