@@ -12,7 +12,6 @@ export const MODELS = {
 
 export const EMBEDDING_DIMENSIONS = 1536;
 export const VIEWPORT = { width: 1280, height: 800 } as const;
-export const DEFAULT_SLOT_COUNT = 6;
 export const DEFAULT_CONCURRENCY = 6;
 export const NOTIFY_MAX_BYTES = 200;
 
