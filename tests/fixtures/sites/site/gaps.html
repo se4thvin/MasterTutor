@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Gaps fixture</title>
+    <style>
+      body {
+        margin: 0;
+        height: 3000px;
+        font: 16px sans-serif;
+      }
+      .abs {
+        position: absolute;
+      }
+      #box {
+        position: fixed;
+        left: 40px;
+        top: 300px;
+        width: 220px;
+        height: 100px;
+        overflow-y: auto;
+        border: 1px solid #999;
+      }
+      #box div {
+        height: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <input id="first" class="abs" aria-label="First" style="left: 40px; top: 40px" />
+    <input
+      id="second"
+      type="password"
+      aria-label="Second"
+      class="abs"
+      style="left: 40px; top: 80px"
+    />
+
+    <input
+      id="adv"
+      class="abs"
+      aria-label="Code part"
+      maxlength="2"
+      style="left: 300px; top: 40px"
+    />
+    <input
+      id="adv-pw"
+      type="password"
+      aria-label="Pass"
+      class="abs"
+      style="left: 300px; top: 80px"
+    />
+
+    <div
+      id="ce"
+      contenteditable="true"
+      class="abs"
+      style="left: 40px; top: 130px; width: 200px; height: 30px; border: 1px solid #999"
+    >
+      s3cr3t
+    </div>
+
+    <label class="abs" style="left: 40px; top: 190px"
+      ><input id="custom" type="checkbox" style="opacity: 0; position: absolute" /> Custom
+      check</label
+    >
+
+    <div id="cdiv" class="abs" style="left: 300px; top: 190px; cursor: pointer">
+      <span>Pointer div</span>
+    </div>
+    <output id="cdiv-count" class="abs" style="left: 420px; top: 190px">0</output>
+
+    <div id="box" class="abs"></div>
+    <button
+      id="fold"
+      style="position: fixed; left: 500px; bottom: -30px; height: 60px; width: 120px"
+    >
+      Fold button
+    </button>
+    <button id="risky" class="abs" style="left: 500px; top: 300px">Delete account</button>
+
+    <script>
+      const first = document.getElementById("first");
+      document.getElementById("adv").addEventListener("input", (e) => {
+        if (e.target.value.length >= 2) document.getElementById("adv-pw").focus();
+      });
+      document.getElementById("cdiv").addEventListener("click", () => {
+        const out = document.getElementById("cdiv-count");
+        out.textContent = String(Number(out.textContent) + 1);
+      });
+      const box = document.getElementById("box");
+      for (let i = 1; i <= 20; i++) {
+        const d = document.createElement("div");
+        d.tabIndex = 0;
+        d.textContent = `Row ${i}`;
+        box.append(d);
+      }
+    </script>
+  </body>
+</html>

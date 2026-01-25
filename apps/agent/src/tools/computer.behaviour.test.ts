@@ -203,3 +203,114 @@ describe("ComputerExecutor", () => {
     ).rejects.toBeInstanceOf(ControlHeld);
   });
 });
+
+describe("ComputerExecutor review gaps (group C fix round)", () => {
+  it("refuses a tab character in typed text so focus cannot reach a password field", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    await executor.execute(click(await point(s, "First")), signal);
+    const note = await executor.execute({ type: "type", text: "x\tsecret" }, signal);
+    expect(note).toMatch(/Tab/);
+    expect(await s.page.inputValue("#first")).toBe("");
+    expect(await s.page.inputValue("#second")).toBe("");
+  });
+
+  it("refuses printable single keys while a secret field has focus", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    await executor.execute(click(await point(s, "Second")), signal);
+    for (const key of ["h", "H", "7"]) {
+      expect(await executor.execute({ type: "keypress", keys: [key] }, signal)).toBe(
+        SECRET_FIELD_REFUSAL,
+      );
+    }
+    expect(await s.page.inputValue("#second")).toBe("");
+    // Non-printing keys still work in a secret field.
+    expect(await executor.execute({ type: "keypress", keys: ["BACKSPACE"] }, signal)).toBeNull();
+  });
+
+  it("never types into a password field the page focuses mid-string", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    await executor.execute(click(await point(s, "Code part")), signal);
+    const run = await executor.run(
+      [{ type: "type", text: "abcdefghijklmnopqrstuvwxyz0123" }],
+      signal,
+    );
+    expect(await s.page.inputValue("#adv")).toBe("ab");
+    expect(await s.page.inputValue("#adv-pw")).toBe("");
+    expect(run.notes.join(" ")).toContain(SECRET_FIELD_REFUSAL);
+  });
+
+  it("stops a batch after a refusal or no-op instead of running later actions", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    const target = click(await point(s, "Pointer div"));
+    const run = await executor.run([{ type: "type", text: "stray" }, target], signal);
+    expect(run.executed).toBe(1);
+    expect(run.notes.join(" ")).toMatch(/Nothing editable/);
+    expect(run.notes.join(" ")).toMatch(/remaining 1 action/);
+    expect(await text(s, "#cdiv-count")).toBe("0");
+    const outside = await executor.run(
+      [{ type: "click", x: 10, y: 799, button: "left" }, target],
+      signal,
+    );
+    expect(outside.executed).toBe(1);
+    expect(await text(s, "#cdiv-count")).toBe("0");
+    // Informational notes (address bar) do not stop a batch.
+    const bar = await executor.run(
+      [
+        { type: "keypress", keys: ["CTRL", "L"] },
+        { type: "type", text: `${SITE}/page2` },
+        { type: "keypress", keys: ["ENTER"] },
+      ],
+      signal,
+    );
+    expect(bar.executed).toBe(3);
+    expect(s.page.url()).toBe(`${SITE}/page2`);
+  });
+
+  it("counts scroll chaining as an effect when the inner box is already at its edge", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    const box = await point(s, "Row 1");
+    await s.page.evaluate(() => {
+      const el = document.getElementById("box")!;
+      el.scrollTop = el.scrollHeight;
+    });
+    expect(
+      await executor.execute(
+        { type: "scroll", x: box.x, y: box.y, scroll_x: 0, scroll_y: 200 },
+        signal,
+      ),
+    ).toBeNull();
+    expect(await s.page.evaluate(() => scrollY)).toBeGreaterThan(0);
+  });
+
+  it("releases the mouse button when a drag fails midway", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    let ups = 0;
+    const mouse = s.page.mouse;
+    const realUp = mouse.up.bind(mouse);
+    const realMove = mouse.move.bind(mouse);
+    let moves = 0;
+    mouse.up = async (...args) => {
+      ups += 1;
+      return realUp(...args);
+    };
+    mouse.move = async (...args) => {
+      moves += 1;
+      if (moves === 2) throw new Error("boom");
+      return realMove(...args);
+    };
+    await expect(
+      executor.execute(
+        {
+          type: "drag",
+          path: [
+            { x: 10, y: 10 },
+            { x: 50, y: 50 },
+            { x: 90, y: 90 },
+          ],
+        },
+        signal,
+      ),
+    ).rejects.toThrow("boom");
+    expect(ups).toBe(1);
+  });
+});

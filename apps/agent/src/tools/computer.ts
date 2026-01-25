@@ -1,5 +1,13 @@
 import type { ComputerAction } from "@mastertutor/contracts";
-import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
+import {
+  armSecretBlock,
+  disarmSecretBlock,
+  focusTarget,
+  hitTest,
+  scrollState,
+  type ScrollState,
+} from "../browser/hit-test.ts";
+import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
 import { pause } from "../runtime/abortable.ts";
@@ -19,14 +27,29 @@ export const SECRET_FIELD_REFUSAL =
 const TYPE_CHUNK = 24;
 const SCROLL_STEP = 240;
 
+/** One printable key, optionally with Shift: it would type a character into the focused field. */
+function isPrintable(keys: readonly string[]): boolean {
+  const names = keys.map((key) => normalizeCombo([key]));
+  if (names.some((name) => ["CTRL", "ALT", "META"].includes(name))) return false;
+  const rest = names.filter((name) => name !== "SHIFT");
+  return rest.length === 1 && (rest[0]?.length === 1 || rest[0] === "SPACE");
+}
+
 const step = (remaining: number) =>
   Math.sign(remaining) * Math.min(Math.abs(remaining), SCROLL_STEP);
 const sameScroll = (a: ScrollState | null, b: ScrollState | null) =>
   a !== null &&
   b !== null &&
-  a.key === b.key &&
-  Math.abs(a.top - b.top) < 1 &&
-  Math.abs(a.left - b.left) < 1;
+  a.chain.length === b.chain.length &&
+  a.chain.every((entry, index) => {
+    const other = b.chain[index];
+    return (
+      other !== undefined &&
+      entry.key === other.key &&
+      Math.abs(entry.top - other.top) < 1 &&
+      Math.abs(entry.left - other.left) < 1
+    );
+  });
 
 /**
  * Executes the allowlisted computer actions as CDP Input through Playwright (spec §6). Coordinates
@@ -38,6 +61,8 @@ export class ComputerExecutor {
   readonly #session: BrowserSession;
   readonly #clock: Clock;
   readonly #waitActionMs: number;
+  /** Set when the current action ended in a refusal or no-op note (the batch must stop). */
+  #refused = false;
 
   constructor(session: BrowserSession, options: { clock: Clock; waitActionMs: number }) {
     this.#session = session;
@@ -61,10 +86,20 @@ export class ComputerExecutor {
         break;
       }
       const urlBefore = this.#session.page.url();
+      this.#refused = false;
       const note = await this.execute(action, signal);
       executed += 1;
       if (note) notes.push(note);
       const remaining = actions.length - index - 1;
+      if (this.#refused) {
+        // A refusal or no-op means the screen is not what the model assumed; later actions would run blind.
+        if (remaining > 0) {
+          notes.push(
+            `Action ${index + 1} (${action.type}) did not take effect; the remaining ${remaining} action(s) were not run. Look at the screen and decide again.`,
+          );
+        }
+        break;
+      }
       if (remaining > 0 && this.#session.page.url() !== urlBefore) {
         notes.push(
           `The page changed after action ${index + 1}; the remaining ${remaining} action(s) were not run. Look at the new screen first.`,
@@ -108,10 +143,17 @@ export class ComputerExecutor {
     }
   }
 
+  #refuse(note: string): string {
+    this.#refused = true;
+    return note;
+  }
+
   async #outside(x: number, y: number): Promise<string> {
     const layout = await this.#session.layout();
     const scale = this.#session.lastScale;
-    return `The point (${x}, ${y}) is outside the visible page (${Math.round(layout.width * scale)}×${Math.round(layout.height * scale)} screenshot pixels); nothing was done.`;
+    return this.#refuse(
+      `The point (${x}, ${y}) is outside the visible page (${Math.round(layout.width * scale)}×${Math.round(layout.height * scale)} screenshot pixels); nothing was done.`,
+    );
   }
 
   async #click(
@@ -165,11 +207,15 @@ export class ComputerExecutor {
     this.#session.guard.assertAgent(signal);
     await mouse.move(first.x, first.y);
     await mouse.down();
-    for (const point of rest) {
-      this.#session.guard.assertAgent(signal);
-      await mouse.move(point.x, point.y, { steps: 5 });
+    try {
+      for (const point of rest) {
+        this.#session.guard.assertAgent(signal);
+        await mouse.move(point.x, point.y, { steps: 5 });
+      }
+    } finally {
+      // Never leave the button down after an abort, a takeover or a failed move.
+      await mouse.up().catch(() => undefined);
     }
-    await mouse.up();
     await settle(this.#session, signal);
     return null;
   }
@@ -205,7 +251,20 @@ export class ComputerExecutor {
     }
     await settle(this.#session, signal, { maxQuietMs: 500 });
     if (sameScroll(before, after)) {
-      return `Scrolling at (${action.x}, ${action.y}) had no effect: that area is already at its edge or cannot scroll. Try another spot or direction.`;
+      return this.#refuse(
+        `Scrolling at (${action.x}, ${action.y}) had no effect: that area is already at its edge or cannot scroll. Try another spot or direction.`,
+      );
+    }
+    return null;
+  }
+
+  /** A refusal for the focused element, or null when typing into it is allowed. */
+  #typingRefusal(focus: TargetDescription | null): string | null {
+    if (focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
+    if (!focus?.editable) {
+      return this.#refuse(
+        "Nothing editable has focus, so nothing was typed. Click the field first.",
+      );
     }
     return null;
   }
@@ -215,13 +274,28 @@ export class ComputerExecutor {
       this.omnibox.type(text);
       return null;
     }
-    const focus = await focusTarget(this.#session);
-    if (focus?.isSecretField) return SECRET_FIELD_REFUSAL;
-    if (!focus?.editable)
-      return "Nothing editable has focus, so nothing was typed. Click the field first.";
-    for (let offset = 0; offset < text.length; offset += TYPE_CHUNK) {
-      this.#session.guard.assertAgent(signal);
-      await this.#session.page.keyboard.type(text.slice(offset, offset + TYPE_CHUNK));
+    if (text.includes("\t")) {
+      return this.#refuse(
+        "Tab characters cannot be typed: they move focus to another field. Type each field's text separately and press TAB with keypress.",
+      );
+    }
+    let refusal = this.#typingRefusal(await focusTarget(this.#session));
+    if (refusal) return refusal;
+    await armSecretBlock(this.#session);
+    try {
+      for (let offset = 0; offset < text.length; offset += TYPE_CHUNK) {
+        this.#session.guard.assertAgent(signal);
+        // Focus can move while typing (auto-advance fields): check before every chunk.
+        if (offset > 0) {
+          refusal = this.#typingRefusal(await focusTarget(this.#session));
+          if (refusal) return refusal;
+        }
+        await this.#session.page.keyboard.type(text.slice(offset, offset + TYPE_CHUNK));
+      }
+      const focus = await focusTarget(this.#session);
+      if (focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
+    } finally {
+      await disarmSecretBlock(this.#session);
     }
     await settle(this.#session, signal);
     return null;
@@ -232,9 +306,9 @@ export class ComputerExecutor {
       const combo = normalizeCombo(keys);
       if (combo === "ENTER") {
         const url = this.omnibox.take();
-        if (!url) return "That is not a valid http(s) URL; nothing was opened.";
+        if (!url) return this.#refuse("That is not a valid http(s) URL; nothing was opened.");
         const opened = await this.#session.goto(url, signal);
-        if (!opened) return `Could not open ${url}.`;
+        if (!opened) return this.#refuse(`Could not open ${url}.`);
         await settle(this.#session, signal);
         return null;
       }
@@ -258,11 +332,24 @@ export class ComputerExecutor {
     try {
       combo = toPlaywrightCombo(keys);
     } catch (error) {
-      if (error instanceof UnknownKey) return `${error.message}; nothing was pressed.`;
+      if (error instanceof UnknownKey)
+        return this.#refuse(`${error.message}; nothing was pressed.`);
       throw error;
     }
     this.#session.guard.assertAgent(signal);
-    await this.#session.page.keyboard.press(combo);
+    if (isPrintable(keys)) {
+      // A lone printable key types a character: refuse it in a secret field like `type` does.
+      if ((await focusTarget(this.#session))?.isSecretField)
+        return this.#refuse(SECRET_FIELD_REFUSAL);
+      await armSecretBlock(this.#session);
+      try {
+        await this.#session.page.keyboard.press(combo);
+      } finally {
+        await disarmSecretBlock(this.#session);
+      }
+    } else {
+      await this.#session.page.keyboard.press(combo);
+    }
     await settle(this.#session, signal);
     return null;
   }
@@ -279,7 +366,7 @@ export class ComputerExecutor {
         ).catch(() => null);
         await settle(this.#session, signal);
         return response === null && page.url() === "about:blank"
-          ? `There is no page to go ${kind} to.`
+          ? this.#refuse(`There is no page to go ${kind} to.`)
           : null;
       }
       case "reload":
@@ -291,7 +378,9 @@ export class ComputerExecutor {
         return "Address bar focused: type the full URL, then press ENTER.";
       case "new_tab":
       case "close_tab":
-        return "Tabs are managed automatically. Use CTRL+L to open a URL in the current tab.";
+        return this.#refuse(
+          "Tabs are managed automatically. Use CTRL+L to open a URL in the current tab.",
+        );
     }
   }
 }

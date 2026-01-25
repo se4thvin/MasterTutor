@@ -55,6 +55,9 @@ export async function startLlmMock(
   const scenarios = new Map<string, Scenario>();
   const states = new Map<string, ScenarioState>();
   const chains = new Map<string, string>();
+  /** Every call_id the mock has issued, and the calls each response left waiting for an output. */
+  const issued = new Set<string>();
+  const pending = new Map<string, Set<string>>();
   const requests: RecordedRequest[] = [];
   const failures: string[] = [];
   let counter = 0;
@@ -95,6 +98,21 @@ export async function startLlmMock(
             pending_safety_checks: [],
           };
         }
+        case "computer_single":
+          return {
+            type: "computer_call",
+            id: nextId("cu"),
+            call_id: nextId("call"),
+            status: "completed",
+            action: output.action,
+            pending_safety_checks: [],
+          };
+        case "reasoning":
+          return {
+            type: "reasoning",
+            id: nextId("rs"),
+            summary: output.text ? [{ type: "summary_text", text: output.text }] : [],
+          };
         case "function":
           return {
             type: "function_call",
@@ -135,6 +153,14 @@ export async function startLlmMock(
   ) => {
     const id = nextId("resp");
     if (name) chains.set(id, name);
+    const calls = new Set<string>();
+    for (const item of output as Array<{ type?: string; call_id?: string }>) {
+      if ((item.type === "function_call" || item.type === "computer_call") && item.call_id) {
+        calls.add(item.call_id);
+        issued.add(item.call_id);
+      }
+    }
+    pending.set(id, calls);
     const input = usage.input ?? 1_000;
     const out = usage.output ?? 100;
     send(response, 200, {
@@ -161,6 +187,28 @@ export async function startLlmMock(
         total_tokens: input + out,
       },
     });
+  };
+
+  /** The real API rejects tool outputs without a call and calls without an output. */
+  const pairingProblem = (body: MockRequestBody): string | null => {
+    const items = Array.isArray(body.input) ? (body.input as Array<Record<string, unknown>>) : [];
+    const outputIds = new Set<string>();
+    const callIds = new Set<string>();
+    for (const item of items) {
+      const id = typeof item.call_id === "string" ? item.call_id : null;
+      if (!id) continue;
+      if (item.type === "function_call_output" || item.type === "computer_call_output") {
+        if (!issued.has(id)) return `No tool call found for call_id ${id}.`;
+        outputIds.add(id);
+      } else if (item.type === "function_call" || item.type === "computer_call") {
+        callIds.add(id);
+      }
+    }
+    const waiting = body.previous_response_id ? pending.get(body.previous_response_id) : undefined;
+    for (const id of [...(waiting ?? []), ...callIds]) {
+      if (!outputIds.has(id)) return `No tool output found for call_id ${id}.`;
+    }
+    return null;
   };
 
   const server = createServer((request, response) => {
@@ -200,6 +248,14 @@ export async function startLlmMock(
             content: [{ type: "output_text", annotations: [], text: JSON.stringify(summary) }],
           },
         ]);
+      }
+      const pairing = pairingProblem(body);
+      if (pairing) {
+        requests.push({ scenario: name, turn: null, body, at: Date.now() });
+        failures.push(`${name} request: ${pairing}`);
+        return send(response, 400, {
+          error: { message: pairing, type: "invalid_request_error", param: "input", code: null },
+        });
       }
       const index = state.cursor;
       state.cursor += 1;

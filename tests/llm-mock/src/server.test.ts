@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { SCENARIOS } from "./scenarios/index.ts";
 import { startLlmMock, type LlmMock } from "./server.ts";
 
 let mock: LlmMock | undefined;
@@ -76,10 +77,17 @@ describe("llm-mock", () => {
       type: "computer_call",
       actions: [{ type: "click", x: 40, y: 60, button: "left" }],
     });
+    const clickCall = (second.body.output as Array<Record<string, unknown>>)[0]!;
     const third = await post({
       model: "gpt-6-astra",
       previous_response_id: second.body.id,
-      input: [],
+      input: [
+        {
+          type: "computer_call_output",
+          call_id: clickCall.call_id,
+          output: { type: "computer_screenshot", image_url: "data:image/png;base64,AAAA" },
+        },
+      ],
     });
     const message = (third.body.output as Array<{ content: Array<{ text: string }> }>)[0]!;
     expect(JSON.parse(message.content[0]!.text)).toEqual({
@@ -119,5 +127,47 @@ describe("llm-mock", () => {
     expect(compaction.status).toBe(200);
     expect((await post({ input: userInput("[scenario:errors]") })).status).toBe(418);
     expect(mock.failures).toEqual(["errors turn 1: expected a screenshot"]);
+  });
+
+  it("rejects unknown and unpaired tool outputs like the real API", async () => {
+    mock = await startLlmMock({
+      scenarios: [
+        {
+          name: "pairing",
+          turns: [
+            {
+              outputs: [
+                { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+              ],
+            },
+            { outputs: [{ type: "turn", status: "done", reason: "ok" }] },
+          ],
+        },
+      ],
+    });
+    const first = await post({ input: userInput("[scenario:pairing]") });
+    const call = (first.body.output as Array<Record<string, unknown>>)[0]!;
+    const unpaired = await post({ previous_response_id: first.body.id, input: [] });
+    expect(unpaired.status).toBe(400);
+    const unknown = await post({
+      previous_response_id: first.body.id,
+      input: [{ type: "function_call_output", call_id: "call_nope", output: "{}" }],
+    });
+    expect(unknown.status).toBe(400);
+    expect(mock.failures).toHaveLength(2);
+    const ok = await post({
+      previous_response_id: first.body.id,
+      input: [{ type: "function_call_output", call_id: call.call_id, output: "{}" }],
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it("emits the single-action computer_call shape and reasoning items", async () => {
+    mock = await startLlmMock({ scenarios: SCENARIOS.filter((s) => s.name === "wire-shapes") });
+    const first = await post({ input: userInput("[scenario:wire-shapes]") });
+    const output = first.body.output as Array<Record<string, unknown>>;
+    expect(output[0]).toMatchObject({ type: "reasoning" });
+    expect(output[1]).toMatchObject({ type: "computer_call", action: { type: "screenshot" } });
+    expect(output[1]).not.toHaveProperty("actions");
   });
 });

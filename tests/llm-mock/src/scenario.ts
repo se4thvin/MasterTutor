@@ -5,6 +5,10 @@ export type MockOutput =
       safetyChecks?: Array<{ id: string; code: string; message: string }>;
     }
   | { type: "click_named"; name: string }
+  /** A computer_call in the single-`action` shape some model versions emit instead of `actions`. */
+  | { type: "computer_single"; action: Record<string, unknown> }
+  /** A reasoning item, as returned when reasoning effort is above none. */
+  | { type: "reasoning"; text?: string }
   | { type: "function"; name: string; args: Record<string, unknown> }
   | {
       type: "turn";

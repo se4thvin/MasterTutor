@@ -23,10 +23,15 @@ export function needsApproval(
         return { kind: "form_submit", formSummary: `Submit "${target.label || "form"}"`, action };
       }
       return null;
-    case "keypress":
-      return normalizeCombo(action.keys) === "ENTER" && target.formKind === "other"
+    case "keypress": {
+      const combo = normalizeCombo(action.keys);
+      if ((combo === "ENTER" || combo === "SPACE") && isRiskyLabel(target.label)) {
+        return { kind: "risky_click", label: target.label, action };
+      }
+      return combo === "ENTER" && target.formKind === "other"
         ? { kind: "form_submit", formSummary: "Press Enter in a form", action }
         : null;
+    }
     case "type":
       return action.text.includes("\n") && target.formKind === "other"
         ? { kind: "form_submit", formSummary: "Type a line break into a form", action }
