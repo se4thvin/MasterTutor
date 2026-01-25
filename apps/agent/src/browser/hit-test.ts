@@ -53,7 +53,14 @@ export function hitTestScript(
   if (!hit) return { target: null, snap: null };
   const target = h.describeTarget(hit);
   if (target.interactive) return { target, snap: null };
-  const near = [...document.querySelectorAll(SELECTOR)].filter((el) => {
+  // cursor:pointer elements count as interactive (matching read_page), where the pointer starts.
+  const candidates = [...document.querySelectorAll("*")].filter((el) => {
+    if (el.matches(SELECTOR)) return true;
+    if (getComputedStyle(el).cursor !== "pointer" || el.closest(SELECTOR)) return false;
+    const parent = el.parentElement;
+    return !parent || getComputedStyle(parent).cursor !== "pointer";
+  });
+  const near = candidates.filter((el) => {
     const r = el.getBoundingClientRect();
     return (
       r.width > 0 &&

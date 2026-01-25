@@ -120,6 +120,16 @@ export function readPageScript(
         200,
       );
     }
+    const EDITABLE =
+      'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="textbox"], [role="combobox"], [role="searchbox"]';
+    if (el.querySelector(EDITABLE)) {
+      // A wrapper (label, clickable div) around an editable: name it from its own text only.
+      const own = clean(el.getAttribute("title"), 200);
+      if (own) return own;
+      const copy = el.cloneNode(true) as Element;
+      for (const inner of copy.querySelectorAll(EDITABLE)) inner.remove();
+      return clean(copy.textContent, 200);
+    }
     const text = clean((el as HTMLElement).innerText ?? el.textContent, 200);
     if (text) return text;
     return clean(

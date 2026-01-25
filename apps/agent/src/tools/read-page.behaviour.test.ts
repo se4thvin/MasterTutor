@@ -138,4 +138,15 @@ describe("read_page review gaps (group C fix round)", () => {
     expect(elements.filter((element) => element.name.startsWith("Pointer div"))).toHaveLength(1);
     expect(byName(elements, "Fold button").point).not.toBeNull();
   });
+
+  it("names wrappers around editable elements without the editable's content", async () => {
+    const { s, elements } = await interactive("/gaps.html");
+    const wrapped = elements.find((element) => element.name.startsWith("Wrapped label"));
+    const pointer = elements.find((element) => element.name.startsWith("Pointer wrap"));
+    expect(wrapped?.tag).toBe("label");
+    expect(pointer?.tag).toBe("div");
+    const dump = JSON.stringify(await readPage(s, { mode: "interactive", sinceHash: null }));
+    expect(dump).not.toContain("w4rp");
+    expect(dump).not.toContain("p4rp");
+  });
 });
