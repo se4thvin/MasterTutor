@@ -103,6 +103,15 @@ export function isFixtureHost(host: string): boolean {
   return /(^|\.)fixtures\.test$/i.test(host);
 }
 
+const DNS_CACHE_MAX = 500;
+const DNS_CACHE_TTL_MS = 60_000;
+
+/**
+ * Name-based private-range check. This is defence in depth, not the boundary: the slot's iptables
+ * rules (Phase 0) are the real egress control. Node resolves here and Chromium resolves again, so
+ * a rebinding answer can differ; the post-response serverAddr() check in installNetworkPolicy
+ * closes most of that gap, and iptables closes the rest. A lookup error fails closed.
+ */
 export class PrivateHostCheck {
   readonly #resolve: HostResolver;
   readonly #cache = new Map<string, { privateHost: boolean; expires: number }>();
@@ -116,45 +125,82 @@ export class PrivateHostCheck {
     if (isIP(host)) return isPrivateAddress(host);
     if (host === "localhost" || host.endsWith(".localhost")) return true;
     const cached = this.#cache.get(host);
-    if (cached && cached.expires > Date.now()) return cached.privateHost;
+    if (cached && cached.expires > Date.now()) {
+      this.#cache.delete(host); // refresh recency (LRU)
+      this.#cache.set(host, cached);
+      return cached.privateHost;
+    }
     let privateHost: boolean;
     try {
       privateHost = (await this.#resolve(host)).some(isPrivateAddress);
     } catch {
-      privateHost = false;
+      privateHost = true;
     }
-    this.#cache.set(host, { privateHost, expires: Date.now() + 60_000 });
+    this.#cache.delete(host);
+    this.#cache.set(host, { privateHost, expires: Date.now() + DNS_CACHE_TTL_MS });
+    while (this.#cache.size > DNS_CACHE_MAX) {
+      const oldest = this.#cache.keys().next().value;
+      if (oldest === undefined) break;
+      this.#cache.delete(oldest);
+    }
     return privateHost;
   }
+}
+
+export interface PrivateConnection {
+  url: string;
+  ip: string;
+  topLevel: boolean;
 }
 
 export interface NetworkPolicyOptions {
   allowedOrigins(): readonly string[];
   testMode: boolean;
   onBlockedNavigation(block: BlockedNavigation): void;
+  /** A response arrived from a private address although the pre-request check passed (rebinding). */
+  onPrivateConnection?(hit: PrivateConnection): void;
   resolveHost?: HostResolver;
 }
 
-function isTopLevelNavigation(route: Route): boolean {
-  const request = route.request();
-  if (!request.isNavigationRequest()) return false;
+export interface NetworkPolicy {
+  /** Resolves once every response seen so far has been checked against its connected address. */
+  settled(): Promise<void>;
+}
+
+/** Only http(s) documents, plus about:blank, may be loaded at top level. */
+export function isAllowedNavigationScheme(raw: string): boolean {
   try {
-    return request.frame().parentFrame() === null;
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" || url.href === "about:blank";
   } catch {
     return false;
   }
 }
 
+/** Fails closed: when the request cannot be inspected it is treated as a top-level navigation. */
+function isTopLevelNavigation(route: Route): boolean {
+  try {
+    const request = route.request();
+    if (!request.isNavigationRequest()) return false;
+    return request.frame().parentFrame() === null;
+  } catch {
+    return true;
+  }
+}
+
 /**
- * Domain allowlist in code (spec §5.5): top-level documents outside allowed_origins are aborted
- * and reported (→ new_origin approval); private ranges are blocked for every request. Fixture
- * hosts bypass only the private-range check, and only when AGENT_TEST_MODE=1.
+ * Domain allowlist in code (spec §5.5): top-level documents outside allowed_origins, and every
+ * top-level non-http(s) scheme (file:, view-source:, chrome:, data:, ...) except about:blank, are
+ * aborted and reported; private ranges are blocked for every request. Fixture hosts bypass only the
+ * private-range check, and only when AGENT_TEST_MODE=1. WebSockets and service workers are not
+ * covered by context.route; the slot's iptables egress rules are the real boundary for those.
  */
 export async function installNetworkPolicy(
   context: BrowserContext,
   options: NetworkPolicyOptions,
-): Promise<void> {
+): Promise<NetworkPolicy> {
   const privateHosts = new PrivateHostCheck(options.resolveHost);
+  const pending = new Set<Promise<void>>();
   await context.route("**/*", async (route) => {
     let url: URL;
     try {
@@ -163,8 +209,10 @@ export async function installNetworkPolicy(
       await route.abort("blockedbyclient");
       return;
     }
+    const topLevel = isTopLevelNavigation(route);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-      await route.continue();
+      if (topLevel && url.href !== "about:blank") await route.abort("blockedbyclient");
+      else await route.continue();
       return;
     }
     const fixture = options.testMode && isFixtureHost(url.hostname);
@@ -172,7 +220,7 @@ export async function installNetworkPolicy(
       await route.abort("blockedbyclient");
       return;
     }
-    if (isTopLevelNavigation(route)) {
+    if (topLevel) {
       const origin = toOrigin(url.href);
       if (origin === null || !options.allowedOrigins().includes(origin)) {
         if (origin !== null) options.onBlockedNavigation({ url: url.href, origin });
@@ -182,4 +230,26 @@ export async function installNetworkPolicy(
     }
     await route.continue();
   });
+  context.on("response", (response) => {
+    const check = (async () => {
+      try {
+        const address = await response.serverAddr();
+        if (!address) return;
+        const url = new URL(response.url());
+        if (options.testMode && isFixtureHost(url.hostname)) return;
+        if (!isPrivateAddress(address.ipAddress)) return;
+        const request = response.request();
+        options.onPrivateConnection?.({
+          url: url.href,
+          ip: address.ipAddress,
+          topLevel: request.isNavigationRequest() && request.frame().parentFrame() === null,
+        });
+      } catch {
+        // The response or its page is gone; there is nothing left to flag.
+      }
+    })();
+    pending.add(check);
+    void check.finally(() => pending.delete(check));
+  });
+  return { settled: async () => void (await Promise.all([...pending])) };
 }

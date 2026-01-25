@@ -1,3 +1,4 @@
+import type { CDPSession } from "playwright-core";
 import sharp from "sharp";
 import type { PageHelpers } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
@@ -59,22 +60,58 @@ function quadToBox(quad: readonly number[]): Box {
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
+export interface MaskScan {
+  boxes: Box[];
+  /** Registered nodes whose box could not be computed and that are not provably detached or hidden. */
+  unverifiable: number;
+}
+
+/** Runs in the page's main world, read-only: why a node without a box model has nothing to mask. */
+const NODE_STATE_SCRIPT = `function () {
+  if (!this.isConnected) return "detached";
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  if (!el) return "detached";
+  const style = getComputedStyle(el);
+  if (style.display === "none" || style.visibility === "hidden") return "hidden";
+  return "visible";
+}`;
+
+/** True only when the node is provably not on screen; any doubt (other target, error, visible) is false. */
+async function provablyNotShown(cdp: CDPSession, backendNodeId: number): Promise<boolean> {
+  try {
+    await cdp.send("DOM.describeNode", { backendNodeId });
+    const { object } = await cdp.send("DOM.resolveNode", { backendNodeId });
+    if (!object.objectId) return false;
+    const result = await cdp.send("Runtime.callFunctionOn", {
+      objectId: object.objectId,
+      functionDeclaration: NODE_STATE_SCRIPT,
+      returnByValue: true,
+    });
+    return result.result.value === "detached" || result.result.value === "hidden";
+  } catch {
+    return false;
+  }
+}
+
 export async function collectMaskBoxes(
   session: BrowserSession,
   sources: MaskSources,
-): Promise<Box[]> {
+): Promise<MaskScan> {
   const worlds = await session.worlds();
   const boxes = await worlds.evaluate(secretFieldBoxesScript, null);
   const cdp = await session.cdp();
+  let unverifiable = 0;
   for (const backendNodeId of sources.nodeIds()) {
     try {
       const { model } = await cdp.send("DOM.getBoxModel", { backendNodeId });
       boxes.push(quadToBox(model.border));
     } catch {
-      // A detached node has nothing on screen to mask.
+      // No box model: fine only when the node is provably detached or hidden. A vault node in
+      // another CDP target (cross-origin frame) or any other error must not ship an unmasked frame.
+      if (!(await provablyNotShown(cdp, backendNodeId))) unverifiable += 1;
     }
   }
-  return boxes;
+  return { boxes, unverifiable };
 }
 
 export function sameBoxes(a: readonly Box[], b: readonly Box[], tolerance = 1): boolean {
@@ -123,18 +160,61 @@ export async function drawMasks(
   return sharp(png).composite(overlays).png().toBuffer();
 }
 
-/** Final check (spec §9): any accessibility-tree name or value containing a secret drops the frame. */
+/**
+ * Secrets of 1-3 characters that are all digits match almost every number on a page, so they are
+ * not scanned for (their fields are still masked by box). Everything else is scanned, including
+ * short non-numeric secrets: over-dropping a frame is the safe failure.
+ */
+export function isScannableSecret(secret: string): boolean {
+  return secret.length > 0 && !(secret.length < 4 && /^\d+$/.test(secret));
+}
+
+interface FrameNode {
+  frame: { id: string; url?: string; securityOrigin?: string };
+  childFrames?: FrameNode[];
+}
+
+function flattenFrames(node: FrameNode, out: FrameNode["frame"][] = []): FrameNode["frame"][] {
+  out.push(node.frame);
+  for (const child of node.childFrames ?? []) flattenFrames(child, out);
+  return out;
+}
+
+/** True when any frame is on a different origin from the main frame (its inputs are another CDP target). */
+export async function hasCrossOriginFrames(session: BrowserSession): Promise<boolean> {
+  const { frameTree } = await (await session.cdp()).send("Page.getFrameTree");
+  const frames = flattenFrames(frameTree as FrameNode);
+  const main = frames[0]?.securityOrigin;
+  // about:srcdoc and about:blank frames inherit the parent's origin (Chromium reports "://" for them).
+  return frames
+    .slice(1)
+    .some((frame) => !frame.url?.startsWith("about:") && frame.securityOrigin !== main);
+}
+
+/**
+ * Final check (spec §9): any accessibility-tree name or value, in every frame, containing a
+ * secret drops the frame. A frame whose tree cannot be read (e.g. out-of-process) fails closed.
+ */
 export async function containsSecretText(
   session: BrowserSession,
   secrets: readonly string[],
 ): Promise<boolean> {
-  const candidates = secrets.filter((secret) => secret.length >= 4);
+  const candidates = secrets.filter(isScannableSecret);
   if (candidates.length === 0) return false;
-  const { nodes } = await (await session.cdp()).send("Accessibility.getFullAXTree", {});
-  for (const node of nodes) {
-    for (const value of [node.name?.value, node.value?.value]) {
-      if (typeof value === "string" && candidates.some((secret) => value.includes(secret)))
-        return true;
+  const cdp = await session.cdp();
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  for (const frame of flattenFrames(frameTree as FrameNode)) {
+    let nodes;
+    try {
+      ({ nodes } = await cdp.send("Accessibility.getFullAXTree", { frameId: frame.id }));
+    } catch {
+      return true;
+    }
+    for (const node of nodes) {
+      for (const value of [node.name?.value, node.value?.value]) {
+        if (typeof value === "string" && candidates.some((secret) => value.includes(secret)))
+          return true;
+      }
     }
   }
   return false;

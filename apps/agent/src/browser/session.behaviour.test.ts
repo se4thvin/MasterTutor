@@ -68,6 +68,48 @@ describe("BrowserSession", () => {
     expect(s.page.url()).not.toContain("fixtures.test");
   });
 
+  it("blocks file: and other non-http(s) top-level navigations", async () => {
+    const s = await open();
+    const signal = new AbortController().signal;
+    await s.goto(`${SITE}/`, signal);
+    expect(await s.goto("file:///etc/hosts", signal)).toBe(false);
+    expect(await s.goto("view-source:http://site.fixtures.test/", signal)).toBe(false);
+    expect(await s.goto("chrome://version", signal)).toBe(false);
+    expect(s.page.url()).toBe(`${SITE}/`);
+    // A page-initiated top-level navigation is stopped by the route policy, not only by goto.
+    await s.page
+      .evaluate(() => void (window.location.href = "file:///etc/hosts"))
+      .catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(s.page.url()).not.toContain("file:");
+  });
+
+  it("blocks a redirect from an allowed origin to a name that resolves privately", async () => {
+    // Only the redirect target resolves privately. Without the private check the redirect would
+    // succeed: other.fixtures.test is reachable and allowlisted.
+    const s = await open({
+      testMode: false,
+      allowedOrigins: () => [SITE, OTHER],
+      resolveHost: async (host) =>
+        host === "other.fixtures.test" ? ["10.0.0.5"] : ["93.184.216.34"],
+    });
+    s.drainPrivateConnections();
+    expect(await s.goto(`${SITE}/redirect-other`, new AbortController().signal)).toBe(false);
+    expect(s.page.url()).not.toContain("other.fixtures.test");
+  });
+
+  it("flags a response whose connected address is private even though the name looked public", async () => {
+    // The resolver claims a public address; the slot really connects to the fixtures container
+    // on a private IP, which serverAddr() reveals. The page is moved off it.
+    const s = await open({ testMode: false, resolveHost: async () => ["93.184.216.34"] });
+    expect(await s.goto(`${SITE}/`, new AbortController().signal)).toBe(false);
+    const hits = s.drainPrivateConnections();
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]?.topLevel).toBe(true);
+    expect(hits[0]?.ip.startsWith("172.30.240.")).toBe(true);
+    await expect.poll(() => s.page.url()).toBe("about:blank");
+  });
+
   it("guards every action while the user holds control", async () => {
     const s = await open();
     s.guard.hold();

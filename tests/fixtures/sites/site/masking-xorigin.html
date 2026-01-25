@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Masking cross-origin fixture</title>
+  </head>
+  <body>
+    <input
+      id="plain"
+      aria-label="Plain"
+      value="visible text"
+      style="position: absolute; left: 40px; top: 40px"
+    />
+    <iframe
+      title="other"
+      src="http://other.fixtures.test/"
+      style="position: absolute; left: 40px; top: 100px; width: 300px; height: 80px; border: 0"
+    ></iframe>
+  </body>
+</html>
