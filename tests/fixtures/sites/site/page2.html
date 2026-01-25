@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Page two</title>
+  </head>
+  <body>
+    <h1>Page two</h1>
+    <p id="tab-flag"></p>
+    <a href="/">Back to the article</a>
+    <script>
+      if (new URLSearchParams(location.search).get("tab") === "1") {
+        document.getElementById("tab-flag").textContent = "Opened in a new tab";
+      }
+    </script>
+  </body>
+</html>

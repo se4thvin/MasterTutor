@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Interactive fixture</title>
+    <style>
+      body {
+        margin: 0;
+        height: 3000px;
+        font: 16px sans-serif;
+      }
+      .abs {
+        position: absolute;
+      }
+      #list {
+        left: 40px;
+        top: 420px;
+        width: 220px;
+        height: 150px;
+        overflow-y: auto;
+        border: 1px solid #999;
+      }
+      #list div {
+        height: 30px;
+      }
+      #menu {
+        left: 700px;
+        top: 40px;
+        width: 120px;
+        height: 30px;
+        background: #eee;
+      }
+      #menu .item {
+        display: none;
+      }
+      #menu:hover .item {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="inc" class="abs" style="left: 40px; top: 40px; width: 120px; height: 40px">
+      Increment
+    </button>
+    <output id="count" class="abs" style="left: 180px; top: 50px">0</output>
+    <button
+      id="tiny"
+      class="abs"
+      aria-label="Tiny"
+      style="left: 300px; top: 50px; width: 16px; height: 16px; padding: 0"
+    ></button>
+    <output id="tiny-count" class="abs" style="left: 330px; top: 50px">0</output>
+
+    <label class="abs" style="left: 40px; top: 110px"
+      >Name <input id="name" name="fullname"
+    /></label>
+    <label class="abs" style="left: 40px; top: 150px"
+      >Password <input id="pw" type="password"
+    /></label>
+    <label class="abs" style="left: 40px; top: 190px"
+      >Notes <textarea id="notes" rows="2" cols="30"></textarea>
+    </label>
+
+    <form
+      id="search"
+      role="search"
+      class="abs"
+      style="left: 400px; top: 110px"
+      onsubmit="
+        event.preventDefault();
+        document.getElementById('searched').textContent = 'searched';
+      "
+    >
+      <input name="q" aria-label="Search" /><button type="submit">Search</button>
+    </form>
+    <output id="searched" class="abs" style="left: 400px; top: 150px"></output>
+
+    <label class="abs" style="left: 40px; top: 250px"
+      ><input id="agree" type="checkbox" /> Agree</label
+    >
+    <a class="abs" style="left: 40px; top: 290px" href="/page2">Go to page two</a>
+    <a class="abs" style="left: 200px; top: 290px" href="/page2?tab=1" target="_blank"
+      >Open in new tab</a
+    >
+    <a class="abs" style="left: 380px; top: 290px" href="http://other.fixtures.test/">Other site</a>
+
+    <button id="later" class="abs" style="left: 40px; top: 330px; width: 120px; height: 30px">
+      Load later
+    </button>
+    <label class="abs" style="left: 200px; top: 330px"
+      >Volume <input id="volume" type="range" min="0" max="100" value="0" style="width: 200px"
+    /></label>
+
+    <div id="list" class="abs"></div>
+
+    <div id="shadow-host" class="abs" style="left: 400px; top: 420px"></div>
+    <iframe
+      id="frame"
+      class="abs"
+      style="left: 400px; top: 480px; width: 200px; height: 80px; border: 0"
+      srcdoc='<button onclick="parent.window.__frameClicks=(parent.window.__frameClicks||0)+1">Frame button</button>'
+    ></iframe>
+
+    <button
+      id="attrs"
+      class="abs"
+      style="left: 640px; top: 420px"
+      onclick="void 0"
+      data-secret="s3cr3t"
+      title="Attribute test"
+    >
+      Attr test
+    </button>
+    <div id="menu" class="abs">
+      Menu
+      <div class="item"><button id="menu-item">Hidden item</button></div>
+    </div>
+    <button id="delete" class="abs" style="left: 640px; top: 480px">Delete account</button>
+
+    <button id="far" class="abs" style="left: 40px; top: 2200px">Far button</button>
+    <output id="far-count" class="abs" style="left: 200px; top: 2200px">0</output>
+
+    <script>
+      const bump = (id) => {
+        const el = document.getElementById(id);
+        el.textContent = String(Number(el.textContent) + 1);
+      };
+      document.getElementById("inc").onclick = () => bump("count");
+      document.getElementById("tiny").onclick = () => bump("tiny-count");
+      document.getElementById("far").onclick = () => bump("far-count");
+      document.getElementById("delete").onclick = () => {
+        window.__deleted = true;
+      };
+      document.getElementById("later").onclick = () =>
+        setTimeout(() => {
+          const p = document.createElement("p");
+          p.id = "late";
+          p.textContent = "Loaded";
+          document.body.append(p);
+        }, 120);
+      const list = document.getElementById("list");
+      for (let i = 1; i <= 50; i++) {
+        const d = document.createElement("div");
+        d.tabIndex = 0;
+        d.textContent = `Item ${i}`;
+        list.append(d);
+      }
+      const root = document.getElementById("shadow-host").attachShadow({ mode: "open" });
+      root.innerHTML = '<button id="shadow-btn">Shadow button</button>';
+      root.getElementById("shadow-btn").onclick = () => {
+        window.__shadowClicks = (window.__shadowClicks || 0) + 1;
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Storage fixture</title>
+  </head>
+  <body>
+    <pre id="state"></pre>
+    <script>
+      if (new URLSearchParams(location.search).get("set") === "1") {
+        document.cookie = "mt_session=abc; path=/; max-age=3600";
+        localStorage.setItem("mt_token", "xyz");
+      }
+      document.getElementById("state").textContent = JSON.stringify({
+        cookie: document.cookie,
+        token: localStorage.getItem("mt_token"),
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,56 @@
+# Agent-behaviour test stack (spec §12): two real slots plus static fixtures. Test-only.
+# The slots publish CDP on 127.0.0.1 so a host-side Vitest process can drive them, and accept
+# CDP from any source (CDP_ALLOWED_IP=0.0.0.0/0). Production never does either (Phase 0 compose.yml).
+# The slot entrypoint passes CDP_ALLOWED_IP to iptables unvalidated, so a CIDR must stay accepted.
+name: mastertutor-behaviour
+
+x-slot: &slot
+  image: mastertutor/browser-slot:local
+  restart: always
+  shm_size: 1gb
+  cap_add: [NET_ADMIN]
+  security_opt:
+    - seccomp=../../apps/browser-slot/seccomp/chromium.json
+  tmpfs:
+    - /tmp/chromium-profile:uid=1000,gid=1000,mode=0700
+  networks: [behaviour]
+  depends_on:
+    fixtures:
+      condition: service_started
+
+x-slot-env: &slot-env
+  NEKO_ADMIN_SECRET: behaviour-admin-secret-0123456789abcdef
+  NEKO_MEMBER_SECRET: behaviour-member-secret-0123456789abcde
+  CDP_ALLOWED_IP: 0.0.0.0/0
+  NEKO_ALLOWED_IPS: 127.0.0.1
+  SLOT_EGRESS_ALLOW_CIDRS: 172.30.240.0/24
+
+services:
+  fixtures:
+    image: nginx:1.30.5-alpine-slim
+    volumes:
+      - ../fixtures/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../fixtures/sites:/srv/fixtures:ro
+    networks:
+      behaviour:
+        aliases: [site.fixtures.test, other.fixtures.test]
+
+  browser-1:
+    <<: *slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-1
+    ports: ["127.0.0.1:19223:9223"]
+
+  browser-2:
+    <<: *slot
+    environment:
+      <<: *slot-env
+      SLOT_NAME: browser-2
+    ports: ["127.0.0.1:19224:9223"]
+
+networks:
+  behaviour:
+    ipam:
+      config:
+        - subnet: 172.30.240.0/24
