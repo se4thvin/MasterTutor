@@ -38,14 +38,18 @@ export function isSecretField(el: Element): boolean {
   if (nonText.includes(type)) return false;
   const autocomplete = (input.getAttribute("autocomplete") ?? "").toLowerCase();
   if (/one-time-code|current-password|new-password/.test(autocomplete)) return true;
-  const hint = [
+  const rawHint = [
     input.name,
     input.id,
     input.getAttribute("aria-label") ?? "",
     input.placeholder,
   ].join(" ");
+  // Compound names count: "userPassword", "passwordConfirm", "new_pwd". Long tokens match anywhere;
+  // short ones (pin, otp, 2fa...) need a word boundary, where camelCase humps are boundaries too.
+  if (/(password|passwd|pwd|passcode|2fa|totp)/i.test(rawHint)) return true;
+  const hint = rawHint.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
   if (
-    /(^|[^a-z])(pin|otp|passcode|password|passwd|pwd|one[-_ ]?time|2fa|mfa|totp|verification[-_ ]?code|security[-_ ]?code)([^a-z]|$)/i.test(
+    /(^|[^a-z])(pin|otp|one[-_ ]?time|mfa|verification[-_ ]?code|security[-_ ]?code)([^a-z]|$)/i.test(
       hint,
     )
   ) {

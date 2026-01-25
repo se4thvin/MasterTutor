@@ -94,6 +94,8 @@ export const ReadPageElement = z.object({
   role: z.string().max(64).nullable(),
   name: z.string().max(500),
   attrs: z.partialRecord(ReadPageAttr, z.string().max(2_000)),
+  /** Click target in screenshot pixels; null when off-screen or covered (B1 amendment). */
+  point: z.object({ x: z.number().int().min(0), y: z.number().int().min(0) }).nullable(),
 });
 export type ReadPageElement = z.infer<typeof ReadPageElement>;
 /** D20: tools may answer {unchanged: true} instead of re-emitting large state. */

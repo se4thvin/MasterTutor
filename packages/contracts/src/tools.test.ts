@@ -61,17 +61,41 @@ describe("other tool schemas", () => {
     expect(
       ReadPageResult.safeParse({
         ...base,
-        elements: [{ ref: "e1", tag: "a", role: "link", name: "Next", attrs: { href: "/next" } }],
+        elements: [
+          {
+            ref: "e1",
+            tag: "a",
+            role: "link",
+            name: "Next",
+            attrs: { href: "/next" },
+            point: { x: 5, y: 5 },
+          },
+        ],
       }).success,
     ).toBe(true);
     expect(
       ReadPageResult.safeParse({
         ...base,
         elements: [
-          { ref: "e1", tag: "a", role: "link", name: "Next", attrs: { onclick: "steal()" } },
+          {
+            ref: "e1",
+            tag: "a",
+            role: "link",
+            name: "Next",
+            attrs: { onclick: "steal()" },
+            point: { x: 5, y: 5 },
+          },
         ],
       }).success,
     ).toBe(false);
+  });
+  it("read_page elements need a point (or null)", () => {
+    const base = { hash: "a".repeat(64), url: "https://example.com/", title: "T" };
+    const element = { ref: "e1", tag: "a", role: "link", name: "Next", attrs: {} };
+    expect(ReadPageResult.safeParse({ ...base, elements: [element] }).success).toBe(false);
+    expect(
+      ReadPageResult.safeParse({ ...base, elements: [{ ...element, point: null }] }).success,
+    ).toBe(true);
   });
   it("video ranges must move forward", () => {
     expect(VideoArgs.safeParse({ op: "keyframes", range: { start: 10, end: 5 } }).success).toBe(
