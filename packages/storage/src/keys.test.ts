@@ -29,6 +29,10 @@ describe("objectKeys", () => {
     expect(objectKeys.snapshot(run, "page.mhtml")).toBe(`snapshots/${run}/page.mhtml`);
     expect(objectKeys.stepScreenshot(run, 7)).toBe(`runs/${run}/steps/7.png`);
     expect(objectKeys.transcriptImage(run, 7, 2)).toBe(`runs/${run}/transcript/7-2.png`);
+    expect(objectKeys.transcriptImage(run, 7, 2, "ab12", "jpeg")).toBe(
+      `runs/${run}/transcript/7-2-ab12.jpeg`,
+    );
+    expect(objectKeys.transcriptImagePrefix(run)).toBe(`runs/${run}/transcript/`);
     expect(objectKeys.download(run, "../x.pdf")).toBe(`downloads/${run}/x.pdf`);
   });
   it("lowercases an uppercase UUID in the key", () => {

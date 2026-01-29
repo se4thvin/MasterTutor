@@ -152,4 +152,74 @@ describe("StepStore.commit (spec §5.3)", () => {
       await owner.db.select().from(runTranscript).where(eq(runTranscript.runId, run.id)),
     ).toEqual([]);
   });
+
+  it("uploads nothing that survives a lost lease and never overwrites a live owner's image", async () => {
+    const { run, store, storage } = await open();
+    const liveKey = `runs/${run.id}/transcript/0-0.png`;
+    await storage.put(liveKey, new Uint8Array([1, 2, 3]), { contentType: "image/png" });
+    await owner.db.update(runs).set({ leaseOwner: "other" }).where(eq(runs.id, run.id));
+    await expect(
+      store.commit({
+        transcript: [
+          {
+            dir: "in",
+            item: {
+              type: "computer_call_output",
+              call_id: "c0",
+              output: { type: "computer_screenshot", image_url: PNG },
+            },
+            responseId: null,
+            userEventId: null,
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(LeaseLost);
+    expect([...storage.objects.keys()]).toEqual([liveKey]);
+    expect([...storage.objects.get(liveKey)!]).toEqual([1, 2, 3]);
+    expect(
+      await owner.db.select().from(runTranscript).where(eq(runTranscript.runId, run.id)),
+    ).toEqual([]);
+  });
+
+  it("completes a started step row with caption, url, screenshot and usage", async () => {
+    const { run, store } = await open();
+    const seq = store.nextSeq();
+    await store.commit({ steps: [{ seq, phase: "act", state: "started" }] });
+    const usage = {
+      steps: 1,
+      inputTokens: 1,
+      cachedInputTokens: 0,
+      outputTokens: 1,
+      usd: 0.1,
+      activeMs: 0,
+    };
+    await store.commit({
+      steps: [
+        {
+          seq,
+          phase: "act",
+          state: "done",
+          caption: "Clicked",
+          url: "http://a.test/",
+          screenshotKey: `runs/${run.id}/steps/${seq}.png`,
+          usage,
+        },
+      ],
+    });
+    await store.commit({ steps: [{ seq, phase: "act", state: "done" }] });
+    const [row] = await owner.db.select().from(runSteps).where(eq(runSteps.runId, run.id));
+    expect(row).toMatchObject({
+      state: "done",
+      caption: "Clicked",
+      url: "http://a.test/",
+      screenshotKey: `runs/${run.id}/steps/${seq}.png`,
+      usage,
+    });
+  });
+
+  it("fails loudly on an unparseable transcript row", async () => {
+    const { run } = await open();
+    await owner.db.insert(runTranscript).values({ runId: run.id, seq: 0, item: { garbage: true } });
+    await expect(loadTranscript(agent.db, run.id)).rejects.toThrow(/unparseable/);
+  });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   TERMINAL_RUN_STATUSES,
   type Budget,
@@ -114,12 +115,27 @@ export class StepStore {
   }
 
   async commit(commit: StepCommit): Promise<void> {
-    const { db, storage, sessionStore, owner, run } = this.#options;
-    const entries = await Promise.all(
-      (commit.transcript ?? []).map((entry, index) =>
-        externalizeImages(storage, run.id, this.#transcriptSeq + index, entry),
-      ),
-    );
+    const { storage, run } = this.#options;
+    const nonce = randomUUID().replaceAll("-", "");
+    const uploaded: string[] = [];
+    let entries: TranscriptEntry[];
+    try {
+      entries = await Promise.all(
+        (commit.transcript ?? []).map((entry, index) =>
+          externalizeImages(storage, run.id, this.#transcriptSeq + index, entry, nonce, uploaded),
+        ),
+      );
+      await this.#write(commit, entries);
+    } catch (error) {
+      // Nothing was committed: do not leave this attempt's uploads behind (best effort).
+      await Promise.allSettled(uploaded.map((key) => storage.delete(key)));
+      throw error;
+    }
+    this.#transcriptSeq += entries.length;
+  }
+
+  async #write(commit: StepCommit, entries: readonly TranscriptEntry[]): Promise<void> {
+    const { db, sessionStore, owner, run } = this.#options;
     await db.transaction(async (tx) => {
       const patch = commit.run ?? {};
       const transition = commit.transition;
@@ -188,7 +204,15 @@ export class StepStore {
           })
           .onConflictDoUpdate({
             target: [runSteps.runId, runSteps.seq],
-            set: { state: step.state, result: step.result ?? null, updatedAt: sql`now()` },
+            set: {
+              state: step.state,
+              result: step.result ?? null,
+              caption: sql`coalesce(excluded.caption, ${runSteps.caption})`,
+              url: sql`coalesce(excluded.url, ${runSteps.url})`,
+              screenshotKey: sql`coalesce(excluded.screenshot_key, ${runSteps.screenshotKey})`,
+              usage: sql`coalesce(excluded.usage, ${runSteps.usage})`,
+              updatedAt: sql`now()`,
+            },
           });
         const action = step.action
           ? { tool: step.action.tool, summary: step.action.summary, point: step.action.point }
@@ -225,6 +249,5 @@ export class StepStore {
       await commit.extra?.(tx);
       await emitRunEvents(tx, run.id, events);
     });
-    this.#transcriptSeq += entries.length;
   }
 }
