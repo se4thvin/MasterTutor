@@ -205,15 +205,13 @@ export class StepStore {
         });
       }
       if (entries.length > 0) {
-        await tx
-          .insert(runTranscript)
-          .values(
-            entries.map((item, index) => ({
-              runId: run.id,
-              seq: this.#transcriptSeq + index,
-              item,
-            })),
-          );
+        await tx.insert(runTranscript).values(
+          entries.map((item, index) => ({
+            runId: run.id,
+            seq: this.#transcriptSeq + index,
+            item,
+          })),
+        );
       }
       if (commit.storage) await sessionStore.save(tx, run, commit.storage);
       if (transition)
