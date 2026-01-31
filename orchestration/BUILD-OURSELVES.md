@@ -1,10 +1,11 @@
-# Build-ourselves backlog (D39)
+# Build-ourselves backlog (D39): OpenAI tools
 
-The approved stack is closed. This means the dependencies already in the spec and plans, in `package.json` files and in compose.
+We use only these OpenAI capabilities:
+- the Responses API, with our own function tools and the computer tool;
+- embeddings;
+- audio transcription.
 
-If work needs a tool, library, service or technology outside that stack, do not add it. Implement the smallest in-repo version that unblocks the current task, or stub it behind an interface. Then log the need here so we can build it properly later.
+If work needs any other OpenAI tool or API, do not adopt it. That includes hosted web_search, file_search, code_interpreter, image generation, the Agents SDK, Realtime, and similar. Build the capability ourselves, or stub it behind an interface for now, then log it here. The orchestrator triages.
 
-Implementers: add a row and mention it in your report. The orchestrator triages.
-
-| # | Need | Why / where it came up | Interim (stub / minimal / blocked) | Raised by | Status |
-|---|------|------------------------|-------------------------------------|-----------|--------|
+| # | Need (OpenAI tool it would replace) | Why / where it came up | Interim (stub / minimal / blocked) | Raised by | Status |
+|---|-------------------------------------|------------------------|-------------------------------------|-----------|--------|
