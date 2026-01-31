@@ -26,3 +26,6 @@ Return the **complete plan markdown as your final reply**. Long is fine and may 
 
 ## OpenAI data policy (binding)
 Any code that touches OpenAI must follow `/Users/sethvin-nanayakkara/orca/workspaces/MasterTutor/houndshark/orchestration/briefs/openai-data-policy.md` (D37, D38).
+
+## No new third-party tools (D39)
+Do not add dependencies, services or tools beyond what the plan already names. If you need one, build the minimal version in-repo or stub it behind an interface, then add a row to `/Users/sethvin-nanayakkara/orca/workspaces/MasterTutor/houndshark/orchestration/BUILD-OURSELVES.md` and list it in your report.

@@ -52,6 +52,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 | D36 | Use the single `OPENAI_API_KEY` for everything OpenAI-related (agent model calls, transcription, embeddings, and web query embeddings). Drop `OPENAI_EMBEDDINGS_KEY`; `web` receives `OPENAI_API_KEY` for query embeddings only. | User |
 | D37 | The agent loop uses `store: false` on the Responses API and never sends `previous_response_id`. Every request rebuilds model input from our own `run_transcript` (with compaction), so OpenAI holds no conversation state. | User |
 | D38 | Minimise data stored at OpenAI: binding policy in `orchestration/briefs/openai-data-policy.md`. store:false everywhere, stateless endpoints only (no Files, vector stores, Assistants, Conversations or Batch), no metadata/user/safety identifiers, minimal masked and windowed content, a single OpenAI client factory that enforces this, and a test guard. Account-level ZDR is an optional request for the user to make. | User |
+| D39 | The stack is closed. Any further tool or technology we need is built in-house, not adopted. Needs found during work are logged in `orchestration/BUILD-OURSELVES.md`, with a minimal in-repo version or stub behind an interface meanwhile, and are worked through later. | User |
 
 ## Proposals awaiting user answer
 
