@@ -6,7 +6,7 @@ import {
   type FunctionToolName,
   type StepAction,
 } from "@mastertutor/contracts";
-import type { ResponseInputItem } from "openai/resources/responses/responses";
+import type { ResponseInputItem } from "./openai.ts";
 
 export interface SafetyCheck {
   id: string;

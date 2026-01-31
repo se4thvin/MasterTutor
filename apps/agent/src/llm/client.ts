@@ -1,17 +1,14 @@
 import { AgentTurn, CompactionSummary } from "@mastertutor/contracts";
-import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
-import type { ResponseInputItem } from "openai/resources/responses/responses";
+import { createOpenAI, zodTextFormat, type ResponseInputItem } from "./openai.ts";
 import type { TokenUsage } from "./pricing.ts";
 import { agentTools } from "./tools.ts";
 
+/** One stateless request: the whole input is rebuilt from run_transcript every time (D37). */
 export interface ModelRequest {
   model: string;
   instructions: string;
   input: ResponseInputItem[];
-  previousResponseId: string | null;
   format: "agent_turn" | "compaction_summary";
-  withTools: boolean;
 }
 
 export interface ModelReply {
@@ -35,12 +32,7 @@ export function createOpenAIModelClient(options: {
   apiKey: string;
   baseURL?: string;
 }): ModelClient {
-  const client = new OpenAI({
-    apiKey: options.apiKey,
-    baseURL: options.baseURL,
-    maxRetries: 0,
-    timeout: 180_000,
-  });
+  const client = createOpenAI(options);
   return {
     async create(request, signal) {
       const response = await client.responses.create(
@@ -48,10 +40,12 @@ export function createOpenAIModelClient(options: {
           model: request.model,
           instructions: request.instructions,
           input: request.input,
-          previous_response_id: request.previousResponseId ?? undefined,
-          store: true,
+          // Reasoning carries across turns only as encrypted items we replay ourselves.
+          include: ["reasoning.encrypted_content"],
           reasoning: { effort: "medium" },
-          tools: request.withTools ? agentTools() : undefined,
+          // Tools are always declared so replayed calls stay valid; a summary must not call them.
+          tools: agentTools(),
+          ...(request.format === "compaction_summary" ? { tool_choice: "none" as const } : {}),
           text: { format: FORMATS[request.format] },
         },
         { signal },

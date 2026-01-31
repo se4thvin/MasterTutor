@@ -1,6 +1,6 @@
 import { CompactionSummary } from "@mastertutor/contracts";
 import type { Storage } from "@mastertutor/storage";
-import type { ResponseInputItem } from "openai/resources/responses/responses";
+import type { ResponseInputItem } from "../llm/openai.ts";
 import type { CallResult, ModelCaller } from "../llm/caller.ts";
 import { pngDataUrl, userMessage } from "../llm/items.ts";
 import { ModelUnavailable } from "../runtime/errors.ts";
@@ -41,34 +41,20 @@ function parseSummary(output: readonly unknown[]): CompactionSummary {
   throw new ModelUnavailable("compaction_failed", "The model did not return a usable summary.");
 }
 
-async function summarize(
-  deps: CompactionDeps,
-  previousResponseId: string | null,
-  input: ResponseInputItem[],
-): Promise<Compacted> {
+async function summarize(deps: CompactionDeps, input: ResponseInputItem[]): Promise<Compacted> {
   const call = await deps.caller.call(
-    {
-      model: deps.model,
-      instructions: deps.instructions,
-      input,
-      previousResponseId,
-      format: "compaction_summary",
-      withTools: false,
-    },
+    { model: deps.model, instructions: deps.instructions, input, format: "compaction_summary" },
     deps.signal,
   );
   return { summary: parseSummary(call.reply.output), call, input };
 }
 
-export function summarizeChain(
+/** Summarizes the full current context (stateless: the context is sent, not referenced). */
+export function summarizeContext(
   deps: CompactionDeps,
-  previousResponseId: string,
-  pendingInput: readonly ResponseInputItem[],
+  context: readonly ResponseInputItem[],
 ): Promise<Compacted> {
-  return summarize(deps, previousResponseId, [
-    ...pendingInput,
-    userMessage([COMPACTION_REQUEST], null),
-  ]);
+  return summarize(deps, [...context, userMessage([COMPACTION_REQUEST], null)]);
 }
 
 export function summarizeTranscript(
@@ -86,7 +72,7 @@ export function summarizeTranscript(
     })),
     20_000,
   );
-  return summarize(deps, null, [
+  return summarize(deps, [
     userMessage(
       [
         `Run goal:\n${goal}`,

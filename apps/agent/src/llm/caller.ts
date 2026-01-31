@@ -1,5 +1,5 @@
 import { MODELS } from "@mastertutor/contracts";
-import { APIError } from "openai";
+import { APIError } from "./openai.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { ChainLost, ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
 import type { ModelClient, ModelReply, ModelRequest } from "./client.ts";

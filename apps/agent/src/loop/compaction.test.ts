@@ -6,7 +6,7 @@ import { createOpenAIModelClient } from "../llm/client.ts";
 import { functionCallOutput, userMessage } from "../llm/items.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
-import { seedFromSummary, summarizeChain, summarizeTranscript } from "./compaction.ts";
+import { seedFromSummary, summarizeContext, summarizeTranscript } from "./compaction.ts";
 
 let mock: LlmMock | undefined;
 afterEach(async () => {
@@ -39,17 +39,19 @@ async function deps() {
 }
 
 describe("compaction (spec §5.4)", () => {
-  it("summarizes through the old chain, answering pending calls first", async () => {
+  it("summarizes the full context it is given, statelessly", async () => {
     const d = await deps();
-    const pending = [functionCallOutput("call_1", "{}"), userMessage(["[scenario:c] note"], null)];
-    const result = await summarizeChain(d, "resp_old", pending);
+    const context = [
+      userMessage(["[scenario:c] goal"], null),
+      { type: "function_call", call_id: "call_1", name: "read_page", arguments: "{}" } as never,
+      functionCallOutput("call_1", "{}"),
+    ];
+    const result = await summarizeContext(d, context);
     expect(result.summary).toEqual(summary);
     const body = mock!.requestsFor("c")[0]!.body;
-    expect(body).toMatchObject({
-      previous_response_id: "resp_old",
-      text: { format: { name: "compaction_summary" } },
-    });
-    expect(body.tools).toBeUndefined();
+    expect(body).toMatchObject({ store: false, text: { format: { name: "compaction_summary" } } });
+    expect(body).not.toHaveProperty("previous_response_id");
+    expect(body).toMatchObject({ tool_choice: "none" });
     expect(JSON.stringify(body.input)).toContain("call_1");
   });
 
@@ -70,7 +72,7 @@ describe("compaction (spec §5.4)", () => {
     );
     expect(result.summary.progress).toBe("p");
     const body = mock!.requestsFor("c")[0]!.body;
-    expect(body.previous_response_id ?? null).toBeNull();
+    expect(body).not.toHaveProperty("previous_response_id");
     expect(JSON.stringify(body.input)).toContain("read_page");
     expect(JSON.stringify(body.input)).toContain("<untrusted_page_content");
   });

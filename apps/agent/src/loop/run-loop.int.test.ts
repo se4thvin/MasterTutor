@@ -391,20 +391,14 @@ describe("RunLoop (spec §5.3)", () => {
     expect(browser.functionRuns).toEqual([]);
   });
 
-  it("compacts above 200K input tokens and rebuilds a lost chain", async () => {
+  it("compacts above 200K input tokens and continues from the seed", async () => {
     const big = await setup([{ ...click(), usage: { input: 210_000 } }, done()]);
     expect(await drive(big.loop)).toEqual({ kind: "completed" });
     const requests = mock.requestsFor(big.name);
     expect(requests.some((r) => r.body.text?.format?.name === "compaction_summary")).toBe(true);
-    expect(requests.at(-1)?.body.previous_response_id ?? null).toBeNull();
-
-    const lost = await setup([
-      click(),
-      { error: { status: 400, code: "previous_response_not_found" } },
-      done(),
-    ]);
-    expect(await drive(lost.loop)).toEqual({ kind: "completed" });
-    expect(mock.requestsFor(lost.name).at(-1)?.body.previous_response_id ?? null).toBeNull();
+    const last = JSON.stringify(requests.at(-1)?.body.input);
+    expect(last).toContain("continues from a summary");
+    expect(last).not.toContain("Do the task");
   });
 
   it("compacts now when the model reports context_length_exceeded", async () => {
@@ -416,7 +410,7 @@ describe("RunLoop (spec §5.3)", () => {
     expect(await drive(loop)).toEqual({ kind: "completed" });
     const requests = mock.requestsFor(name);
     expect(requests.some((r) => r.body.text?.format?.name === "compaction_summary")).toBe(true);
-    expect(requests.at(-1)?.body.previous_response_id ?? null).toBeNull();
+    expect(JSON.stringify(requests.at(-1)?.body.input)).toContain("continues from a summary");
   });
 
   it("compacts after a restore when the last turn was above 200K", async () => {
@@ -670,5 +664,50 @@ describe("RunLoop (spec §5.3)", () => {
     await loop.markHandBack();
     expect(await drive(loop)).toEqual({ kind: "completed" });
     expect(browser.executed).toEqual([]);
+  });
+
+  it("a fresh worker rebuilds the identical model input from run_transcript (D37)", async () => {
+    const turns = () => [click(), click(12, 20), done()];
+    const straight = await setup(turns());
+    expect(await drive(straight.loop)).toEqual({ kind: "completed" });
+    const restarted = await setup(turns());
+    for (let i = 0; i < 4; i++)
+      expect(await restarted.loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
+    expect(await drive(await restarted.reload())).toEqual({ kind: "completed" });
+    const normalize = (name: string, turn: number) =>
+      JSON.stringify(mock.requestsFor(name)[turn]?.body.input)
+        .replaceAll(/\b(call|cu|resp|msg|rs|enc)_[a-z0-9]+/g, "$1_X")
+        .replaceAll(`[scenario:${name}]`, "[scenario:S]");
+    for (const turn of [1, 2])
+      expect(normalize(restarted.name, turn)).toBe(normalize(straight.name, turn));
+  });
+
+  it("sends only the newest 3 screenshots as images", async () => {
+    const { name, browser, loop } = await setup([
+      click(10),
+      click(11),
+      click(12),
+      click(13),
+      click(14),
+      done(),
+    ]);
+    browser.png = Buffer.from("a distinct screenshot");
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const last = JSON.stringify(mock.requestsFor(name).at(-1)?.body.input);
+    const real = `data:image/png;base64,${browser.png.toString("base64")}`;
+    expect(last.split(real).length - 1).toBe(3);
+    expect(last).toContain("[screenshot omitted]");
+  });
+
+  // Runs last: every request this file made went through the policy (openai-data-policy.md rule 6).
+  it("sent every request statelessly, anonymously and only to allowlisted endpoints", () => {
+    const allowed = new Set(["/v1/responses", "/v1/embeddings", "/v1/audio/transcriptions"]);
+    expect(mock.requests.length).toBeGreaterThan(50);
+    for (const request of mock.requests) {
+      expect(allowed.has(request.path)).toBe(true);
+      expect(request.body.store).toBe(false);
+      for (const field of ["previous_response_id", "metadata", "user", "safety_identifier"])
+        expect(request.body).not.toHaveProperty(field);
+    }
   });
 });

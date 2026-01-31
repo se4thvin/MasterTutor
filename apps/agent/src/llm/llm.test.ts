@@ -1,5 +1,5 @@
 import { EMPTY_USAGE, MODELS, TOOL_NAMES } from "@mastertutor/contracts";
-import { APIError } from "openai";
+import { APIError, statelessParams } from "./openai.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { instantClock } from "../runtime/clock.ts";
@@ -19,9 +19,7 @@ const request: ModelRequest = {
   model: MODELS.agentPrimary,
   instructions: "i",
   input: [],
-  previousResponseId: null,
   format: "agent_turn",
-  withTools: true,
 };
 const reply: ModelReply = {
   id: "resp_1",
@@ -239,7 +237,7 @@ describe("OpenAI client against llm-mock", () => {
     await mock?.close();
     mock = undefined;
   });
-  it("sends exactly the 7 tools, store:true, medium effort and the agent_turn format", async () => {
+  it("sends exactly the 7 tools, store:false with no identifiers, encrypted reasoning, medium effort and the agent_turn format", async () => {
     mock = await startLlmMock({
       scenarios: [
         { name: "wire", turns: [{ outputs: [{ type: "turn", status: "done", reason: "ok" }] }] },
@@ -264,9 +262,27 @@ describe("OpenAI client against llm-mock", () => {
     expect(functions).toHaveLength(6);
     for (const tool of functions) expect(tool.strict).toBe(true);
     expect(body).toMatchObject({
-      store: true,
+      store: false,
+      include: ["reasoning.encrypted_content"],
       reasoning: { effort: "medium" },
       text: { format: { name: "agent_turn" } },
     });
+    for (const field of ["previous_response_id", "metadata", "user", "safety_identifier"])
+      expect(body).not.toHaveProperty(field);
+  });
+});
+
+describe("statelessParams (openai-data-policy.md)", () => {
+  it("forces store:false and strips chaining and identifiers whatever the caller passed", () => {
+    const params = statelessParams({
+      model: "m",
+      input: [],
+      store: true,
+      previous_response_id: "resp_1",
+      metadata: { runId: "r" },
+      user: "u@example.com",
+      safety_identifier: "s",
+    } as never);
+    expect(params).toEqual({ model: "m", input: [], store: false });
   });
 });

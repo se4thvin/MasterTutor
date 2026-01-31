@@ -71,11 +71,11 @@ describe("StepStore.commit (spec §5.3)", () => {
           userEventId: null,
         },
       ],
-      run: { previousResponseId: "resp_1", currentUrl: "http://site.fixtures.test/" },
+      run: { model: "gpt-6.1-sol", currentUrl: "http://site.fixtures.test/" },
     });
     const [row] = await owner.db.select().from(runs).where(eq(runs.id, run.id));
     expect(row).toMatchObject({
-      previousResponseId: "resp_1",
+      model: "gpt-6.1-sol",
       currentUrl: "http://site.fixtures.test/",
     });
     const transcript = await loadTranscript(agent.db, run.id);
