@@ -14,7 +14,7 @@ export const ENV_DEFAULTS = {
   BROWSER_SLOTS: DEFAULT_BROWSER_SLOTS.join(","),
   AUTH_SIGNUP_OPEN: "0",
 } as const;
-export const MANUAL_KEYS = ["OPENAI_API_KEY", "OPENAI_EMBEDDINGS_KEY"] as const;
+export const MANUAL_KEYS = ["OPENAI_API_KEY"] as const;
 
 export function generateSecrets(): Record<string, string> {
   const { publicKey, privateKey } = generateKeyPairSync("x25519");

@@ -1,5 +1,7 @@
 # Phase B6: Live View Implementation Plan
 
+> **D36 (supersedes this plan):** OPENAI_EMBEDDINGS_KEY is removed; web uses OPENAI_API_KEY for query embeddings.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the n.eko live view and the takeover control lock. The work covers:

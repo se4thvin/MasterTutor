@@ -46,7 +46,7 @@ describe("fillEnv", () => {
     expect(result.text).toContain(`BROWSER_SLOTS=${ENV_DEFAULTS.BROWSER_SLOTS}`);
     expect(result.filled).toContain("POSTGRES_PASSWORD");
     expect(result.filled).not.toContain("NEKO_ADMIN_SECRET");
-    expect(result.missingManual).toEqual(["OPENAI_EMBEDDINGS_KEY"]);
+    expect(result.missingManual).toEqual([]);
   });
 
   it("is a no-op the second time", () => {

@@ -77,9 +77,18 @@ describe("compose.yml", () => {
   it("places secrets with least privilege (spec §12 key placement)", () => {
     const web = Object.keys(env(base.services.web!));
     const agent = Object.keys(env(base.services.agent!));
-    for (const key of ["VAULT_PRIVATE_KEY", "NEKO_ADMIN_SECRET", "OPENAI_API_KEY"]) {
+    for (const key of [
+      "VAULT_PRIVATE_KEY",
+      "NEKO_ADMIN_SECRET",
+      "S3_AGENT_ACCESS_KEY_ID",
+      "S3_AGENT_SECRET_ACCESS_KEY",
+    ]) {
       expect(web).not.toContain(key);
     }
+    expect(web).not.toContain("OPENAI_EMBEDDINGS_KEY");
+    // D36: one OpenAI key, same interpolated value in web and agent.
+    expect(env(base.services.web!).OPENAI_API_KEY).toBeDefined();
+    expect(env(base.services.web!).OPENAI_API_KEY).toBe(env(base.services.agent!).OPENAI_API_KEY);
     for (const key of [
       "NEKO_MEMBER_SECRET",
       "BETTER_AUTH_SECRET",

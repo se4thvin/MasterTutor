@@ -786,7 +786,7 @@ Also: n.eko 8080 and CDP 9223 are unreachable from the host and from `edge`.
 | Service | Secrets |
 |---|---|
 | `agent` | `OPENAI_API_KEY`, `VAULT_PRIVATE_KEY`, `NEKO_ADMIN_SECRET`, `DATABASE_URL` (agent_role), S3 read/write key |
-| `web` | `BETTER_AUTH_SECRET`, `VAULT_PUBLIC_KEY`, `NEKO_MEMBER_SECRET`, `LIVE_COOKIE_SECRET`, `TURN_SECRET`, `DATABASE_URL` (web_role), S3 read-only key, `OPENAI_EMBEDDINGS_KEY` (embeddings-only project key) |
+| `web` | `BETTER_AUTH_SECRET`, `VAULT_PUBLIC_KEY`, `NEKO_MEMBER_SECRET`, `LIVE_COOKIE_SECRET`, `TURN_SECRET`, `DATABASE_URL` (web_role), S3 read-only key, `OPENAI_API_KEY` (the single OpenAI key, D36; web uses it for query embeddings only) |
 | `browser-N` | `NEKO_ADMIN_SECRET`, `NEKO_MEMBER_SECRET`, `PUBLIC_IP` |
 | `coturn` | `TURN_SECRET` |
 
