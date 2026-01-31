@@ -23,6 +23,13 @@ export const ApprovalRequest = z.discriminatedUnion("kind", [
     label: z.string().max(500),
     url: PageUrl,
     screenshotKey: ScreenshotKey,
+    /** Present when the request is the model's pending_safety_checks, not a risky target. */
+    safetyChecks: z
+      .array(
+        z.object({ code: z.string().max(100).nullable(), message: z.string().max(500).nullable() }),
+      )
+      .max(20)
+      .optional(),
   }),
   z.object({
     kind: z.literal("form_submit"),
@@ -96,4 +103,20 @@ export const POLICY_DECIDER = "policy";
 
 export function decideByPolicy(mode: ApprovalMode, kind: ApprovalKind): PolicyDecision {
   return mode === "ask" ? "ask" : AUTO_MODE_DECISIONS[kind];
+}
+
+/** The only safety-check code auto mode may clear, and only on an allowed origin. */
+export const AUTO_CLEARABLE_SAFETY_CHECK = "irrelevant_domain";
+
+/**
+ * The model's pending_safety_checks have their own rule (not AUTO_MODE_DECISIONS): prompt-injection
+ * signals (malicious_instructions), sensitive domains and unknown codes always wait for a human.
+ */
+export function decideSafetyChecks(
+  mode: ApprovalMode,
+  checks: ReadonlyArray<{ code: string | null }>,
+  originAllowed: boolean,
+): PolicyDecision {
+  if (mode === "ask" || !originAllowed || checks.length === 0) return "ask";
+  return checks.every((check) => check.code === AUTO_CLEARABLE_SAFETY_CHECK) ? "approved" : "ask";
 }

@@ -14,6 +14,9 @@ export const ItemDecision = z.object({
   item: z.string(),
   approved: z.boolean(),
   note: z.string().nullable(),
+  /** The approved request's risk kind and label: an approved action runs only while these still match. */
+  kind: z.string().nullable(),
+  label: z.string().nullable(),
 });
 export type ItemDecision = z.infer<typeof ItemDecision>;
 
