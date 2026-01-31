@@ -49,6 +49,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 | D33 | Benchmark mode: per-run `approvalMode: ask \| auto_within_allowlist` (auto decisions still recorded, `decided_by='policy'`); `benchmarks` + `benchmark_runs` tables. | Orchestrator (for D32) |
 | D34 | zyBooks credentials are never written to repo files or plans (a `.env` write was denied). They enter the product through the Vault UI at benchmark time. Login is the direct zyBooks email/password form at `https://learn.zybooks.com/signin` (no UTD SSO/MFA, per the user); vault item origin `https://learn.zybooks.com`. | Orchestrator |
 | D35 | Execution: subagent-driven development. Plans are written per phase into `docs/superpowers/plans/`. Environment: the worktree branch is `agentic-notes-browser-agent`. pnpm 10.34.6 via corepack, pinned in `packageManager`; about 22GB disk free, so keep Docker images lean. | Orchestrator |
+| D36 | Use the single `OPENAI_API_KEY` for everything OpenAI-related (agent model calls, transcription, embeddings, and web query embeddings). Drop `OPENAI_EMBEDDINGS_KEY`; `web` receives `OPENAI_API_KEY` for query embeddings only. | User |
 
 ## Proposals awaiting user answer
 
