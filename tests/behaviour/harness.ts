@@ -77,6 +77,8 @@ export async function startBehaviourAgent(
         heartbeatMs: 1_000,
         sweepMs: 500,
         downloadsDir: "/tmp/mastertutor-behaviour-downloads",
+        // The next file must start on idle slots: wait for every restart (production bounds this).
+        shutdownDrainMs: 90_000,
         ...options.config,
       },
     });
@@ -94,6 +96,7 @@ export async function startBehaviourAgent(
       await owner.close();
       await web.close();
     },
+    // A true crash: the DB closes first, so the in-flight act keeps no abort row.
     crash: () => agent.supervisor.crash(),
     restart: async () => {
       agent.supervisor = make();

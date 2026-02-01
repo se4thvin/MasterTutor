@@ -34,7 +34,6 @@ export interface WorkerDeps {
   clock: Clock;
   config: RuntimeConfig;
   log: Log;
-  owner: string;
   connect: ConnectBrowser;
 }
 
@@ -91,6 +90,14 @@ export class RunWorker {
       .finally(() => this.#latch.open());
   }
 
+  /** The run was claimed again (its lease lapsed): stop without writing anything. */
+  abandon(): Promise<void> {
+    this.#stop = "lease_lost";
+    this.#abort.abort(new Interrupted("lease_lost"));
+    this.#latch.open();
+    return this.#done ?? Promise.resolve();
+  }
+
   stop(why: "kill" | "shutdown" | "crash"): Promise<void> {
     this.#stop = why;
     this.#abort.abort(new Interrupted(why));
@@ -106,7 +113,7 @@ export class RunWorker {
         db: this.#deps.db,
         storage: this.#deps.storage,
         sessionStore: this.#deps.hooks.sessionStore,
-        owner: this.#deps.owner,
+        owner: this.#claim.leaseToken,
         run: this.#claim.run,
       });
       this.#attached = await this.#deps.connect({
@@ -163,13 +170,9 @@ export class RunWorker {
   async #restore(): Promise<StepOutcome> {
     const run = this.#claim.run;
     const browser = this.#attached!.browser;
-    const state = await this.#deps.hooks.sessionStore.load(run);
-    const removeRestore = state ? await browser.applyStorage(state) : null;
-    const target = run.currentUrl ?? startUrl(run.goal, run.allowedOrigins);
-    if (target) await browser.navigate(target, this.#abort.signal);
-    await removeRestore?.();
-    await browser.restoreView({ scroll: run.scroll ?? null, videoTime: run.videoTime ?? null });
-    this.#loop = await RunLoop.restore(
+    // The loop exists before any browser work, so a takeover or interruption while the page is
+    // being restored is handled like any other (I1).
+    this.#loop ??= await RunLoop.restore(
       {
         db: this.#deps.db,
         storage: this.#deps.storage,
@@ -183,6 +186,12 @@ export class RunWorker {
       },
       snapshotOf(run),
     );
+    const state = await this.#deps.hooks.sessionStore.load(run);
+    const removeRestore = state ? await browser.applyStorage(state) : null;
+    const target = run.currentUrl ?? startUrl(run.goal, run.allowedOrigins);
+    if (target) await browser.navigate(target, this.#abort.signal);
+    await removeRestore?.();
+    await browser.restoreView({ scroll: run.scroll ?? null, videoTime: run.videoTime ?? null });
     if (run.controller === "user") return this.#holdForUser();
     if (this.#loop.hasPendingApproval) return this.#loop.resume(this.#abort.signal);
     if (run.status === "waiting")
@@ -269,7 +278,8 @@ export class RunWorker {
             waitReason: null,
             reason: null,
           },
-          wake: run.status === "running",
+          // A run the user holds must come back holding: handBack alone wakes nothing (I2).
+          wake: run.status === "running" || run.controller === "user",
         });
       }
     }
@@ -301,13 +311,22 @@ export class RunWorker {
       options.transition?.to === "failed"
         ? null
         : await this.#attached?.browser.collectStorage().catch(() => null);
-    await this.#store!.commit({
-      transition: options.transition,
-      storage: storage ?? null,
-      run: { releaseLease: true, ...(options.wake ? { wakeRequested: true } : {}) },
-      events: [{ type: "slot", slotName: null }],
-      extra: (tx) => releaseSlot(tx, { name: slotName, runId: this.runId }),
-    });
+    const release = (transition: Transition | undefined) =>
+      this.#store!.commit({
+        transition,
+        storage: storage ?? null,
+        run: { releaseLease: true, ...(options.wake ? { wakeRequested: true } : {}) },
+        events: [{ type: "slot", slotName: null }],
+        extra: (tx) => releaseSlot(tx, { name: slotName, runId: this.runId }),
+      });
+    try {
+      await release(options.transition);
+    } catch (error) {
+      // The web already moved the run on (e.g. a cancel racing a kill): free the slot anyway (M7).
+      if (!(error instanceof RunChanged) || !options.transition) throw error;
+      log.warn({ runId: this.runId, errorCode: "release_transition_skipped" }, "run changed");
+      await release(undefined);
+    }
     await this.#attached?.close().catch(() => undefined);
     void pool.reset(slotName);
     await clearRunDownloads(config.downloadsDir, this.runId).catch(() =>
@@ -323,7 +342,7 @@ export class RunWorker {
       await renewLeases(this.#deps.db, {
         runId: this.runId,
         slotName: this.#claim.slotName,
-        owner: this.#deps.owner,
+        owner: this.#claim.leaseToken,
         leaseMs: this.#deps.config.leaseMs,
       });
     } catch (error) {

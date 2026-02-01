@@ -35,6 +35,7 @@ const supervisor = new Supervisor({
   cdpBaseUrl: (name) => slotCdpBaseUrl(name),
   log,
   testMode: env.AGENT_TEST_MODE,
+  config: { shutdownDrainMs: env.AGENT_SHUTDOWN_DRAIN_MS },
 });
 
 // /healthz listens first: starting the supervisor waits for every slot to come back (up to minutes).
@@ -54,9 +55,6 @@ const health = await startHealthServer({
     ),
   }),
 });
-await supervisor.start();
-log.info({ port: health.port, slots: env.BROWSER_SLOTS.length }, "agent ready");
-
 async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, "shutting down");
   // Running runs go to sleep with a wake; the supervisor closes the database handle it owns.
@@ -64,5 +62,9 @@ async function shutdown(signal: string): Promise<void> {
   await health.close();
   process.exit(0);
 }
+// Registered before the (possibly long) boot reconcile, so a SIGTERM during boot is graceful too.
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
+
+await supervisor.start();
+log.info({ port: health.port, slots: env.BROWSER_SLOTS.length }, "agent ready");

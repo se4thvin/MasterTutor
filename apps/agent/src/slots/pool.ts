@@ -70,15 +70,20 @@ export class SlotPool {
     await Promise.allSettled([...this.#inFlight.values()]);
   }
 
-  /** Boot and sweep: retire expired leases, then bring every restarting slot back. */
-  async reconcile(): Promise<void> {
+  /**
+   * Boot and sweep: retire expired leases, then bring every restarting slot back. The sweep passes
+   * `awaitResets: false` so a hung slot restart never holds up the next sweep's work.
+   */
+  async reconcile(options: { awaitResets?: boolean } = {}): Promise<void> {
     const reclaimed = await this.#options.store.reclaimExpired(this.#options.slots);
     if (reclaimed.length > 0)
       this.#options.log.warn({ slots: reclaimed }, "reclaimed slots from expired leases");
     const restarting = await this.#options.store.listRestarting(this.#options.slots);
-    await Promise.all(
+    const resets = Promise.all(
       restarting.filter((name) => !this.resetting(name)).map((name) => this.reset(name)),
     );
+    if (options.awaitResets ?? true) await resets;
+    else void resets.catch(() => undefined);
   }
 
   async #baseUrl(name: string): Promise<string | null> {

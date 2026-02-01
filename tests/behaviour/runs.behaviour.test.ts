@@ -1,5 +1,9 @@
+import { POLICY_DECIDER } from "@mastertutor/contracts";
+import { approvals } from "@mastertutor/db";
+import { eq } from "drizzle-orm";
 import { chromium, type Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { FORBIDDEN_RESPONSE_FIELDS } from "../../apps/agent/src/llm/openai.ts";
 import { imageWidth, regionIsBlack, type PixelBox } from "../../apps/agent/src/testing/png.ts";
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
 import type { MockTurn, RecordedRequest, Scenario } from "../llm-mock/src/scenario.ts";
@@ -21,14 +25,6 @@ import {
 
 /** Spec targets: takeover ≤ 300 ms, kill ≤ 1 s. CI asserts a generous bound on DB timestamps (ruling). */
 const CI_BOUND_MS = 2_000;
-const FORBIDDEN_FIELDS = [
-  "previous_response_id",
-  "metadata",
-  "user",
-  "safety_identifier",
-  "conversation",
-  "background",
-];
 
 let agent: BehaviourAgent;
 let checked = 0;
@@ -44,7 +40,7 @@ afterEach(() => {
   for (const request of agent.mock.requests.slice(checked)) {
     expect(request.path).toBe("/v1/responses");
     expect(request.body.store).toBe(false);
-    for (const field of FORBIDDEN_FIELDS) expect(request.body).not.toHaveProperty(field);
+    for (const field of FORBIDDEN_RESPONSE_FIELDS) expect(request.body).not.toHaveProperty(field);
   }
   checked = agent.mock.requests.length;
 });
@@ -158,7 +154,15 @@ describe("agent behaviour on real slots (spec §12)", () => {
     });
     const run = await waitForRun(agent, runId, (r) => r.status === "completed", "completed");
     expect(run.currentUrl?.startsWith(OTHER)).toBe(false);
-    expect(run.allowedOrigins).toEqual([SITE]);
+    // The blocked navigation was decided by policy, recorded, and denied.
+    const decisions = await agent.owner.db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.runId, runId));
+    expect(decisions.map((a) => [a.kind, a.status, a.decidedBy])).toEqual([
+      ["new_origin", "denied", POLICY_DECIDER],
+    ]);
+    expect(decisions[0]!.request).toMatchObject({ origin: OTHER });
   });
 
   it("restores after a crash without retrying the started action", async () => {
@@ -179,20 +183,21 @@ describe("agent behaviour on real slots (spec §12)", () => {
       "completed after restore",
       90_000,
     );
-    // crash() aborted the act (one aborted row); the restored worker answered it "Not retried".
+    // A true crash writes nothing more: the act stays "started" with no abort row, and the restored
+    // worker answers it "Not retried" instead of typing again.
     const acts = await typeActs(runId);
-    expect(acts.map((s) => s.state)).toEqual(["aborted"]);
+    expect(acts.map((s) => s.state)).toEqual(["started"]);
   });
 
   it("resets the slot after a run: no cookies survive (profile wiped)", async () => {
-    const name = scenario("storage", [readText, done]);
+    // The run's own read_page shows the cookie it set, so an empty jar afterwards proves a wipe.
+    const name = scenario("storage", [readText, doneExpecting("mt_session=abc")]);
     const runId = await createRun(agent, `[scenario:${name}] ${SITE}/storage.html?set=1`);
     await waitForRun(agent, runId, (r) => r.status === "completed", "completed");
     const slot = await slotOf(agent, runId);
     expect(slot).toBeTruthy();
     await waitFor(() => slotIdle(agent, slot!), { label: "slot recycled", timeoutMs: 60_000 });
-    const final = await waitForRun(agent, runId, (r) => r.slotName === null, "slot released");
-    expect(final.slotName).toBeNull();
+    await waitForRun(agent, runId, (r) => r.slotName === null, "slot released");
     const browser = await chromium.connectOverCDP(SLOT_CDP[slot!] ?? "");
     try {
       const context = browser.contexts()[0]!;
@@ -299,18 +304,19 @@ describe("agent behaviour on real slots (spec §12)", () => {
       });
       const mutations = () =>
         withSlotPage(runId, "masking", (page) =>
-          page.evaluate(() => (window as unknown as { __mutations: string[] }).__mutations.length),
+          page.evaluate(() => [...(window as unknown as { __mutations: string[] }).__mutations]),
         );
-      // The page's own observer also sees the parser finish the document after its script, so the
-      // count is compared before and after the agent's work (ruling), not against zero.
+      // The page's observer starts inside its own script, so it also sees the parser finish the
+      // document: exactly these 3 records. Anything more came from the agent's first observation.
       const loaded = await mutations();
+      expect(loaded).toEqual(["childList", "characterData", "characterData"]);
       first.open();
       await waitFor(() => agent.mock.requestsFor(name).length === 2, {
         label: "second decide",
         timeoutMs: 60_000,
       });
       // read_page and a second observation (screenshot, DOM read, page state) changed nothing.
-      expect(await mutations()).toBe(loaded);
+      expect(await mutations()).toEqual(loaded);
       const geometry = await withSlotPage(runId, "masking", (page) =>
         page.evaluate(() => ({
           viewport: window.innerWidth,
@@ -335,6 +341,15 @@ describe("agent behaviour on real slots (spec §12)", () => {
       const [password, otp, pin, plain] = geometry.boxes;
       for (const secret of [password, otp, pin]) expect(await black(secret!)).toBe(true);
       expect(await black(plain!)).toBe(false);
+      // No secret value reached the model, as text or anywhere else in a request (images aside).
+      for (const request of agent.mock.requestsFor(name)) {
+        const body = JSON.stringify(request.body).replaceAll(
+          /data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+/g,
+          "",
+        );
+        for (const secret of ["hunter2-secret", "123456", "9876"])
+          expect(body).not.toContain(secret);
+      }
     } finally {
       first.open();
       second.open();

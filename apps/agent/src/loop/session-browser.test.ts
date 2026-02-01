@@ -59,4 +59,14 @@ describe("observeOnOnePage (review M7)", () => {
     expect(obs.domHash).toBe("");
     expect(obs.title).toBe("");
   });
+
+  it("gives every withheld frame its own perceptual hash, so loop detection never matches them (M8)", async () => {
+    const urls = ["http://a.test/1", "http://a.test/2", "http://a.test/3", "http://a.test/4"];
+    const a = page(urls);
+    const b = page(urls);
+    const first = await observeOnOnePage(a.readUrl, a.capture);
+    const second = await observeOnOnePage(b.readUrl, b.capture);
+    expect(first.screenshot.dropped && second.screenshot.dropped).toBe(true);
+    expect(first.phash).not.toBe(second.phash);
+  });
 });

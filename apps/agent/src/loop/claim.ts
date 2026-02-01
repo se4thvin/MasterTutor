@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   DEFAULT_CONCURRENCY,
   type LeasePriority,
@@ -27,6 +28,11 @@ export interface ClaimOptions {
 
 export interface ClaimedRun {
   run: RunRecord;
+  /**
+   * This claim's own lease owner (`<agent owner>:<uuid>`). Renewals and step commits check it, so a
+   * stale worker of the same agent loses every write once its run is claimed again.
+   */
+  leaseToken: string;
   slotName: string;
   priority: LeasePriority;
   previousStatus: RunStatus;
@@ -63,6 +69,7 @@ export async function claimNextRun(
       .for("update", { skipLocked: true });
     if (!candidate) return null;
 
+    const leaseToken = `${options.owner}:${randomUUID()}`;
     const priority: LeasePriority = candidate.status === "queued" ? "queued" : "wake";
     const concurrency = await workspaceConcurrency(tx, candidate.workspaceId);
     const slotName = await pickIdleSlot(tx, { slots: options.slots, priority, concurrency });
@@ -73,7 +80,7 @@ export async function claimNextRun(
     await assignSlot(tx, {
       name: slotName,
       runId: candidate.id,
-      owner: options.owner,
+      owner: leaseToken,
       leaseMs: options.leaseMs,
     });
     const [run] = await tx
@@ -81,7 +88,7 @@ export async function claimNextRun(
       .set({
         status: sql`(case when ${runs.status} in ('queued', 'sleeping') then 'running' else ${runs.status}::text end)::run_status`,
         slotName,
-        leaseOwner: options.owner,
+        leaseOwner: leaseToken,
         leaseExpiresAt: leaseUntil(options.leaseMs),
         wakeRequestedAt: null,
         lastActivityAt: sql`now()`,
@@ -95,7 +102,7 @@ export async function claimNextRun(
       events.push({ type: "status", status: run.status, waitReason: run.waitReason, reason: null });
     }
     await emitRunEvents(tx, run.id, events);
-    return { run, slotName, priority, previousStatus: candidate.status };
+    return { run, leaseToken, slotName, priority, previousStatus: candidate.status };
   });
 }
 

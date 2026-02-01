@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import type { NotifyPayload } from "@mastertutor/contracts";
 import type { DbHandle } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
@@ -49,6 +50,7 @@ export class Supervisor {
   #claimAgain = false;
   #stopped = false;
   #sweep: NodeJS.Timeout | null = null;
+  #sweeping: Promise<void> | null = null;
   #unlisten: (() => Promise<void>) | null = null;
 
   constructor(options: SupervisorOptions) {
@@ -98,30 +100,44 @@ export class Supervisor {
       this.#options.log,
     );
     await this.#pool.reconcile();
-    this.#sweep = setInterval(() => void this.#sweepOnce(), this.#config.sweepMs);
+    this.#sweep = setInterval(() => {
+      // One sweep at a time; a sweep never waits on slot restarts, so it stays short.
+      this.#sweeping ??= this.#sweepOnce().finally(() => {
+        this.#sweeping = null;
+      });
+    }, this.#config.sweepMs);
     this.#kick();
   }
 
-  /** Graceful: running runs sleep with a wake, slot restarts finish, then the DB handle closes. */
+  /**
+   * Graceful: running runs (and runs the user holds) sleep with a wake, slot restarts get up to
+   * `shutdownDrainMs` (boot reconcile recovers the rest), then the DB handle closes.
+   */
   async stop(): Promise<void> {
-    await this.#halt("shutdown");
-    await this.#pool.drain();
-    await this.#options.db.close();
-  }
-
-  /** Tests only: dies like a killed process (no releases, no status writes). */
-  async crash(): Promise<void> {
-    await this.#halt("crash");
-    await this.#options.db.close();
-  }
-
-  async #halt(why: "shutdown" | "crash"): Promise<void> {
     this.#stopped = true;
     if (this.#sweep) clearInterval(this.#sweep);
     await this.#unlisten?.().catch(() => undefined);
     // A claim already in flight may still spawn a worker; wait for it so that worker is stopped too.
     await this.#claiming;
-    await Promise.all([...this.#workers.values()].map((worker) => worker.stop(why)));
+    await Promise.all([...this.#workers.values()].map((worker) => worker.stop("shutdown")));
+    const drained = new AbortController();
+    await Promise.race([
+      this.#pool.drain(),
+      delay(this.#config.shutdownDrainMs, undefined, { signal: drained.signal }).catch(
+        () => undefined,
+      ),
+    ]);
+    drained.abort();
+    await this.#sweeping;
+    await this.#options.db.close();
+  }
+
+  /** Tests only: dies like a killed process. The DB goes first, so nothing more is written. */
+  async crash(): Promise<void> {
+    this.#stopped = true;
+    if (this.#sweep) clearInterval(this.#sweep);
+    await this.#options.db.close();
+    await Promise.all([...this.#workers.values()].map((worker) => worker.stop("crash")));
   }
 
   #onWake(payload: NotifyPayload<"run_wake">): void {
@@ -178,16 +194,21 @@ export class Supervisor {
         clock: this.#clock,
         config: this.#config,
         log: this.#options.log,
-        owner: this.owner,
         connect: this.#connect,
       },
       claim,
     );
-    this.#workers.set(claim.run.id, worker);
-    void worker.start().finally(() => {
-      this.#workers.delete(claim.run.id);
-      this.#kick();
-    });
+    const id = claim.run.id;
+    // Our own run claimed again (its lease lapsed, e.g. a heartbeat outage): the old worker has
+    // lost its lease token, so it is abandoned before the new one starts.
+    const previous = this.#workers.get(id);
+    this.#workers.set(id, worker);
+    void (previous?.abandon() ?? Promise.resolve())
+      .then(() => worker.start())
+      .finally(() => {
+        if (this.#workers.get(id) === worker) this.#workers.delete(id);
+        this.#kick();
+      });
   }
 
   async #onKill(): Promise<void> {
@@ -206,9 +227,10 @@ export class Supervisor {
   }
 
   async #sweepOnce(): Promise<void> {
+    // The kill fallback (a missed NOTIFY) first: it must not wait behind slot work.
+    await this.#onKill();
     try {
-      await this.#pool.reconcile();
-      await this.#onKill();
+      await this.#pool.reconcile({ awaitResets: false });
     } catch {
       this.#options.log.warn({ errorCode: "sweep_failed" }, "sweep failed");
     }

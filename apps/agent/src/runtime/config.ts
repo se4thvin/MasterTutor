@@ -11,6 +11,8 @@ export interface RuntimeConfig {
   waitActionMs: number;
   /** Shared downloads volume mount (Phase 0 compose: `downloads:/downloads`). Tests point it at a temp dir. */
   downloadsDir: string;
+  /** How long a graceful stop waits for slot restarts in flight (boot reconcile recovers the rest). */
+  shutdownDrainMs: number;
 }
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
@@ -24,6 +26,7 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
   fallbackAfter5xx: 3,
   waitActionMs: 1_000,
   downloadsDir: "/downloads",
+  shutdownDrainMs: 5_000,
 };
 
 export function runtimeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
