@@ -10,11 +10,12 @@ import { ModelCaller } from "../llm/caller.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
-import { Interrupted } from "../runtime/errors.ts";
+import { ControlHeld, Interrupted } from "../runtime/errors.ts";
+import { emitRunEvent } from "../events/emit.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser } from "../testing/fake-loop-browser.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
-import { withHooks } from "./hooks.ts";
+import { withHooks, type RunHooks } from "./hooks.ts";
 import { RunLoop, type StepOutcome } from "./run-loop.ts";
 import { snapshotOf } from "./run-state.ts";
 import { NO_SESSION_STORE, StepStore } from "./step-store.ts";
@@ -41,9 +42,30 @@ afterAll(async () => {
   await owner?.close();
   await database?.stop();
 });
+const FORBIDDEN_FIELDS = [
+  "previous_response_id",
+  "metadata",
+  "user",
+  "safety_identifier",
+  "conversation",
+  "background",
+];
+const ALLOWED_PATHS = new Set(["/v1/responses", "/v1/embeddings", "/v1/audio/transcriptions"]);
+/** openai-data-policy.md rule 6: stateless, anonymous and allowlisted only. */
+function expectPolicy(requests: typeof mock.requests): void {
+  for (const request of requests) {
+    expect(ALLOWED_PATHS.has(request.path)).toBe(true);
+    expect(request.body.store).toBe(false);
+    for (const field of FORBIDDEN_FIELDS) expect(request.body).not.toHaveProperty(field);
+  }
+}
+let policyChecked = 0;
 // Every model call must be answered by exactly one output; the mock records any pairing problem.
+// Every request a test made also goes through the data policy, whatever order the tests run in.
 afterEach(() => {
   expect(mock.failures.splice(0)).toEqual([]);
+  expectPolicy(mock.requests.slice(policyChecked));
+  policyChecked = mock.requests.length;
 });
 
 const done = (reason = "Finished"): MockTurn => ({
@@ -70,7 +92,11 @@ const risky = (label: string) => ({
 
 async function setup(
   turns: MockTurn[],
-  options: { approvalMode?: "ask" | "auto_within_allowlist"; budget?: Budget } = {},
+  options: {
+    approvalMode?: "ask" | "auto_within_allowlist";
+    budget?: Budget;
+    hooks?: Partial<RunHooks>;
+  } = {},
 ) {
   const name = `s${++counter}`;
   mock.setScenarios([{ name, turns }]);
@@ -93,7 +119,7 @@ async function setup(
     storage,
     caller,
     browser,
-    hooks: withHooks(),
+    hooks: withHooks(options.hooks),
     clock: instantClock(),
     config: runtimeConfig(),
     log,
@@ -699,15 +725,106 @@ describe("RunLoop (spec §5.3)", () => {
     expect(last).toContain("[screenshot omitted]");
   });
 
-  // Runs last: every request this file made went through the policy (openai-data-policy.md rule 6).
-  it("sent every request statelessly, anonymously and only to allowlisted endpoints", () => {
-    const allowed = new Set(["/v1/responses", "/v1/embeddings", "/v1/audio/transcriptions"]);
-    expect(mock.requests.length).toBeGreaterThan(50);
-    for (const request of mock.requests) {
-      expect(allowed.has(request.path)).toBe(true);
-      expect(request.body.store).toBe(false);
-      for (const field of ["previous_response_id", "metadata", "user", "safety_identifier"])
-        expect(request.body).not.toHaveProperty(field);
+  it("sends a full run statelessly, anonymously and only to allowlisted endpoints (D38 guard)", async () => {
+    const { name, loop } = await setup([
+      { ...click(), usage: { input: 210_000 } },
+      { outputs: [{ type: "reasoning", text: "thinking" }, ...click(11).outputs!] },
+      done(),
+    ]);
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const requests = mock.requestsFor(name);
+    // Agent turns plus a compaction summary, each checked on its own (not via file order).
+    expect(requests.length).toBeGreaterThanOrEqual(4);
+    expect(requests.some((r) => r.body.text?.format?.name === "compaction_summary")).toBe(true);
+    expectPolicy(requests);
+  });
+
+  it("never calls the model while the user holds control (spec §10.3)", async () => {
+    const { name, run, loop } = await setup([done()]);
+    expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" }); // observe
+    await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+    await expect(loop.step(new AbortController().signal)).rejects.toBeInstanceOf(ControlHeld);
+    expect(mock.requestsFor(name)).toHaveLength(0);
+    await owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, run.id));
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(mock.requestsFor(name)).toHaveLength(1);
+  });
+
+  it("never calls the model for a compaction while the user holds control", async () => {
+    const { name, run, loop } = await setup([{ ...click(), usage: { input: 210_000 } }, done()]);
+    for (let i = 0; i < 4; i++)
+      expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
+    expect(mock.requestsFor(name)).toHaveLength(1);
+    await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+    await loop.step(new AbortController().signal); // observe
+    await expect(loop.step(new AbortController().signal)).rejects.toBeInstanceOf(ControlHeld);
+    expect(mock.requestsFor(name)).toHaveLength(1);
+  });
+
+  it("carries this turn's user messages verbatim into the context after a compaction", async () => {
+    const message = "Please do reading 2.4 next, not 2.5";
+    const { name, run, loop } = await setup([
+      { ...click(), usage: { input: 210_000 } },
+      click(11),
+      done(),
+    ]);
+    for (let i = 0; i < 4; i++)
+      expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
+    await owner.db.transaction((tx) =>
+      emitRunEvent(tx, run.id, { type: "user_message", text: message }),
+    );
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const requests = mock.requestsFor(name);
+    const turns = requests.filter((r) => r.body.text?.format?.name === "agent_turn");
+    // The turn right after the compaction starts from the seed and still has the message verbatim,
+    // and so does the next one (the message is part of the new base context, not only the summary).
+    for (const turn of turns.slice(1)) {
+      const input = JSON.stringify(turn.body.input);
+      expect(input).toContain("continues from a summary");
+      expect(input).toContain(`Message from the user: ${message}`);
     }
+    expect(turns).toHaveLength(3);
+  });
+
+  describe("function-tool approvals (hooks.functionApproval)", () => {
+    const readPage: MockTurn = {
+      outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+    };
+    const firstUse = async () =>
+      ({
+        kind: "credential_first_use",
+        alias: "school",
+        origin: "http://site.fixtures.test",
+      }) as const;
+
+    it("asks for a function call's approval, then runs it once approved", async () => {
+      const { run, browser, loop, reload } = await setup([readPage, doneExpecting("tool")], {
+        hooks: { functionApproval: firstUse },
+      });
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      const [request] = await approvalRows(run.id);
+      expect(request).toMatchObject({ kind: "credential_first_use", status: "pending" });
+      expect(browser.functionRuns).toEqual([]);
+      await decideApproval(run.id, "approved");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.functionRuns).toEqual([
+        { name: "read_page", args: { mode: "text", sinceHash: null } },
+      ]);
+    });
+
+    it("answers a denied function call as not run and never runs it", async () => {
+      const { run, browser, loop, reload } = await setup(
+        [readPage, doneExpecting("the user denied this action")],
+        { hooks: { functionApproval: firstUse } },
+      );
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      await decideApproval(run.id, "denied");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.functionRuns).toEqual([]);
+    });
   });
 });

@@ -1,0 +1,342 @@
+import type { RunStatus, WaitReason } from "@mastertutor/contracts";
+import type { Database } from "@mastertutor/db";
+import type { Storage } from "@mastertutor/storage";
+import { ControlGuard } from "../browser/guard.ts";
+import type { ModelCaller } from "../llm/caller.ts";
+import type { Clock } from "../runtime/clock.ts";
+import type { RuntimeConfig } from "../runtime/config.ts";
+import {
+  Interrupted,
+  LeaseLost,
+  RunChanged,
+  interruptionOf,
+  type InterruptCause,
+} from "../runtime/errors.ts";
+import { Latch } from "../runtime/latch.ts";
+import type { Log } from "../runtime/types.ts";
+import { clearRunDownloads } from "../slots/downloads.ts";
+import { releaseSlot } from "../slots/leases.ts";
+import type { SlotPool } from "../slots/pool.ts";
+import { renewLeases, type ClaimedRun } from "./claim.ts";
+import type { RunHooks } from "./hooks.ts";
+import type { AttachedBrowser, ConnectBrowser } from "./loop-browser.ts";
+import { RunLoop, type StepOutcome } from "./run-loop.ts";
+import { isTerminal, readRunControl, snapshotOf } from "./run-state.ts";
+import { startUrl } from "./start-url.ts";
+import { StepStore, type Transition } from "./step-store.ts";
+
+export interface WorkerDeps {
+  db: Database;
+  storage: Storage;
+  caller: ModelCaller;
+  pool: SlotPool;
+  hooks: RunHooks;
+  clock: Clock;
+  config: RuntimeConfig;
+  log: Log;
+  owner: string;
+  connect: ConnectBrowser;
+}
+
+const CONTINUE: StepOutcome = { kind: "continue" };
+const NON_TERMINAL: readonly RunStatus[] = ["queued", "running", "waiting", "sleeping"];
+type Next = StepOutcome | "slept";
+
+/** Holds one run's leases and drives its loop until it ends, sleeps or loses its lease. */
+export class RunWorker {
+  readonly runId: string;
+  readonly workspaceId: string;
+  readonly #deps: WorkerDeps;
+  readonly #claim: ClaimedRun;
+  readonly #guard = new ControlGuard();
+  readonly #latch = new Latch();
+  #abort = new AbortController();
+  #stop: InterruptCause | null = null;
+  #attached: AttachedBrowser | null = null;
+  #store: StepStore | null = null;
+  #loop: RunLoop | null = null;
+  #done: Promise<void> | null = null;
+
+  constructor(deps: WorkerDeps, claim: ClaimedRun) {
+    this.#deps = deps;
+    this.#claim = claim;
+    this.runId = claim.run.id;
+    this.workspaceId = claim.run.workspaceId;
+  }
+
+  start(): Promise<void> {
+    this.#done ??= this.#main();
+    return this.#done;
+  }
+
+  notify(): void {
+    this.#latch.open();
+  }
+
+  /** run_control: takeover, hand back or cancel. Aborts the in-flight action at once (target ≤ 300 ms). */
+  control(): void {
+    void readRunControl(this.#deps.db, this.runId)
+      .then((run) => {
+        if (!run) return;
+        if (isTerminal(run.status)) this.#abort.abort(new Interrupted("cancel"));
+        else if (run.controller === "user" && !this.#guard.held) {
+          this.#guard.hold();
+          this.#abort.abort(new Interrupted("takeover"));
+        }
+      })
+      .catch(() =>
+        this.#deps.log.warn({ runId: this.runId, errorCode: "control_read_failed" }, "control"),
+      )
+      // Whatever happened, the worker re-reads the run itself.
+      .finally(() => this.#latch.open());
+  }
+
+  stop(why: "kill" | "shutdown" | "crash"): Promise<void> {
+    this.#stop = why;
+    this.#abort.abort(new Interrupted(why));
+    this.#latch.open();
+    return this.#done ?? Promise.resolve();
+  }
+
+  async #main(): Promise<void> {
+    const { config, log } = this.#deps;
+    const beat = setInterval(() => void this.#beat(), config.heartbeatMs);
+    try {
+      this.#store = await StepStore.open({
+        db: this.#deps.db,
+        storage: this.#deps.storage,
+        sessionStore: this.#deps.hooks.sessionStore,
+        owner: this.#deps.owner,
+        run: this.#claim.run,
+      });
+      this.#attached = await this.#deps.connect({
+        slotName: this.#claim.slotName,
+        run: () => this.#loop?.run ?? snapshotOf(this.#claim.run),
+        guard: this.#guard,
+      });
+      let next: Next = await this.#guarded(() => this.#restore());
+      for (;;) {
+        if (this.#stop) return await this.#onStop();
+        if (next === "slept") return;
+        if (next.kind === "continue") next = await this.#guarded(() => this.#stepOnce());
+        else if (next.kind === "waiting") next = await this.#guarded(() => this.#waitForChange());
+        else return await this.#end(next);
+      }
+    } catch (error) {
+      if (this.#stop === "crash" || this.#stop === "lease_lost" || error instanceof LeaseLost)
+        return;
+      if (this.#stop) return await this.#onStop().catch(() => undefined);
+      log.error(
+        {
+          runId: this.runId,
+          errorCode: "agent_error",
+          err: error instanceof Error ? error.name : "unknown",
+        },
+        "run failed",
+      );
+      await this.#end({
+        kind: "failed",
+        error: { code: "agent_error", message: "The agent hit an unexpected error." },
+      }).catch(() => undefined);
+    } finally {
+      clearInterval(beat);
+      await this.#attached?.close().catch(() => undefined);
+    }
+  }
+
+  async #guarded(work: () => Promise<Next>): Promise<Next> {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof RunChanged) return CONTINUE;
+      if (interruptionOf(error) === null && !this.#abort.signal.aborted) throw error;
+      if (this.#stop) return CONTINUE;
+      const run = await readRunControl(this.#deps.db, this.runId);
+      if (!run || isTerminal(run.status)) return { kind: "cancelled" };
+      if (run.controller === "user") return this.#holdForUser();
+      this.#abort = new AbortController();
+      this.#loop?.reobserve();
+      return CONTINUE;
+    }
+  }
+
+  async #restore(): Promise<StepOutcome> {
+    const run = this.#claim.run;
+    const browser = this.#attached!.browser;
+    const state = await this.#deps.hooks.sessionStore.load(run);
+    const removeRestore = state ? await browser.applyStorage(state) : null;
+    const target = run.currentUrl ?? startUrl(run.goal, run.allowedOrigins);
+    if (target) await browser.navigate(target, this.#abort.signal);
+    await removeRestore?.();
+    await browser.restoreView({ scroll: run.scroll ?? null, videoTime: run.videoTime ?? null });
+    this.#loop = await RunLoop.restore(
+      {
+        db: this.#deps.db,
+        storage: this.#deps.storage,
+        caller: this.#deps.caller,
+        browser,
+        store: this.#store!,
+        hooks: this.#deps.hooks,
+        clock: this.#deps.clock,
+        config: this.#deps.config,
+        log: this.#deps.log,
+      },
+      snapshotOf(run),
+    );
+    if (run.controller === "user") return this.#holdForUser();
+    if (this.#loop.hasPendingApproval) return this.#loop.resume(this.#abort.signal);
+    if (run.status === "waiting")
+      return { kind: "waiting", reason: (run.waitReason ?? "takeover") as WaitReason };
+    return CONTINUE;
+  }
+
+  async #stepOnce(): Promise<StepOutcome> {
+    const run = await readRunControl(this.#deps.db, this.runId);
+    if (!run || isTerminal(run.status)) return { kind: "cancelled" };
+    if (run.controller === "user") return this.#holdForUser();
+    return this.#loop!.step(this.#abort.signal);
+  }
+
+  async #waitForChange(): Promise<Next> {
+    const timer = new AbortController();
+    try {
+      const woke = await Promise.race([
+        this.#latch.wait().then(() => true),
+        this.#deps.clock.sleep(this.#deps.config.idleSleepMs, timer.signal).then(
+          () => false,
+          () => false,
+        ),
+      ]);
+      if (this.#stop) return CONTINUE;
+      const run = await readRunControl(this.#deps.db, this.runId);
+      if (!run || isTerminal(run.status)) return { kind: "cancelled" };
+      if (run.controller === "user") return this.#holdForUser();
+      if (woke) return this.#loop!.resume(this.#abort.signal);
+      await this.#release({
+        transition: {
+          from: ["running", "waiting"],
+          to: "sleeping",
+          waitReason: null,
+          reason: null,
+        },
+      });
+      return "slept";
+    } finally {
+      timer.abort();
+    }
+  }
+
+  /** While the user holds control: no input, no screenshots, no model calls, no sleep (spec §5.1, §10.3). */
+  async #holdForUser(): Promise<StepOutcome> {
+    const slot = this.#claim.slotName;
+    this.#guard.hold();
+    if (!this.#abort.signal.aborted) this.#abort.abort(new Interrupted("takeover"));
+    await this.#deps.hooks.control.onUserControl(slot, this.runId);
+    await this.#loop!.markTakeover();
+    for (;;) {
+      await this.#latch.wait();
+      if (this.#stop) return CONTINUE;
+      const run = await readRunControl(this.#deps.db, this.runId);
+      if (!run || isTerminal(run.status)) return { kind: "cancelled" };
+      if (run.controller === "agent") {
+        await this.#deps.hooks.control.onAgentControl(slot, this.runId);
+        this.#guard.release();
+        this.#abort = new AbortController();
+        await this.#loop!.markHandBack();
+        return CONTINUE;
+      }
+    }
+  }
+
+  async #onStop(): Promise<void> {
+    if (this.#stop === "kill") {
+      await this.#release({
+        transition: {
+          from: NON_TERMINAL,
+          to: "cancelled",
+          waitReason: null,
+          reason: "kill switch",
+          error: { code: "kill_switch", message: "Stopped by the kill switch" },
+        },
+      });
+    } else if (this.#stop === "shutdown") {
+      const run = await readRunControl(this.#deps.db, this.runId);
+      if (run && !isTerminal(run.status)) {
+        await this.#release({
+          transition: {
+            from: ["running", "waiting"],
+            to: "sleeping",
+            waitReason: null,
+            reason: null,
+          },
+          wake: run.status === "running",
+        });
+      }
+    }
+  }
+
+  async #end(outcome: StepOutcome): Promise<void> {
+    const transition: Transition | undefined =
+      outcome.kind === "failed"
+        ? {
+            from: NON_TERMINAL,
+            to: "failed",
+            waitReason: null,
+            reason: outcome.error.message,
+            error: outcome.error,
+          }
+        : undefined;
+    await this.#release({ transition });
+  }
+
+  /**
+   * Slot release (spec §5.2 rule 5 + Phase 0 amendment): seal storageState, then in ONE transaction
+   * mark the slot restarting AND clear runs.slot_name (runs_slot_name_uq), then recycle the slot and
+   * delete /downloads/<runId>, which survives slot restarts.
+   */
+  async #release(options: { transition?: Transition; wake?: boolean }): Promise<void> {
+    const { pool, config, log } = this.#deps;
+    const slotName = this.#claim.slotName;
+    const storage =
+      options.transition?.to === "failed"
+        ? null
+        : await this.#attached?.browser.collectStorage().catch(() => null);
+    await this.#store!.commit({
+      transition: options.transition,
+      storage: storage ?? null,
+      run: { releaseLease: true, ...(options.wake ? { wakeRequested: true } : {}) },
+      events: [{ type: "slot", slotName: null }],
+      extra: (tx) => releaseSlot(tx, { name: slotName, runId: this.runId }),
+    });
+    await this.#attached?.close().catch(() => undefined);
+    void pool.reset(slotName);
+    await clearRunDownloads(config.downloadsDir, this.runId).catch(() =>
+      log.warn(
+        { runId: this.runId, errorCode: "downloads_cleanup_failed" },
+        "could not clear downloads",
+      ),
+    );
+  }
+
+  async #beat(): Promise<void> {
+    try {
+      await renewLeases(this.#deps.db, {
+        runId: this.runId,
+        slotName: this.#claim.slotName,
+        owner: this.#deps.owner,
+        leaseMs: this.#deps.config.leaseMs,
+      });
+    } catch (error) {
+      if (error instanceof LeaseLost) {
+        this.#stop = "lease_lost";
+        this.#abort.abort(new Interrupted("lease_lost"));
+        this.#latch.open();
+      } else {
+        this.#deps.log.warn(
+          { runId: this.runId, errorCode: "heartbeat_failed" },
+          "heartbeat failed",
+        );
+      }
+    }
+  }
+}

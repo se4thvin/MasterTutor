@@ -180,6 +180,28 @@ describe("llm-mock", () => {
     expect(output[1]).not.toHaveProperty("actions");
   });
 
+  it("rejects a replayed reasoning item without encrypted_content like the real store:false API", async () => {
+    mock = await startLlmMock({ scenarios: SCENARIOS.filter((s) => s.name === "wire-shapes") });
+    const input = userInput("[scenario:wire-shapes]");
+    const first = await post({ input });
+    const [reasoning, call] = first.body.output as Array<Record<string, unknown>>;
+    expect(reasoning).toMatchObject({ type: "reasoning" });
+    const output = {
+      type: "computer_call_output",
+      call_id: call!.call_id,
+      output: { type: "computer_screenshot", image_url: "data:image/png;base64,AA==" },
+    };
+    const { encrypted_content: _dropped, ...bare } = reasoning!;
+    const stripped = await post({ input: [...input, bare, call, output] });
+    expect(stripped.status).toBe(400);
+    const empty = await post({
+      input: [...input, { ...reasoning, encrypted_content: "" }, call, output],
+    });
+    expect(empty.status).toBe(400);
+    expect(mock.failures).toHaveLength(2);
+    expect((await post({ input: [...input, reasoning, call, output] })).status).toBe(200);
+  });
+
   it("refuses stored, chained or identified requests (openai-data-policy.md)", async () => {
     mock = await startLlmMock({
       scenarios: [
@@ -194,9 +216,11 @@ describe("llm-mock", () => {
       { metadata: { runId: "r" } },
       { user: "u" },
       { safety_identifier: "s" },
+      { conversation: "conv_1" },
+      { background: false },
     ])
       expect((await post({ input, ...extra })).status).toBe(400);
-    expect(mock.failures).toHaveLength(6);
+    expect(mock.failures).toHaveLength(8);
     expect((await post({ input })).status).toBe(200);
     const other = await fetch(`${mock.url}/v1/files`, { method: "POST", body: "{}" });
     expect(other.status).toBe(404);

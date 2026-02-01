@@ -282,6 +282,8 @@ describe("statelessParams (openai-data-policy.md)", () => {
       metadata: { runId: "r" },
       user: "u@example.com",
       safety_identifier: "s",
+      conversation: "conv_1",
+      background: true,
     } as never);
     expect(params).toEqual({ model: "m", input: [], store: false });
   });

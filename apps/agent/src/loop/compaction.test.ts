@@ -93,7 +93,11 @@ describe("compaction (spec §5.4)", () => {
         "runs/3f2504e0-4f89-41d3-9a0c-0305e82c3301/transcript/1-0.png",
         "runs/3f2504e0-4f89-41d3-9a0c-0305e82c3301/transcript/2-0.png",
       ],
-      { pageText: "Current page: x", screenshot: PNG },
+      {
+        pageText: "Current page: x",
+        screenshot: PNG,
+        userMessages: ["Message from the user: do 2.4 next"],
+      },
     );
     expect(JSON.stringify(seed).match(/input_image/g)).toHaveLength(3);
     const texts = seed.flatMap((item) =>
@@ -105,5 +109,6 @@ describe("compaction (spec §5.4)", () => {
     );
     const summaryText = texts.find((text) => text.startsWith("Summary:\n"));
     expect(JSON.parse(summaryText!.slice("Summary:\n".length))).toEqual(summary);
+    expect(texts).toContain("Message from the user: do 2.4 next");
   });
 });

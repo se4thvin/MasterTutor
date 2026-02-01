@@ -16,7 +16,14 @@ interface ScenarioState {
   elements: Array<{ name: string; point: { x: number; y: number } | null }>;
 }
 
-const FORBIDDEN_FIELDS = ["previous_response_id", "metadata", "user", "safety_identifier"];
+const FORBIDDEN_FIELDS = [
+  "previous_response_id",
+  "metadata",
+  "user",
+  "safety_identifier",
+  "conversation",
+  "background",
+];
 const TAG = /\[scenario:([a-z0-9_-]+)\]/i;
 
 async function readJson(request: IncomingMessage): Promise<MockRequestBody> {
@@ -214,6 +221,13 @@ export async function startLlmMock(
   const policyProblem = (body: MockRequestBody): string | null => {
     if (body.store !== false) return "store must be false.";
     for (const field of FORBIDDEN_FIELDS) if (field in body) return `${field} must not be sent.`;
+    // With store:false a reasoning item can only be replayed with its encrypted content.
+    const items = Array.isArray(body.input) ? (body.input as Array<Record<string, unknown>>) : [];
+    for (const item of items) {
+      if (item.type !== "reasoning") continue;
+      if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0)
+        return `Reasoning item ${String(item.id)} must carry encrypted_content when store is false.`;
+    }
     return null;
   };
 

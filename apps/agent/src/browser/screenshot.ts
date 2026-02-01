@@ -32,14 +32,20 @@ function targetSize(layout: Layout) {
   };
 }
 
-async function blackFrame(layout: Layout): Promise<ModelScreenshot> {
-  const { scale, width, height } = targetSize(layout);
-  const png = await sharp({
-    create: { width, height, channels: 3, background: { r: 0, g: 0, b: 0 } },
-  })
+async function blackPng(width: number, height: number): Promise<Buffer> {
+  return sharp({ create: { width, height, channels: 3, background: { r: 0, g: 0, b: 0 } } })
     .png()
     .toBuffer();
-  return { png, width, height, scale, masked: 0, dropped: true };
+}
+
+async function blackFrame(layout: Layout): Promise<ModelScreenshot> {
+  const { scale, width, height } = targetSize(layout);
+  return { png: await blackPng(width, height), width, height, scale, masked: 0, dropped: true };
+}
+
+/** The same frame with nothing on it, for a capture that cannot be trusted (geometry kept). */
+export async function withheldScreenshot(shot: ModelScreenshot): Promise<ModelScreenshot> {
+  return { ...shot, png: await blackPng(shot.width, shot.height), masked: 0, dropped: true };
 }
 
 async function finalize(

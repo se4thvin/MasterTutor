@@ -34,7 +34,7 @@ import {
 import { addUsage, usageDelta } from "../llm/pricing.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
-import { ContextOverflow, interruptionOf } from "../runtime/errors.ts";
+import { ContextOverflow, ControlHeld, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import {
   actionItem,
@@ -392,7 +392,7 @@ export class RunLoop {
       ...(this.#firstTurn ? [goalText(this.#run, extra)] : []),
       ...notes,
       ...this.#notes,
-      ...userTexts.map((text) => `Message from the user: ${text}`),
+      ...userTexts,
       this.#pageHeader(obs),
     ];
     const needsImage = this.#firstTurn || !this.#calls.some((call) => call.kind === "computer");
@@ -407,11 +407,8 @@ export class RunLoop {
     const messages = await loadUserMessages(db, runId, this.#userCursor);
     const cursor = messages.at(-1)?.id ?? this.#userCursor;
     const extra = this.#firstTurn ? await hooks.promptContext(this.#run) : [];
-    const pending = this.#buildInput(
-      obs,
-      messages.map((message) => message.text),
-      extra,
-    );
+    const userTexts = messages.map((message) => `Message from the user: ${message.text}`);
+    const pending = this.#buildInput(obs, userTexts, extra);
     const history = await loadTranscript(db, runId);
     const transcript: TranscriptEntry[] = [];
     const deltas: Usage[] = [];
@@ -430,8 +427,15 @@ export class RunLoop {
           ...(mark ? { mark } : {}),
         });
     };
+    // Every model call, compaction included, first re-checks who holds control (spec §10.3).
+    const guarded = {
+      call: async (request: Parameters<ModelCaller["call"]>[0], callSignal: AbortSignal) => {
+        await this.#assertAgentControl(callSignal);
+        return caller.call(request, callSignal);
+      },
+    };
     const compactionDeps = {
-      caller,
+      caller: guarded,
       model: this.#run.model,
       instructions: AGENT_INSTRUCTIONS,
       signal,
@@ -446,6 +450,7 @@ export class RunLoop {
       const items = await seedFromSummary(storage, compacted.summary, keys, {
         pageText: this.#pageHeader(obs),
         screenshot: pngDataUrl(obs.screenshot.png),
+        userMessages: userTexts,
       });
       record("in", items, null, "seed");
       return items;
@@ -476,13 +481,13 @@ export class RunLoop {
         input = context;
       }
       try {
-        return await caller.call(request(), signal);
+        return await guarded.call(request(), signal);
       } catch (error) {
         // context_length_exceeded → compact now (once).
         if (!(error instanceof ContextOverflow) || compacted) throw error;
         compacted = true;
         input = await rebuild();
-        return caller.call(request(), signal);
+        return guarded.call(request(), signal);
       }
     };
     let call: ModelCall;
@@ -550,6 +555,13 @@ export class RunLoop {
     this.#notes.push(NUDGE);
     this.#next = "observe";
     return CONTINUE;
+  }
+
+  /** The model is never called while the user holds control: the DB is the source of truth. */
+  async #assertAgentControl(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const control = await readRunControl(this.#deps.db, this.#run.id);
+    if (control?.controller === "user") throw new ControlHeld();
   }
 
   async #charge(deltas: readonly Usage[]): Promise<void> {
