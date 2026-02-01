@@ -33,7 +33,7 @@ services:
       - ../fixtures/sites:/srv/fixtures:ro
     networks:
       behaviour:
-        aliases: [site.fixtures.test, other.fixtures.test]
+        aliases: [site.fixtures.test, other.fixtures.test, other.fixtures-isolated.test]
 
   browser-1:
     <<: *slot

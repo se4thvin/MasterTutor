@@ -19,6 +19,8 @@ export const ItemDecision = z.object({
   label: z.string().nullable(),
   /** The approved element's path (TargetDescription.path); null when the item has no element. */
   target: z.string().nullable().default(null),
+  /** The approved element's record context digest (TargetDescription.context), R29-3. */
+  context: z.string().nullable().default(null),
 });
 export type ItemDecision = z.infer<typeof ItemDecision>;
 
@@ -29,6 +31,8 @@ export const ApproveStepResult = z.object({
   item: z.string().nullable(),
   /** The element path of the item being asked about, bound into its decision. */
   target: z.string().nullable().default(null),
+  /** The record context digest of that element. */
+  context: z.string().nullable().default(null),
   url: z.string(),
   domHash: z.string(),
   decided: z.array(ItemDecision),

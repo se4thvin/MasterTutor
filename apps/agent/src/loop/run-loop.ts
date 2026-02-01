@@ -110,6 +110,8 @@ interface RiskyItem {
   safetyChecks: ReadonlyArray<{ code: string | null }> | null;
   /** The element the action hits (TargetDescription.path), bound into the approval. */
   target: string | null;
+  /** That element's record context digest (TargetDescription.context), bound too (R29-3). */
+  context: string | null;
 }
 
 const CONTINUE: StepOutcome = { kind: "continue" };
@@ -626,6 +628,7 @@ export class RunLoop {
             request,
             safetyChecks: null,
             target: null,
+            context: null,
           });
         continue;
       }
@@ -650,6 +653,7 @@ export class RunLoop {
           },
           safetyChecks: checks,
           target: null,
+          context: null,
         });
       }
       let previous: TargetDescription | null = null;
@@ -665,6 +669,7 @@ export class RunLoop {
             request: approvalRequestFor(need, url, this.#screenshotKey),
             safetyChecks: null,
             target: target?.path ?? null,
+            context: target?.context ?? null,
           });
       }
     }
@@ -712,6 +717,7 @@ export class RunLoop {
         note: decision === "denied" ? POLICY_BLOCKED : null,
         ...riskOf(item.request),
         target: item.target,
+        context: item.context,
       });
     }
     if (rows.length > 0) {
@@ -738,14 +744,24 @@ export class RunLoop {
       });
     }
     if (ask)
-      return this.#ask(ask.request, { callIds: [ask.callId], item: ask.item, target: ask.target });
+      return this.#ask(ask.request, {
+        callIds: [ask.callId],
+        item: ask.item,
+        target: ask.target,
+        context: ask.context,
+      });
     this.#next = "act";
     return CONTINUE;
   }
 
   async #ask(
     request: ApprovalRequest,
-    scope: { callIds: string[]; item: string | null; target?: string | null },
+    scope: {
+      callIds: string[];
+      item: string | null;
+      target?: string | null;
+      context?: string | null;
+    },
   ): Promise<StepOutcome> {
     const obs = this.#obs();
     const seq = this.#deps.store.nextSeq();
@@ -755,6 +771,7 @@ export class RunLoop {
       callIds: scope.callIds,
       item: scope.item,
       target: scope.target ?? null,
+      context: scope.context ?? null,
       url: obs.url,
       domHash: obs.domHash,
       decided: [...this.#decided.values()],
@@ -825,7 +842,9 @@ export class RunLoop {
           decision &&
           need.kind === decision.kind &&
           needLabel(need) === decision.label &&
-          (decision.target === null || decision.target === (target?.path ?? null))
+          (decision.target === null || decision.target === (target?.path ?? null)) &&
+          // ...and on the same record: an approval for Alice's row never deletes Bobby (R29-3).
+          (decision.context === null || decision.context === (target?.context ?? null))
         )
           return true;
         if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
@@ -1059,6 +1078,7 @@ export class RunLoop {
         item: pending.item,
         ...riskOf(pending.request),
         target: pending.target,
+        context: pending.context,
         approved: decision.status === "approved",
         note:
           decision.status === "approved"

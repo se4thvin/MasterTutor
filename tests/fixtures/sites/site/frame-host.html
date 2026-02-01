@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Embedded widgets</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      iframe {
+        position: absolute;
+        left: 40px;
+        width: 320px;
+        height: 120px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Same site, other origin: an in-process frame the page script cannot read. -->
+    <iframe
+      id="inproc"
+      title="Account"
+      src="http://other.fixtures.test/frame-delete.html"
+      style="top: 40px"
+    ></iframe>
+    <!-- Another site: an out-of-process frame (site isolation). -->
+    <iframe
+      id="oopif"
+      title="Account"
+      src="http://other.fixtures-isolated.test/frame-delete.html"
+      style="top: 200px"
+    ></iframe>
+  </body>
+</html>

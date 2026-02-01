@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nested frames</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      iframe,
+      button {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        border: 0;
+      }
+      iframe {
+        width: 700px;
+        height: 500px;
+      }
+      button {
+        width: 150px;
+        height: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      // ?d=N: N cross-origin frames deep (alternating hosts), then a Delete button.
+      const depth = Number(new URLSearchParams(location.search).get("d") ?? "0");
+      if (depth > 0) {
+        const next = location.hostname.startsWith("site.")
+          ? "http://other.fixtures.test"
+          : "http://site.fixtures.test";
+        const frame = document.createElement("iframe");
+        frame.title = "Nested";
+        frame.src = `${next}/nest.html?d=${depth - 1}`;
+        document.body.append(frame);
+      } else {
+        const button = document.createElement("button");
+        button.textContent = "Delete account";
+        document.body.append(button);
+      }
+    </script>
+  </body>
+</html>

@@ -83,6 +83,7 @@ async function historyTarget(
     label: `${move === "reload" ? "Reload" : `Go ${move} to`} a page made by submitting a form`,
     tag: HISTORY_TAG,
     path: `history:${move}`,
+    context: `history:${move}:${entry.url}`,
     isFormSubmit: true,
     formKind: "other",
     isSecretField: false,
