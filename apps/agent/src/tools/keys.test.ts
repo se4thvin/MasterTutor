@@ -13,6 +13,15 @@ describe("keys", () => {
     expect(toPlaywrightCombo(["1"])).toBe("Digit1");
     expect(() => toPlaywrightCombo(["HYPERDRIVE"])).toThrow(UnknownKey);
   });
+  it("names whitespace keys, so a raw newline or space can never pass as no key (N2 audit)", () => {
+    for (const key of ["\n", "\r", "\r\n", "Return", "NumpadEnter", "KP_Enter"])
+      expect(normalizeCombo([key])).toBe("ENTER");
+    expect(normalizeCombo([" "])).toBe("SPACE");
+    expect(normalizeCombo(["shift", "\r"])).toBe("SHIFT+ENTER");
+    for (const key of ["\n", "\r", "\r\n", "NumpadEnter"])
+      expect(toPlaywrightCombo([key])).toBe("Enter");
+    expect(toPlaywrightCombo([" "])).toBe("Space");
+  });
   it("normalizes combos with modifiers first", () => {
     expect(normalizeCombo(["l", "control"])).toBe("CTRL+L");
     expect(normalizeCombo(["Left", "Alt"])).toBe("ALT+ARROWLEFT");

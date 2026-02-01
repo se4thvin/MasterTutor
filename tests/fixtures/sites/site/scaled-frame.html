@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Scaled widget</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      iframe {
+        position: absolute;
+        left: 40px;
+        top: 40px;
+        width: 600px;
+        height: 300px;
+        border: 10px solid #888;
+        padding: 5px;
+        transform: scale(0.5);
+        transform-origin: 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Another site (out of process), drawn at half size. -->
+    <iframe title="Account" src="http://other.fixtures-isolated.test/cancel-delete.html"></iframe>
+  </body>
+</html>

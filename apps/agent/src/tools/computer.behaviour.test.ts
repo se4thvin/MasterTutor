@@ -2,6 +2,7 @@ import type { ComputerAction, ReadPageElement } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { OTHER, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts";
+import { hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { captureModelScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
@@ -346,5 +347,45 @@ describe("ComputerExecutor review gaps (group C fix round)", () => {
     };
     expect(await executor.execute(click(miss), signal)).toBeNull();
     expect(await text(s, "#cdiv-count")).toBe("1");
+  });
+});
+
+describe("ComputerExecutor inside cross-origin frames (targeted fix)", () => {
+  it("blocks auto-advanced typing into a password field inside an out-of-process frame", async () => {
+    const { s, executor } = await setup("/frame-otp.html");
+    // The Code field inside the frame (frame at 40,40; field at 20,20 inside, 200x30).
+    expect(await executor.execute(click({ x: 100, y: 75 }), signal)).toBeNull();
+    const result = await executor.execute({ type: "type", text: "1234secret" }, signal);
+    expect(result).toBe(SECRET_FIELD_REFUSAL);
+    const frame = s.page.frames().find((candidate) => candidate.url().includes("otp-advance"))!;
+    expect(
+      await frame.evaluate(() => (document.getElementById("code") as HTMLInputElement).value),
+    ).toBe("1234");
+    expect(
+      await frame.evaluate(() => (document.getElementById("pw") as HTMLInputElement).value),
+    ).toBe("");
+  });
+
+  it("returns the uninspectable-frame target when a frame lookup throws, and forgets the frame (N3)", async () => {
+    const { s } = await setup("/frame-host.html");
+    const forgotten: string[] = [];
+    const broken = s as unknown as {
+      frameWorlds(frameId: string): Promise<unknown>;
+      forgetFrame(frameId: string): void;
+    };
+    broken.frameWorlds = async () => ({
+      evaluate: async () => {
+        throw new Error("Target closed");
+      },
+      evaluateHandle: async () => {
+        throw new Error("Target closed");
+      },
+      cdp: { send: async () => ({}) },
+    });
+    broken.forgetFrame = (frameId) => void forgotten.push(frameId);
+    // The out-of-process frame (other.fixtures-isolated.test) at top 200.
+    const hit = await hitTest(s, { x: 140, y: 240 });
+    expect(hit.target).toMatchObject({ opaqueFrame: true });
+    expect(forgotten).toHaveLength(1);
   });
 });

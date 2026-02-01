@@ -142,25 +142,25 @@ export function describeTarget(el: Element): TargetDescription {
   }
   const LIVE =
     "[aria-live], [role=status], [role=timer], [role=log], [role=marquee], [role=alert], time, script, style, noscript, template";
+  // The record the element acts on (R29-3), bounded (N4): the nearest row/record container or
+  // landmark, else the body; at most 500 text nodes (2,000 visited) in document order, live regions left out.
   const RECORD =
-    "tr, [role=row], li, [role=listitem], article, [role=article], dialog, [role=dialog], fieldset, form, section, [role=region], [aria-selected=true]";
-  const textOf = (root: Element | null): string => {
-    if (!root) return "";
-    const parts: string[] = [];
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node && parts.length < 4_000; node = walker.nextNode()) {
-      if (node.parentElement?.closest(LIVE)) continue;
-      const text = clean(node.textContent);
-      if (text) parts.push(text);
-    }
-    return parts.join(" ").slice(0, 16_000);
-  };
+    "tr, [role=row], li, [role=listitem], article, [role=article], dialog, [role=dialog], fieldset, form, section, [role=region], [aria-selected=true], main, [role=main], nav, [role=navigation], aside, [role=complementary], header, footer";
   const doc = target.ownerDocument;
-  const context = [
-    textOf(target.closest(RECORD)),
-    textOf(doc.querySelector("main, [role=main]") ?? doc.body),
-    doc.location?.href ?? "",
-  ].join("\n");
+  const scope = target.closest(RECORD) ?? doc.body ?? doc.documentElement;
+  const parts: string[] = [];
+  const walker = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let visited = 0;
+  for (
+    let node = walker.nextNode();
+    node && parts.length < 500 && visited < 2_000;
+    node = walker.nextNode(), visited++
+  ) {
+    if (node.parentElement?.closest(LIVE)) continue;
+    const text = clean(node.textContent);
+    if (text) parts.push(text);
+  }
+  const context = [parts.join(" ").slice(0, 16_000), doc.location?.href ?? ""].join("\n");
   return {
     label: label.slice(0, 200),
     tag,

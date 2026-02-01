@@ -1,7 +1,6 @@
 import type { ComputerAction } from "@mastertutor/contracts";
 import {
   armSecretBlock,
-  disarmSecretBlock,
   focusTarget,
   hitTest,
   scrollState,
@@ -280,7 +279,7 @@ export class ComputerExecutor {
     }
     let refusal = this.#typingRefusal(await focusTarget(this.#session));
     if (refusal) return refusal;
-    await armSecretBlock(this.#session);
+    const disarm = await armSecretBlock(this.#session);
     try {
       for (let offset = 0; offset < text.length; offset += TYPE_CHUNK) {
         this.#session.guard.assertAgent(signal);
@@ -294,7 +293,7 @@ export class ComputerExecutor {
       const focus = await focusTarget(this.#session);
       if (focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     } finally {
-      await disarmSecretBlock(this.#session);
+      await disarm();
     }
     await settle(this.#session, signal);
     return null;
@@ -341,11 +340,11 @@ export class ComputerExecutor {
     const focus = await focusTarget(this.#session);
     if (typesText(keys) && focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     if (focus?.editable || focus?.isSecretField) {
-      await armSecretBlock(this.#session);
+      const disarm = await armSecretBlock(this.#session);
       try {
         await this.#session.page.keyboard.press(combo);
       } finally {
-        await disarmSecretBlock(this.#session);
+        await disarm();
       }
     } else {
       await this.#session.page.keyboard.press(combo);

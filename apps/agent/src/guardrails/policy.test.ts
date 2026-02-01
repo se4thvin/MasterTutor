@@ -103,8 +103,36 @@ describe("needsApproval (spec §5.5)", () => {
       { type: "type" as const, text: "ok\n" },
     ])
       expect(needsApproval(action, opaque)).toMatchObject({ kind: "form_submit" });
-    expect(needsApproval({ type: "type", text: "plain text" }, opaque)).toBeNull();
-    expect(needsApproval({ type: "keypress", keys: ["A"] }, opaque)).toBeNull();
+    expect(needsApproval({ type: "keypress", keys: ["CTRL", "A"] }, opaque)).toBeNull();
+    expect(needsApproval({ type: "keypress", keys: ["TAB"] }, opaque)).toBeNull();
+  });
+  it("needs approval to put text into an embedded page it could not inspect (interim, before B3)", () => {
+    const opaque = target({ tag: "iframe", label: "", opaqueFrame: true });
+    for (const keys of [["A"], ["SHIFT", "A"], ["1"], ["SPACE"], ["@"]])
+      expect(needsApproval({ type: "keypress", keys }, opaque)).toMatchObject({
+        kind: "form_submit",
+      });
+    expect(needsApproval({ type: "type", text: "plain text" }, opaque)).toMatchObject({
+      kind: "form_submit",
+    });
+  });
+  it("treats every line break and Enter alias as Enter (N2)", () => {
+    const field = target({ editable: true, formKind: "other", tag: "input" });
+    for (const text of ["hello\r", "hello\n", "hello\r\nmore"])
+      expect(needsApproval({ type: "type", text }, field)).toMatchObject({ kind: "form_submit" });
+    const opaque = target({ tag: "iframe", label: "", opaqueFrame: true });
+    expect(needsApproval({ type: "type", text: "x\r" }, opaque)).toMatchObject({
+      kind: "form_submit",
+    });
+    const save = target({ label: "Save", isFormSubmit: true, formKind: "other" });
+    for (const keys of [["\n"], ["\r"], ["Return"], ["NumpadEnter"], [" "], ["SHIFT", "\r"]])
+      expect(needsApproval({ type: "keypress", keys }, save)).toMatchObject({
+        kind: "form_submit",
+      });
+    for (const keys of [["\r"], ["NumpadEnter"]])
+      expect(needsApproval({ type: "keypress", keys }, field)).toMatchObject({
+        kind: "form_submit",
+      });
   });
   it("builds contract-valid approval requests", () => {
     const need = needsApproval(click, target({ label: "Pay now" }));

@@ -91,6 +91,7 @@ async function setup(
     approvalMode?: "ask" | "auto_within_allowlist";
     budget?: Budget;
     hooks?: Partial<RunHooks>;
+    leaseExpired?: () => boolean;
   } = {},
 ) {
   const name = `s${++counter}`;
@@ -115,6 +116,7 @@ async function setup(
     caller,
     browser,
     hooks: withHooks(options.hooks),
+    ...(options.leaseExpired ? { leaseExpired: options.leaseExpired } : {}),
     clock: instantClock(),
     config: runtimeConfig(),
     log,
@@ -925,6 +927,18 @@ describe("RunLoop (spec §5.3)", () => {
     await owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, run.id));
     expect(await drive(loop)).toEqual({ kind: "completed" });
     expect(mock.requestsFor(name)).toHaveLength(1);
+  });
+
+  it("never calls the model once the worker's local lease deadline has passed (I2 residual)", async () => {
+    let expired = false;
+    const { name, loop } = await setup([done()], { leaseExpired: () => expired });
+    expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" }); // observe
+    expired = true;
+    await expect(loop.step(new AbortController().signal)).rejects.toMatchObject({
+      name: "Interrupted",
+      why: "lease_lost",
+    });
+    expect(mock.requestsFor(name)).toHaveLength(0);
   });
 
   it("never calls the model for a compaction while the user holds control", async () => {

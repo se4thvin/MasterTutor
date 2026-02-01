@@ -223,4 +223,86 @@ describe("SessionLoopBrowser", () => {
     expect(bobby!.context).not.toBe(alice!.context);
     expect(bobby!.context).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it("maps a click into a scaled, bordered, padded frame by its real transform (N1)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/scaled-frame.html`, signal);
+    await browser.observe(signal);
+    // Outer (98,108) lands on "Delete account" (inner ~101,121); an unscaled mapping would read
+    // "Cancel" (inner ~50,60).
+    const click = { type: "click" as const, x: 98, y: 108, button: "left" as const };
+    const target = await browser.targetFor(click, null);
+    expect(target).toMatchObject({ label: "Delete account" });
+    expect(needsApproval(click, target)?.kind).toBe("risky_click");
+  });
+
+  it("treats a cross-origin <object> as a frame: never an ungated click inside (N1)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/object-frame.html`, signal);
+    await browser.observe(signal);
+    const click = { type: "click" as const, x: 140, y: 80, button: "left" as const };
+    const target = await browser.targetFor(click, null);
+    expect(target?.tag).not.toBe("object");
+    expect(needsApproval(click, target)).not.toBeNull();
+  });
+
+  it("gates a typed carriage return, which really submits the form (N2)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/save-form.html`, signal);
+    await browser.observe(signal);
+    await browser.runComputer(
+      [{ type: "click", x: 80, y: 30, button: "left" }],
+      signal,
+      async () => true,
+    );
+    const typed = { type: "type" as const, text: "hello\r" };
+    expect(needsApproval(typed, await browser.targetFor(typed, null))?.kind).toBe("form_submit");
+    for (const keys of [["\r"], ["NumpadEnter"]]) {
+      const key = { type: "keypress" as const, keys };
+      expect(needsApproval(key, await browser.targetFor(key, null))?.kind).toBe("form_submit");
+    }
+    // What the gate prevents: "\r" is Enter to the browser and sends the form.
+    await browser.runComputer([typed], signal, async () => true);
+    expect((await browser.observe(signal)).title).toBe("Order placed");
+  });
+
+  it("hashes only the nearest row for the record context, bounded and deterministic (N4)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/long-table.html`, signal);
+    await browser.observe(signal);
+    const { output } = await browser.runFunction(
+      "read_page",
+      { mode: "interactive", sinceHash: null },
+      signal,
+    );
+    const json = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1)) as {
+      elements: Array<{ name: string; point: { x: number; y: number } | null }>;
+    };
+    const [first, second] = json.elements.filter((e) => e.name === "Delete" && e.point);
+    const at = (point: { x: number; y: number }) => ({
+      type: "click" as const,
+      ...point,
+      button: "left" as const,
+    });
+    const row1 = (await browser.targetFor(at(first!.point!), null))!.context;
+    expect((await browser.targetFor(at(first!.point!), null))!.context).toBe(row1);
+    expect((await browser.targetFor(at(second!.point!), null))!.context).not.toBe(row1);
+    const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
+    const page = remote
+      .contexts()[0]!
+      .pages()
+      .find((p) => p.url().includes("long-table"))!;
+    await page.evaluate(() => {
+      document.getElementById("banner")!.textContent = "Banner changed";
+      document.getElementById("name-900")!.textContent = "Somebody else";
+    });
+    // Text outside the row does not move its context...
+    expect((await browser.targetFor(at(first!.point!), null))!.context).toBe(row1);
+    await page.evaluate(() => {
+      document.getElementById("name-1")!.textContent = "Bobby";
+    });
+    await remote.close();
+    // ...the row's own record does.
+    expect((await browser.targetFor(at(first!.point!), null))!.context).not.toBe(row1);
+  });
 });
