@@ -13,7 +13,7 @@ The main session acts as orchestrator. Before doing anything, read `orchestratio
 
 ## Engineering principles (must follow everywhere in this repo)
 
-1. **Bloat-free.** Add a dependency, layer or abstraction only when a current requirement needs it. Prefer the platform and the standard library. No speculative features or "just in case" config.
+1. **Bloat-free.** If something isn't needed, leave it out: no speculative features, unused code, "just in case" config, or redundant layers. Additions that bring real UI delight (animation, micro-interactions, React Bits components) or real functional efficiency are needed and welcome. Prefer the platform and the standard library for everything else.
 2. **Low latency by design.** Stream instead of polling; do work in parallel where it's safe; avoid extra network hops and serialization layers. Keep hot paths (agent loop, screencast, activity stream) lean, and measure before optimizing.
 3. **Security first.**
    - Secrets never reach the model, logs, traces or screenshots.
