@@ -11,13 +11,13 @@ import {
   type WaitReason,
 } from "@mastertutor/contracts";
 import type { Database } from "@mastertutor/db";
-import { objectKeys, type Storage } from "@mastertutor/storage";
+import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
 import { approvalRequestFor, needsApproval, type ApprovalNeed } from "../guardrails/policy.ts";
-import { wrapUntrusted } from "../guardrails/untrusted.ts";
+import { wrapUntrusted } from "../tools/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
 import { AGENT_INSTRUCTIONS, NUDGE, goalText } from "../llm/instructions.ts";
 import {
@@ -67,9 +67,10 @@ import {
 import type { RunHooks } from "./hooks.ts";
 import type { LoopBrowser, Observation } from "./loop-browser.ts";
 import { buildModelInput, rehydrateImages } from "./model-input.ts";
-import { lastInputTokens, readRunControl, type RunSnapshot } from "./run-state.ts";
+import { lastInputTokens, readRunControl, readWakeRequest, type RunSnapshot } from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
 import {
+  GARAGE_REF,
   lastUserEventId,
   loadTranscript,
   recentScreenshotKeys,
@@ -107,6 +108,8 @@ interface RiskyItem {
   request: ApprovalRequest;
   /** The model's pending_safety_checks: decided by decideSafetyChecks, never by AUTO_MODE_DECISIONS. */
   safetyChecks: ReadonlyArray<{ code: string | null }> | null;
+  /** The element the action hits (TargetDescription.path), bound into the approval. */
+  target: string | null;
 }
 
 const CONTINUE: StepOutcome = { kind: "continue" };
@@ -161,6 +164,10 @@ export class RunLoop {
   #pending: PendingApproval | null = null;
   #notesChanged = false;
   #lastTick: number | null = null;
+  /** run_transcript as stored, loaded once and appended after each commit (M5). */
+  #history: TranscriptEntry[] = [];
+  /** Recent screenshots as data URLs, by storage key, so a request never re-reads them (M5). */
+  readonly #images = new Map<string, string>();
 
   private constructor(
     deps: RunLoopDeps,
@@ -177,6 +184,7 @@ export class RunLoop {
   static async restore(deps: RunLoopDeps, run: RunSnapshot): Promise<RunLoop> {
     const transcript = await loadTranscript(deps.db, run.id);
     const loop = new RunLoop(deps, run, transcript.length === 0, lastUserEventId(transcript));
+    loop.#history = transcript;
     loop.#calls = unansweredCalls(transcript);
     loop.#pending = await loadPendingApproval(deps.db, run.id);
     loop.#lastInputTokens = await lastInputTokens(deps.db, run.id);
@@ -198,6 +206,19 @@ export class RunLoop {
 
   get hasPendingApproval(): boolean {
     return this.#pending !== null;
+  }
+
+  /**
+   * Whether a wake brought something only a person can supply: a decided approval or a new user
+   * message. A stale wake (a message already read, a repeated NOTIFY) does not end a wait (I1).
+   */
+  async hasNews(): Promise<boolean> {
+    const pending = this.#pending;
+    if (pending) {
+      const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
+      if (decision && decision.status !== "pending") return true;
+    }
+    return (await loadUserMessages(this.#deps.db, this.#run.id, this.#userCursor)).length > 0;
   }
 
   reobserve(): void {
@@ -307,8 +328,9 @@ export class RunLoop {
     this.#observation = obs;
     const unchanged =
       previous !== null && previous.url === obs.url && previous.domHash === obs.domHash;
-    const key = objectKeys.stepScreenshot(this.#run.id, seq);
-    await this.#deps.storage.put(key, obs.screenshot.png, { contentType: "image/png" });
+    // Uploaded once, by the commit that records the step; the model input refers to the same object.
+    const key = this.#deps.store.screenshotKey(seq);
+    this.#images.set(key, pngDataUrl(obs.screenshot.png));
     this.#screenshotKey = key;
     const step: StepRecord = {
       seq,
@@ -316,6 +338,7 @@ export class RunLoop {
       state: "done",
       url: obs.url,
       screenshotKey: key,
+      screenshot: obs.screenshot.png,
       caption: obs.screenshot.dropped ? "Screenshot withheld: a secret field moved" : null,
       result: unchanged
         ? { unchanged: true }
@@ -362,12 +385,13 @@ export class RunLoop {
 
   /* --------------------------------- decide ---------------------------------- */
 
+  /** This turn's input items, and the texts a compaction must carry verbatim (M7, carry-over c). */
   #buildInput(
     obs: Observation,
     userTexts: readonly string[],
     extra: readonly string[],
-  ): ResponseInputItem[] {
-    const shot = pngDataUrl(obs.screenshot.png);
+  ): { items: ResponseInputItem[]; carried: string[] } {
+    const shot = `${GARAGE_REF}${this.#screenshotKey}`;
     const items: ResponseInputItem[] = [];
     const notes: string[] = [];
     for (const call of this.#calls) {
@@ -397,19 +421,21 @@ export class RunLoop {
     ];
     const needsImage = this.#firstTurn || !this.#calls.some((call) => call.kind === "computer");
     items.push(userMessage(texts, needsImage ? shot : null));
-    return items;
+    return { items, carried: [...notes, ...this.#notes, ...userTexts] };
   }
 
   async #decide(signal: AbortSignal): Promise<StepOutcome> {
-    const { db, caller, storage, hooks, config } = this.#deps;
+    const { db, caller, hooks, config } = this.#deps;
     const runId = this.#run.id;
     const obs = this.#obs();
+    // Read the wake request before the messages, so the messages it announced are among them (I1).
+    const wake = await readWakeRequest(db, runId);
     const messages = await loadUserMessages(db, runId, this.#userCursor);
     const cursor = messages.at(-1)?.id ?? this.#userCursor;
     const extra = this.#firstTurn ? await hooks.promptContext(this.#run) : [];
     const userTexts = messages.map((message) => `Message from the user: ${message.text}`);
-    const pending = this.#buildInput(obs, userTexts, extra);
-    const history = await loadTranscript(db, runId);
+    const { items: pending, carried } = this.#buildInput(obs, userTexts, extra);
+    const history = this.#history;
     const transcript: TranscriptEntry[] = [];
     const deltas: Usage[] = [];
     const record = (
@@ -445,19 +471,21 @@ export class RunLoop {
       record("in", pending, null, "compaction");
       record("out", compacted.call.reply.output, compacted.call.reply.id, "compaction");
       deltas.push(usageDelta(compacted.call.model, compacted.call.reply.usage, 0));
-      // Only this run's own transcript screenshots are rehydrated (Group D: resolveGarageRef).
+      // Only this run's own screenshots are referenced (Group D: resolveGarageRef).
       const keys = recentScreenshotKeys(history, runId, 2);
-      const items = await seedFromSummary(storage, compacted.summary, keys, {
+      const items = seedFromSummary(compacted.summary, keys, {
         pageText: this.#pageHeader(obs),
-        screenshot: pngDataUrl(obs.screenshot.png),
-        userMessages: userTexts,
+        screenshotKey: this.#screenshotKey!,
+        carried,
       });
       record("in", items, null, "seed");
       return items;
     };
     /** Rebuild from the run_transcript text log when the context itself is too large to send. */
     const rebuild = async () =>
-      seed(await summarizeTranscript(compactionDeps, history, this.#run.goal, pending));
+      this.#rehydrate(
+        await seed(await summarizeTranscript(compactionDeps, history, this.#run.goal, pending)),
+      );
     let compacted = false;
     let input: ResponseInputItem[] = [];
     const request = () => ({
@@ -468,11 +496,13 @@ export class RunLoop {
     });
     const obtain = async (): Promise<ModelCall> => {
       // Stateless (D37): the whole context is rebuilt from run_transcript for every request.
-      const context = await rehydrateImages(buildModelInput(history, pending), runId, storage);
+      const context = await this.#rehydrate(buildModelInput(history, pending));
       if (history.length > 0 && this.#lastInputTokens > config.compactionInputTokens) {
         compacted = true;
         try {
-          input = await seed(await summarizeContext(compactionDeps, context));
+          input = await this.#rehydrate(
+            await seed(await summarizeContext(compactionDeps, context)),
+          );
         } catch (error) {
           if (!(error instanceof ContextOverflow)) throw error;
           input = await rebuild();
@@ -515,7 +545,7 @@ export class RunLoop {
     const events: RunEvent[] = [{ type: "budget", usage, budget: this.#run.budget }];
     if (call.fallback)
       events.unshift({ type: "model_fallback", from: call.fallback.from, to: call.fallback.to });
-    await this.#deps.store.commit({
+    const stored = await this.#deps.store.commit({
       steps: [
         {
           seq: this.#deps.store.nextSeq(),
@@ -532,9 +562,11 @@ export class RunLoop {
         plan: this.#run.plan,
         usage,
         model: call.model,
+        consumeWake: wake,
       },
       events,
     });
+    this.#history.push(...stored);
     this.#userCursor = cursor;
     this.#firstTurn = false;
     this.#notes = [];
@@ -555,6 +587,10 @@ export class RunLoop {
     this.#notes.push(NUDGE);
     this.#next = "observe";
     return CONTINUE;
+  }
+
+  #rehydrate(items: readonly ResponseInputItem[]): Promise<ResponseInputItem[]> {
+    return rehydrateImages(items, this.#run.id, this.#deps.storage, this.#images);
   }
 
   /** The model is never called while the user holds control: the DB is the source of truth. */
@@ -589,6 +625,7 @@ export class RunLoop {
             index: null,
             request,
             safetyChecks: null,
+            target: null,
           });
         continue;
       }
@@ -612,6 +649,7 @@ export class RunLoop {
             safetyChecks: checks.slice(0, 20),
           },
           safetyChecks: checks,
+          target: null,
         });
       }
       let previous: TargetDescription | null = null;
@@ -626,6 +664,7 @@ export class RunLoop {
             index,
             request: approvalRequestFor(need, url, this.#screenshotKey),
             safetyChecks: null,
+            target: target?.path ?? null,
           });
       }
     }
@@ -672,6 +711,7 @@ export class RunLoop {
         approved: decision === "approved",
         note: decision === "denied" ? POLICY_BLOCKED : null,
         ...riskOf(item.request),
+        target: item.target,
       });
     }
     if (rows.length > 0) {
@@ -697,14 +737,15 @@ export class RunLoop {
         extra: (tx) => insertApprovals(tx, this.#run.id, seq, rows, POLICY_DECIDER),
       });
     }
-    if (ask) return this.#ask(ask.request, { callIds: [ask.callId], item: ask.item });
+    if (ask)
+      return this.#ask(ask.request, { callIds: [ask.callId], item: ask.item, target: ask.target });
     this.#next = "act";
     return CONTINUE;
   }
 
   async #ask(
     request: ApprovalRequest,
-    scope: { callIds: string[]; item: string | null },
+    scope: { callIds: string[]; item: string | null; target?: string | null },
   ): Promise<StepOutcome> {
     const obs = this.#obs();
     const seq = this.#deps.store.nextSeq();
@@ -713,6 +754,7 @@ export class RunLoop {
       approvalId,
       callIds: scope.callIds,
       item: scope.item,
+      target: scope.target ?? null,
       url: obs.url,
       domHash: obs.domHash,
       decided: [...this.#decided.values()],
@@ -774,10 +816,17 @@ export class RunLoop {
           refusals.push(`Action ${index + 1} (${action.type}): ${decision.note ?? DENIED}`);
           return false;
         }
-        const need = needsApproval(action, await this.#deps.browser.targetFor(action, null));
+        const target = await this.#deps.browser.targetFor(action, null);
+        const need = needsApproval(action, target);
         if (need === null) return true;
-        // An approval covers what was approved, not the batch index: the target must still match.
-        if (decision && need.kind === decision.kind && needLabel(need) === decision.label)
+        // An approval covers what was approved, not the batch index: the same kind and label on
+        // the same element (M10).
+        if (
+          decision &&
+          need.kind === decision.kind &&
+          needLabel(need) === decision.label &&
+          (decision.target === null || decision.target === (target?.path ?? null))
+        )
           return true;
         if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
         return false;
@@ -889,19 +938,24 @@ export class RunLoop {
       this.reobserve();
       return CONTINUE;
     }
+    const wake = await readWakeRequest(this.#deps.db, this.#run.id);
     const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
     if (!decision || decision.status === "pending") {
       const control = await readRunControl(this.#deps.db, this.#run.id);
-      if (control?.status === "running") {
-        await this.#deps.store.commit({
-          transition: {
-            from: ["running"],
-            to: "waiting",
-            waitReason: "approval",
-            reason: pending.request.kind,
-          },
-        });
-      }
+      // Still waiting: this wake is used up, so a later sleep is not undone by it (I1).
+      await this.#deps.store.commit({
+        run: { consumeWake: wake },
+        ...(control?.status === "running"
+          ? {
+              transition: {
+                from: ["running"],
+                to: "waiting",
+                waitReason: "approval",
+                reason: pending.request.kind,
+              } as Transition,
+            }
+          : {}),
+      });
       return { kind: "waiting", reason: "approval" };
     }
     const { obs, step } = await this.#capture(signal);
@@ -1004,6 +1058,7 @@ export class RunLoop {
       this.#applyDecision({
         item: pending.item,
         ...riskOf(pending.request),
+        target: pending.target,
         approved: decision.status === "approved",
         note:
           decision.status === "approved"

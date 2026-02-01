@@ -21,6 +21,7 @@ import { Supervisor } from "../../apps/agent/src/loop/supervisor.ts";
 import { instantClock, type Clock } from "../../apps/agent/src/runtime/clock.ts";
 import type { RuntimeConfig } from "../../apps/agent/src/runtime/config.ts";
 import { seedWorkspace } from "../../apps/agent/src/testing/db.ts";
+import { crashSupervisor } from "../../apps/agent/src/testing/crash.ts";
 import { createMemoryStorage } from "../../apps/agent/src/testing/memory-storage.ts";
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
 import type { Scenario } from "../llm-mock/src/scenario.ts";
@@ -62,9 +63,10 @@ export async function startBehaviourAgent(
   const [existing] = await owner.db.select({ id: settings.workspaceId }).from(settings).limit(1);
   const workspaceId = existing?.id ?? (await seedWorkspace(owner.db));
   await owner.db.update(settings).set({ killSwitch: false });
+  let agentDb = createDb(env.agentUrl);
   const make = () =>
     new Supervisor({
-      db: createDb(env.agentUrl),
+      db: agentDb,
       storage,
       model: createOpenAIModelClient({ apiKey: "behaviour", baseURL: `${mock.url}/v1` }),
       slots: [...BEHAVIOUR_SLOTS],
@@ -97,8 +99,9 @@ export async function startBehaviourAgent(
       await web.close();
     },
     // A true crash: the DB closes first, so the in-flight act keeps no abort row.
-    crash: () => agent.supervisor.crash(),
+    crash: () => crashSupervisor(agent.supervisor, agentDb),
     restart: async () => {
+      agentDb = createDb(env.agentUrl);
       agent.supervisor = make();
       await agent.supervisor.start();
     },

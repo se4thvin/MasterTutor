@@ -14,13 +14,13 @@ import {
   type WaitReason,
 } from "@mastertutor/contracts";
 import { runSteps, runTranscript, runs, type Database } from "@mastertutor/db";
-import type { Storage } from "@mastertutor/storage";
+import { objectKeys, type Storage } from "@mastertutor/storage";
 import { and, eq, gt, inArray, max, sql } from "drizzle-orm";
 import type { BrowserStorageState } from "../browser/storage-state.ts";
 import { emitRunEvents } from "../events/emit.ts";
 import { LeaseLost, RunChanged } from "../runtime/errors.ts";
 import type { Tx } from "../runtime/types.ts";
-import { externalizeImages, type TranscriptEntry } from "./transcript.ts";
+import { externalizeImages, inJsonbOrder, type TranscriptEntry } from "./transcript.ts";
 
 export interface RunPatch {
   plan?: Plan | null;
@@ -32,6 +32,11 @@ export interface RunPatch {
   videoTime?: number | null;
   allowedOrigins?: string[];
   wakeRequested?: boolean;
+  /**
+   * The wake request this step consumed (the `wake_requested_at` value read as text). It is cleared
+   * only if no newer wake arrived meanwhile.
+   */
+  consumeWake?: string | null;
   releaseLease?: boolean;
 }
 
@@ -53,6 +58,11 @@ export interface StepRecord {
   caption?: string | null;
   url?: string | null;
   screenshotKey?: string | null;
+  /**
+   * The screenshot bytes for `screenshotKey`, uploaded with this commit: a failed commit (lost lease)
+   * deletes them again, and the nonce in the key means nothing live is ever overwritten.
+   */
+  screenshot?: Uint8Array;
   usage?: Usage | null;
 }
 
@@ -113,17 +123,33 @@ export class StepStore {
     return this.#seq++;
   }
 
-  async commit(commit: StepCommit): Promise<void> {
+  /** A fresh, unique key for a step screenshot (uploaded by the commit that carries the step). */
+  screenshotKey(seq: number): string {
+    return objectKeys.stepScreenshot(this.#options.run.id, seq, randomUUID().replaceAll("-", ""));
+  }
+
+  /** Commits in one transaction; returns the transcript entries as stored (images as refs). */
+  async commit(commit: StepCommit): Promise<TranscriptEntry[]> {
     const { storage, run } = this.#options;
     const nonce = randomUUID().replaceAll("-", "");
     const uploaded: string[] = [];
     let entries: TranscriptEntry[];
     try {
-      entries = await Promise.all(
-        (commit.transcript ?? []).map((entry, index) =>
-          externalizeImages(storage, run.id, this.#transcriptSeq + index, entry, nonce, uploaded),
-        ),
+      const shots = (commit.steps ?? []).flatMap((step) =>
+        step.screenshot && step.screenshotKey
+          ? [{ key: step.screenshotKey, body: step.screenshot }]
+          : [],
       );
+      uploaded.push(...shots.map((shot) => shot.key));
+      const [stored] = await Promise.all([
+        Promise.all(
+          (commit.transcript ?? []).map((entry, index) =>
+            externalizeImages(storage, run.id, this.#transcriptSeq + index, entry, nonce, uploaded),
+          ),
+        ),
+        ...shots.map((shot) => storage.put(shot.key, shot.body, { contentType: "image/png" })),
+      ]);
+      entries = stored;
       await this.#write(commit, entries);
     } catch (error) {
       // Nothing was committed: do not leave this attempt's uploads behind (best effort).
@@ -131,6 +157,7 @@ export class StepStore {
       throw error;
     }
     this.#transcriptSeq += entries.length;
+    return entries.map(inJsonbOrder);
   }
 
   async #write(commit: StepCommit, entries: readonly TranscriptEntry[]): Promise<void> {
@@ -154,6 +181,11 @@ export class StepStore {
           ...(patch.videoTime !== undefined ? { videoTime: patch.videoTime } : {}),
           ...(patch.allowedOrigins ? { allowedOrigins: patch.allowedOrigins } : {}),
           ...(patch.wakeRequested ? { wakeRequestedAt: sql`now()` } : {}),
+          ...(patch.consumeWake
+            ? {
+                wakeRequestedAt: sql`case when ${runs.wakeRequestedAt} <= ${patch.consumeWake}::timestamptz then null else ${runs.wakeRequestedAt} end`,
+              }
+            : {}),
           ...(patch.releaseLease ? { leaseOwner: null, leaseExpiresAt: null } : {}),
           ...(transition
             ? {

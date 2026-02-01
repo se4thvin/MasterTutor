@@ -62,6 +62,20 @@ export async function externalizeImages(
   return { ...entry, item };
 }
 
+/**
+ * The value with object keys in Postgres jsonb order (shorter keys first, then bytewise), so an
+ * entry kept in memory serializes exactly like the same entry reloaded from run_transcript (D37:
+ * a restored worker sends byte-identical input).
+ */
+export function inJsonbOrder<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(inJsonbOrder) as T;
+  if (value === null || typeof value !== "object") return value;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a.length !== b.length ? a.length - b.length : Buffer.compare(Buffer.from(a), Buffer.from(b)),
+  );
+  return Object.fromEntries(entries.map(([key, inner]) => [key, inJsonbOrder(inner)])) as T;
+}
+
 export async function loadTranscript(db: Database, runId: string): Promise<TranscriptEntry[]> {
   const rows = await db
     .select({ seq: runTranscript.seq, item: runTranscript.item })
@@ -107,12 +121,15 @@ export function lastUserEventId(entries: readonly TranscriptEntry[]): string | n
   return best === null ? null : best.toString();
 }
 
-/** The storage key behind a `garage:` ref, only if it lies under this run's transcript prefix. */
+/** The storage key behind a `garage:` ref, only if it is one of this run's images (transcript or step). */
 export function resolveGarageRef(runId: string, value: unknown): string | null {
   if (typeof value !== "string" || !value.startsWith(GARAGE_REF)) return null;
   const key = value.slice(GARAGE_REF.length);
   if (
-    !key.startsWith(objectKeys.transcriptImagePrefix(runId)) ||
+    !(
+      key.startsWith(objectKeys.transcriptImagePrefix(runId)) ||
+      key.startsWith(objectKeys.stepScreenshotPrefix(runId))
+    ) ||
     key.includes("..") ||
     key.includes("\\")
   )

@@ -1,4 +1,5 @@
 import type { ComputerAction, FunctionToolName, ScrollPosition } from "@mastertutor/contracts";
+import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserStorageState } from "../browser/storage-state.ts";
@@ -13,6 +14,7 @@ export const TINY_PNG = Buffer.from(
 export const PLAIN_TARGET: TargetDescription = {
   label: "",
   tag: "div",
+  path: "div",
   isFormSubmit: false,
   formKind: null,
   isSecretField: false,
@@ -38,13 +40,18 @@ export class FakeLoopBrowser implements LoopBrowser {
   readonly navigations: string[] = [];
   blocked: BlockedNavigation[] = [];
   /** Runs after each single action, e.g. to change what lies under a later action of the batch. */
-  actionHook: ((action: ComputerAction) => void) | null = null;
+  actionHook: ((action: ComputerAction) => void | Promise<void>) | null = null;
+  /** The worker's control guard, checked before every input and screenshot like the real session. */
+  guard: ControlGuard | null = null;
+  /** How often the storage-state restore script was removed again. */
+  restoreRemovals = 0;
   computerHook:
     ((actions: readonly ComputerAction[], signal: AbortSignal) => Promise<void>) | null = null;
   functionOutput = (name: string): string => JSON.stringify({ ok: true, tool: name });
 
   async observe(signal: AbortSignal): Promise<Observation> {
     signal.throwIfAborted();
+    this.guard?.assertAgent(signal);
     return {
       url: this.url,
       title: this.title,
@@ -77,9 +84,10 @@ export class FakeLoopBrowser implements LoopBrowser {
     for (const action of actions) {
       if (!(await gate(action)))
         return { executed, notes: ["Stopped before an action: it needs approval."] };
+      this.guard?.assertAgent(signal);
       this.executed.push(action);
       executed += 1;
-      this.actionHook?.(action);
+      await this.actionHook?.(action);
     }
     this.computerRuns.push([...actions]);
     await this.computerHook?.(actions, signal);
@@ -113,6 +121,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   }
 
   async applyStorage(): Promise<() => Promise<void>> {
-    return async () => undefined;
+    return async () => {
+      this.restoreRemovals += 1;
+    };
   }
 }

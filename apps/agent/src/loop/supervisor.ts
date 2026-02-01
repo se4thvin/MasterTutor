@@ -19,7 +19,7 @@ import { slotBrowserConnector } from "./session-browser.ts";
 import { RunWorker } from "./worker.ts";
 
 export interface SupervisorOptions {
-  /** Owned by the supervisor: stop() and crash() close it. */
+  /** Owned by the supervisor: stop() closes it. */
   db: DbHandle;
   storage: Storage;
   model: ModelClient;
@@ -132,14 +132,6 @@ export class Supervisor {
     await this.#options.db.close();
   }
 
-  /** Tests only: dies like a killed process. The DB goes first, so nothing more is written. */
-  async crash(): Promise<void> {
-    this.#stopped = true;
-    if (this.#sweep) clearInterval(this.#sweep);
-    await this.#options.db.close();
-    await Promise.all([...this.#workers.values()].map((worker) => worker.stop("crash")));
-  }
-
   #onWake(payload: NotifyPayload<"run_wake">): void {
     if (payload.reason === "kill") {
       void this.#onKill();
@@ -199,6 +191,8 @@ export class Supervisor {
       claim,
     );
     const id = claim.run.id;
+    // The run's previous slot may still hold a stale worker's browser: restart it now (I2).
+    if (claim.reclaimedSlot) void this.#pool.reset(claim.reclaimedSlot).catch(() => undefined);
     // Our own run claimed again (its lease lapsed, e.g. a heartbeat outage): the old worker has
     // lost its lease token, so it is abandoned before the new one starts.
     const previous = this.#workers.get(id);
@@ -229,6 +223,8 @@ export class Supervisor {
   async #sweepOnce(): Promise<void> {
     // The kill fallback (a missed NOTIFY) first: it must not wait behind slot work.
     await this.#onKill();
+    // Likewise for run_control: a takeover or cancel whose NOTIFY was lost (M3).
+    for (const worker of this.#workers.values()) worker.control();
     try {
       await this.#pool.reconcile({ awaitResets: false });
     } catch {

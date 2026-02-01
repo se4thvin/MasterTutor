@@ -1,15 +1,13 @@
 import { MODELS } from "@mastertutor/contracts";
 import { APIError } from "./openai.ts";
 import type { Clock } from "../runtime/clock.ts";
-import { ChainLost, ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
+import { ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
 import type { ModelClient, ModelReply, ModelRequest } from "./client.ts";
 
-export type ModelErrorKind =
-  "rate_limited" | "server" | "transient" | "chain_lost" | "context_overflow" | "fatal";
+export type ModelErrorKind = "rate_limited" | "server" | "transient" | "context_overflow" | "fatal";
 
 export function classifyModelError(error: unknown): ModelErrorKind {
   if (error instanceof APIError) {
-    if (error.code === "previous_response_not_found") return "chain_lost";
     if (error.code === "context_length_exceeded") return "context_overflow";
     if (error.status === 408 || error.status === 409) return "transient";
     if (error.status === 429) return "rate_limited";
@@ -69,7 +67,6 @@ export class ModelCaller {
       } catch (error) {
         if (signal.aborted) throw signal.reason;
         const kind = classifyModelError(error);
-        if (kind === "chain_lost") throw new ChainLost();
         if (kind === "context_overflow") throw new ContextOverflow();
         if (kind === "fatal")
           throw new ModelUnavailable("model_request_rejected", "The model rejected the request.");

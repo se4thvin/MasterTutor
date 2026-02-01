@@ -3,7 +3,7 @@ import { APIError, statelessParams } from "./openai.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { instantClock } from "../runtime/clock.ts";
-import { ChainLost, ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
+import { ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
 import { ModelCaller, backoffMs, classifyModelError, retryAfterMs } from "./caller.ts";
 import {
   createOpenAIModelClient,
@@ -189,7 +189,7 @@ describe("ModelCaller", () => {
       MODELS.agentFallback,
     ]);
   });
-  it("gives up after the fallback also fails, and maps chain loss and 4xx", async () => {
+  it("gives up after the fallback also fails, and maps 4xx (a lost chain cannot happen under D37)", async () => {
     await expect(
       caller(scripted(Array.from({ length: 6 }, () => apiError(500))).client).call(
         request,
@@ -201,7 +201,8 @@ describe("ModelCaller", () => {
         request,
         signal(),
       ),
-    ).rejects.toBeInstanceOf(ChainLost);
+    ).rejects.toMatchObject({ name: "ModelUnavailable", code: "model_request_rejected" });
+    expect(classifyModelError(apiError(400, "previous_response_not_found"))).toBe("fatal");
     await expect(
       caller(scripted([apiError(400)]).client).call(request, signal()),
     ).rejects.toBeInstanceOf(ModelUnavailable);

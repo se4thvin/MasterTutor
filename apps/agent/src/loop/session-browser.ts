@@ -19,10 +19,12 @@ import {
   type BrowserStorageState,
 } from "../browser/storage-state.ts";
 import { isCaptchaFrameUrl, isChallengePage } from "../guardrails/captcha.ts";
+import { HISTORY_TAG } from "../guardrails/policy.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
 import type { SlotPool } from "../slots/pool.ts";
+import { matchAccelerator } from "../tools/accelerators.ts";
 import { ComputerExecutor, type ActionGate } from "../tools/computer.ts";
 import { readPage, readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry } from "../tools/registry.ts";
@@ -65,6 +67,29 @@ export async function detectCaptcha(page: Page): Promise<boolean> {
 }
 
 const OBSERVE_ATTEMPTS = 3;
+
+/**
+ * Reload, back and forward land on a history entry. If that entry was made by submitting a form,
+ * Chromium sends the form again, so it is described as a form submission and needs approval.
+ */
+async function historyTarget(
+  session: BrowserSession,
+  move: "reload" | "back" | "forward",
+): Promise<TargetDescription | null> {
+  const { currentIndex, entries } = await (await session.cdp()).send("Page.getNavigationHistory");
+  const entry = entries[currentIndex + (move === "back" ? -1 : move === "forward" ? 1 : 0)];
+  if (entry?.transitionType !== "form_submit") return null;
+  return {
+    label: `${move === "reload" ? "Reload" : `Go ${move} to`} a page made by submitting a form`,
+    tag: HISTORY_TAG,
+    path: `history:${move}`,
+    isFormSubmit: true,
+    formKind: "other",
+    isSecretField: false,
+    editable: false,
+    interactive: true,
+  };
+}
 
 /**
  * One observation of one page (review M7). The URL is read first and re-checked last, so a
@@ -151,6 +176,14 @@ export class SessionLoopBrowser implements LoopBrowser {
     action: ComputerAction,
     previous: TargetDescription | null,
   ): Promise<TargetDescription | null> {
+    const history =
+      action.type === "keypress"
+        ? matchAccelerator(action.keys)
+        : action.type === "click" && (action.button === "back" || action.button === "forward")
+          ? action.button
+          : null;
+    if (history === "reload" || history === "back" || history === "forward")
+      return historyTarget(this.#session, history);
     if (action.type === "click" || action.type === "double_click") {
       const point = await this.#executor.toPage(action.x, action.y);
       return point ? (await hitTest(this.#session, point)).target : null;

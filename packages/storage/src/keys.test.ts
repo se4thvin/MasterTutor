@@ -27,7 +27,9 @@ describe("objectKeys", () => {
   it("builds the spec layout", () => {
     expect(objectKeys.asset(run, "a".repeat(64))).toBe(`assets/${run}/${"a".repeat(64)}`);
     expect(objectKeys.snapshot(run, "page.mhtml")).toBe(`snapshots/${run}/page.mhtml`);
-    expect(objectKeys.stepScreenshot(run, 7)).toBe(`runs/${run}/steps/7.png`);
+    expect(objectKeys.stepScreenshot(run, 7, "ab12")).toBe(`runs/${run}/steps/7-ab12.png`);
+    expect(objectKeys.stepScreenshotPrefix(run)).toBe(`runs/${run}/steps/`);
+    expect(() => objectKeys.stepScreenshot(run, 7, "../x")).toThrow(TypeError);
     expect(objectKeys.transcriptImage(run, 7, 2)).toBe(`runs/${run}/transcript/7-2.png`);
     expect(objectKeys.transcriptImage(run, 7, 2, "ab12", "jpeg")).toBe(
       `runs/${run}/transcript/7-2-ab12.jpeg`,
@@ -36,12 +38,12 @@ describe("objectKeys", () => {
     expect(objectKeys.download(run, "../x.pdf")).toBe(`downloads/${run}/x.pdf`);
   });
   it("lowercases an uppercase UUID in the key", () => {
-    expect(objectKeys.stepScreenshot(run.toUpperCase(), 1)).toBe(`runs/${run}/steps/1.png`);
+    expect(objectKeys.stepScreenshot(run.toUpperCase(), 1, "n")).toBe(`runs/${run}/steps/1-n.png`);
   });
   it("refuses malformed ids", () => {
     expect(() => objectKeys.asset("../../", "a".repeat(64))).toThrow(TypeError);
     expect(() => objectKeys.asset(run, "ABC")).toThrow(TypeError);
-    expect(() => objectKeys.stepScreenshot(run, -1)).toThrow(TypeError);
+    expect(() => objectKeys.stepScreenshot(run, -1, "n")).toThrow(TypeError);
   });
   it("validates raw keys", () => {
     expect(isObjectKey(`runs/${run}/steps/1.png`)).toBe(true);

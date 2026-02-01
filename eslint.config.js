@@ -49,14 +49,15 @@ export default defineConfig(
     },
   },
   {
+    // Scoped to OpenAI client objects (`openai`, `client`, `this.client`, `x.openai`), so DOM
+    // `input.files` or `dataTransfer.files` stay legal. The import ban above is the real boundary.
     files: ["apps/**/*.{ts,tsx}", "packages/*/src/server/**/*.ts"],
-    ignores: ["apps/web/**"],
     rules: {
       "no-restricted-syntax": [
         "error",
         {
           selector:
-            "MemberExpression[property.name=/^(files|vectorStores|conversations|batches|fineTuning|evals)$/]",
+            "MemberExpression[property.name=/^(files|vectorStores|conversations|batches|fineTuning|evals)$/]:matches([object.name=/^(openai|client|openaiClient)$/i], [object.property.name=/^(openai|client|openaiClient)$/i])",
           message:
             "Stateful OpenAI APIs are banned (openai-data-policy.md): use Responses with store:false, embeddings or transcription only.",
         },

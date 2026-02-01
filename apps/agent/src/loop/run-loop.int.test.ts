@@ -73,9 +73,10 @@ const doneExpecting = (text: string): MockTurn => ({
     if (!JSON.stringify(r.body.input).includes(text)) throw new Error(`no "${text}" in the input`);
   },
 });
-const risky = (label: string) => ({
+const risky = (label: string, path = `button:${label}`) => ({
   label,
   tag: "button",
+  path,
   isFormSubmit: false,
   formKind: null,
   isSecretField: false,
@@ -128,7 +129,7 @@ async function setup(
     const [fresh] = await owner.db.select().from(runs).where(eq(runs.id, row.id));
     return RunLoop.restore(await deps(), snapshotOf(fresh!));
   };
-  return { name, run: row, browser, loop: await reload(), reload };
+  return { name, run: row, browser, storage, loop: await reload(), reload };
 }
 
 async function drive(loop: RunLoop, max = 60): Promise<StepOutcome> {
@@ -588,6 +589,94 @@ describe("RunLoop (spec §5.3)", () => {
     await resumed.resume(new AbortController().signal);
     expect(await drive(resumed)).toEqual({ kind: "completed" });
     expect(browser.executed).toEqual([{ type: "click", x: 10, y: 20, button: "left" }]);
+  });
+
+  it("binds an approval to the element: a same-label button on another row is not approved (M10)", async () => {
+    const { run, browser, loop, reload } = await setup([
+      {
+        outputs: [
+          {
+            type: "computer",
+            actions: [
+              { type: "click", x: 10, y: 20, button: "left" },
+              { type: "click", x: 30, y: 40, button: "left" },
+            ],
+          },
+        ],
+      },
+      doneExpecting("page changed"),
+    ]);
+    browser.targets.set("30,40", risky("Delete", "table>tr:1>td>button"));
+    // Action 0 re-sorts the table: the point of action 1 now hits row 2's "Delete".
+    browser.actionHook = (action) => {
+      if (action.type === "click" && action.x === 10)
+        browser.targets.set("30,40", risky("Delete", "table>tr:2>td>button"));
+    };
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    await decideApproval(run.id, "approved");
+    const resumed = await reload();
+    await resumed.resume(new AbortController().signal);
+    expect(await drive(resumed)).toEqual({ kind: "completed" });
+    expect(browser.executed).toEqual([{ type: "click", x: 10, y: 20, button: "left" }]);
+  });
+
+  it("stores each screenshot once, shared by its step and the transcript (M4)", async () => {
+    const { run, browser, storage, loop } = await setup([click(10), click(11), click(12), done()]);
+    browser.png = Buffer.from("one screenshot");
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const keys = [...storage.objects.keys()];
+    const observed = (await owner.db.select().from(runSteps).where(eq(runSteps.runId, run.id)))
+      .filter((step) => step.screenshotKey !== null)
+      .map((step) => step.screenshotKey);
+    expect(keys.filter((key) => key.includes("/transcript/"))).toEqual([]);
+    expect(keys.sort()).toEqual([...observed].sort());
+  });
+
+  it("keeps the transcript and recent images in memory: an uninterrupted run reads no image back (M5)", async () => {
+    const { browser, storage, loop } = await setup([
+      click(10),
+      click(11),
+      click(12),
+      click(13),
+      click(14),
+      done(),
+    ]);
+    browser.png = Buffer.from("another screenshot");
+    const read = storage.getBytes.bind(storage);
+    let reads = 0;
+    storage.getBytes = async (key: string) => {
+      reads += 1;
+      return read(key);
+    };
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(reads).toBe(0);
+  });
+
+  it("carries this turn's executor notes verbatim into the context after a compaction (M7)", async () => {
+    const note = "Executor: navigation to http://other.fixtures.test was blocked";
+    const { name, browser, loop } = await setup(
+      [{ ...click(), usage: { input: 210_000 } }, click(11), done()],
+      { approvalMode: "auto_within_allowlist" },
+    );
+    let first = true;
+    browser.computerHook = async () => {
+      if (!first) return;
+      first = false;
+      browser.blocked.push({
+        url: "http://other.fixtures.test/a",
+        origin: "http://other.fixtures.test",
+      });
+    };
+    for (let i = 0; i < 4; i++)
+      expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const turns = mock.requestsFor(name).filter((r) => r.body.text?.format?.name === "agent_turn");
+    expect(turns).toHaveLength(3);
+    for (const turn of turns.slice(1)) {
+      const input = JSON.stringify(turn.body.input);
+      expect(input).toContain("continues from a summary");
+      expect(input).toContain(note);
+    }
   });
 
   it("tells the model about every blocked navigation, not only the first", async () => {

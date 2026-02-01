@@ -5,6 +5,11 @@
 export interface TargetDescription {
   label: string;
   tag: string;
+  /**
+   * Where the element sits (`tag:nth` steps from the root, `#shadow` across shadow roots). Approvals
+   * bind to it, so a same-label element elsewhere (another row's "Delete") is not approved.
+   */
+  path: string;
   isFormSubmit: boolean;
   formKind: "login" | "search" | "other" | null;
   isSecretField: boolean;
@@ -110,9 +115,27 @@ export function describeTarget(el: Element): TargetDescription {
     (tag === "input" && !nonText.includes(type || "text")) ||
     tag === "textarea" ||
     (target as HTMLElement).isContentEditable;
+  const steps: string[] = [];
+  let node: Element | null = target;
+  for (let depth = 0; node && depth < 32; depth++) {
+    const name = node.tagName.toLowerCase();
+    const parent: Element | null = node.parentElement;
+    if (!parent) {
+      steps.unshift(name);
+      const root = node.getRootNode();
+      node = root instanceof ShadowRoot ? root.host : null;
+      if (node) steps.unshift("#shadow");
+      continue;
+    }
+    const current: Element = node;
+    const same = [...parent.children].filter((child) => child.tagName === current.tagName);
+    steps.unshift(same.length > 1 ? `${name}:${same.indexOf(current) + 1}` : name);
+    node = parent;
+  }
   return {
     label: label.slice(0, 200),
     tag,
+    path: steps.join(">").slice(0, 1_000),
     isFormSubmit,
     formKind,
     isSecretField: isSecretField(target),

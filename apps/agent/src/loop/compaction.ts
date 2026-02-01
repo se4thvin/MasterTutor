@@ -1,11 +1,10 @@
 import { CompactionSummary } from "@mastertutor/contracts";
-import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { CallResult, ModelCaller } from "../llm/caller.ts";
-import { pngDataUrl, userMessage } from "../llm/items.ts";
+import { userMessage } from "../llm/items.ts";
 import { ModelUnavailable } from "../runtime/errors.ts";
-import { wrapUntrusted } from "../guardrails/untrusted.ts";
-import { transcriptAsText, type TranscriptEntry } from "./transcript.ts";
+import { wrapUntrusted } from "../tools/untrusted.ts";
+import { GARAGE_REF, transcriptAsText, type TranscriptEntry } from "./transcript.ts";
 
 export const COMPACTION_REQUEST =
   "Context is getting long. Summarize this run for a fresh context as compaction_summary JSON: the goal, the plan with done flags, progress so far, key facts (URLs, names, what is finished), and open questions.";
@@ -86,32 +85,28 @@ export function summarizeTranscript(
   ]);
 }
 
-export async function seedFromSummary(
-  storage: Storage,
+/**
+ * The base of a fresh context. Images are `garage:` refs (rehydrated per request, never re-uploaded);
+ * `carried` are this turn's executor notes and user messages, verbatim: a summary must not
+ * paraphrase what the user said or what the executor refused.
+ */
+export function seedFromSummary(
   summary: CompactionSummary,
   previousKeys: readonly string[],
-  current: {
-    pageText: string;
-    screenshot: string;
-    /** This turn's messages from the user, carried verbatim: a summary must not paraphrase them. */
-    userMessages: readonly string[];
-  },
-): Promise<ResponseInputItem[]> {
-  const earlier = await Promise.all(
-    previousKeys.slice(-2).map(async (key) => pngDataUrl(await storage.getBytes(key)).toString()),
-  );
+  current: { pageText: string; screenshotKey: string; carried: readonly string[] },
+): ResponseInputItem[] {
   return [
     userMessage(
       [
         "This run continues from a summary of earlier context. Earlier tool calls are finished; act on the current screen.",
         `Summary:\n${JSON.stringify(summary)}`,
-        ...current.userMessages,
+        ...current.carried,
         current.pageText,
         "Earlier screenshots, oldest first, then the current screen:",
       ],
       null,
     ),
-    ...earlier.map((image) => userMessage([], image)),
-    userMessage([], current.screenshot),
+    ...previousKeys.slice(-2).map((key) => userMessage([], `${GARAGE_REF}${key}`)),
+    userMessage([], `${GARAGE_REF}${current.screenshotKey}`),
   ];
 }
