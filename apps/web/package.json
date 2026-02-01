@@ -7,13 +7,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "motion:css": "node scripts/generate-motion-css.ts"
   },
   "dependencies": {
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
     "better-auth": "1.7.7",
     "drizzle-orm": "0.45.3",
+    "motion": "14.0.0",
     "next": "16.3.8",
     "react": "19.3.0",
     "react-dom": "19.3.0"
