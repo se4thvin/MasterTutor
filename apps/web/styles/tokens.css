@@ -1,0 +1,126 @@
+/* Design tokens: spec §11.1, run 12, D25. Components read these through Tailwind @theme or var(). */
+/* light */
+:root {
+  color-scheme: light;
+  --bg: #fafafa;
+  --bg-2: #f5f5f7;
+  --bg-3: #fbfbfd;
+  --elevated: #ffffff;
+  --label: #1d1d1f;
+  --label-2: #636366;
+  --label-3: #86868b;
+  --hairline: #d2d2d7;
+  --sep: rgb(0 0 0 / 0.08);
+  --fill: rgb(118 118 128 / 0.12);
+  --fill-2: rgb(118 118 128 / 0.08);
+  --tint: #0071e3;
+  --tint-text: #0066cc;
+  --on-tint: #ffffff;
+  --tint-wash: rgb(0 113 227 / 0.09);
+  --signal: #c22914;
+  --on-signal: #ffffff;
+  --signal-wash: rgb(217 48 26 / 0.08);
+  --navy: #0b1a66;
+  --ok: #17742f;
+  --ok-wash: rgb(26 127 55 / 0.09);
+  --warn: #a84b00;
+  --warn-wash: rgb(255 159 10 / 0.14);
+  --danger: #c40014;
+  --on-danger: #ffffff;
+  --danger-wash: rgb(215 0 21 / 0.08);
+  --switch-on: #34c759;
+  --seg-thumb: #ffffff;
+  --seg-thumb-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 2px 6px rgb(0 0 0 / 0.1);
+  --code-keyword: #9b2393;
+  --code-number: #1c00cf;
+  --code-title: #326d74;
+  --code-string: #c41a16;
+  --code-comment: #6e6e73;
+  --glass: rgb(255 255 255 / 0.72);
+  --glass-side: rgb(246 246 248 / 0.78);
+  --glass-line: rgb(0 0 0 / 0.07);
+  --blur: saturate(180%) blur(24px);
+  --scrim: rgb(0 0 0 / 0.18);
+  --ambient: rgb(0 113 227 / 0.16);
+  --e1: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.05);
+  --e2: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 6px 16px rgb(0 0 0 / 0.07), 0 1px 3px rgb(0 0 0 / 0.05);
+  --e3: 0 0 0 0.5px rgb(0 0 0 / 0.1), 0 22px 48px rgb(0 0 0 / 0.14), 0 4px 10px rgb(0 0 0 / 0.06);
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", var(--font-inter), Inter,
+    system-ui, sans-serif;
+  --font-display:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", var(--font-inter), Inter, system-ui,
+    sans-serif;
+  --font-code: ui-monospace, "SF Mono", "Geist Mono", Menlo, monospace;
+  --r-xs: 0.375rem;
+  --r-sm: 0.5rem;
+  --r-md: 0.75rem;
+  --r-lg: 1.125rem;
+  --r-xl: 1.625rem;
+  --r-pill: 62.4375rem;
+  --r-frame: 0.875rem;
+  --hit: 2.75rem;
+  --sidebar-w: 15.5rem;
+  --rail-w: 4.5rem;
+  --tabbar-h: 3.5rem;
+  --toolbar-h: 3.25rem;
+  --measure: 42.5rem;
+  --margin-col: 15rem;
+  --gutter: 2.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0c;
+    --bg-2: #161617;
+    --bg-3: #111112;
+    --elevated: #1c1c1e;
+    --label: #f5f5f7;
+    --label-2: #a1a1a6;
+    --label-3: #6e6e73;
+    --hairline: #38383a;
+    --sep: rgb(255 255 255 / 0.09);
+    --fill: rgb(118 118 128 / 0.24);
+    --fill-2: rgb(118 118 128 / 0.16);
+    --tint: #0071e3;
+    --tint-text: #2997ff;
+    --on-tint: #ffffff;
+    --tint-wash: rgb(41 151 255 / 0.14);
+    --signal: #ff5533;
+    --on-signal: #0b0b0c;
+    --signal-wash: rgb(255 85 51 / 0.13);
+    --navy: #2b3a8f;
+    --ok: #30d158;
+    --ok-wash: rgb(48 209 88 / 0.13);
+    --warn: #ffb340;
+    --warn-wash: rgb(255 179 64 / 0.13);
+    --danger: #ff453a;
+    --on-danger: #0b0b0c;
+    --danger-wash: rgb(255 69 58 / 0.14);
+    --switch-on: #30d158;
+    --seg-thumb: #5a5a5e;
+    --seg-thumb-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.08);
+    --code-keyword: #ff7ab2;
+    --code-number: #d9c97c;
+    --code-title: #78c2b3;
+    --code-string: #fc6a5d;
+    --code-comment: #a1a1a6;
+    --glass: rgb(22 22 23 / 0.72);
+    --glass-side: rgb(28 28 30 / 0.74);
+    --glass-line: rgb(255 255 255 / 0.08);
+    --scrim: rgb(0 0 0 / 0.45);
+    --ambient: rgb(41 151 255 / 0.12);
+    --e1: 0 0 0 0.5px rgb(255 255 255 / 0.1);
+    --e2: 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.5);
+    --e3: 0 0 0 0.5px rgb(255 255 255 / 0.12), 0 24px 60px rgb(0 0 0 / 0.65);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass: var(--bg);
+    --glass-side: var(--bg-2);
+    --blur: none;
+  }
+}
