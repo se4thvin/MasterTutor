@@ -1,23 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { authErrorCopy } from "./auth-client.ts";
 
+const NEUTRAL =
+  "Couldn't create the account. Sign-up may be closed, or this email may already be registered.";
+
 describe("authErrorCopy", () => {
   it("explains wrong credentials without blame", () => {
-    expect(authErrorCopy({ status: 401, code: "INVALID_EMAIL_OR_PASSWORD" })).toBe(
+    expect(authErrorCopy({ status: 401, code: "INVALID_EMAIL_OR_PASSWORD" }, "sign-in")).toBe(
       "That email and password don't match.",
     );
   });
-  it("explains closed sign-up", () => {
-    expect(authErrorCopy({ status: 403 })).toBe(
-      "Sign-up is closed. Ask the workspace owner to invite you.",
-    );
+  it("gives one answer for closed sign-up and an existing account", () => {
+    expect(authErrorCopy({ status: 403 }, "sign-up")).toBe(NEUTRAL);
+    expect(authErrorCopy({ status: 422, code: "USER_ALREADY_EXISTS" }, "sign-up")).toBe(NEUTRAL);
+    expect(NEUTRAL).not.toMatch(/already exists/i);
   });
-  it("explains an existing account", () => {
-    expect(authErrorCopy({ status: 422, code: "USER_ALREADY_EXISTS" })).toBe(
-      "An account with this email already exists. Sign in instead.",
+  it("does not talk about sign-up when sign-in is refused", () => {
+    expect(authErrorCopy({ status: 403 }, "sign-in")).toBe("Couldn't sign in. Try again.");
+  });
+  it("asks for a longer password", () => {
+    expect(authErrorCopy({ code: "PASSWORD_TOO_SHORT" }, "sign-up")).toBe(
+      "Use at least 12 characters.",
     );
   });
   it("falls back politely", () => {
-    expect(authErrorCopy({ status: 500 })).toBe("Couldn't reach the server. Try again.");
+    expect(authErrorCopy({ status: 500 }, "sign-up")).toBe("Couldn't reach the server. Try again.");
   });
 });

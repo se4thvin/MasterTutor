@@ -33,7 +33,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext value={show}>
       {children}
-      <section className="toast-region" aria-label="Notifications">
+      <section className="toast-region" aria-label="Notifications" aria-live="polite">
         <AnimatePresence initial={false}>
           {toasts.map((t) => (
             <m.div

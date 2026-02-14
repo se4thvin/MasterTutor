@@ -96,6 +96,8 @@ export function SwipeToast({
     });
     a.onfinish = () => close("timeout");
     burn.current = a;
+    flags.current.hidden = document.hidden;
+    syncFuse();
     const onVisibility = () => {
       flags.current.hidden = document.hidden;
       syncFuse();
@@ -164,9 +166,8 @@ export function SwipeToast({
     <m.div
       ref={cardRef}
       className={cx("toast", tone === "danger" && "toast-danger")}
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
+      role="group"
+      aria-label="Notification"
       tabIndex={0}
       style={{ y, opacity: fade }}
       onPointerDown={onPointerDown}

@@ -26,6 +26,14 @@ export function OverlaysSection() {
         }
       >
         <p>Folders appear here.</p>
+        <Menu.Root>
+          <Menu.Trigger className="btn btn-gray">Folder options</Menu.Trigger>
+          <MenuPanel align="start">
+            <MenuItem icon="folderAdd" onSelect={() => setResult("New folder")}>
+              New folder
+            </MenuItem>
+          </MenuPanel>
+        </Menu.Root>
       </Sheet>
       <Button variant="danger" onClick={() => setAlert(true)}>
         Delete folder…

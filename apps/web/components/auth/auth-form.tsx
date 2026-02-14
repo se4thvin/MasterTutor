@@ -21,20 +21,26 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
     const name = String(form.get("name") ?? "").trim();
     setPending(true);
     setError(null);
-    const result = signUp
-      ? await authClient.signUp.email({ email, password, name })
-      : await authClient.signIn.email({ email, password });
-    setPending(false);
-    if (result.error) {
-      setError(authErrorCopy(result.error));
+    try {
+      const result = signUp
+        ? await authClient.signUp.email({ email, password, name })
+        : await authClient.signIn.email({ email, password });
+      if (result.error) {
+        setError(authErrorCopy(result.error, mode));
+        return;
+      }
+    } catch {
+      setError(authErrorCopy({}, mode));
       return;
+    } finally {
+      setPending(false);
     }
     router.replace("/library");
     router.refresh();
   }
 
   return (
-    <form className="auth-card" onSubmit={onSubmit} noValidate={false}>
+    <form className="auth-card" onSubmit={onSubmit}>
       <h1 className="t-title1">{signUp ? "Create account" : "Sign in"}</h1>
       <p className="t-callout muted">
         {signUp ? "The first account owns this workspace." : "Welcome back."}

@@ -59,7 +59,7 @@ test("sign-up enforces 12-character passwords and explains closed sign-up", asyn
   await page.getByLabel("Password").fill("correct-horse-battery");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.locator("p[role=alert]")).toHaveText(
-    "Sign-up is closed. Ask the workspace owner to invite you.",
+    "Couldn't create the account. Sign-up may be closed, or this email may already be registered.",
   );
   await expectCleanScreen(page);
 });

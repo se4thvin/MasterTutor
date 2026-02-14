@@ -28,6 +28,17 @@ test.describe("layout detector self-test", () => {
     expect(await findLayoutIssues(page)).toEqual([]);
   });
 
+  test("accepts the visually-hidden pattern but not a small clipped box", async ({ page }) => {
+    await page.setContent(`
+      <span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">screen reader text</span>
+      <span style="position:absolute;top:40px;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap">more hidden text</span>`);
+    expect(await findLayoutIssues(page)).toEqual([]);
+    await page.setContent(
+      `<div style="width:60px;height:20px;overflow:hidden;white-space:nowrap">long text that is cut off</div>`,
+    );
+    expect((await findLayoutIssues(page)).join("\n")).toContain("text clipped by its own box");
+  });
+
   test("flags text clipped by its own overflow:hidden box", async ({ page }) => {
     await page.setContent(
       `<div style="width:60px;overflow:hidden;white-space:nowrap">long text that is cut off</div>`,

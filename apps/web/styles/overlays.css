@@ -2,7 +2,7 @@
   .scrim {
     position: fixed;
     inset: 0;
-    z-index: 90;
+    z-index: var(--z-scrim);
     background: var(--scrim);
     transition-property: opacity;
     transition-duration: var(--motion-dur-base);
@@ -16,7 +16,7 @@
   .alert-viewport {
     position: fixed;
     inset: 0;
-    z-index: 100;
+    z-index: var(--z-sheet);
     display: grid;
   }
   .sheet-viewport {
@@ -124,7 +124,7 @@
     margin-top: 1.25rem;
   }
   .popover-positioner {
-    z-index: 80;
+    z-index: var(--z-popover); /* above a sheet, so menus opened inside one are not covered */
   }
   .popover,
   .menu {
@@ -177,7 +177,7 @@
   }
   .toast-region {
     position: fixed;
-    z-index: 110;
+    z-index: var(--z-toast);
     left: 1rem;
     right: 1rem;
     bottom: calc(var(--tabbar-h) + 1rem + env(safe-area-inset-bottom));
