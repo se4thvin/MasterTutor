@@ -2,6 +2,7 @@
 @import "../styles/tokens.css";
 @import "../styles/motion.css";
 @import "../styles/base.css";
+@import "../styles/components.css";
 
 @theme inline {
   --color-*: initial;
