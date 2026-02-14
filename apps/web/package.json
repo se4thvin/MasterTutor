@@ -12,6 +12,7 @@
     "motion:css": "node scripts/generate-motion-css.ts"
   },
   "dependencies": {
+    "@base-ui/react": "1.8.0",
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
     "@orpc/client": "1.15.4",

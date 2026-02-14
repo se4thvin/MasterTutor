@@ -9,4 +9,481 @@
       radial-gradient(circle at 20% 30%, var(--ambient), transparent 60%),
       linear-gradient(135deg, var(--tint-wash), var(--signal-wash));
   }
+  .wrap {
+    max-width: 84rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    @variant md {
+      padding: 0 1.5rem;
+    }
+    @variant lg {
+      padding: 0 2.5rem;
+    }
+  }
+  .btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    min-height: 2.25rem;
+    padding: 0 0.95rem;
+    border-radius: var(--r-pill);
+    font-weight: 500;
+    font-size: 0.8125rem;
+    white-space: nowrap;
+    text-decoration: none;
+    transition-property: transform;
+    transition-duration: var(--motion-dur-micro);
+    transition-timing-function: var(--motion-ease-out);
+    &::after {
+      content: "";
+      position: absolute;
+      inset: -0.25rem;
+    }
+    &:hover {
+      text-decoration: none;
+    }
+    &:active:not(:disabled) {
+      transform: scale(var(--motion-press));
+    }
+    &:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+  }
+  .btn-primary {
+    background: var(--tint);
+    color: var(--on-tint);
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--tint) 88%, black);
+    }
+  }
+  .btn-gray {
+    background: var(--fill);
+    color: var(--label);
+  }
+  .btn-plain {
+    color: var(--tint-text);
+    padding: 0 0.6rem;
+    &:hover {
+      background: var(--tint-wash);
+    }
+  }
+  .btn-danger {
+    background: var(--danger);
+    color: var(--on-danger);
+  }
+  .btn-lg {
+    min-height: var(--hit);
+    padding: 0 1.35rem;
+    font-size: 0.9375rem;
+  }
+  .icon-btn {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    flex: none;
+    border-radius: var(--r-pill);
+    color: var(--label-2);
+    transition-property: transform;
+    transition-duration: var(--motion-dur-micro);
+    transition-timing-function: var(--motion-ease-out);
+    &::after {
+      content: "";
+      position: absolute;
+      inset: -0.25rem;
+    }
+    &:hover {
+      background: var(--fill-2);
+      color: var(--label);
+    }
+    &:active {
+      transform: scale(var(--motion-press-icon));
+    }
+  }
+  @media (pointer: coarse) {
+    .btn {
+      min-height: var(--hit);
+    }
+    .icon-btn {
+      width: var(--hit);
+      height: var(--hit);
+    }
+  }
+  .kbd {
+    color: var(--label);
+    font: 500 0.6875rem/1 var(--font-code);
+    padding: 0.15rem 0.32rem;
+    border-radius: 0.3125rem;
+    background: var(--fill-2);
+    box-shadow: inset 0 -1px 0 var(--sep);
+  }
+  .btn-primary .kbd {
+    background: rgb(255 255 255 / 0.2);
+    box-shadow: none;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.18rem 0.5rem;
+    border-radius: var(--r-pill);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+  .badge-ok {
+    color: var(--ok);
+    background: var(--ok-wash);
+  }
+  .badge-warn {
+    color: var(--warn);
+    background: var(--warn-wash);
+  }
+  .badge-neutral {
+    color: var(--label);
+    background: var(--fill-2);
+  }
+  .badge-tint {
+    color: var(--tint-text);
+    background: var(--tint-wash);
+  }
+  .badge-signal {
+    color: var(--signal);
+    background: var(--signal-wash);
+  }
+  .badge-danger {
+    color: var(--danger);
+    background: var(--danger-wash);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 2rem;
+    max-width: 100%;
+    padding: 0 0.35rem 0 0.6rem;
+    border-radius: var(--r-pill);
+    background: var(--bg-2);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .chip-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chip-x {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    color: var(--label-2);
+    &::after {
+      content: "";
+      position: absolute;
+      inset: -0.625rem;
+    }
+    &:hover {
+      background: var(--fill);
+    }
+  }
+  .sk {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    border-radius: var(--r-xs);
+    background: var(--fill-2);
+    &::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.45), transparent);
+      transform: translateX(-100%);
+      animation-name: shimmer;
+      animation-duration: var(--motion-dur-shimmer);
+      animation-timing-function: var(--motion-ease-out);
+      animation-iteration-count: infinite;
+    }
+  }
+  @media (prefers-color-scheme: dark) {
+    .sk::after {
+      background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.06), transparent);
+    }
+  }
+  @keyframes shimmer {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.625rem) scale(0.96);
+    }
+  }
+  .tf {
+    display: grid;
+    gap: 0.35rem;
+  }
+  .tf-label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+  .tf-input {
+    min-height: var(--hit);
+    width: 100%;
+    min-width: 0;
+    padding: 0 0.75rem;
+    border: 0;
+    border-radius: 0.625rem;
+    background: var(--fill-2);
+    outline: none;
+    &:focus-visible {
+      box-shadow:
+        0 0 0 3px var(--tint-wash),
+        inset 0 0 0 1px var(--tint);
+    }
+    &[aria-invalid="true"] {
+      box-shadow: inset 0 0 0 1px var(--danger);
+    }
+  }
+  .tf-hint {
+    font-size: 0.75rem;
+    color: var(--label-2);
+  }
+  .tf-error {
+    font-size: 0.75rem;
+    color: var(--danger);
+  }
+  .search-field {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    padding: 0 0.75rem;
+    border-radius: 0.625rem;
+    background: var(--fill-2);
+    color: var(--label-2);
+    &:focus-within {
+      box-shadow:
+        0 0 0 3px var(--tint-wash),
+        inset 0 0 0 1px var(--tint);
+    }
+    & input {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      border: 0;
+      outline: 0;
+      background: none;
+      color: var(--label);
+    }
+    & input::placeholder {
+      color: var(--label-2);
+    }
+  }
+  .switch {
+    position: relative;
+    flex: none;
+    width: 2.375rem;
+    height: 1.375rem;
+    border-radius: var(--r-pill);
+    background: var(--fill);
+    &[data-checked] {
+      background: var(--switch-on);
+    }
+    &.switch-danger[data-checked] {
+      background: var(--danger);
+    }
+    &[data-disabled] {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    &::after {
+      content: "";
+      position: absolute;
+      inset: -0.6875rem -0.1875rem;
+    }
+  }
+  .switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 1.125rem;
+    height: 1.125rem;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: var(--e1);
+    transition-property: transform;
+    transition-duration: var(--motion-spring-dur);
+    transition-timing-function: var(--motion-spring);
+    &[data-checked] {
+      transform: translateX(1rem);
+    }
+  }
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: var(--toolbar-h);
+    padding: 0 1rem;
+    @variant md {
+      gap: 0.75rem;
+      padding: 0 1.5rem;
+    }
+    &::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      height: 1px;
+      background: var(--glass-line);
+      opacity: 0;
+      animation-name: fade-in;
+      animation-timing-function: var(--motion-ease-linear);
+      animation-fill-mode: both;
+      animation-timeline: scroll(nearest block);
+      animation-range: 0 1rem;
+    }
+  }
+  @keyframes fade-in {
+    to {
+      opacity: 1;
+    }
+  }
+  .toolbar-spacer {
+    flex: 1;
+  }
+  .crumbs {
+    min-width: 0;
+    font-size: 0.8125rem;
+    color: var(--label-2);
+    & ol {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      min-width: 0;
+    }
+    & .crumb {
+      display: none;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+      @variant sm {
+        display: flex;
+      }
+    }
+    & .crumb a {
+      color: var(--label-2);
+    }
+    & .crumb-current {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--label);
+      font-weight: 600;
+    }
+  }
+  .pagehead {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: end;
+    gap: 1.5rem;
+    padding: 2.5rem 0 1.5rem;
+    @variant md {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    @variant lg {
+      padding: 4rem 0 2rem;
+    }
+  }
+  .pagehead-lede {
+    margin-top: 0.75rem;
+    max-width: 34rem;
+    color: var(--label-2);
+    font-size: 1.0625rem;
+    line-height: 1.45;
+    letter-spacing: -0.01em;
+  }
+  .group {
+    border-radius: var(--r-lg);
+    background: var(--elevated);
+    box-shadow: var(--e1);
+    overflow: hidden;
+  }
+  .row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 3.5rem;
+    padding: 0.6rem 1.1rem;
+    font-size: 0.875rem;
+    & + .row::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 1.1rem;
+      right: 0;
+      height: 1px;
+      background: var(--sep);
+    }
+    & small {
+      display: block;
+      color: var(--label-2);
+      font-size: 0.75rem;
+    }
+  }
+  .empty {
+    display: grid;
+    gap: 2rem;
+    align-items: center;
+    padding: 3rem 0 5rem;
+    @variant md {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+  }
+  .empty-art {
+    display: grid;
+    place-items: center;
+    width: 6.5rem;
+    height: 6.5rem;
+    border-radius: var(--r-xl);
+    background: var(--bg-2);
+    color: var(--label-2);
+  }
+  .empty-body {
+    margin-top: 0.75rem;
+    max-width: 26rem;
+    color: var(--label-2);
+    font-size: 1rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+  }
 }
