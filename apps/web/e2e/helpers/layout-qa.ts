@@ -34,6 +34,11 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
       return content.right > box.right - Number.parseFloat(style.borderRightWidth) + TOL;
     };
 
+    // Text-only content: an ellipsis ancestor truncates it on purpose; anything else it clips is a defect.
+    const isTextOnly = (el: Element): boolean =>
+      (el.textContent ?? "").trim() !== "" &&
+      !el.querySelector("svg,img,input,button,canvas,video");
+
     const root = document.documentElement;
     if (root.scrollWidth > root.clientWidth + TOL) {
       issues.push(`page scrolls sideways (${root.scrollWidth}px > ${root.clientWidth}px)`);
@@ -59,6 +64,18 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
       ) {
         issues.push(`text overflows its box: ${describe(el)}`);
       }
+      // Text clipped by the very element that holds it (overflow hidden/clip, no ellipsis).
+      if (
+        style.display !== "inline" &&
+        style.overflowX !== "visible" &&
+        !/(auto|scroll)/.test(style.overflowX) &&
+        style.textOverflow !== "ellipsis" &&
+        (el.textContent ?? "").trim() !== "" &&
+        el.clientWidth > 0 &&
+        contentSpills(el, style)
+      ) {
+        issues.push(`text clipped by its own box: ${describe(el)}`);
+      }
       if (el.hasAttribute("data-qa-single-line")) {
         const lineHeight =
           Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.2;
@@ -76,8 +93,8 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
         if (!clipX && !clipY) continue;
         const box = parent.getBoundingClientRect();
         const scrollable = /(auto|scroll)/.test(`${ps.overflowX} ${ps.overflowY}`);
-        if (scrollable || ps.textOverflow === "ellipsis" || box.width <= TOL || box.height <= TOL)
-          break;
+        const ellipsisOk = ps.textOverflow === "ellipsis" && isTextOnly(el);
+        if (scrollable || ellipsisOk || box.width <= TOL || box.height <= TOL) break;
         const r = el.getBoundingClientRect();
         const outX = clipX && (r.left < box.left - TOL || r.right > box.right + TOL);
         const outY = clipY && (r.top < box.top - TOL || r.bottom > box.bottom + TOL);
