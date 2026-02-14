@@ -108,3 +108,20 @@ blockquote {
 .period {
   color: var(--signal);
 }
+.ic {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+.ic-sm {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.ic-lg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.ic-xl {
+  width: 2.5rem;
+  height: 2.5rem;
+}
