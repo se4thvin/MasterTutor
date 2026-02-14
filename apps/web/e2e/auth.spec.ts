@@ -1,0 +1,65 @@
+import { expect, expectCleanScreen, test } from "./helpers/test.ts";
+
+test.use({ signedOut: true });
+
+test("sign-in screen is clean and labelled", async ({ page }) => {
+  await page.goto("/sign-in");
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByLabel("Email")).toHaveAttribute("autocomplete", "email");
+  await expect(page.getByLabel("Password")).toHaveAttribute("autocomplete", "current-password");
+  await expect(page.getByRole("link", { name: "Create an account" })).toHaveCSS(
+    "text-decoration-line",
+    "underline",
+  );
+  await expectCleanScreen(page);
+});
+
+test("shows a calm error on wrong credentials and keeps the email", async ({ page }) => {
+  await page.route("**/api/auth/sign-in/email", (route) =>
+    route.fulfill({
+      status: 401,
+      json: { code: "INVALID_EMAIL_OR_PASSWORD", message: "Invalid email or password" },
+    }),
+  );
+  await page.goto("/sign-in");
+  await page.getByLabel("Email").fill("sam@example.test");
+  await page.getByLabel("Password").fill("wrong-password-123");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.locator("p[role=alert]")).toHaveText("That email and password don't match.");
+  await expect(page.getByLabel("Email")).toHaveValue("sam@example.test");
+});
+
+test("signs in and lands in the library", async ({ page }) => {
+  await page.route("**/api/auth/sign-in/email", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "set-cookie": "mt_fixture_auth=signed-in; Path=/" },
+      json: {
+        redirect: false,
+        token: "t",
+        user: { id: "fixture-user", email: "sam@example.test", name: "Sam Lee" },
+      },
+    }),
+  );
+  await page.goto("/sign-in");
+  await page.getByLabel("Email").fill("sam@example.test");
+  await page.getByLabel("Password").fill("correct-horse-battery");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/library$/);
+});
+
+test("sign-up enforces 12-character passwords and explains closed sign-up", async ({ page }) => {
+  await page.route("**/api/auth/sign-up/email", (route) =>
+    route.fulfill({ status: 403, json: { code: "FORBIDDEN" } }),
+  );
+  await page.goto("/sign-up");
+  await expect(page.getByLabel("Password")).toHaveAttribute("minlength", "12");
+  await page.getByLabel("Name").fill("Sam Lee");
+  await page.getByLabel("Email").fill("sam@example.test");
+  await page.getByLabel("Password").fill("correct-horse-battery");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.locator("p[role=alert]")).toHaveText(
+    "Sign-up is closed. Ask the workspace owner to invite you.",
+  );
+  await expectCleanScreen(page);
+});

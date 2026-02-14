@@ -41,4 +41,8 @@ test.describe("signed out", () => {
     await page.goto("/library");
     await expect(page).toHaveURL(/\/sign-in$/);
   });
+  test("keeps the design-system page behind sign-in", async ({ page }) => {
+    await page.goto("/design");
+    await expect(page).toHaveURL(/\/sign-in$/);
+  });
 });
