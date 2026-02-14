@@ -97,3 +97,14 @@ describe("tokens", () => {
     }
   });
 });
+
+describe("--label-3", () => {
+  /** Decorative only (placeholders, disabled glyphs, dividers): it is not AA text colour. */
+  it.each([
+    ["light", blockAfter("/* light */")],
+    ["dark", blockAfter("prefers-color-scheme: dark")],
+  ])("meets the 3:1 non-text minimum on bg (%s)", (_scheme, vars) => {
+    const bg = parseColor(vars["bg"] ?? "");
+    expect(contrast(parseColor(vars["label-3"] ?? ""), bg)).toBeGreaterThanOrEqual(3);
+  });
+});

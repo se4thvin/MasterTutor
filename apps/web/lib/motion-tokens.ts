@@ -3,7 +3,7 @@
  * styles/motion.css; components pass `transitions.*` to motion. Lint forbids raw values elsewhere.
  */
 export const springs = {
-  /** Stiffness 400, damping 30: settles in about 465ms. Buttons, knobs, cards, toasts. */
+  /** Stiffness 400, damping 30: settles in about 455ms. Buttons, knobs, cards, toasts. */
   spring: { type: "spring", stiffness: 400, damping: 30, mass: 1 },
   /** Softer spring for sheets and the PiP. */
   springSoft: { type: "spring", stiffness: 260, damping: 30, mass: 1 },
