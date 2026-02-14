@@ -17,3 +17,26 @@ test("controls give press feedback and keep switches keyboard-operable", async (
   await expect(toggle).not.toBeChecked();
   await expect(page.locator("p[role=alert]")).toHaveText("Enter a website such as example.com.");
 });
+
+test("overlays trap focus, default to the safe action, and close with Escape", async ({ page }) => {
+  await page.goto("/design#overlays");
+  await page.getByRole("button", { name: "Open sheet" }).click();
+  const sheet = page.getByRole("dialog", { name: "Move to…" });
+  await expect(sheet).toBeVisible();
+  await expectCleanScreen(page);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+
+  await page.getByRole("button", { name: "Delete folder…" }).click();
+  const alert = page.getByRole("alertdialog", { name: "Delete “Papers”?" });
+  await expect(alert.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await alert.getByRole("button", { name: "Delete Folder" }).click();
+  await expect(page.getByText("Deleted", { exact: true })).toBeVisible();
+
+  await page.locator("#overlays").getByRole("button", { name: "More actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Show provenance" }).click();
+  await expect(page.getByRole("dialog", { name: "Block provenance" })).toBeVisible();
+});
