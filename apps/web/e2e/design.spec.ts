@@ -40,3 +40,52 @@ test("overlays trap focus, default to the safe action, and close with Escape", a
   await page.getByRole("button", { name: "Show provenance" }).click();
   await expect(page.getByRole("dialog", { name: "Block provenance" })).toBeVisible();
 });
+
+test("undo toast runs its action, dismisses with Escape and announces politely", async ({
+  page,
+}) => {
+  await page.goto("/design#toasts");
+  await page.getByRole("button", { name: "Show undo toast" }).click();
+  const toast = page.getByRole("status").filter({ hasText: "Moved to Papers" });
+  await expect(toast).toBeVisible();
+  await expect(toast).toHaveAttribute("aria-live", "polite");
+  // Focus pauses the countdown, so the audit below cannot outlive the toast.
+  await toast.focus();
+  // The entrance spring is JavaScript, which settle() cannot see: wait for full opacity.
+  await expect
+    .poll(() =>
+      toast.evaluate((el) => {
+        let opacity = 1;
+        for (let n: Element | null = el; n; n = n.parentElement) {
+          opacity *= Number(getComputedStyle(n).opacity);
+        }
+        return opacity;
+      }),
+    )
+    .toBe(1);
+  await expectCleanScreen(page);
+  await toast.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByText("Undo pressed")).toBeVisible();
+  await expect(toast).toBeHidden();
+
+  await page.getByRole("button", { name: "Show undo toast" }).click();
+  await page.getByRole("status").filter({ hasText: "Moved to Papers" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("status").filter({ hasText: "Moved to Papers" })).toBeHidden();
+});
+
+test("a hovered toast pauses its countdown", async ({ page }) => {
+  await page.goto("/design#toasts");
+  await page.getByRole("button", { name: "Show undo toast" }).click();
+  const toast = page.getByRole("status").filter({ hasText: "Moved to Papers" });
+  await expect(toast).toBeVisible();
+  await toast.hover();
+  const state = () =>
+    toast.evaluate((el) => {
+      const fuse = el.querySelector(".toast-fuse");
+      return fuse?.getAnimations()[0]?.playState ?? "none";
+    });
+  await expect.poll(state).toBe("paused");
+  await page.mouse.move(0, 0);
+  await expect.poll(state).toBe("running");
+});

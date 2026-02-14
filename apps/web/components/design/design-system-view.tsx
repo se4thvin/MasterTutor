@@ -5,6 +5,7 @@ import { ControlsSection } from "./sections/controls.tsx";
 import { FoundationsSection } from "./sections/foundations.tsx";
 import { IconGallerySection } from "./sections/icon-gallery.tsx";
 import { OverlaysSection } from "./sections/overlays.tsx";
+import { ToastsSection } from "./sections/toasts.tsx";
 
 /** Later tasks append their section component here. */
 const SECTIONS: ReadonlyArray<{ id: string; title: string; Section: ComponentType }> = [
@@ -12,6 +13,7 @@ const SECTIONS: ReadonlyArray<{ id: string; title: string; Section: ComponentTyp
   { id: "icons", title: "Icons", Section: IconGallerySection },
   { id: "controls", title: "Controls", Section: ControlsSection },
   { id: "overlays", title: "Overlays", Section: OverlaysSection },
+  { id: "toasts", title: "Toasts", Section: ToastsSection },
 ];
 
 export function DesignSystemView() {
