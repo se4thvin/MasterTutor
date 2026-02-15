@@ -93,7 +93,7 @@ export function NoteReader({ noteId }: { noteId: string }) {
   const path = data.note.folderId ? folderPath(folders, data.note.folderId) : [];
   // The block to highlight in both panes: the hovered one, else the one "View in source" chose
   // (hover events fired by the layout shift must not erase that choice).
-  const shownActive = activeBlockId ?? pinnedBlockId;
+  const shownActive = activeBlockId ?? (view === "source" ? pinnedBlockId : null);
   const sourceById = new Map(data.sources.map((s) => [s.id, s]));
 
   return (

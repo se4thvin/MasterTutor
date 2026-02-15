@@ -17,11 +17,15 @@ const schema = {
 };
 
 const components: Components = {
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ),
+  // In-page anchors (footnotes) stay in the tab; everything else opens in a new one.
+  a: ({ href, children }) =>
+    href?.startsWith("#") ? (
+      <a href={href}>{children}</a>
+    ) : (
+      <a href={href} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    ),
   // A code block can scroll sideways, so keyboard users must be able to focus it.
   pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
   // Captured images are asset blocks, loaded only through assets.url; an inline <img> in page
@@ -32,7 +36,17 @@ const components: Components = {
 type Plugins = NonNullable<Parameters<typeof ReactMarkdown>[0]["rehypePlugins"]>;
 const SAFE: Plugins = [
   [rehypeSanitize, schema],
-  [rehypeKatex, { throwOnError: false, strict: "ignore", trust: false, output: "htmlAndMathml" }],
+  [
+    rehypeKatex,
+    {
+      throwOnError: false,
+      strict: "ignore",
+      trust: false,
+      maxSize: 20,
+      maxExpand: 200,
+      output: "htmlAndMathml",
+    },
+  ],
   [rehypeHighlight, { languages: HIGHLIGHT_LANGUAGES, detect: false }],
 ];
 const WITH_HTML: Plugins = [rehypeRaw, ...SAFE];

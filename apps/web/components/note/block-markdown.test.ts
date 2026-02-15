@@ -68,3 +68,14 @@ describe("BlockMarkdown on untrusted page content", () => {
     expect(render("| a | b |\n| - | - |\n| 1 | 2 |")).toContain("<table>");
   });
 });
+
+describe("BlockMarkdown links and math limits", () => {
+  it("keeps in-page footnote links in the same tab", () => {
+    const html = render("a[^1]\n\n[^1]: note");
+    expect(html).toContain('href="#user-content-fn-1"');
+    expect(html).not.toMatch(/href="#user-content-fn-1"[^>]*target=/);
+  });
+  it("caps huge boxes in untrusted math", () => {
+    expect(render("$\\rule{9999em}{1em}$")).not.toMatch(/(width|height):\s*9999/);
+  });
+});
