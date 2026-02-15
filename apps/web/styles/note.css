@@ -1,0 +1,93 @@
+@layer components {
+  .prose {
+    font-size: 1.0625rem;
+    line-height: 1.65;
+    letter-spacing: -0.011em;
+    overflow-wrap: anywhere;
+    & p + p {
+      margin-top: 0.75rem;
+    }
+    & h2 {
+      font: 700 1.625rem/1.2 var(--font-display);
+      letter-spacing: -0.025em;
+      padding-top: 1.4rem;
+    }
+    & h3 {
+      font: 600 1.25rem/1.3 var(--font-display);
+      padding-top: 1rem;
+    }
+    & ul,
+    & ol {
+      margin: 0;
+      padding-left: 1.4rem;
+    }
+    & blockquote {
+      padding-left: 1rem;
+      border-left: 3px solid var(--hairline);
+      color: var(--label-2);
+    }
+    & pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      overflow-x: auto;
+      border-radius: var(--r-md);
+      background: var(--bg-2);
+      font: 400 0.8125rem/1.65 var(--font-code);
+      overflow-wrap: normal;
+    }
+    & :not(pre) > code {
+      padding: 0.1rem 0.3rem;
+      border-radius: 0.3rem;
+      background: var(--fill-2);
+      font: 0.875em var(--font-code);
+    }
+    & table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      overflow-wrap: normal;
+    }
+    & th {
+      padding: 0.55rem 0.6rem;
+      border-bottom: 1px solid var(--label);
+      text-align: left;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--label-2);
+    }
+    & td {
+      padding: 0.6rem;
+      border-bottom: 1px solid var(--sep);
+      font-variant-numeric: tabular-nums;
+    }
+    & .katex-display {
+      margin: 0;
+      padding: 1rem 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    & .inline-img {
+      font-style: italic;
+      color: var(--label-2);
+    }
+  }
+  .hljs-keyword,
+  .hljs-built_in {
+    color: var(--code-keyword);
+  }
+  .hljs-number,
+  .hljs-literal {
+    color: var(--code-number);
+  }
+  .hljs-title,
+  .hljs-function {
+    color: var(--code-title);
+  }
+  .hljs-string {
+    color: var(--code-string);
+  }
+  .hljs-comment {
+    color: var(--code-comment);
+    font-style: italic;
+  }
+}
