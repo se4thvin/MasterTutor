@@ -1,17 +1,28 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
+import type { SourceKind } from "@mastertutor/contracts";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { Button } from "@/components/ui/button.tsx";
+import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
+import { Button, ButtonLink } from "@/components/ui/button.tsx";
+import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
+import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
 import { folderPath } from "@/lib/folders/tree.ts";
-import { libraryHref, parseLibraryParams } from "@/lib/library/params.ts";
+import {
+  libraryHref,
+  parseLibraryParams,
+  type LibraryParams,
+  type LibraryViewMode,
+} from "@/lib/library/params.ts";
+import { KIND_LABEL } from "@/lib/notes/format.ts";
 import { FolderActions } from "./folder-actions.tsx";
 import { FolderTree } from "./folder-tree.tsx";
+import { NoteCard } from "./note-card.tsx";
 
 export function useLibraryScope() {
   const params = parseLibraryParams(useSearchParams());
@@ -62,6 +73,113 @@ export function LibraryHeader({
   );
 }
 
+const KIND_ITEMS: SegmentItem<"all" | SourceKind>[] = [
+  { value: "all", label: "All" },
+  { value: "web", label: "Web" },
+  { value: "pdf", label: "PDF" },
+  { value: "youtube", label: "Video" },
+];
+const VIEW_ITEMS: SegmentItem<LibraryViewMode>[] = [
+  { value: "grid", label: "Grid", icon: "grid", hideLabel: true },
+  { value: "list", label: "List", icon: "list", hideLabel: true },
+];
+
 export function LibraryView() {
-  return <LibraryHeader onDropNote={() => undefined} />;
+  const router = useRouter();
+  const { params } = useLibraryScope();
+  const notes = useInfiniteQuery(
+    orpc.notes.list.infiniteOptions({
+      input: (cursor: string | null) => ({
+        folder: params.folder,
+        kind: params.kind,
+        limit: 50,
+        cursor,
+      }),
+      initialPageParam: null as string | null,
+      getNextPageParam: (last) => last.nextCursor,
+    }),
+  );
+  // Filter again on the client so a note that just moved out of this scope leaves at once.
+  const items = (notes.data?.pages.flatMap((p) => p.items) ?? []).filter((n) =>
+    params.folder === "all"
+      ? true
+      : params.folder === "unfiled"
+        ? n.folderId === null
+        : n.folderId === params.folder,
+  );
+  const set = (patch: Partial<LibraryParams>) =>
+    router.replace(libraryHref({ ...params, ...patch }), { scroll: false });
+
+  return (
+    <>
+      <LibraryHeader onDropNote={() => undefined} />
+      <div className="wrap">
+        <div className="libbar">
+          <RubberSegment
+            aria-label="Filter by type"
+            items={KIND_ITEMS}
+            value={params.kind ?? "all"}
+            onChange={(v) => set({ kind: v === "all" ? null : v })}
+          />
+          <span className="toolbar-spacer" />
+          <RubberSegment
+            aria-label="View"
+            size="sm"
+            items={VIEW_ITEMS}
+            value={params.view}
+            onChange={(v) => set({ view: v })}
+          />
+        </div>
+        {notes.isPending ? (
+          <div
+            className="notes"
+            data-view={params.view}
+            role="status"
+            aria-busy="true"
+            aria-label="Loading notes"
+          >
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="card">
+                <Skeleton className="card-cover" />
+                <Skeleton className="mt-4 h-4 w-1/3" />
+                <Skeleton className="mt-2 h-5 w-3/4" />
+              </div>
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState
+            icon="allNotes"
+            eyebrow={params.kind ? KIND_LABEL[params.kind] : undefined}
+            title="Nothing here yet"
+            body="Notes appear here when the agent files them, or when you move them in."
+            actions={
+              <ButtonLink href="/new" variant="primary" size="lg">
+                New task
+              </ButtonLink>
+            }
+          />
+        ) : (
+          <div className="notes" data-view={params.view}>
+            {items.map((note, i) => (
+              <NoteCard
+                key={note.id}
+                note={note}
+                view={params.view}
+                index={i}
+                onMove={() => undefined}
+                onDelete={() => undefined}
+              />
+            ))}
+          </div>
+        )}
+        {notes.hasNextPage ? (
+          <div className="flex justify-center pb-12">
+            <Button onClick={() => void notes.fetchNextPage()} disabled={notes.isFetchingNextPage}>
+              Load more
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
 }

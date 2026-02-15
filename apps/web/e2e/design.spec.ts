@@ -107,3 +107,33 @@ test("a menu opened inside a sheet is stacked above it", async ({ page }) => {
   });
   expect(onTop).toBe(true);
 });
+
+test("segmented control sizes to its content and the thumb follows the selection", async ({
+  page,
+}) => {
+  await page.goto("/design#controls");
+  const group = page.getByRole("radiogroup", { name: "Note view" });
+  const source = group.getByRole("radio", { name: "Source" });
+  const note = group.getByRole("radio", { name: "Note" });
+  const [sourceBox, noteBox] = await Promise.all([source.boundingBox(), note.boundingBox()]);
+  // Equal slots would make these identical; content sizing keeps each label fully inside its slot.
+  expect(sourceBox?.width).toBeGreaterThan((noteBox?.width ?? 0) + 4);
+
+  const thumbMatches = async (target: typeof note) => {
+    const [thumb, box] = await Promise.all([
+      group.locator(".rseg-thumb").boundingBox(),
+      target.boundingBox(),
+    ]);
+    return (
+      Math.abs((thumb?.x ?? -99) - (box?.x ?? 0)) +
+      Math.abs((thumb?.width ?? 0) - (box?.width ?? 0))
+    );
+  };
+  await expect.poll(() => thumbMatches(source)).toBeLessThan(2);
+  await note.click();
+  await expect(note).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => thumbMatches(note)).toBeLessThan(2);
+  await page.keyboard.press("ArrowLeft");
+  await expect(source).toBeChecked();
+  await expect.poll(() => thumbMatches(source)).toBeLessThan(2);
+});

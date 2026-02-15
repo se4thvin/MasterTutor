@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button, IconButton } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
@@ -9,8 +10,20 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Switch } from "@/components/ui/switch.tsx";
 import { TextField } from "@/components/ui/text-field.tsx";
 
+const NOTE_VIEWS: SegmentItem<"source" | "note">[] = [
+  { value: "source", label: "Source" },
+  { value: "note", label: "Note" },
+];
+const BUDGETS: SegmentItem<"quick" | "standard" | "deep">[] = [
+  { value: "quick", label: "Quick" },
+  { value: "standard", label: "Standard" },
+  { value: "deep", label: "Deep" },
+];
+
 export function ControlsSection() {
   const [on, setOn] = useState(true);
+  const [view, setView] = useState<"source" | "note">("source");
+  const [budget, setBudget] = useState<"quick" | "standard" | "deep">("standard");
   const [query, setQuery] = useState("");
   return (
     <div className="grid gap-8">
@@ -39,6 +52,16 @@ export function ControlsSection() {
         <TextField label="Alias" hint="Lowercase letters, numbers, dash or underscore." placeholder="zybooks" />
         <TextField label="Website" error="Enter a website such as example.com." defaultValue="not a url" />
         <SearchField label="Search the library" value={query} onChange={setQuery} placeholder="Search every block" shortcut="⌘K" />
+      </div>
+      <div className="flex flex-wrap items-center gap-4">
+        <RubberSegment aria-label="Budget" items={BUDGETS} value={budget} onChange={setBudget} />
+        <RubberSegment
+          aria-label="Note view"
+          fit="content"
+          items={NOTE_VIEWS}
+          value={view}
+          onChange={setView}
+        />
       </div>
       <label className="flex items-center gap-3">
         <Switch checked={on} onCheckedChange={setOn} label="Show callouts" />
