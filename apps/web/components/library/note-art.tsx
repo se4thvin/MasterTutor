@@ -154,11 +154,11 @@ const ART = {
         width="180"
         height="104"
         rx="16"
-        fill="#0e1116"
+        fill={L}
         style={{ filter: SHADOW_LIFT }}
       />
-      <circle cx="100" cy="70" r="22" fill="#ffffff" />
-      <path d="M94 59v22l18-11z" fill="#0e1116" />
+      <circle cx="100" cy="70" r="22" fill={E} />
+      <path d="M94 59v22l18-11z" fill={L} />
     </>
   ),
   net: (
