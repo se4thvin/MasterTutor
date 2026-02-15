@@ -194,4 +194,36 @@
       transform: translateY(-50%);
     }
   }
+  .move-list {
+    display: grid;
+    gap: 1px;
+    max-height: 55dvh;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+  }
+  .move-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    min-height: var(--hit);
+    padding-inline-end: 0.75rem;
+    border-radius: var(--r-sm);
+    text-align: left;
+    &:hover {
+      background: var(--fill-2);
+    }
+    &[aria-current="true"] {
+      background: var(--fill);
+      font-weight: 600;
+    }
+    & span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
 }
