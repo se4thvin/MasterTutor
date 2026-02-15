@@ -22,6 +22,8 @@ const components: Components = {
       {children}
     </a>
   ),
+  // A code block can scroll sideways, so keyboard users must be able to focus it.
+  pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
   // Captured images are asset blocks, loaded only through assets.url; an inline <img> in page
   // markdown could track the reader, so it renders as text and never carries a src.
   img: ({ alt }) => <span className="inline-img">{alt ? `Image: ${alt}` : "Image"}</span>,

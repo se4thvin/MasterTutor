@@ -1,0 +1,84 @@
+import type { NoteBlock, SourceView } from "@mastertutor/contracts";
+import { describe, expect, it } from "vitest";
+import { calloutFor, isRawHtmlTable, provenanceOf } from "./provenance.ts";
+
+const base: NoteBlock = {
+  id: "00000000-0000-4000-8000-000003000001",
+  noteId: "00000000-0000-4000-8000-000002000001",
+  position: "a0",
+  type: "paragraph",
+  markdown: "Training a transformer with Adam",
+  assetId: null,
+  sourceId: "s",
+  origin: "dom",
+  anchor: {
+    selector: "article > p",
+    xpath: null,
+    start: null,
+    end: null,
+    textFragment: "Training a transformer",
+  },
+  contentSha256: "9f2c41e0".padEnd(64, "0"),
+  verified: true,
+  edited: false,
+  originalMarkdown: null,
+  createdAt: "2026-10-05T17:09:41.000Z",
+};
+const source: SourceView = {
+  id: "s",
+  kind: "web",
+  url: "https://fieldnotes.ml/posts/x",
+  canonicalUrl: null,
+  origin: "https://fieldnotes.ml",
+  title: null,
+  faviconAssetId: null,
+  capturedAt: base.createdAt,
+};
+
+describe("provenance", () => {
+  it("describes a verified DOM block with a text-fragment link", () => {
+    const p = provenanceOf(base, source);
+    expect(p).toMatchObject({
+      status: "verified",
+      originLabel: "Page text",
+      selector: "article > p",
+      hashShort: "9f2c41e0…",
+    });
+    expect(p.openUrl).toBe("https://fieldnotes.ml/posts/x#:~:text=Training%20a%20transformer");
+    expect(calloutFor(base)).toBeNull();
+  });
+  it("flags OCR blocks for review", () => {
+    const ocr = { ...base, origin: "ocr_model" as const, verified: false, anchor: null };
+    expect(provenanceOf(ocr, source).status).toBe("needs_review");
+    expect(calloutFor(ocr)?.lead).toBe("Needs review.");
+  });
+  it("marks edits and agent notes", () => {
+    expect(provenanceOf({ ...base, edited: true, originalMarkdown: "x" }, source).status).toBe(
+      "edited",
+    );
+    expect(calloutFor({ ...base, origin: "model", type: "commentary" })?.lead).toBe(
+      "Agent's note.",
+    );
+  });
+  it("cites video time and PDF pages", () => {
+    const t = {
+      ...base,
+      origin: "captions" as const,
+      anchor: { ...base.anchor!, tStart: 768, tEnd: 774 },
+    };
+    const video = { ...source, kind: "youtube" as const, url: "https://www.youtube.com/watch?v=x" };
+    expect(provenanceOf(t, video)).toMatchObject({ where: "12:48–12:54" });
+    expect(provenanceOf(t, video).openUrl).toBe("https://www.youtube.com/watch?v=x&t=768s");
+    expect(
+      provenanceOf({ ...base, origin: "pdf", anchor: { ...base.anchor!, page: 3 } }, source).where,
+    ).toBe("Page 3");
+  });
+  it("never offers a non-http source URL as an Open on page link", () => {
+    const evil = { ...source, url: "javascript:alert(1)" };
+    expect(provenanceOf(base, evil).openUrl).toBeNull();
+  });
+  it("detects raw HTML tables only for table blocks", () => {
+    expect(isRawHtmlTable({ ...base, type: "table", markdown: "<table></table>" })).toBe(true);
+    expect(isRawHtmlTable({ ...base, markdown: "<table></table>" })).toBe(false);
+  });
+});

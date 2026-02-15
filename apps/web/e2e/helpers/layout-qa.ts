@@ -56,9 +56,18 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
       issues.push(`page scrolls sideways (${root.scrollWidth}px > ${root.clientWidth}px)`);
     }
 
-    const elements = Array.from(document.body.querySelectorAll("*")).filter(
+    const all = Array.from(document.body.querySelectorAll("*"));
+    const hiddenBoxes = new Set(all.filter(isVisuallyHidden));
+    // Whatever sits inside a visually-hidden box (KaTeX's MathML copy) is hidden with it.
+    const inHiddenBox = (el: Element): boolean => {
+      for (let p = el.parentElement; p; p = p.parentElement) if (hiddenBoxes.has(p)) return true;
+      return false;
+    };
+
+    const elements = all.filter(
       (el) =>
         !el.closest("[data-qa-allow-clip]") &&
+        !inHiddenBox(el) &&
         !el.parentElement?.closest("svg") &&
         // Base UI renders a hidden native input beside its custom controls; it is never seen.
         !el.matches('input[aria-hidden="true"]') &&
