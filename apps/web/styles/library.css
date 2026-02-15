@@ -173,6 +173,7 @@
     }
     &:hover {
       transform: none;
+      background: var(--fill-2);
     }
     & .card-cover {
       border-radius: 0.625rem;
@@ -202,6 +203,11 @@
     padding: 0;
     overflow: auto;
     list-style: none;
+  }
+  .move-empty {
+    padding: 0.75rem;
+    color: var(--label-2);
+    font-size: 0.8125rem;
   }
   .move-row {
     display: flex;

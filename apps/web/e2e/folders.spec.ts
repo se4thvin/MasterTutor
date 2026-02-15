@@ -87,3 +87,70 @@ test("a folder cannot be dropped into its own subfolder; a legal drop moves it (
   await expect(item("Machine learning")).toHaveAttribute("aria-level", "1");
   expect(moves).toHaveLength(1);
 });
+
+test("tree items report their set size and position", async ({ page }) => {
+  await page.goto("/library");
+  const tree = await openTree(page);
+  // Top level: All notes, Unfiled, Machine learning, Databases, Coursework.
+  const ml = tree.getByRole("treeitem", { name: "Machine learning" });
+  await expect(ml).toHaveAttribute("aria-setsize", "5");
+  await expect(ml).toHaveAttribute("aria-posinset", "3");
+  await expect(tree.getByRole("treeitem", { name: "Coursework" })).toHaveAttribute(
+    "aria-posinset",
+    "5",
+  );
+  await ml.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tree.getByRole("treeitem", { name: "Papers" })).toHaveAttribute("aria-setsize", "2");
+  await expect(tree.getByRole("treeitem", { name: "Papers" })).toHaveAttribute(
+    "aria-posinset",
+    "2",
+  );
+});
+
+test("Move folder to… is a keyboard path that offers only legal destinations", async ({ page }) => {
+  const moves: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/api/rpc/folders/move")) moves.push(r.url());
+  });
+  // Machine learning: its own subfolders are not destinations (a cycle).
+  await page.goto("/library?folder=00000000-0000-4000-8000-000001000001");
+  await page.getByRole("button", { name: "Folder actions" }).click();
+  await page.getByRole("menuitem", { name: "Move folder to…" }).click();
+  const ml = page.getByRole("dialog", { name: "Move folder to…" });
+  await expect(ml.getByRole("button", { name: "Databases" })).toBeVisible();
+  await expect(ml.getByRole("button", { name: "Optimization" })).toHaveCount(0);
+  await expect(ml.getByRole("button", { name: "Machine learning" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  // Papers lives in Machine learning; move it under Databases.
+  await page.goto("/library?folder=00000000-0000-4000-8000-000001000004");
+  await page.getByRole("button", { name: "Folder actions" }).click();
+  await page.getByRole("menuitem", { name: "Move folder to…" }).click();
+  const sheet = page.getByRole("dialog", { name: "Move folder to…" });
+  await expectCleanScreen(page);
+  await sheet.getByRole("button", { name: "Databases" }).click();
+  await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toContainText("Databases");
+  expect(moves).toHaveLength(1);
+});
+
+test("dropping a folder on its current parent sends nothing", async ({ page }) => {
+  test.skip(!isWide(page), "drag targets live in the wide sidebar");
+  const moves: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/api/rpc/folders/move")) moves.push(r.url());
+  });
+  await page.goto("/library");
+  const tree = page.getByRole("tree", { name: "Folders" });
+  await tree.getByRole("treeitem", { name: "Machine learning" }).focus();
+  await page.keyboard.press("ArrowRight");
+  // Machine learning is a root: dropping it on "All notes" is its current parent (the root).
+  await tree
+    .getByRole("treeitem", { name: "Machine learning" })
+    .dragTo(tree.getByRole("treeitem", { name: "All notes" }));
+  await expect(tree.getByRole("treeitem", { name: "Machine learning" })).toHaveAttribute(
+    "aria-level",
+    "1",
+  );
+  expect(moves).toEqual([]);
+});

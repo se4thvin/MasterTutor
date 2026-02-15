@@ -1,7 +1,7 @@
 "use client";
 
 import type { SourceKind } from "@mastertutor/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { skipToken, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { orpc } from "@/lib/api/client.ts";
 
@@ -14,10 +14,11 @@ export function useNoteSearch(q: string, kind: SourceKind | null) {
     const timer = setTimeout(() => setDebounced(q.trim()), DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [q]);
-  const query = useQuery({
-    ...orpc.notes.search.queryOptions({ input: { q: debounced || " ", kind, limit: 20 } }),
-    enabled: debounced.length > 0,
-  });
+  const query = useQuery(
+    orpc.notes.search.queryOptions({
+      input: debounced ? { q: debounced, kind, limit: 20 } : skipToken,
+    }),
+  );
   return {
     hits: debounced ? (query.data?.items ?? []) : [],
     isFetching: query.isFetching,

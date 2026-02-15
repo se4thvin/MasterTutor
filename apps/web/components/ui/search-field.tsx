@@ -8,6 +8,7 @@ export function SearchField({
   placeholder,
   shortcut,
   inputRef,
+  maxLength,
 }: {
   label: string;
   value: string;
@@ -15,6 +16,7 @@ export function SearchField({
   placeholder?: string;
   shortcut?: string;
   inputRef?: Ref<HTMLInputElement>;
+  maxLength?: number;
 }) {
   return (
     <div className="search-field" role="search">
@@ -25,6 +27,7 @@ export function SearchField({
         aria-label={label}
         value={value}
         placeholder={placeholder}
+        maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
       />
       {shortcut ? (
