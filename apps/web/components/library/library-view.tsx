@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
+import { SearchField } from "@/components/ui/search-field.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
@@ -23,10 +24,12 @@ import {
 import { KIND_LABEL } from "@/lib/notes/format.ts";
 import { FolderActions } from "./folder-actions.tsx";
 import { FolderTree } from "./folder-tree.tsx";
+import { SearchResults } from "./search-results.tsx";
 import { MoveSheet } from "./move-sheet.tsx";
 import { NoteCard } from "./note-card.tsx";
 import { useDeleteNote } from "./use-delete-note.ts";
 import { useMoveNote } from "./use-move-note.ts";
+import { useNoteSearch } from "./use-note-search.ts";
 
 export function useLibraryScope() {
   const params = parseLibraryParams(useSearchParams());
@@ -111,6 +114,9 @@ export function LibraryView() {
         ? n.folderId === null
         : n.folderId === params.folder,
   );
+  const [query, setQuery] = useState(params.q);
+  const search = useNoteSearch(query, params.kind);
+  const searching = query.trim() !== "";
   const moveNote = useMoveNote();
   const deleteNote = useDeleteNote();
   const [moving, setMoving] = useState<NoteSummary | null>(null);
@@ -127,6 +133,18 @@ export function LibraryView() {
       <LibraryHeader onDropNote={dropNote} />
       <div className="wrap">
         <div className="libbar">
+          <div className="libbar-search">
+            <SearchField
+              label="Search the library"
+              value={query}
+              onChange={(v) => {
+                setQuery(v);
+                set({ q: v });
+              }}
+              placeholder="Search every block"
+              shortcut="⌘K"
+            />
+          </div>
           <RubberSegment
             aria-label="Filter by type"
             items={KIND_ITEMS}
@@ -142,7 +160,38 @@ export function LibraryView() {
             onChange={(v) => set({ view: v })}
           />
         </div>
-        {notes.isPending ? (
+        {searching ? (
+          search.hits.length ? (
+            <SearchResults hits={search.hits} query={search.settledQuery} />
+          ) : search.settledQuery && !search.isFetching ? (
+            <EmptyState
+              icon="search"
+              eyebrow="Search"
+              title="No results"
+              body={`No notes match “${search.settledQuery}”. Search covers titles and every captured block.`}
+              actions={
+                <>
+                  <ButtonLink
+                    href={`/new?goal=${encodeURIComponent(search.settledQuery)}`}
+                    variant="primary"
+                    size="lg"
+                  >
+                    Take notes on this
+                  </ButtonLink>
+                  <Button
+                    size="lg"
+                    onClick={() => {
+                      setQuery("");
+                      set({ q: "" });
+                    }}
+                  >
+                    Clear search
+                  </Button>
+                </>
+              }
+            />
+          ) : null
+        ) : notes.isPending ? (
           <div
             className="notes"
             data-view={params.view}
@@ -194,7 +243,7 @@ export function LibraryView() {
           destructive
           onConfirm={() => deleting && void deleteNote(deleting)}
         />
-        {notes.hasNextPage ? (
+        {!searching && notes.hasNextPage ? (
           <div className="flex justify-center pb-12">
             <Button onClick={() => void notes.fetchNextPage()} disabled={notes.isFetchingNextPage}>
               Load more
