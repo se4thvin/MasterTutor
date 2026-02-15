@@ -59,7 +59,12 @@ export function Sidebar({
           })}
         </ul>
       </nav>
-      {libraryTree ? <div className="sidebar-section">{libraryTree}</div> : null}
+      {libraryTree ? (
+        <div className="sidebar-section">
+          <h2 className="eyebrow sidebar-heading">Folders</h2>
+          {libraryTree}
+        </div>
+      ) : null}
       <RecentNotes />
       <div className="sidebar-foot">
         <UserMenu viewer={viewer} onSignOut={onSignOut} />

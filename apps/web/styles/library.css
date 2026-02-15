@@ -1,0 +1,49 @@
+@layer components {
+  .tree {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .tree-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.25rem;
+    padding-inline-end: 0.6rem;
+    border-radius: var(--r-sm);
+    font-size: 0.8125rem;
+    cursor: default;
+    outline-offset: -2px;
+    &:hover {
+      background: var(--fill-2);
+    }
+    & > .ic {
+      color: var(--tint-text);
+    }
+    @media (pointer: coarse) {
+      min-height: var(--hit);
+    }
+  }
+  .tree-row-current {
+    background: var(--fill);
+  }
+  .tree-row-drop {
+    box-shadow: inset 0 0 0 2px var(--tint);
+    background: var(--tint-wash);
+  }
+  .tree-disclosure {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 1rem;
+    color: var(--label-2);
+  }
+  .tree-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
