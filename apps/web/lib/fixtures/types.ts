@@ -8,6 +8,7 @@ import type {
   VaultAuditView,
   VaultItemView,
 } from "@mastertutor/contracts";
+import type { SessionContext } from "../server/rpc/require-viewer.ts";
 
 export interface NoteRecord {
   note: NoteSummary;
@@ -25,6 +26,6 @@ export interface FixtureState {
   runs: RunSummary[];
 }
 
-export interface FixtureContext {
+export interface FixtureContext extends SessionContext {
   ns: string;
 }

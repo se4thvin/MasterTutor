@@ -8,11 +8,13 @@ import {
 import { ORPCError, implement } from "@orpc/server";
 import { buildNoteMarkdown } from "../export/note-markdown.ts";
 import { canCreateFolder, canMoveFolder, descendantIds, folderPath } from "../folders/tree.ts";
+import { requireViewer } from "../server/rpc/require-viewer.ts";
 import { FIXTURE_ASSETS } from "./assets.ts";
 import { stateFor, usageReport } from "./store.ts";
 import type { FixtureContext, FixtureState, NoteRecord } from "./types.ts";
 
-const os = implement(apiContract).$context<FixtureContext>();
+// Fixture mode enforces the session like live mode, so UI tests can expire it mid-session.
+const os = implement(apiContract).$context<FixtureContext>().use(requireViewer);
 
 const now = () => new Date().toISOString();
 const notFound = (what: string) => new ORPCError("NOT_FOUND", { message: `${what} not found` });

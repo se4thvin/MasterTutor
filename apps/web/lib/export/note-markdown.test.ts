@@ -2,10 +2,13 @@ import { createRouterClient } from "@orpc/server";
 import { describe, expect, it } from "vitest";
 import { ids } from "../fixtures/ids.ts";
 import { fixtureRouter } from "../fixtures/router.ts";
+import { FIXTURE_VIEWER } from "../server/viewer.ts";
 import { buildNoteMarkdown, exportFileName } from "./note-markdown.ts";
 import { safeDownloadUrl } from "./download-url.ts";
 
-const api = createRouterClient(fixtureRouter, { context: { ns: "export-test" } });
+const api = createRouterClient(fixtureRouter, {
+  context: { ns: "export-test", viewer: FIXTURE_VIEWER },
+});
 
 describe("Obsidian export", () => {
   it("writes YAML front-matter with provenance and every block in order", async () => {
