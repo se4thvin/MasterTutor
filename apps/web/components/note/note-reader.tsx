@@ -16,6 +16,7 @@ import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
 import { libraryHref } from "@/lib/library/params.ts";
 import { formatDate } from "@/lib/notes/format.ts";
 import { BlockView } from "./block-view.tsx";
+import { ExportButton } from "./export-button.tsx";
 import { MarginCallouts } from "./margin-callouts.tsx";
 import { SourcePane } from "./source-pane.tsx";
 import { SourceStrip } from "./source-strip.tsx";
@@ -115,6 +116,7 @@ export function NoteReader({ noteId }: { noteId: string }) {
           value={view}
           onChange={setView}
         />
+        <ExportButton detail={data} />
       </Toolbar>
       <div className={cx("note-body", view === "source" && "note-body-split")}>
         {view === "source" ? (
