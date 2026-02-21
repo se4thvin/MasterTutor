@@ -2,13 +2,13 @@
 
 import type { InfiniteData } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { FolderTree } from "@/components/library/folder-tree.tsx";
 import { SearchPalette } from "@/components/library/search-palette.tsx";
 import { useMoveNote } from "@/components/library/use-move-note.ts";
 import { orpc } from "@/lib/api/client.ts";
 import { useHotkey } from "@/lib/hooks/use-hotkey.ts";
+import { useSignOut } from "@/lib/hooks/use-sign-out.ts";
 import type { NotesPage } from "@/lib/notes/cache.ts";
 import type { Viewer } from "@/lib/server/viewer.ts";
 import { KillBanner } from "./kill-banner.tsx";
@@ -37,7 +37,6 @@ function SidebarFolders() {
 }
 
 export function AppShell({ viewer, children }: { viewer: Viewer; children: ReactNode }) {
-  const router = useRouter();
   const [searchOpen, setSearchOpen] = useState(false);
   useHotkey({ key: "k", meta: true }, () => setSearchOpen(true));
   // Declared after useHotkey, so its listener is attached first. Tests wait for this marker
@@ -48,12 +47,7 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
       delete document.documentElement.dataset["hotkeys"];
     };
   }, []);
-  const signOut = async () => {
-    const { authClient } = await import("@/lib/auth-client.ts");
-    await authClient.signOut();
-    router.replace("/sign-in");
-    router.refresh();
-  };
+  const signOut = useSignOut();
   return (
     <div className="app">
       <a href="#main" className="skip-link">
