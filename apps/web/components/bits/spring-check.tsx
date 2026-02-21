@@ -57,9 +57,12 @@ export function SpringCheck({
       role="checkbox"
       aria-checked={checked}
       aria-label={text}
-      disabled={disabled}
+      // aria-disabled, not disabled: a disabled button drops keyboard focus to <body>.
+      aria-disabled={disabled || undefined}
       className="scheck"
-      onClick={() => onCheckedChange(!checked)}
+      onClick={() => {
+        if (!disabled) onCheckedChange(!checked);
+      }}
     >
       <m.span className="scheck-box" style={{ scale: box }}>
         <span className="scheck-ring" aria-hidden="true" />

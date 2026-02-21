@@ -48,6 +48,18 @@ describe("fixture notes", () => {
     expect([...positions].sort()).toEqual(positions);
   });
 
+  it('orders blocks by position bytes (Postgres "C"), not by locale', async () => {
+    const { ns, api } = client();
+    const record = stateFor(ns).notes.find((r) => r.note.id === ids.note(1));
+    if (!record) throw new Error("missing fixture note");
+    const keys = ["aa", "aA", "a0", "Zz"];
+    record.blocks = record.blocks
+      .slice(0, keys.length)
+      .map((b, i) => ({ ...b, position: keys[i] ?? "" }));
+    const detail = await api.notes.get({ noteId: ids.note(1) });
+    expect(detail.blocks.map((b) => b.position)).toEqual(["Zz", "a0", "aA", "aa"]);
+  });
+
   it("searches block text and returns a snippet", async () => {
     const { api } = client();
     const { items } = await api.notes.search({ q: "grad_norm" });

@@ -16,6 +16,11 @@ describe("vault field helpers", () => {
     expect(normalizeTotpSeed("not base32!")).toBeNull();
     expect(normalizeTotpSeed("ABC")).toBeNull();
   });
+  it("bounds TOTP seed length (a SHA-512 key is 103 base32 characters)", () => {
+    expect(normalizeTotpSeed("A".repeat(128))).toBe("A".repeat(128));
+    expect(normalizeTotpSeed("A".repeat(129))).toBeNull();
+    expect(normalizeTotpSeed("A".repeat(100_000))).toBeNull();
+  });
   it("accepts 4–12 digit PINs only", () => {
     expect(isValidPin("1234")).toBe(true);
     expect(isValidPin("12a4")).toBe(false);
@@ -25,6 +30,12 @@ describe("vault field helpers", () => {
     expect(suggestAlias("https://learn.zybooks.com/signin")).toBe("zybooks");
     expect(suggestAlias("github.com")).toBe("github");
     expect(suggestAlias("")).toBe("");
+  });
+  it("does not suggest a fragment of an IP address", () => {
+    expect(suggestAlias("192.168.1.10")).toBe("");
+    expect(suggestAlias("http://10.0.0.2:8080/login")).toBe("");
+    expect(suggestAlias("http://[::1]:3000")).toBe("");
+    expect(suggestAlias("http://localhost:3000")).toBe("localhost");
   });
   it("builds the create input from enabled fields only", () => {
     const form = {
@@ -67,6 +78,17 @@ describe("vault field helpers", () => {
         "username",
       ]);
       expect(JSON.stringify(result.errors)).not.toContain("12x");
+    }
+  });
+  it("reports a contract failure on the field that failed, without echoing values", () => {
+    const form = { ...emptyVaultForm(), label: "x".repeat(121), alias: "x", origin: "x.test" };
+    form.values.username = "me";
+    form.values.password = "p".repeat(4_097);
+    const result = toCreateInput(form);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(Object.keys(result.errors).sort()).toEqual(["label", "password"]);
+      expect(JSON.stringify(result.errors)).not.toContain("ppp");
     }
   });
   it("rejects non-http(s) origins", () => {

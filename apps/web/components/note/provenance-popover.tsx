@@ -1,7 +1,7 @@
 "use client";
 
 import type { NoteBlock, SourceView } from "@mastertutor/contracts";
-import { useState } from "react";
+import { useState, type Ref } from "react";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
@@ -18,6 +18,7 @@ export function ProvenancePopover({
   onEdit,
   onViewInSource,
   editable,
+  triggerRef,
 }: {
   block: NoteBlock;
   source: SourceView | undefined;
@@ -27,12 +28,15 @@ export function ProvenancePopover({
   onEdit: () => void;
   onViewInSource: () => void;
   editable: boolean;
+  /** The block's focus home: editing returns focus here. */
+  triggerRef?: Ref<HTMLButtonElement>;
 }) {
   const p = provenanceOf(block, source);
   const [showOriginal, setShowOriginal] = useState(false);
   return (
     <Popover.Root open={open} onOpenChange={(next) => onOpenChange(next)}>
       <Popover.Trigger
+        ref={triggerRef}
         className={cx("gutter-btn", `gutter-${p.status}`)}
         aria-label={`Provenance for block ${index + 1}: ${p.statusLabel}`}
       >

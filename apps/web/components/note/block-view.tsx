@@ -2,11 +2,12 @@
 
 import type { NoteBlock, SourceView } from "@mastertutor/contracts";
 import dynamic from "next/dynamic";
+import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { cx } from "@/lib/cx.ts";
 import { formatTimestamp } from "@/lib/notes/format.ts";
-import { isRawHtmlTable, statusOf } from "@/lib/notes/provenance.ts";
+import { isRawHtmlTable, showsVerifyCheck, statusOf } from "@/lib/notes/provenance.ts";
 import { AssetImage } from "./asset-image.tsx";
 import { BlockMarkdown } from "./block-markdown.tsx";
 import { ProvenancePopover } from "./provenance-popover.tsx";
@@ -122,6 +123,18 @@ export function BlockView(props: BlockViewProps) {
     flash = false,
   } = props;
   const status = statusOf(block);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  // Save, Cancel and Esc unmount the editor, which held focus; hand it back to the block.
+  const finishEdit = () => {
+    refocus.current = true;
+    onEditDone();
+  };
+  useEffect(() => {
+    if (editing || !refocus.current) return;
+    refocus.current = false;
+    trigger.current?.focus();
+  }, [editing]);
   return (
     <div
       id={`block-${block.id}`}
@@ -142,9 +155,10 @@ export function BlockView(props: BlockViewProps) {
         onEdit={onEdit}
         onViewInSource={onViewInSource}
         editable={EDITABLE_TYPES.has(block.type)}
+        triggerRef={trigger}
       />
-      {editing ? <BlockEditor block={block} onDone={onEditDone} /> : <BlockContent block={block} />}
-      {block.origin === "ocr_model" || status === "needs_review" ? (
+      {editing ? <BlockEditor block={block} onDone={finishEdit} /> : <BlockContent block={block} />}
+      {showsVerifyCheck(block) ? (
         <div className="blk-actions" data-qa="review-actions">
           {!block.verified ? (
             <Badge tone="warn" icon="needsReview">

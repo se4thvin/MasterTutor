@@ -21,20 +21,23 @@ export function VaultView() {
   const { data, isPending } = useQuery(orpc.vault.list.queryOptions({ input: {} }));
   const key = orpc.vault.list.queryKey({ input: {} });
 
-  const signOut = async (item: VaultItemView) => {
-    const previous = qc.getQueryData<VaultList>(key);
+  const setSessionSaved = (itemId: string, sessionSaved: boolean) =>
     qc.setQueryData<VaultList>(
       key,
       (old) =>
-        old && {
-          items: old.items.map((i) => (i.id === item.id ? { ...i, sessionSaved: false } : i)),
-        },
+        old && { items: old.items.map((i) => (i.id === itemId ? { ...i, sessionSaved } : i)) },
     );
+
+  const signOut = async (item: VaultItemView) => {
+    // A refetch in flight would overwrite the optimistic row with the old session state.
+    await qc.cancelQueries({ queryKey: key });
+    setSessionSaved(item.id, false);
     try {
       await api.vault.forgetSession({ alias: item.alias, origin: item.origin });
       toast({ title: `Signed out of ${item.alias}`, icon: "signOut" });
     } catch {
-      qc.setQueryData(key, previous);
+      // Restore only this row, so a concurrent change to another sign-in survives.
+      setSessionSaved(item.id, item.sessionSaved);
       toast({ title: "Couldn't sign out.", icon: "needsReview", tone: "danger" });
     }
   };
@@ -57,7 +60,7 @@ export function VaultView() {
         <Cutaway />
         <div className="group-h">
           <h2 className="t-title3">
-            Sign-ins <span className="muted">· {data?.items.length ?? 0}</span>
+            Sign-ins{data ? <span className="muted"> · {data.items.length}</span> : null}
           </h2>
           <span className="t-foot">Values are write-only. Replace or remove, never reveal.</span>
         </div>

@@ -21,3 +21,29 @@ test("signing out of a saved session is optimistic", async ({ page }) => {
   await row.getByRole("button", { name: "Sign out of github" }).click();
   await expect(row).toContainText("Signs in on next use");
 });
+
+test("the sign-in count appears only once the list has loaded", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/rpc/vault/list", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto("/vault");
+  const heading = page.getByRole("heading", { level: 2, name: /^Sign-ins/ });
+  await expect(page.getByRole("status", { name: "Loading sign-ins" })).toBeVisible();
+  await expect(heading).toHaveText("Sign-ins");
+  release();
+  await expect(heading).toHaveText("Sign-ins · 5");
+});
+
+test("a failed sign-out restores the session and says so", async ({ page }) => {
+  await page.route("**/api/rpc/vault/forgetSession", (route) =>
+    route.fulfill({ status: 500, json: { json: { code: "INTERNAL_SERVER_ERROR" } } }),
+  );
+  await page.goto("/vault");
+  const row = page.locator(".vrow").filter({ hasText: "github" });
+  await row.getByRole("button", { name: "Sign out of github" }).click();
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't sign out." })).toBeVisible();
+  await expect(row).toContainText("Session saved");
+});

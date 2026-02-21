@@ -9,6 +9,7 @@ test("Mark verified springs, clears the review state and updates fidelity", asyn
   await expectCleanScreen(page);
   await check.click();
   await expect(page.getByRole("checkbox", { name: "Verified" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Verified" })).toBeFocused();
   await expect(page.locator(".srcstrip").getByText("Verified", { exact: true })).toBeVisible();
 });
 
@@ -22,4 +23,19 @@ test("a failed verify rolls back and tells the user (Review Focus 5)", async ({ 
     page.getByRole("group").filter({ hasText: "Couldn't mark the block verified." }),
   ).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Mark verified" })).not.toBeChecked();
+});
+
+test("keyboard focus stays on the check after verifying, and it cannot be unchecked", async ({
+  page,
+}) => {
+  await page.goto(NOTE);
+  const check = page.getByRole("checkbox", { name: "Mark verified" });
+  await check.focus();
+  await page.keyboard.press("Space");
+  const done = page.getByRole("checkbox", { name: "Verified" });
+  await expect(done).toBeChecked();
+  await expect(done).toBeFocused();
+  await expect(done).toHaveAttribute("aria-disabled", "true");
+  await page.keyboard.press("Space");
+  await expect(done).toBeChecked();
 });
