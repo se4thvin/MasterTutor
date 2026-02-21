@@ -55,3 +55,24 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bash apps/browser-slot/test/verify.sh
       - run: bash scripts/compose-smoke.sh
+
+  ui:
+    name: UI (Playwright, 5 breakpoints, layout QA + axe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @mastertutor/web exec playwright install --with-deps chromium
+      - run: pnpm test:ui
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          retention-days: 7
