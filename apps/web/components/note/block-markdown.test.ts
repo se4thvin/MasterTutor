@@ -69,6 +69,31 @@ describe("BlockMarkdown on untrusted page content", () => {
   });
 });
 
+describe("BlockMarkdown asset references", () => {
+  const id = "00000000-0000-4000-8000-000005000001";
+  it("maps asset: images to same-origin /api/assets and renders them", () => {
+    const html = render(`![Decay curve](asset:${id})`);
+    expect(html).toContain(`<img src="/api/assets/${id}" alt="Decay curve"`);
+  });
+  it("maps asset: links to same-origin /api/assets", () => {
+    expect(render(`[Full figure](asset:${id})`)).toContain(`href="/api/assets/${id}"`);
+  });
+  it("still renders every other image as text, including look-alike paths", () => {
+    for (const src of [
+      "https://evil.example/p.png",
+      "//evil.example/p.png",
+      `/api/assets/${id}/../../x`,
+      "/api/assets/not-a-uuid",
+      `/api/assets/${id}?track=1`,
+      "data:image/png;base64,AAAA",
+      "asset:not-a-uuid",
+    ]) {
+      const html = render(`![x](${src})`);
+      expect(html, src).not.toContain("<img");
+    }
+  });
+});
+
 describe("BlockMarkdown links and math limits", () => {
   it("keeps in-page footnote links in the same tab", () => {
     const html = render("a[^1]\n\n[^1]: note");
