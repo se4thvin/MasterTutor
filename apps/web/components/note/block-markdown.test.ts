@@ -1,7 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { BlockMarkdown } from "./block-markdown.tsx";
+import { loadAllPlugins } from "./rich-plugins-loader.ts";
+
+// The reader loads KaTeX/highlight on demand; these tests render synchronously, so load first.
+beforeAll(async () => {
+  await loadAllPlugins();
+});
 
 const render = (markdown: string, allowHtml = false) =>
   renderToStaticMarkup(createElement(BlockMarkdown, { markdown, allowHtml }));

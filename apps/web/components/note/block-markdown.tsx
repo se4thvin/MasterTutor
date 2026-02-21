@@ -1,13 +1,15 @@
 import "katex/dist/katex.min.css";
 import { replaceAssetUris } from "@mastertutor/contracts";
 import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
-import rehypeKatex from "rehype-katex";
-import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import { HIGHLIGHT_LANGUAGES } from "./highlight-languages.ts";
+import {
+  needsRichRendering,
+  rawHtmlPlugins,
+  richPlugins,
+  type RehypePlugins,
+} from "./rich-plugins-loader.ts";
 
 const schema = {
   ...defaultSchema,
@@ -44,39 +46,43 @@ const components: Components = {
     ),
 };
 
-type Plugins = NonNullable<Parameters<typeof ReactMarkdown>[0]["rehypePlugins"]>;
-const SAFE: Plugins = [
-  [rehypeSanitize, schema],
-  [
-    rehypeKatex,
-    {
-      throwOnError: false,
-      strict: "ignore",
-      trust: false,
-      maxSize: 20,
-      maxExpand: 200,
-      output: "htmlAndMathml",
-    },
-  ],
-  [rehypeHighlight, { languages: HIGHLIGHT_LANGUAGES, detect: false }],
-];
-const WITH_HTML: Plugins = [rehypeRaw, ...SAFE];
+const SANITIZE: RehypePlugins = [[rehypeSanitize, schema]];
 
-/** Renders one block's Markdown. Page content is untrusted: sanitize runs before KaTeX and highlight. */
-export function BlockMarkdown({
-  markdown,
-  allowHtml = false,
-}: {
+interface Props {
   markdown: string;
   allowHtml?: boolean;
+}
+
+function Markdown({
+  markdown,
+  raw = [],
+  rich = [],
+}: {
+  markdown: string;
+  raw?: RehypePlugins;
+  rich?: RehypePlugins;
 }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={allowHtml ? WITH_HTML : SAFE}
+      rehypePlugins={[...raw, ...SANITIZE, ...rich]}
       components={components}
     >
       {replaceAssetUris(markdown, toAssetPath)}
     </ReactMarkdown>
   );
+}
+
+/**
+ * Renders one block's Markdown. Page content is untrusted: sanitize runs before KaTeX and
+ * highlight. The heavy parts load only for blocks that need them: KaTeX and highlight.js for math
+ * or a fenced language (until then the block shows its sanitized plain rendering), and the HTML
+ * parser for captured raw-HTML tables.
+ */
+export function BlockMarkdown({ markdown, allowHtml = false }: Props) {
+  const raw = rawHtmlPlugins.usePlugins(allowHtml);
+  const rich = richPlugins.usePlugins(needsRichRendering(markdown));
+  // A raw-HTML table is not shown as Markdown source while its parser loads.
+  if (allowHtml && !raw) return null;
+  return <Markdown markdown={markdown} raw={raw} rich={rich} />;
 }
