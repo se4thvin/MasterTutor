@@ -31,38 +31,46 @@ export function DefaultsForm({ settings }: { settings: SettingsView }) {
   const [newOrigin, setNewOrigin] = useState("");
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
+  // A website typed but not yet added counts as an edit, so Save is offered and will add it.
+  const dirty = JSON.stringify(draft) !== JSON.stringify(initial) || newOrigin.trim() !== "";
+
+  /** The origins with the typed website added, or the error to show. Empty input adds nothing. */
+  const withTypedOrigin = (): { origins: string[] } | { error: string } => {
+    if (!newOrigin.trim()) return { origins: draft.origins };
+    const parsed = OriginInput.safeParse(newOrigin);
+    if (!parsed.success) return { error: "Enter a website such as example.com." };
+    if (draft.origins.includes(parsed.data)) return { origins: draft.origins };
+    if (draft.origins.length >= MAX_ORIGINS) return { error: `Use up to ${MAX_ORIGINS} websites.` };
+    return { origins: [...draft.origins, parsed.data] };
+  };
 
   const addOrigin = () => {
-    const parsed = OriginInput.safeParse(newOrigin);
-    if (!parsed.success) {
-      setErrors((e) => ({ ...e, origin: "Enter a website such as example.com." }));
-      return;
-    }
-    if (!draft.origins.includes(parsed.data) && draft.origins.length >= MAX_ORIGINS) {
-      setErrors((e) => ({ ...e, origin: `Use up to ${MAX_ORIGINS} websites.` }));
+    const next = withTypedOrigin();
+    if ("error" in next) {
+      setErrors((e) => ({ ...e, origin: next.error }));
       return;
     }
     setErrors((e) => ({ ...e, origin: undefined }));
-    setDraft((d) =>
-      d.origins.includes(parsed.data) ? d : { ...d, origins: [...d.origins, parsed.data] },
-    );
+    setDraft((d) => ({ ...d, origins: next.origins }));
     setNewOrigin("");
   };
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (pending) return;
+    const origins = withTypedOrigin();
     const budget = Budget.safeParse({
       maxSteps: Number(draft.steps),
       maxUsd: Number(draft.usd),
       maxActiveMinutes: Number(draft.minutes),
     });
-    if (!budget.success) {
-      const fields = new Set(budget.error.issues.map((i) => String(i.path[0])));
+    if (!budget.success || "error" in origins) {
+      const fields = new Set(budget.error?.issues.map((i) => String(i.path[0])));
       setErrors({
         steps: fields.has("maxSteps") ? "Use 1–10,000 steps." : undefined,
         usd: fields.has("maxUsd") ? "Use more than $0 and at most $1,000." : undefined,
         minutes: fields.has("maxActiveMinutes") ? "Use 1–1,440 minutes." : undefined,
+        origin: "error" in origins ? origins.error : undefined,
       });
       return;
     }
@@ -71,8 +79,9 @@ export function DefaultsForm({ settings }: { settings: SettingsView }) {
     try {
       const saved = await api.settings.update({
         defaultBudget: budget.data,
-        defaultAllowedOrigins: draft.origins,
+        defaultAllowedOrigins: origins.origins,
       });
+      setNewOrigin("");
       qc.setQueryData(orpc.settings.get.queryKey({ input: {} }), saved);
       toast({ title: "Defaults saved", icon: "check" });
     } catch {
@@ -149,6 +158,7 @@ export function DefaultsForm({ settings }: { settings: SettingsView }) {
           <Button
             onClick={() => {
               setDraft(initial);
+              setNewOrigin("");
               setErrors({});
             }}
           >

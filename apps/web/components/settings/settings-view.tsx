@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Button } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
+import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar } from "@/components/ui/toolbar.tsx";
@@ -15,7 +16,8 @@ import { KillSwitchRow } from "./kill-switch-row.tsx";
 
 export function SettingsView() {
   const signOut = useSignOut();
-  const { data } = useQuery(orpc.settings.get.queryOptions({ input: {} }));
+  const settings = useQuery(orpc.settings.get.queryOptions({ input: {} }));
+  const { data } = settings;
   return (
     <>
       <Toolbar>
@@ -26,7 +28,13 @@ export function SettingsView() {
           title="Settings"
           lede="Safety, defaults for new tasks, and what the agent has used."
         />
-        {!data ? (
+        {settings.isError && !data ? (
+          <LoadError
+            title="Couldn't load settings."
+            onRetry={() => void settings.refetch()}
+            retrying={settings.isFetching}
+          />
+        ) : !data ? (
           <div role="status" aria-busy="true" aria-label="Loading settings">
             <Skeleton className="h-40 rounded-lg" />
           </div>
