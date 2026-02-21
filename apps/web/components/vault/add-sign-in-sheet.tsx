@@ -40,30 +40,40 @@ const TOGGLES: Array<{ key: FieldToggle; label: string }> = [
   { key: "imap", label: "Email codes (IMAP)" },
 ];
 
-/** Drops every secret value; the username is not a secret and survives for a retry. */
-const withoutSecrets = (form: VaultForm): VaultForm => ({
-  ...form,
-  values: { ...emptyVaultForm().values, username: form.values.username },
-});
-
-const SECRET_KEYS = {
+/**
+ * Secret inputs are uncontrolled: a controlled input mirrors its value into the DOM `value`
+ * attribute, where serialisers and CSS attribute selectors can read it. Each is named by its
+ * VaultForm key, read once from the form at submit, and then wiped.
+ */
+const SECRET_FIELDS = {
   password: "password",
   totp: "totp",
   pin: "pin",
   imapPassword: "imap",
 } as const satisfies Partial<Record<keyof VaultForm["values"], VaultFormField>>;
+type SecretKey = keyof typeof SECRET_FIELDS;
+const SECRET_KEYS = Object.keys(SECRET_FIELDS) as SecretKey[];
 
-/** After a failed submit, every secret that was cleared asks to be typed again (unless it has a worse error). */
+/** Reads every secret input once, then empties them, so the DOM holds no secret after submit. */
+function takeSecrets(formEl: HTMLFormElement): Record<SecretKey, string> {
+  const data = new FormData(formEl);
+  const values = Object.fromEntries(
+    SECRET_KEYS.map((key) => [key, String(data.get(key) ?? "")]),
+  ) as Record<SecretKey, string>;
+  for (const key of SECRET_KEYS) {
+    const input = formEl.elements.namedItem(key);
+    if (input instanceof HTMLInputElement) input.value = "";
+  }
+  return values;
+}
+
+/** After a failed submit, every secret that was wiped asks to be typed again (unless it has a worse error). */
 function reenterErrors(
-  form: VaultForm,
+  secrets: Record<SecretKey, string>,
   errors: Partial<Record<VaultFormField, string>>,
 ): Partial<Record<VaultFormField, string>> {
   const next = { ...errors };
-  for (const [key, field] of Object.entries(SECRET_KEYS) as Array<
-    [keyof typeof SECRET_KEYS, VaultFormField]
-  >) {
-    if (form.values[key]) next[field] ??= "Enter it again.";
-  }
+  for (const key of SECRET_KEYS) if (secrets[key]) next[SECRET_FIELDS[key]] ??= "Enter it again.";
   return next;
 }
 
@@ -87,20 +97,21 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
   const [pending, setPending] = useState(false);
   const [aliasTouched, setAliasTouched] = useState(false);
   const patch = (fn: (f: VaultForm) => VaultForm) => setForm((f) => fn(f));
-  const setValue = (key: keyof VaultForm["values"], value: string) =>
-    patch((f) => ({ ...f, values: { ...f.values, [key]: value } }));
 
-  async function submit(event: FormEvent) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const result = toCreateInput(form);
-    // Secrets leave component state the moment they are read, whatever happens next.
-    setForm(withoutSecrets);
-    setFormError(null);
+    if (pending) return;
+    // Secrets are read once and wiped from the inputs before anything else happens.
+    const secrets = takeSecrets(event.currentTarget);
+    const result = toCreateInput({ ...form, values: { ...form.values, ...secrets } });
+    // Field errors are quiet text; this one message is the only thing announced.
     if (!result.ok) {
-      setErrors(reenterErrors(form, result.errors));
+      setErrors(reenterErrors(secrets, result.errors));
+      setFormError("Check the highlighted fields.");
       return;
     }
     setErrors({});
+    setFormError(null);
     setPending(true);
     try {
       await api.vault.create(result.input);
@@ -109,8 +120,8 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
       onClose();
     } catch (err) {
       const conflict = errorCode(err) === "CONFLICT";
-      setErrors(reenterErrors(form, conflict ? { alias: "That alias is already used." } : {}));
-      if (!conflict) setFormError("Couldn't save. Try again.");
+      setErrors(reenterErrors(secrets, conflict ? { alias: "That alias is already used." } : {}));
+      setFormError(conflict ? "Check the highlighted fields." : "Couldn't save. Try again.");
     } finally {
       setPending(false);
     }
@@ -138,6 +149,7 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
           </p>
         ) : null}
         <TextField
+          announceError={false}
           label="Website"
           inputMode="url"
           autoComplete="off"
@@ -151,6 +163,7 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
           hint="The agent may use this sign-in only on this website."
         />
         <TextField
+          announceError={false}
           label="Name"
           autoComplete="off"
           value={form.label}
@@ -158,6 +171,7 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
           onChange={(e) => patch((f) => ({ ...f, label: e.target.value }))}
         />
         <TextField
+          announceError={false}
           label="Alias"
           autoComplete="off"
           spellCheck={false}
@@ -186,48 +200,52 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
         </fieldset>
         {form.enabled.username ? (
           <TextField
+            announceError={false}
             label="Username or email"
             autoComplete="off"
             spellCheck={false}
             value={form.values.username}
             error={errors.username}
-            onChange={(e) => setValue("username", e.target.value)}
+            onChange={(e) =>
+              patch((f) => ({ ...f, values: { ...f.values, username: e.target.value } }))
+            }
           />
         ) : null}
         {form.enabled.password ? (
           <TextField
+            announceError={false}
             label="Password"
             {...SECRET_INPUT}
-            value={form.values.password}
+            name="password"
             error={errors.password}
-            onChange={(e) => setValue("password", e.target.value)}
           />
         ) : null}
         {form.enabled.totp ? (
           <TextField
+            announceError={false}
             label="Authenticator setup key"
             {...SECRET_INPUT}
-            value={form.values.totp}
+            name="totp"
             error={errors.totp}
             hint="Paste the key or otpauth:// link shown when you set up two-factor."
-            onChange={(e) => setValue("totp", e.target.value)}
           />
         ) : null}
         {form.enabled.pin ? (
           <TextField
+            announceError={false}
             label="PIN"
             {...SECRET_INPUT}
             inputMode="numeric"
-            value={form.values.pin}
+            name="pin"
             error={errors.pin}
             hint="Filled across split boxes in order."
-            onChange={(e) => setValue("pin", e.target.value)}
           />
         ) : null}
         {form.enabled.imap ? (
           <fieldset className="vform-imap">
             <legend className="tf-label">Email codes</legend>
             <TextField
+              announceError={false}
               label="Mail server"
               autoComplete="off"
               spellCheck={false}
@@ -235,6 +253,7 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
               onChange={(e) => patch((f) => ({ ...f, imap: { ...f.imap, host: e.target.value } }))}
             />
             <TextField
+              announceError={false}
               label="Port"
               inputMode="numeric"
               autoComplete="off"
@@ -242,6 +261,7 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
               onChange={(e) => patch((f) => ({ ...f, imap: { ...f.imap, port: e.target.value } }))}
             />
             <TextField
+              announceError={false}
               label="Mail user"
               autoComplete="off"
               spellCheck={false}
@@ -249,6 +269,7 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
               onChange={(e) => patch((f) => ({ ...f, imap: { ...f.imap, user: e.target.value } }))}
             />
             <TextField
+              announceError={false}
               label="Codes come from"
               autoComplete="off"
               spellCheck={false}
@@ -259,11 +280,11 @@ function AddSignInForm({ onClose }: { onClose: () => void }) {
               }
             />
             <TextField
+              announceError={false}
               label="Mail password"
               {...SECRET_INPUT}
-              value={form.values.imapPassword}
+              name="imapPassword"
               error={errors.imap}
-              onChange={(e) => setValue("imapPassword", e.target.value)}
             />
           </fieldset>
         ) : null}

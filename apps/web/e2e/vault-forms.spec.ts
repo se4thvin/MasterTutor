@@ -99,6 +99,88 @@ test("every secret input is write-only: masked, no autofill, never pre-filled", 
   );
 });
 
+test("a typed secret never reaches the DOM while the sheet is open", async ({ page }) => {
+  await page.goto("/vault");
+  await page.getByRole("button", { name: "Add sign-in" }).click();
+  const sheet = page.getByRole("dialog", { name: "Add sign-in" });
+  for (const toggle of ["Authenticator (TOTP)", "PIN", "Email codes (IMAP)"]) {
+    await sheet.getByRole("checkbox", { name: toggle }).check();
+  }
+  const secrets = [
+    sheet.getByLabel("Password", { exact: true }).last(),
+    sheet.getByLabel("Authenticator setup key"),
+    sheet.getByLabel("PIN", { exact: true }).last(),
+    sheet.getByLabel("Mail password"),
+  ];
+  for (const input of secrets) {
+    await input.fill(CANARY);
+    await expect(input).toHaveValue(CANARY);
+    expect(await input.getAttribute("value")).toBeNull();
+  }
+  expect(await page.content()).not.toContain(CANARY);
+  await sheet.getByRole("button", { name: "Cancel" }).click();
+
+  const row = page.locator(".vrow").filter({ hasText: "github" });
+  await row.getByRole("button", { name: "Actions for github" }).click();
+  await page.getByRole("menuitem", { name: "Replace or add a value…" }).click();
+  const value = page
+    .getByRole("dialog", { name: "Replace or add a value" })
+    .getByLabel("New value");
+  await value.fill(CANARY);
+  expect(await value.getAttribute("value")).toBeNull();
+  expect(await page.content()).not.toContain(CANARY);
+});
+
+test("the secret is sent only in the body of the sealing requests", async ({ page }) => {
+  const carriers: string[] = [];
+  page.on("request", (request) => {
+    const leaked = [request.url(), request.postData() ?? "", JSON.stringify(request.headers())];
+    if (leaked.some((part) => part.includes(CANARY)))
+      carriers.push(new URL(request.url()).pathname);
+  });
+  await page.goto("/vault");
+  await page.getByRole("button", { name: "Add sign-in" }).click();
+  const sheet = page.getByRole("dialog", { name: "Add sign-in" });
+  await sheet.getByLabel("Website").fill("example.com");
+  await sheet.getByLabel("Name", { exact: true }).fill("Example");
+  await sheet.getByLabel("Alias").fill("example");
+  await sheet.getByLabel("Username or email").fill("someone@example.test");
+  await sheet.getByLabel("Password", { exact: true }).last().fill(CANARY);
+  await sheet.getByRole("button", { name: "Save" }).click();
+  await expect(sheet).toBeHidden();
+
+  const row = page.locator(".vrow").filter({ hasText: "example" });
+  await row.getByRole("button", { name: "Actions for example" }).click();
+  await page.getByRole("menuitem", { name: "Replace or add a value…" }).click();
+  const secretSheet = page.getByRole("dialog", { name: "Replace or add a value" });
+  await secretSheet.getByLabel("Field").selectOption("password");
+  await secretSheet.getByLabel("New value").fill(CANARY);
+  await secretSheet.getByRole("button", { name: "Save" }).click();
+  await expect(secretSheet).toBeHidden();
+  await page.reload();
+  expect(carriers).toEqual(["/api/rpc/vault/create", "/api/rpc/vault/setSecret"]);
+});
+
+test("a failed submit announces one alert, not one per field", async ({ page }) => {
+  await page.route("**/api/rpc/vault/create", (route) =>
+    route.fulfill({ status: 500, json: { json: { code: "INTERNAL_SERVER_ERROR" } } }),
+  );
+  await page.goto("/vault");
+  await page.getByRole("button", { name: "Add sign-in" }).click();
+  const sheet = page.getByRole("dialog", { name: "Add sign-in" });
+  await sheet.getByRole("checkbox", { name: "PIN" }).check();
+  await sheet.getByLabel("Website").fill("example.com");
+  await sheet.getByLabel("Name", { exact: true }).fill("Example");
+  await sheet.getByLabel("Alias").fill("example");
+  await sheet.getByLabel("Username or email").fill("someone@example.test");
+  await sheet.getByLabel("Password", { exact: true }).last().fill(CANARY);
+  await sheet.getByLabel("PIN", { exact: true }).last().fill("4821");
+  await sheet.getByRole("button", { name: "Save" }).click();
+  await expect(sheet.getByText("Couldn't save. Try again.")).toBeVisible();
+  await expect(sheet.getByText("Enter it again.")).toHaveCount(2);
+  await expect(sheet.getByRole("alert")).toHaveCount(1);
+});
+
 test("a failed save clears every secret and shows fixed copy that never echoes it", async ({
   page,
 }) => {
