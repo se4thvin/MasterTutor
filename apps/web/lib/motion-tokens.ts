@@ -11,6 +11,8 @@ export const springs = {
 
 /** Milliseconds. */
 export const durations = {
+  /** Press feedback (D21) must land in under 100ms. */
+  press: 90,
   micro: 120,
   base: 200,
   panel: 300,

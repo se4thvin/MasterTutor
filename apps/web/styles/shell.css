@@ -144,14 +144,8 @@
     font-size: 0.625rem;
     font-weight: 500;
     text-decoration: none;
-    transition-property: transform;
-    transition-duration: var(--motion-dur-micro);
-    transition-timing-function: var(--motion-ease-out);
     &:hover {
       text-decoration: none;
-    }
-    &:active {
-      transform: scale(var(--motion-press-row));
     }
     &[aria-current="page"] {
       color: var(--tint-text);

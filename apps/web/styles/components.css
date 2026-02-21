@@ -1,4 +1,91 @@
 @layer components {
+  /*
+   * Press feedback (D21): the one rule for every press target. It uses the independent `scale`
+   * property, so an element's own transform (a card's hover lift) is untouched, and lands within
+   * --motion-dur-press (< 100ms). Reduced motion swaps the scale for a dim.
+   */
+  :is(.btn, .rseg-item, .toast-action) {
+    --press-scale: var(--motion-press);
+  }
+  :is(.icon-btn, .chip-x, .toast-close) {
+    --press-scale: var(--motion-press-icon);
+  }
+  :is(
+    .card,
+    .nav-item,
+    .tree-row,
+    .move-row,
+    .menu-item,
+    .row-link,
+    .recent-item,
+    .callout,
+    .src-pick
+  ) {
+    --press-scale: var(--motion-press-row);
+  }
+  :where(
+    .btn,
+    .rseg-item,
+    .toast-action,
+    .icon-btn,
+    .chip-x,
+    .toast-close,
+    .nav-item,
+    .tree-row,
+    .move-row,
+    .menu-item,
+    .row-link,
+    .recent-item,
+    .callout,
+    .src-pick
+  ) {
+    transition-property: scale;
+    transition-duration: var(--motion-dur-press);
+    transition-timing-function: var(--motion-ease-out);
+  }
+  /* Only the targets themselves: :active also matches every ancestor, up to <body>. */
+  :is(
+      .btn,
+      .rseg-item,
+      .toast-action,
+      .icon-btn,
+      .chip-x,
+      .toast-close,
+      .card,
+      .nav-item,
+      .tree-row,
+      .move-row,
+      .menu-item,
+      .row-link,
+      .recent-item,
+      .callout,
+      .src-pick
+    ):active:not(:disabled, [aria-disabled="true"]) {
+    scale: var(--press-scale);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :is(
+        .btn,
+        .rseg-item,
+        .toast-action,
+        .icon-btn,
+        .chip-x,
+        .toast-close,
+        .card,
+        .nav-item,
+        .tree-row,
+        .move-row,
+        .menu-item,
+        .row-link,
+        .recent-item,
+        .callout,
+        .src-pick
+      ):active:not(:disabled, [aria-disabled="true"]) {
+      scale: none;
+      opacity: 0.7;
+    }
+  }
+
   .glass {
     background: var(--glass);
     backdrop-filter: var(--blur);
@@ -33,9 +120,6 @@
     font-size: 0.8125rem;
     white-space: nowrap;
     text-decoration: none;
-    transition-property: transform;
-    transition-duration: var(--motion-dur-micro);
-    transition-timing-function: var(--motion-ease-out);
     &::after {
       content: "";
       position: absolute;
@@ -43,9 +127,6 @@
     }
     &:hover {
       text-decoration: none;
-    }
-    &:active:not(:disabled) {
-      transform: scale(var(--motion-press));
     }
     &:disabled {
       opacity: 0.45;
@@ -88,9 +169,6 @@
     flex: none;
     border-radius: var(--r-pill);
     color: var(--label-2);
-    transition-property: transform;
-    transition-duration: var(--motion-dur-micro);
-    transition-timing-function: var(--motion-ease-out);
     &::after {
       content: "";
       position: absolute;
@@ -99,9 +177,6 @@
     &:hover {
       background: var(--fill-2);
       color: var(--label);
-    }
-    &:active {
-      transform: scale(var(--motion-press-icon));
     }
   }
   @media (pointer: coarse) {
@@ -543,16 +618,10 @@
     font-size: 0.8125rem;
     font-weight: 500;
     white-space: nowrap;
-    transition-property: transform;
-    transition-duration: var(--motion-dur-micro);
-    transition-timing-function: var(--motion-ease-out);
     &::after {
       content: "";
       position: absolute;
       inset: -0.375rem 0;
-    }
-    &:active {
-      transform: scale(var(--motion-press));
     }
     @media (pointer: coarse) {
       min-height: 2.5rem;
