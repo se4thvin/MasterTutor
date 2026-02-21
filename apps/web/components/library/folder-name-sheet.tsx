@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import { TextField } from "@/components/ui/text-field.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
-import { errorCopy } from "@/lib/api/errors.ts";
+import { errorCode, errorCopy } from "@/lib/api/errors.ts";
 
 export type FolderNameTarget =
   | { mode: "create"; parentId: string | null; parentName: string | null }
@@ -62,9 +62,11 @@ function FolderNameForm({
       onDone?.(folder.id);
       onClose();
     } catch (err) {
-      const conflict =
-        typeof err === "object" && err !== null && "code" in err && err.code === "CONFLICT";
-      setError(conflict ? "A folder with that name already exists here." : errorCopy(err));
+      setError(
+        errorCode(err) === "CONFLICT"
+          ? "A folder with that name already exists here."
+          : errorCopy(err),
+      );
     } finally {
       setPending(false);
     }

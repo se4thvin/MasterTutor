@@ -1,0 +1,277 @@
+"use client";
+
+import { useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent, type InputHTMLAttributes } from "react";
+import { useToast } from "@/components/toast/toast-provider.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Icon } from "@/components/ui/icon.tsx";
+import { Sheet } from "@/components/ui/sheet.tsx";
+import { TextField } from "@/components/ui/text-field.tsx";
+import { api, orpc } from "@/lib/api/client.ts";
+import { errorCode } from "@/lib/api/errors.ts";
+import {
+  emptyVaultForm,
+  suggestAlias,
+  toCreateInput,
+  type FieldToggle,
+  type VaultForm,
+  type VaultFormField,
+} from "@/lib/vault/fields.ts";
+
+/**
+ * Attributes every secret input carries: masked, no autofill from the browser or the user's own
+ * password manager, no spellcheck (which can send text to a spelling service). Never pre-filled.
+ */
+export const SECRET_INPUT: InputHTMLAttributes<HTMLInputElement> &
+  Record<"data-1p-ignore" | "data-lpignore", string> = {
+  type: "password",
+  autoComplete: "new-password",
+  spellCheck: false,
+  maxLength: 4_096,
+  "data-1p-ignore": "true",
+  "data-lpignore": "true",
+};
+
+const TOGGLES: Array<{ key: FieldToggle; label: string }> = [
+  { key: "username", label: "Username" },
+  { key: "password", label: "Password" },
+  { key: "totp", label: "Authenticator (TOTP)" },
+  { key: "pin", label: "PIN" },
+  { key: "imap", label: "Email codes (IMAP)" },
+];
+
+/** Drops every secret value; the username is not a secret and survives for a retry. */
+const withoutSecrets = (form: VaultForm): VaultForm => ({
+  ...form,
+  values: { ...emptyVaultForm().values, username: form.values.username },
+});
+
+const SECRET_KEYS = {
+  password: "password",
+  totp: "totp",
+  pin: "pin",
+  imapPassword: "imap",
+} as const satisfies Partial<Record<keyof VaultForm["values"], VaultFormField>>;
+
+/** After a failed submit, every secret that was cleared asks to be typed again (unless it has a worse error). */
+function reenterErrors(
+  form: VaultForm,
+  errors: Partial<Record<VaultFormField, string>>,
+): Partial<Record<VaultFormField, string>> {
+  const next = { ...errors };
+  for (const [key, field] of Object.entries(SECRET_KEYS) as Array<
+    [keyof typeof SECRET_KEYS, VaultFormField]
+  >) {
+    if (form.values[key]) next[field] ??= "Enter it again.";
+  }
+  return next;
+}
+
+export function AddSignInSheet({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  // Mounting only while open discards every value typed previously.
+  return open ? <AddSignInForm onClose={() => onOpenChange(false)} /> : null;
+}
+
+function AddSignInForm({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [form, setForm] = useState<VaultForm>(emptyVaultForm);
+  const [errors, setErrors] = useState<Partial<Record<VaultFormField, string>>>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [aliasTouched, setAliasTouched] = useState(false);
+  const patch = (fn: (f: VaultForm) => VaultForm) => setForm((f) => fn(f));
+  const setValue = (key: keyof VaultForm["values"], value: string) =>
+    patch((f) => ({ ...f, values: { ...f.values, [key]: value } }));
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const result = toCreateInput(form);
+    // Secrets leave component state the moment they are read, whatever happens next.
+    setForm(withoutSecrets);
+    setFormError(null);
+    if (!result.ok) {
+      setErrors(reenterErrors(form, result.errors));
+      return;
+    }
+    setErrors({});
+    setPending(true);
+    try {
+      await api.vault.create(result.input);
+      await qc.invalidateQueries({ queryKey: orpc.vault.key() });
+      toast({ title: "Saved. Values are sealed.", icon: "sealed" });
+      onClose();
+    } catch (err) {
+      const conflict = errorCode(err) === "CONFLICT";
+      setErrors(reenterErrors(form, conflict ? { alias: "That alias is already used." } : {}));
+      if (!conflict) setFormError("Couldn't save. Try again.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Sheet
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title="Add sign-in"
+      description="The agent will use this by alias. You won't be able to view these values again."
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" form="add-sign-in" disabled={pending}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form id="add-sign-in" className="vform" onSubmit={submit} autoComplete="off" noValidate>
+        {formError ? (
+          <p className="tf-error" role="alert">
+            {formError}
+          </p>
+        ) : null}
+        <TextField
+          label="Website"
+          inputMode="url"
+          autoComplete="off"
+          spellCheck={false}
+          value={form.origin}
+          error={errors.origin}
+          onChange={(e) => patch((f) => ({ ...f, origin: e.target.value }))}
+          onBlur={() =>
+            !aliasTouched && patch((f) => ({ ...f, alias: suggestAlias(f.origin) || f.alias }))
+          }
+          hint="The agent may use this sign-in only on this website."
+        />
+        <TextField
+          label="Name"
+          autoComplete="off"
+          value={form.label}
+          error={errors.label}
+          onChange={(e) => patch((f) => ({ ...f, label: e.target.value }))}
+        />
+        <TextField
+          label="Alias"
+          autoComplete="off"
+          spellCheck={false}
+          value={form.alias}
+          error={errors.alias}
+          onChange={(e) => {
+            setAliasTouched(true);
+            patch((f) => ({ ...f, alias: e.target.value }));
+          }}
+          hint="What the agent asks for. Lowercase letters, numbers, “-” or “_”."
+        />
+        <fieldset className="vform-fields">
+          <legend className="tf-label">Sign-in uses</legend>
+          {TOGGLES.map((t) => (
+            <label key={t.key} className="vform-toggle">
+              <input
+                type="checkbox"
+                checked={form.enabled[t.key]}
+                onChange={(e) =>
+                  patch((f) => ({ ...f, enabled: { ...f.enabled, [t.key]: e.target.checked } }))
+                }
+              />
+              {t.label}
+            </label>
+          ))}
+        </fieldset>
+        {form.enabled.username ? (
+          <TextField
+            label="Username or email"
+            autoComplete="off"
+            spellCheck={false}
+            value={form.values.username}
+            error={errors.username}
+            onChange={(e) => setValue("username", e.target.value)}
+          />
+        ) : null}
+        {form.enabled.password ? (
+          <TextField
+            label="Password"
+            {...SECRET_INPUT}
+            value={form.values.password}
+            error={errors.password}
+            onChange={(e) => setValue("password", e.target.value)}
+          />
+        ) : null}
+        {form.enabled.totp ? (
+          <TextField
+            label="Authenticator setup key"
+            {...SECRET_INPUT}
+            value={form.values.totp}
+            error={errors.totp}
+            hint="Paste the key or otpauth:// link shown when you set up two-factor."
+            onChange={(e) => setValue("totp", e.target.value)}
+          />
+        ) : null}
+        {form.enabled.pin ? (
+          <TextField
+            label="PIN"
+            {...SECRET_INPUT}
+            inputMode="numeric"
+            value={form.values.pin}
+            error={errors.pin}
+            hint="Filled across split boxes in order."
+            onChange={(e) => setValue("pin", e.target.value)}
+          />
+        ) : null}
+        {form.enabled.imap ? (
+          <fieldset className="vform-imap">
+            <legend className="tf-label">Email codes</legend>
+            <TextField
+              label="Mail server"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.imap.host}
+              onChange={(e) => patch((f) => ({ ...f, imap: { ...f.imap, host: e.target.value } }))}
+            />
+            <TextField
+              label="Port"
+              inputMode="numeric"
+              autoComplete="off"
+              value={form.imap.port}
+              onChange={(e) => patch((f) => ({ ...f, imap: { ...f.imap, port: e.target.value } }))}
+            />
+            <TextField
+              label="Mail user"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.imap.user}
+              onChange={(e) => patch((f) => ({ ...f, imap: { ...f.imap, user: e.target.value } }))}
+            />
+            <TextField
+              label="Codes come from"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.imap.senderFilter}
+              hint="Sender address, e.g. no-reply@example.com"
+              onChange={(e) =>
+                patch((f) => ({ ...f, imap: { ...f.imap, senderFilter: e.target.value } }))
+              }
+            />
+            <TextField
+              label="Mail password"
+              {...SECRET_INPUT}
+              value={form.values.imapPassword}
+              error={errors.imap}
+              onChange={(e) => setValue("imapPassword", e.target.value)}
+            />
+          </fieldset>
+        ) : null}
+        <p className="t-foot vform-note">
+          <Icon name="passkey" size="sm" /> Passkeys are added during a run: take over the browser
+          and register one on the site.
+        </p>
+      </form>
+    </Sheet>
+  );
+}

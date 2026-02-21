@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/client";
 import { describe, expect, it } from "vitest";
-import { errorCopy } from "./errors.ts";
+import { errorCode, errorCopy } from "./errors.ts";
 
 describe("errorCopy", () => {
   it("maps codes to fixed copy and never echoes the server message", () => {
@@ -10,5 +10,10 @@ describe("errorCopy", () => {
   });
   it("falls back for unknown errors", () => {
     expect(errorCopy(new Error("boom secret"), "Couldn't save.")).toBe("Couldn't save.");
+  });
+  it("reads the code only from coded errors", () => {
+    expect(errorCode(new ORPCError("CONFLICT"))).toBe("CONFLICT");
+    expect(errorCode(new Error("CONFLICT"))).toBeNull();
+    expect(errorCode(null)).toBeNull();
   });
 });

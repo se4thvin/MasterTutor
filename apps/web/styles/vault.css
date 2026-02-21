@@ -173,4 +173,36 @@
       color: var(--label);
     }
   }
+  .vform {
+    display: grid;
+    gap: 0.9rem;
+  }
+  .vform-fields,
+  .vform-imap {
+    display: grid;
+    gap: 0.5rem;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .vform-imap {
+    gap: 0.9rem;
+  }
+  .vform-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: var(--hit);
+    & input {
+      width: 1.125rem;
+      height: 1.125rem;
+      accent-color: var(--tint);
+    }
+  }
+  .vform-note {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
 }
