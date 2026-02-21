@@ -1,14 +1,17 @@
-/** Schemes a download link may carry. A Markdown data URL is what the fixture API serves. */
-const SAFE_PROTOCOLS = new Set(["https:", "http:", "blob:"]);
-
-/** Returns the URL only if it can download a file and cannot run script; anything else is null. */
-export function safeDownloadUrl(raw: string): string | null {
+/**
+ * Returns a URL that can download a file and cannot run script, or null. Relative URLs (what
+ * notes.export returns once wired) resolve against `origin`. Accepted: same-origin http(s),
+ * cross-origin https (signed object-store links), blob:, and the Markdown data URL the fixture
+ * API serves.
+ */
+export function safeDownloadUrl(raw: string, origin: string): string | null {
   let url: URL;
   try {
-    url = new URL(raw);
+    url = new URL(raw, origin);
   } catch {
     return null;
   }
-  if (SAFE_PROTOCOLS.has(url.protocol)) return raw;
+  if (url.origin === origin && /^https?:$/.test(url.protocol)) return url.href;
+  if (url.protocol === "https:" || url.protocol === "blob:") return raw;
   return url.protocol === "data:" && /^data:text\/markdown[;,]/i.test(raw) ? raw : null;
 }
