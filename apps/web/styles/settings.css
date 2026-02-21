@@ -40,4 +40,154 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin: 0;
+    @variant md {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+  .tile {
+    min-width: 0;
+    padding: 1rem;
+    border-radius: var(--r-lg);
+    background: var(--elevated);
+    box-shadow: var(--e1);
+    & dt {
+      font-size: 0.75rem;
+      color: var(--label-2);
+    }
+    & dd {
+      margin: 0.25rem 0 0;
+      font: 700 1.5rem/1.1 var(--font-display);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
+      overflow-wrap: anywhere;
+    }
+    & small {
+      display: block;
+      margin-top: 0.2rem;
+      font: 400 0.75rem var(--font-ui);
+      letter-spacing: 0;
+      color: var(--label-2);
+    }
+  }
+  .chart-plot {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem;
+    height: 12rem;
+  }
+  .chart-axis {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font: 0.6875rem var(--font-code);
+    color: var(--label-2);
+  }
+  /* The bars box anchors the tooltips, so each one can be clamped inside the chart. */
+  .chart-bars {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--sep);
+    list-style: none;
+  }
+  .chart-col {
+    display: flex;
+    flex: 1;
+    align-items: flex-end;
+    min-width: 0;
+    height: 100%;
+  }
+  .chart-bar {
+    display: block;
+    width: 100%;
+    height: calc(var(--v) * 100%);
+    min-height: 1px;
+    border-radius: 4px 4px 0 0;
+    background: var(--tint);
+    outline-offset: 1px;
+  }
+  /*
+   * Centred over its bar (--x is the bar's centre as a fraction of the chart), clamped to the
+   * chart's edges. Hidden tooltips are invisible, not just transparent: they never take hits.
+   */
+  .chart-tip {
+    --tip-w: min(14rem, 100%);
+    position: absolute;
+    top: 0;
+    left: clamp(0px, calc(var(--x) * 100% - var(--tip-w) / 2), calc(100% - var(--tip-w)));
+    z-index: 5;
+    width: var(--tip-w);
+    padding: 0.4rem 0.55rem;
+    border-radius: var(--r-sm);
+    background: var(--elevated);
+    box-shadow: var(--e2);
+    font-size: 0.75rem;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition-property: opacity, visibility;
+    transition-duration: var(--motion-dur-micro);
+    transition-timing-function: var(--motion-ease-out);
+  }
+  .chart-col:hover .chart-tip,
+  .chart-bar:focus-visible + .chart-tip {
+    visibility: visible;
+    opacity: 1;
+  }
+  .chart-x {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+    padding-left: 3.5rem;
+  }
+  .chart-data {
+    margin-top: 0.75rem;
+    & table {
+      width: 100%;
+      font-size: 0.8125rem;
+      border-collapse: collapse;
+    }
+    & td,
+    & th {
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid var(--sep);
+      text-align: left;
+    }
+  }
+  .table-scroll {
+    overflow-x: auto;
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+    & th {
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid var(--sep);
+      text-align: left;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--label-2);
+      white-space: nowrap;
+    }
+    & td {
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid var(--sep);
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+    }
+    & tr:last-child td {
+      border-bottom: 0;
+    }
+  }
 }

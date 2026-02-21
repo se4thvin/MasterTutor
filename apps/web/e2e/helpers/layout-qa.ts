@@ -69,6 +69,8 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
         !el.closest("[data-qa-allow-clip]") &&
         !inHiddenBox(el) &&
         !el.parentElement?.closest("svg") &&
+        // A closed <details> does not render its content; only its summary is on screen.
+        !el.closest("details:not([open]) > :not(summary)") &&
         // Base UI renders a hidden native input beside its custom controls; it is never seen.
         !el.matches('input[aria-hidden="true"]') &&
         !isVisuallyHidden(el) &&
