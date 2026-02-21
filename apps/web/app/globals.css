@@ -7,6 +7,7 @@
 @import "../styles/shell.css";
 @import "../styles/library.css";
 @import "../styles/note.css";
+@import "../styles/vault.css";
 
 @theme inline {
   --color-*: initial;
