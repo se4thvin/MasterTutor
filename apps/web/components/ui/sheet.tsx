@@ -29,7 +29,7 @@ export function Sheet({
       <Dialog.Portal>
         <Dialog.Backdrop className="scrim" />
         <Dialog.Viewport className="sheet-viewport">
-          <Dialog.Popup className="sheet" initialFocus={initialFocus}>
+          <Dialog.Popup className="sheet glass" initialFocus={initialFocus}>
             <div className="sheet-grabber" aria-hidden="true" />
             <div className="sheet-head">
               <Dialog.Title className="t-title2">{title}</Dialog.Title>

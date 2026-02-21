@@ -4,8 +4,8 @@ import type { SourceKind } from "@mastertutor/contracts";
  * Product-shot covers (mockup D): a small object on the soft cover, lifted by a shadow, drawn
  * from the page tokens so it follows light and dark. Decorative; the title carries the meaning.
  */
-const SHADOW = "drop-shadow(0 8px 16px rgb(0 0 0 / 0.1))";
-const SHADOW_LIFT = "drop-shadow(0 8px 16px rgb(0 0 0 / 0.14))";
+const SHADOW = "var(--art-shadow)";
+const SHADOW_LIFT = "var(--art-shadow-lift)";
 const E = "var(--elevated)";
 const L = "var(--label)";
 const L3 = "var(--label-3)";
@@ -104,7 +104,7 @@ const ART = {
         rx="6"
         fill={E}
         transform="rotate(6 110 70)"
-        style={{ filter: "drop-shadow(0 6px 12px rgb(0 0 0 / 0.08))" }}
+        style={{ filter: "var(--art-shadow-soft)" }}
       />
       <rect x="50" y="4" width="96" height="128" rx="6" fill={E} style={{ filter: SHADOW_LIFT }} />
       <path

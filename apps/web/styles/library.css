@@ -292,9 +292,7 @@
     grid-template-rows: auto minmax(0, 1fr);
     border-radius: var(--r-xl);
     /* Near-opaque: result text must stay legible over busy pages even if the blur is unavailable. */
-    background: color-mix(in srgb, var(--elevated) 94%, transparent);
-    backdrop-filter: var(--blur);
-    -webkit-backdrop-filter: var(--blur);
+    --glass-bg: color-mix(in srgb, var(--elevated) 94%, transparent);
     box-shadow: var(--e3);
     transition-property: transform, opacity;
     transition-duration: var(--motion-spring-dur);

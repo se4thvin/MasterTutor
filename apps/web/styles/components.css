@@ -86,8 +86,9 @@
     }
   }
 
+  /* The one glass recipe (sheets, toasts, sidebar, palette). Surfaces tune it with --glass-bg. */
   .glass {
-    background: var(--glass);
+    background: var(--glass-bg, var(--glass));
     backdrop-filter: var(--blur);
     -webkit-backdrop-filter: var(--blur);
   }
@@ -197,7 +198,7 @@
     box-shadow: inset 0 -1px 0 var(--sep);
   }
   .btn-primary .kbd {
-    background: rgb(255 255 255 / 0.2);
+    background: var(--kbd-on-tint);
     box-shadow: none;
   }
   .badge {
@@ -280,17 +281,12 @@
       content: "";
       position: absolute;
       inset: 0;
-      background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.45), transparent);
+      background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
       transform: translateX(-100%);
       animation-name: shimmer;
       animation-duration: var(--motion-dur-shimmer);
       animation-timing-function: var(--motion-ease-out);
       animation-iteration-count: infinite;
-    }
-  }
-  @media (prefers-color-scheme: dark) {
-    .sk::after {
-      background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.06), transparent);
     }
   }
   @keyframes shimmer {
@@ -400,7 +396,7 @@
     width: 1.125rem;
     height: 1.125rem;
     border-radius: 50%;
-    background: #fff;
+    background: var(--switch-thumb);
     box-shadow: var(--e1);
     transition-property: transform;
     transition-duration: var(--motion-spring-dur);
