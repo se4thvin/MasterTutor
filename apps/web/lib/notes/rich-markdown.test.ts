@@ -26,6 +26,8 @@ const CASES: Array<[name: string, markdown: string, rich: boolean]> = [
   ["paren list marker", "1) one", false],
   ["trailing newline", "text\n", false],
   ["underline syntax is plain text", "x ++u++ y", true],
+  ["commentary prose", "The author skips the bias-correction step; see **Adam** §2.", true],
+  ["commentary with inline math", "Warmup keeps $\\eta_t$ small early.", false],
 ];
 
 describe("rich-text editing is offered only when it is byte-faithful", () => {
@@ -41,6 +43,18 @@ describe("rich-text editing is offered only when it is byte-faithful", () => {
     for (const type of RAW_BLOCK_TYPES) {
       expect(editsAsRichText({ type, markdown: "plain" }), type).toBe(false);
     }
+  });
+
+  it("offers rich editing for commentary exactly when its Markdown round-trips", () => {
+    const commentary = createSeed()
+      .notes.flatMap((n) => n.blocks)
+      .filter((b) => b.type === "commentary");
+    expect(commentary.length).toBeGreaterThan(0);
+    for (const block of commentary) {
+      expect(editsAsRichText(block), block.markdown).toBe(roundTripsRichText(block.markdown));
+    }
+    expect(editsAsRichText({ type: "commentary", markdown: "A plain aside." })).toBe(true);
+    expect(editsAsRichText({ type: "commentary", markdown: "A claim[^1]" })).toBe(false);
   });
 
   it("keeps plain fixture prose on the rich editor", () => {

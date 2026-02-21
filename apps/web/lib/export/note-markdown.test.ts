@@ -35,9 +35,31 @@ describe("Obsidian export", () => {
     expect(exportFileName("CON")).toBe("_CON.md");
     expect(exportFileName("lpt9.txt")).toBe("_lpt9.txt.md");
     expect(exportFileName("Console")).toBe("Console.md");
-    const long = exportFileName("😀".repeat(200));
-    expect(Array.from(long.slice(0, -3))).toHaveLength(120);
-    expect(long.isWellFormed()).toBe(true);
+  });
+
+  it("caps file names at 255 UTF-8 bytes (NAME_MAX), not characters, without splitting one", () => {
+    const bytes = (name: string) => new TextEncoder().encode(name).length;
+    const ascii = exportFileName("a".repeat(400));
+    expect(bytes(ascii)).toBe(255);
+    expect(ascii.endsWith(".md")).toBe(true);
+    const emoji = exportFileName("😀".repeat(200));
+    expect(bytes(emoji)).toBeLessThanOrEqual(255);
+    expect(emoji).toBe(`${"😀".repeat(63)}.md`);
+    expect(emoji.isWellFormed()).toBe(true);
+    // A ZWJ family is one grapheme: it is kept whole or dropped, never cut into its parts.
+    const family = "👨‍👩‍👧";
+    const families = exportFileName(family.repeat(40));
+    expect(bytes(families)).toBeLessThanOrEqual(255);
+    expect(families.slice(0, -3).replaceAll(family, "")).toBe("");
+    expect(exportFileName("é".repeat(200))).toBe(`${"é".repeat(126)}.md`);
+  });
+
+  it("strips bidi controls so a name cannot display as something else", () => {
+    expect(exportFileName("invoice\u202Egpj.exe")).toBe("invoicegpj.exe.md");
+    for (const cp of [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]) {
+      expect(exportFileName(`a${String.fromCodePoint(cp)}b`), cp.toString(16)).toBe("ab.md");
+    }
+    expect(exportFileName("\u2067\u2069")).toBe("note.md");
   });
 
   it("keeps the API's block order rather than re-sorting positions by locale", async () => {
