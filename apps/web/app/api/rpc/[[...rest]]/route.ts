@@ -14,7 +14,7 @@ async function handle(request: Request): Promise<Response> {
   // Both routers enforce the session themselves (requireViewer), so a missing one is a typed
   // oRPC UNAUTHORIZED error the client understands, not a bare 401.
   const viewer = await getViewer();
-  if (getWebEnv().WEB_FIXTURE_API) {
+  if (__FIXTURE_BUILD__ && getWebEnv().WEB_FIXTURE_API) {
     const { fixtureRouter } = await import("@/lib/fixtures/router.ts");
     const { fixtureNamespaceFrom } = await import("@/lib/fixtures/cookies.ts");
     fixtureHandler ??= new RPCHandler(fixtureRouter);

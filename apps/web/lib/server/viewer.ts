@@ -17,7 +17,8 @@ export const FIXTURE_VIEWER: Viewer = {
 
 /** The signed-in user, or null. Fixture mode signs in a fixed user unless the test sets "signed-out". */
 export async function getViewer(): Promise<Viewer | null> {
-  if (getWebEnv().WEB_FIXTURE_API) {
+  // Only a fixture build can sign anyone in by cookie; a production build folds this away.
+  if (__FIXTURE_BUILD__ && getWebEnv().WEB_FIXTURE_API) {
     const jar = await cookies();
     return jar.get(FIXTURE_AUTH_COOKIE)?.value === "signed-out" ? null : FIXTURE_VIEWER;
   }
