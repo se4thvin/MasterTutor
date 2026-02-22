@@ -13,7 +13,7 @@ import { BlockMarkdown } from "./block-markdown.tsx";
 import { ProvenancePopover } from "./provenance-popover.tsx";
 import { VerifyCheck } from "./verify-check.tsx";
 
-export const EDITABLE_TYPES = new Set([
+const EDITABLE_TYPES = new Set([
   "heading",
   "paragraph",
   "list",
@@ -25,7 +25,7 @@ export const EDITABLE_TYPES = new Set([
   "transcript",
 ]);
 
-export interface BlockViewProps {
+interface BlockViewProps {
   block: NoteBlock;
   source: SourceView | undefined;
   index: number;
@@ -41,7 +41,7 @@ export interface BlockViewProps {
   flash?: boolean;
 }
 
-export function BlockContent({ block }: { block: NoteBlock }) {
+function BlockContent({ block }: { block: NoteBlock }) {
   const plainCaption = block.markdown.replace(/[*_`#>]/g, "").trim();
   switch (block.type) {
     case "image":

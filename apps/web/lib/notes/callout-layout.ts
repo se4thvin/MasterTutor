@@ -1,4 +1,4 @@
-export interface CalloutItem {
+interface CalloutItem {
   id: string;
   anchorTop: number;
   height: number;

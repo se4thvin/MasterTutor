@@ -32,7 +32,7 @@ import { useDeleteNote } from "./use-delete-note.ts";
 import { useMoveNote } from "./use-move-note.ts";
 import { useNoteSearch } from "./use-note-search.ts";
 
-export function useLibraryScope() {
+function useLibraryScope() {
   const params = parseLibraryParams(useSearchParams());
   const { data } = useQuery(orpc.folders.tree.queryOptions({ input: {} }));
   const folders = data?.folders ?? [];
@@ -45,7 +45,7 @@ export function useLibraryScope() {
   return { params, folders, path, current, scopeLabel };
 }
 
-export function LibraryHeader({
+function LibraryHeader({
   onDropNote,
 }: {
   onDropNote: (noteId: string, folderId: string | null) => void;

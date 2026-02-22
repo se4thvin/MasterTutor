@@ -6,7 +6,7 @@ import { cx } from "@/lib/cx.ts";
 
 export { Popover };
 
-export interface PopoverPanelProps {
+interface PopoverPanelProps {
   children: ReactNode;
   side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";

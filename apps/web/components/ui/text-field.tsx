@@ -1,7 +1,7 @@
 import { useId, type InputHTMLAttributes } from "react";
 import { cx } from "@/lib/cx.ts";
 
-export interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "children"> {
+interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "children"> {
   label: string;
   hint?: string;
   error?: string | null;

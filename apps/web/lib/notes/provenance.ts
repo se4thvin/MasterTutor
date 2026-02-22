@@ -2,7 +2,7 @@ import type { BlockOrigin, NoteBlock, SourceView } from "@mastertutor/contracts"
 import type { BadgeTone, IconName } from "@/lib/ui/vocabulary.ts";
 import { formatTimestamp } from "./format.ts";
 
-export type ProvenanceStatus = "verified" | "needs_review" | "edited" | "model";
+type ProvenanceStatus = "verified" | "needs_review" | "edited" | "model";
 
 const ORIGIN_LABEL: Record<BlockOrigin, string> = {
   dom: "Page text",

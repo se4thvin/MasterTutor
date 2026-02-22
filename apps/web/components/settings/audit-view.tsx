@@ -16,10 +16,7 @@ import { formatDateTime, hostOf } from "@/lib/notes/format.ts";
 import { FIELD_META } from "@/lib/vault/fields.ts";
 
 /** Every audit action has a word and an icon; a refusal is warn-toned but never colour alone. */
-export const ACTION_META: Record<
-  VaultAuditAction,
-  { label: string; icon: IconName; tone: BadgeTone }
-> = {
+const ACTION_META: Record<VaultAuditAction, { label: string; icon: IconName; tone: BadgeTone }> = {
   create: { label: "Added", icon: "add", tone: "neutral" },
   update: { label: "Changed", icon: "edit", tone: "neutral" },
   delete: { label: "Deleted", icon: "delete", tone: "neutral" },

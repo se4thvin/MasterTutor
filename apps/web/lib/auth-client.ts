@@ -2,7 +2,7 @@ import { createAuthClient } from "better-auth/react";
 
 export const authClient = createAuthClient();
 
-export type AuthMode = "sign-in" | "sign-up";
+type AuthMode = "sign-in" | "sign-up";
 
 /**
  * Fixed copy for auth failures; never echoes server messages. Sign-up deliberately gives one

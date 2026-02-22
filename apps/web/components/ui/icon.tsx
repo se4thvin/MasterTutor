@@ -3,9 +3,9 @@ import type { IconName } from "@/lib/ui/vocabulary.ts";
 import { icons } from "./icons.ts";
 
 export type { IconName } from "@/lib/ui/vocabulary.ts";
-export type IconSize = "sm" | "md" | "lg" | "xl";
+type IconSize = "sm" | "md" | "lg" | "xl";
 
-export interface IconProps {
+interface IconProps {
   name: IconName;
   size?: IconSize;
   /** When set, the icon is meaningful on its own; otherwise it is decorative. */

@@ -33,7 +33,7 @@ export interface SegmentItem<V extends string> {
   hideLabel?: boolean;
 }
 
-export interface RubberSegmentProps<V extends string> {
+interface RubberSegmentProps<V extends string> {
   items: readonly SegmentItem<V>[];
   value: V;
   onChange: (value: V) => void;

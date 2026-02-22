@@ -16,7 +16,7 @@ import { APIError } from "better-auth/api";
 import { getDb } from "./db.ts";
 import { getWebEnv } from "./env.ts";
 
-export interface AuthDeps {
+interface AuthDeps {
   db: Database;
   secret: string;
   baseURL: string;

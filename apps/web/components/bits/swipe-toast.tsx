@@ -18,9 +18,9 @@ import { Icon, type IconName } from "@/components/ui/icon.tsx";
 import { cx } from "@/lib/cx.ts";
 import { durations, fuse, transitions } from "@/lib/motion-tokens.ts";
 
-export type SwipeToastCloseReason = "timeout" | "swipe" | "action" | "close" | "escape";
+type SwipeToastCloseReason = "timeout" | "swipe" | "action" | "close" | "escape";
 
-export interface SwipeToastProps {
+interface SwipeToastProps {
   title: ReactNode;
   description?: ReactNode;
   icon?: IconName;
