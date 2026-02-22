@@ -250,12 +250,13 @@ export function FolderTree({
               <span
                 className="tree-disclosure"
                 aria-hidden="true"
+                data-open={expanded.has(row.key) ? "" : undefined}
                 onClick={(e) => {
                   e.stopPropagation();
                   toggle(row.key);
                 }}
               >
-                <Icon name={expanded.has(row.key) ? "chevronDown" : "chevronRight"} size="sm" />
+                <Icon name="chevronRight" size="sm" />
               </span>
             ) : (
               <span className="tree-disclosure" aria-hidden="true" />

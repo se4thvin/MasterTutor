@@ -26,6 +26,22 @@
       min-height: var(--hit);
     }
   }
+  /* A row a folder just revealed eases in (M4); collapsing simply removes rows. */
+  .tree-row[aria-level]:not([aria-level="1"]) {
+    animation-name: tree-reveal;
+    animation-duration: var(--motion-dur-base);
+    animation-timing-function: var(--motion-ease-out);
+  }
+  @keyframes tree-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(-0.25rem);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
   .tree-row-current {
     background: var(--fill);
   }
@@ -39,6 +55,19 @@
     place-items: center;
     width: 1rem;
     color: var(--label-2);
+    /* One chevron that turns, rather than two glyphs that swap (M4). */
+    & .ic {
+      transition-property: rotate;
+      transition-duration: var(--motion-dur-micro);
+      transition-timing-function: var(--motion-ease-out);
+    }
+    &[data-open] .ic {
+      rotate: 90deg;
+    }
+  }
+  .card-slot {
+    display: grid;
+    min-width: 0;
   }
   .tree-label {
     min-width: 0;
@@ -257,8 +286,31 @@
       text-decoration: none;
     }
   }
-  .hit-active {
+  /* The selection highlight eases in under the moving cursor instead of jumping (M4). */
+  .palette .hit {
+    position: relative;
+    isolation: isolate;
+  }
+  .hit-active::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: var(--r-sm);
     background: var(--fill-2);
+    animation-name: hit-select;
+    animation-duration: var(--motion-dur-micro);
+    animation-timing-function: var(--motion-ease-out);
+  }
+  @keyframes hit-select {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   .hit-title {
     font-weight: 600;
