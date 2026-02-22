@@ -7,7 +7,8 @@ import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
 import { TextField } from "@/components/ui/text-field.tsx";
-import { api, orpc } from "@/lib/api/client.ts";
+import { api } from "@/lib/api/client.ts";
+import { saveSettingsFields } from "@/lib/settings/cache.ts";
 
 /** The contract's cap on default allowed websites (UpdateSettingsInput). */
 const MAX_ORIGINS = 50;
@@ -76,19 +77,17 @@ export function DefaultsForm({ settings }: { settings: SettingsView }) {
     }
     setErrors({});
     setPending(true);
-    try {
-      const saved = await api.settings.update({
-        defaultBudget: budget.data,
-        defaultAllowedOrigins: origins.origins,
-      });
-      setNewOrigin("");
-      qc.setQueryData(orpc.settings.get.queryKey({ input: {} }), saved);
-      toast({ title: "Defaults saved", icon: "check" });
-    } catch {
-      toast({ title: "Couldn't save the defaults.", icon: "needsReview", tone: "danger" });
-    } finally {
-      setPending(false);
-    }
+    // Owns only the defaults: a late response cannot touch the kill switch.
+    const ok = await saveSettingsFields(qc, ["defaultBudget", "defaultAllowedOrigins"], () =>
+      api.settings.update({ defaultBudget: budget.data, defaultAllowedOrigins: origins.origins }),
+    );
+    setPending(false);
+    if (ok) setNewOrigin("");
+    toast(
+      ok
+        ? { title: "Defaults saved", icon: "check" }
+        : { title: "Couldn't save the defaults.", icon: "needsReview", tone: "danger" },
+    );
   }
 
   return (

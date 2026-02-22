@@ -144,3 +144,34 @@ test("settings that fail to load offer Retry instead of an endless skeleton", as
   await error.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByRole("switch", { name: "Kill switch" })).toBeVisible();
 });
+
+test("a late defaults response cannot switch the kill switch back off (R29-5)", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+  const kill = page.getByRole("switch", { name: "Kill switch" });
+  await expect(kill).not.toBeChecked();
+  // Refetches are slowed so what the save responses themselves wrote stays observable.
+  await page.route("**/api/rpc/settings/get", async (route) => {
+    await new Promise((r) => setTimeout(r, 3_000));
+    await route.continue();
+  });
+  // The server processes the defaults save now (kill switch still off), but its response is held.
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/rpc/settings/update", async (route) => {
+    const response = await route.fetch();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.getByLabel("Max steps").fill("90");
+  await page.getByRole("button", { name: "Save defaults" }).click();
+  await kill.click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Stop All Runs" }).click();
+  await expect(page.getByRole("group").filter({ hasText: "All runs stopped" })).toBeVisible();
+  release();
+  await expect(page.getByRole("group").filter({ hasText: "Defaults saved" })).toBeVisible();
+  await expect(kill).toBeChecked();
+  await expect(page.getByRole("status").filter({ hasText: "Kill switch is on." })).toBeVisible();
+  await expect(page.getByLabel("Max steps")).toHaveValue("90");
+});

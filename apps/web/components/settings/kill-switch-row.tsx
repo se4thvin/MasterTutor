@@ -6,7 +6,8 @@ import { useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Switch } from "@/components/ui/switch.tsx";
-import { api, orpc } from "@/lib/api/client.ts";
+import { api } from "@/lib/api/client.ts";
+import { saveSettingsFields } from "@/lib/settings/cache.ts";
 
 /** Turning it on stops every run, so it asks first; turning it off does not. Optimistic either way. */
 export function KillSwitchRow({ settings }: { settings: SettingsView }) {
@@ -15,29 +16,27 @@ export function KillSwitchRow({ settings }: { settings: SettingsView }) {
   const [confirm, setConfirm] = useState(false);
   // One change at a time: out-of-order responses would otherwise settle on the wrong state.
   const [pending, setPending] = useState(false);
-  const key = orpc.settings.get.queryKey({ input: {} });
-  const setKillSwitch = (killSwitch: boolean) =>
-    qc.setQueryData<SettingsView>(key, (old) => old && { ...old, killSwitch });
-
   const apply = async (on: boolean) => {
     if (pending) return;
     setPending(true);
-    // A refetch in flight would overwrite the optimistic value with the old one.
-    await qc.cancelQueries({ queryKey: key });
-    setKillSwitch(on);
-    try {
-      qc.setQueryData(key, await api.settings.setKillSwitch({ on }));
-      toast({
-        title: on ? "All runs stopped" : "Kill switch off. Runs can start again.",
-        icon: on ? "stop" : "ok",
-      });
-    } catch {
-      // Roll back only the switch, so a concurrent defaults save survives.
-      setKillSwitch(!on);
-      toast({ title: "Couldn't change the kill switch.", icon: "needsReview", tone: "danger" });
-    } finally {
-      setPending(false);
-    }
+    // Owns only killSwitch; refetches on settle, so a lost response cannot leave the UI wrong.
+    const ok = await saveSettingsFields(
+      qc,
+      ["killSwitch"],
+      () => api.settings.setKillSwitch({ on }),
+      {
+        killSwitch: on,
+      },
+    );
+    setPending(false);
+    toast(
+      ok
+        ? {
+            title: on ? "All runs stopped" : "Kill switch off. Runs can start again.",
+            icon: on ? "stop" : "ok",
+          }
+        : { title: "Couldn't change the kill switch.", icon: "needsReview", tone: "danger" },
+    );
   };
 
   return (
