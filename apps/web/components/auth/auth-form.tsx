@@ -31,7 +31,8 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
         return;
       }
     } catch {
-      setError(authErrorCopy({}, mode));
+      // A thrown request never got an answer.
+      setError(authErrorCopy({ network: true }, mode));
       return;
     } finally {
       setPending(false);

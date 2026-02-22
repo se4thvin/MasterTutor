@@ -63,3 +63,42 @@ test("sign-up enforces 12-character passwords and explains closed sign-up", asyn
   );
   await expectCleanScreen(page);
 });
+
+test("the first user creates the workspace account and lands in the library", async ({ page }) => {
+  let sent: { email?: string; name?: string; password?: string } = {};
+  await page.route("**/api/auth/sign-up/email", async (route) => {
+    sent = route.request().postDataJSON() as typeof sent;
+    await route.fulfill({
+      status: 200,
+      headers: { "set-cookie": "mt_fixture_auth=signed-in; Path=/" },
+      json: {
+        token: "t",
+        user: { id: "first-user", email: "owner@example.test", name: "Owner" },
+      },
+    });
+  });
+  await page.goto("/sign-up");
+  await expect(page.getByText("The first account owns this workspace.")).toBeVisible();
+  await page.getByLabel("Name").fill("Owner");
+  await page.getByLabel("Email").fill("owner@example.test");
+  await page.getByLabel("Password").fill("correct-horse-battery-staple");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page).toHaveURL(/\/library$/);
+  expect(sent).toEqual({
+    email: "owner@example.test",
+    name: "Owner",
+    password: "correct-horse-battery-staple",
+  });
+});
+
+test("an unexpected sign-up answer is not reported as a network problem", async ({ page }) => {
+  await page.route("**/api/auth/sign-up/email", (route) =>
+    route.fulfill({ status: 500, json: { code: "INTERNAL" } }),
+  );
+  await page.goto("/sign-up");
+  await page.getByLabel("Name").fill("Owner");
+  await page.getByLabel("Email").fill("owner@example.test");
+  await page.getByLabel("Password").fill("correct-horse-battery-staple");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.locator("p[role=alert]")).toHaveText("Couldn't create the account. Try again.");
+});
