@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
+import type { BadgeTone } from "@/lib/ui/vocabulary.ts";
 import { Icon, type IconName } from "./icon.tsx";
-
-export type BadgeTone = "ok" | "warn" | "neutral" | "tint" | "signal" | "danger";
 
 /** Status never relies on colour alone: icon + word are required. */
 export function Badge({

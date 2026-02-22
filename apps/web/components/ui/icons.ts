@@ -1,4 +1,4 @@
-import type { SourceKind } from "@mastertutor/contracts";
+import type { IconName } from "@/lib/ui/vocabulary.ts";
 import {
   Activity,
   ArrowUpRight,
@@ -139,12 +139,4 @@ export const icons = {
   audit: ScrollText,
   model: Bot,
   budget: Gauge,
-} as const satisfies Record<string, LucideIcon>;
-
-export type IconName = keyof typeof icons;
-
-export const SOURCE_KIND_ICON: Record<SourceKind, IconName> = {
-  web: "web",
-  pdf: "pdf",
-  youtube: "video",
-};
+} as const satisfies Record<IconName, LucideIcon>;

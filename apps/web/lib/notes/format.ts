@@ -1,6 +1,5 @@
 import type { Fidelity, NoteSummary, SourceKind } from "@mastertutor/contracts";
-import type { BadgeTone } from "@/components/ui/badge.tsx";
-import { SOURCE_KIND_ICON, type IconName } from "@/components/ui/icons.ts";
+import { SOURCE_KIND_ICON, type BadgeTone, type IconName } from "@/lib/ui/vocabulary.ts";
 
 export const KIND_LABEL: Record<SourceKind, string> = {
   web: "Web page",

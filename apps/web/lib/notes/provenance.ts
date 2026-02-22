@@ -1,6 +1,5 @@
 import type { BlockOrigin, NoteBlock, SourceView } from "@mastertutor/contracts";
-import type { BadgeTone } from "@/components/ui/badge.tsx";
-import type { IconName } from "@/components/ui/icons.ts";
+import type { BadgeTone, IconName } from "@/lib/ui/vocabulary.ts";
 import { formatTimestamp } from "./format.ts";
 
 export type ProvenanceStatus = "verified" | "needs_review" | "edited" | "model";

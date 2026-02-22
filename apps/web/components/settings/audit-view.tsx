@@ -2,9 +2,9 @@
 
 import type { VaultAuditAction, VaultAuditView } from "@mastertutor/contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Badge, type BadgeTone } from "@/components/ui/badge.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import type { IconName } from "@/components/ui/icon.tsx";
+import type { BadgeTone, IconName } from "@/lib/ui/vocabulary.ts";
 import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";

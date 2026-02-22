@@ -2,7 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Icon } from "./icon.tsx";
-import { SOURCE_KIND_ICON, icons, type IconName } from "./icons.ts";
+import { SOURCE_KIND_ICON, type IconName } from "@/lib/ui/vocabulary.ts";
+import { icons } from "./icons.ts";
 
 const REQUIRED: IconName[] = [
   // source and type

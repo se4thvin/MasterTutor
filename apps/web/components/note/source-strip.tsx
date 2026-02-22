@@ -3,7 +3,7 @@
 import type { NoteDetail } from "@mastertutor/contracts";
 import { FidelityBadge } from "@/components/library/fidelity-badge.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
-import { SOURCE_KIND_ICON } from "@/components/ui/icons.ts";
+import { SOURCE_KIND_ICON } from "@/lib/ui/vocabulary.ts";
 import { formatDateTime, hostOf, pathOf } from "@/lib/notes/format.ts";
 import { safePageUrl } from "@/lib/notes/provenance.ts";
 import { AssetImage } from "./asset-image.tsx";

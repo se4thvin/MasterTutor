@@ -1,5 +1,6 @@
 import { Icon } from "@/components/ui/icon.tsx";
-import { icons, type IconName } from "@/components/ui/icons.ts";
+import { icons } from "@/components/ui/icons.ts";
+import type { IconName } from "@/lib/ui/vocabulary.ts";
 
 export function IconGallerySection() {
   const names = Object.keys(icons) as IconName[];
