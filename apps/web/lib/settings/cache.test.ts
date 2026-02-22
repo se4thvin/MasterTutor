@@ -20,15 +20,29 @@ function held<T>(value: T) {
   return { send: async () => (await gate, value), release };
 }
 
-/** The server processed the defaults save first (kill switch still off), then the kill switch. */
-const defaultsResponse: SettingsView = { ...base, defaultBudget: B };
-const killResponse: SettingsView = { ...base, defaultBudget: B, killSwitch: true };
+/**
+ * Each write is answered with the whole SettingsView as the server had it then.
+ * - "kill-first": the defaults save was processed first (kill switch still off) but its response
+ *   arrives last; it must not switch the kill switch back off.
+ * - "defaults-first": the kill switch was processed first (budget still A) but its response
+ *   arrives last; it must not roll the saved budget back to A.
+ */
+const responses = {
+  "kill-first": {
+    defaults: { ...base, defaultBudget: B },
+    kill: { ...base, defaultBudget: B, killSwitch: true },
+  },
+  "defaults-first": {
+    defaults: { ...base, defaultBudget: B, killSwitch: true },
+    kill: { ...base, defaultBudget: A, killSwitch: true },
+  },
+} satisfies Record<string, { defaults: SettingsView; kill: SettingsView }>;
 
 async function run(order: "kill-first" | "defaults-first") {
   const qc = new QueryClient();
   qc.setQueryData(key, base);
-  const defaults = held(defaultsResponse);
-  const kill = held(killResponse);
+  const defaults = held(responses[order].defaults);
+  const kill = held(responses[order].kill);
   const savingDefaults = saveSettingsFields(
     qc,
     ["defaultBudget", "defaultAllowedOrigins"],
