@@ -1,4 +1,6 @@
+import type { Page } from "@playwright/test";
 import { FIXTURE_AUTH_COOKIE } from "../lib/fixtures/cookies.ts";
+import { ids } from "../lib/fixtures/ids.ts";
 import { expect, test } from "./helpers/test.ts";
 
 test("an expired session returns to sign-in and comes back to the same page", async ({
@@ -31,6 +33,67 @@ test("an expired session returns to sign-in and comes back to the same page", as
   await page.getByLabel("Password").fill("correct-horse-battery");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/vault$/);
+});
+
+async function expireSession(page: Page, baseURL: string | undefined) {
+  await page
+    .context()
+    .addCookies([
+      { name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL ?? "http://localhost:3100" },
+    ]);
+}
+
+async function signInAgain(page: Page) {
+  await page.route("**/api/auth/sign-in/email", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "set-cookie": `${FIXTURE_AUTH_COOKIE}=signed-in; Path=/` },
+      json: { redirect: false, token: "t", user: { id: "u", email: "a@b.test", name: "A" } },
+    }),
+  );
+  await page.getByLabel("Email").fill("sam@example.test");
+  await page.getByLabel("Password").fill("correct-horse-battery");
+  await page.getByRole("button", { name: "Sign in" }).click();
+}
+
+test("a block edit saved after the session ended returns to sign-in and keeps the draft", async ({
+  page,
+  baseURL,
+}) => {
+  const note = `/notes/${ids.note(1)}`;
+  await page.goto(note);
+  await page.getByRole("button", { name: /Provenance for block 3:/ }).click();
+  await page
+    .getByRole("dialog", { name: "Block provenance" })
+    .getByRole("button", { name: "Edit block" })
+    .click();
+  const editor = page.getByRole("textbox", { name: "Edit block" });
+  await editor.press("ControlOrMeta+a");
+  await editor.pressSequentially("Written just as the session ended.");
+  await expireSession(page, baseURL);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page).toHaveURL(new RegExp(`/sign-in\\?next=${encodeURIComponent(note)}$`));
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't save" })).toHaveCount(0);
+  await signInAgain(page);
+  await expect(page).toHaveURL(new RegExp(`${note}$`));
+  const restored = page.getByRole("textbox", { name: "Edit block" });
+  await expect(restored).toContainText("Written just as the session ended.");
+});
+
+test("a vault value saved after the session ended returns to sign-in", async ({
+  page,
+  baseURL,
+}) => {
+  await page.goto("/vault");
+  const row = page.locator(".vrow").filter({ hasText: "github" });
+  await row.getByRole("button", { name: "Actions for github" }).click();
+  await page.getByRole("menuitem", { name: "Replace or add a value…" }).click();
+  const sheet = page.getByRole("dialog", { name: "Replace or add a value" });
+  await sheet.getByLabel("New value").fill("a-new-password-value");
+  await expireSession(page, baseURL);
+  await sheet.getByRole("button", { name: "Save" }).click();
+  await expect(page).toHaveURL(/\/sign-in\?next=%2Fvault$/);
+  await expect(page.getByRole("group")).toHaveCount(0);
 });
 
 test.describe("signed out", () => {

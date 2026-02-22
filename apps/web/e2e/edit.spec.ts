@@ -109,3 +109,23 @@ test("Markdown the rich editor can't represent edits raw, and an unchanged save 
   await expect(page.getByRole("button", { name: /Provenance for block 3:/ })).toBeFocused();
   expect(writes).toEqual([]);
 });
+
+test("a failed save keeps the typed text in the reopened editor (M11)", async ({ page }) => {
+  await page.route("**/api/rpc/notes/updateBlock", (route) =>
+    route.fulfill({ status: 500, json: { json: { code: "INTERNAL_SERVER_ERROR" } } }),
+  );
+  await page.goto(NOTE);
+  const editor = await openEditor(page, 3);
+  await editor.press("ControlOrMeta+a");
+  await editor.pressSequentially("My careful rewrite.");
+  await editor.press("ControlOrMeta+Enter");
+  await expect(
+    page.getByRole("group").filter({ hasText: "Couldn't save your edit." }),
+  ).toBeVisible();
+  const reopened = page.getByRole("textbox", { name: "Edit block" });
+  await expect(reopened).toBeVisible();
+  await expect(reopened).toContainText("My careful rewrite.");
+  // The block itself shows the saved text, not the failed draft.
+  await reopened.press("Escape");
+  await expect(page.locator("#main")).not.toContainText("My careful rewrite.");
+});

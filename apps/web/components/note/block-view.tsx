@@ -157,7 +157,11 @@ export function BlockView(props: BlockViewProps) {
         editable={EDITABLE_TYPES.has(block.type)}
         triggerRef={trigger}
       />
-      {editing ? <BlockEditor block={block} onDone={finishEdit} /> : <BlockContent block={block} />}
+      {editing ? (
+        <BlockEditor block={block} onDone={finishEdit} onReopen={onEdit} />
+      ) : (
+        <BlockContent block={block} />
+      )}
       {showsVerifyCheck(block) ? (
         <div className="blk-actions" data-qa="review-actions">
           {!block.verified ? (
