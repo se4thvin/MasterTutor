@@ -34,6 +34,16 @@ const components: Components = {
         {children}
       </a>
     ),
+  // The sanitizer keeps <input> only for GFM task lists. Whatever a page sent, render nothing but
+  // a disabled, labelled checkbox: never a text box (a fake form) and never unlabelled.
+  input: ({ checked }) => (
+    <input
+      type="checkbox"
+      disabled
+      checked={Boolean(checked)}
+      aria-label={checked ? "Done" : "To do"}
+    />
+  ),
   // A code block can scroll sideways, so keyboard users must be able to focus it.
   pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
   // Only stored assets load, from this origin (cookie-authenticated, workspace-scoped). Any other

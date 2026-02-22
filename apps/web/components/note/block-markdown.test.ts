@@ -75,6 +75,17 @@ describe("BlockMarkdown on untrusted page content", () => {
   });
 });
 
+describe("BlockMarkdown inputs in captured content", () => {
+  it("renders any input only as a disabled, labelled checkbox", () => {
+    const hostile = render('<table><tr><td><input name="q" value="pwd"></td></tr></table>', true);
+    expect(hostile).not.toMatch(/name=|value=|type="text"/);
+    expect(hostile).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""[^>]*aria-label="To do"/);
+    const tasks = render("- [x] done\n- [ ] open");
+    expect(tasks).toContain('aria-label="Done"');
+    expect(tasks).toContain('aria-label="To do"');
+  });
+});
+
 describe("BlockMarkdown asset references", () => {
   const id = "00000000-0000-4000-8000-000005000001";
   it("maps asset: images to same-origin /api/assets and renders them", () => {

@@ -12,6 +12,8 @@ export const RICH_PLUGINS: RehypePlugins = [
     rehypeKatex,
     {
       throwOnError: false,
+      // Untrusted commands render as text in this colour; the token meets AA in light and dark.
+      errorColor: "var(--danger)",
       strict: "ignore",
       trust: false,
       maxSize: 20,
