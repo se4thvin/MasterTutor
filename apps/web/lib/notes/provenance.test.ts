@@ -52,6 +52,24 @@ describe("provenance", () => {
     expect(provenanceOf(ocr, source).status).toBe("needs_review");
     expect(calloutFor(ocr)?.lead).toBe("Needs review.");
   });
+  it("says why a block needs review, by its origin (M12)", () => {
+    const review = (origin: NoteBlock["origin"]) =>
+      calloutFor({ ...base, origin, verified: false })?.text;
+    expect(review("ocr_model")).toBe(
+      "Read from an image by the model. Check it against the source.",
+    );
+    expect(review("asr")).toBe(
+      "Transcribed from the audio by the model. Check it against the source.",
+    );
+    expect(review("dom")).toBe("Not yet matched to the page text. Check it against the source.");
+    expect(review("pdf")).toBe("Not yet matched to the PDF's text. Check it against the source.");
+    expect(review("captions")).toBe(
+      "From the uploader's captions, not yet checked against the audio. Check it against the source.",
+    );
+    for (const origin of ["dom", "pdf", "captions", "asr"] as const) {
+      expect(review(origin), origin).not.toContain("image");
+    }
+  });
   it("marks edits and agent notes", () => {
     expect(provenanceOf({ ...base, edited: true, originalMarkdown: "x" }, source).status).toBe(
       "edited",

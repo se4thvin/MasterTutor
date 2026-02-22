@@ -1,4 +1,5 @@
 import type { NoteBlock, NoteDetail } from "@mastertutor/contracts";
+import { REVIEW_REASON } from "../notes/provenance.ts";
 
 /** YAML double-quoted scalar (JSON strings are valid YAML, and escape newlines). */
 const q = (value: string) => JSON.stringify(value);
@@ -58,7 +59,7 @@ function blockBody(block: NoteBlock): string {
     return `> [!note] Agent's note\n${quoted}`;
   }
   if (!block.verified) {
-    return `> [!warning] Needs review\n> Read from an image by the model.\n\n${block.markdown}`;
+    return `> [!warning] Needs review\n> ${REVIEW_REASON[block.origin]}\n\n${block.markdown}`;
   }
   return block.markdown;
 }

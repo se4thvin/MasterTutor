@@ -76,6 +76,18 @@ describe("Obsidian export", () => {
     expect(exportFileName("\u2067\u2069")).toBe("note.md");
   });
 
+  it("explains an unverified block by its origin, not always as an image", async () => {
+    const detail = await api.notes.get({ noteId: ids.note(1) });
+    const [first] = detail.blocks;
+    if (!first) throw new Error("seed has blocks");
+    const md = buildNoteMarkdown({
+      ...detail,
+      blocks: [{ ...first, origin: "asr", verified: false }],
+    });
+    expect(md).toContain("> [!warning] Needs review\n> Transcribed from the audio by the model.");
+    expect(md).not.toContain("Read from an image");
+  });
+
   it("keeps the API's block order rather than re-sorting positions by locale", async () => {
     const detail = await api.notes.get({ noteId: ids.note(1) });
     // Fractional-index keys in byte ("C") order: "aA" < "aa". A locale sort flips them.
