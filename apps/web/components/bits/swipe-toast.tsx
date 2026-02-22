@@ -9,7 +9,7 @@
  * Adaptations: only transform and opacity animate; colours, radii and shadows come from our
  * tokens (styles/overlays.css) and the glyph from <Icon>; springs come from motion-tokens;
  * m.* under LazyMotion; useReducedMotion drops movement (fade only); the countdown pauses on
- * hover, focus, drag and a hidden tab; inline mode (grid-template-rows animation), the
+ * hover, focus, drag, a hidden tab and while the stack is held; inline mode (grid-template-rows animation), the
  * Tailwind arbitrary-value styling and unused props are removed.
  */
 import { animate, m, useMotionValue, useReducedMotion } from "motion/react";
@@ -27,6 +27,8 @@ export interface SwipeToastProps {
   actionLabel?: string;
   onAction?: () => void;
   tone?: "neutral" | "danger";
+  /** True while the pointer or focus is anywhere in the stack: every countdown waits. */
+  held?: boolean;
   onClose: (reason: SwipeToastCloseReason) => void;
 }
 
@@ -53,6 +55,7 @@ export function SwipeToast({
   actionLabel,
   onAction,
   tone = "neutral",
+  held = false,
   onClose,
 }: SwipeToastProps) {
   const reduce = useReducedMotion();
@@ -64,7 +67,7 @@ export function SwipeToast({
   const drag = useRef<{ id: number; startY: number; grab: number | null; hist: Sample[] } | null>(
     null,
   );
-  const flags = useRef({ hover: false, focus: false, drag: false, hidden: false });
+  const flags = useRef({ hover: false, focus: false, drag: false, hidden: false, held: false });
   const closed = useRef(false);
   const onCloseRef = useRef(onClose);
   useEffect(() => {
@@ -82,9 +85,14 @@ export function SwipeToast({
     const a = burn.current;
     if (!a) return;
     const f = flags.current;
-    if (f.hover || f.focus || f.drag || f.hidden) a.pause();
+    if (f.hover || f.focus || f.drag || f.hidden || f.held) a.pause();
     else if (a.playState === "paused") a.play();
   }, []);
+
+  useEffect(() => {
+    flags.current.held = held;
+    syncFuse();
+  }, [held, syncFuse]);
 
   useEffect(() => {
     const el = fuseRef.current;

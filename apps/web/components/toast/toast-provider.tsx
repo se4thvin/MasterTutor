@@ -22,6 +22,8 @@ const MAX_TOASTS = 3;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Array<ToastInput & { id: number }>>([]);
   const nextId = useRef(0);
+  // Reading one toast must not let the others expire: the whole stack holds while pointed at or focused.
+  const [held, setHeld] = useState(false);
   const show = useCallback((toast: ToastInput) => {
     // On the way back to sign-in, failures are expected: no toast should flash before the page goes.
     if (hasSessionEnded()) return;
@@ -36,7 +38,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext value={show}>
       {children}
-      <section className="toast-region" aria-label="Notifications" aria-live="polite">
+      <section
+        className="toast-region"
+        aria-label="Notifications"
+        aria-live="polite"
+        onPointerEnter={() => setHeld(true)}
+        onPointerLeave={() => setHeld(false)}
+        onFocus={() => setHeld(true)}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) setHeld(false);
+        }}
+      >
         <AnimatePresence initial={false}>
           {toasts.map((t) => (
             <m.div
@@ -46,7 +58,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               exit={{ opacity: 0, y: 24 }}
               transition={transitions.spring}
             >
-              <SwipeToast {...t} onClose={() => dismiss(t.id)} />
+              <SwipeToast {...t} held={held} onClose={() => dismiss(t.id)} />
             </m.div>
           ))}
         </AnimatePresence>

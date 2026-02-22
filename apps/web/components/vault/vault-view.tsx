@@ -7,6 +7,7 @@ import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
+import { LoadError } from "@/components/ui/load-error.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -22,7 +23,8 @@ type VaultList = { items: VaultItemView[] };
 export function VaultView() {
   const qc = useQueryClient();
   const toast = useToast();
-  const { data, isPending } = useQuery(orpc.vault.list.queryOptions({ input: {} }));
+  const list = useQuery(orpc.vault.list.queryOptions({ input: {} }));
+  const { data, isPending } = list;
   const key = orpc.vault.list.queryKey({ input: {} });
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<VaultItemView | null>(null);
@@ -98,7 +100,13 @@ export function VaultView() {
           </h2>
           <span className="t-foot">Values are write-only. Replace or remove, never reveal.</span>
         </div>
-        {isPending ? (
+        {list.isError && !data ? (
+          <LoadError
+            title="Couldn't load your sign-ins."
+            onRetry={() => void list.refetch()}
+            retrying={list.isFetching}
+          />
+        ) : isPending ? (
           <div className="group" role="status" aria-busy="true" aria-label="Loading sign-ins">
             <Skeleton className="m-4 h-12" />
             <Skeleton className="m-4 h-12" />

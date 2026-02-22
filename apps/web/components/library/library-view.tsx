@@ -8,6 +8,7 @@ import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segmen
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
+import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import { SearchField } from "@/components/ui/search-field.tsx";
@@ -215,6 +216,12 @@ export function LibraryView() {
               }
             />
           ) : null
+        ) : notes.isError && !notes.data ? (
+          <LoadError
+            title="Couldn't load your notes."
+            onRetry={() => void notes.refetch()}
+            retrying={notes.isFetching}
+          />
         ) : notes.isPending ? (
           <div
             className="notes"
