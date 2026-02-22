@@ -307,3 +307,21 @@ test("a failed delete restores only that sign-in", async ({ page }) => {
   await expect(row).toBeVisible();
   await expect(page.locator(".vrow")).toHaveCount(5);
 });
+
+test("the replace sheet masks secrets but not the username, and opens on a secret", async ({
+  page,
+}) => {
+  await page.goto("/vault");
+  const row = page.locator(".vrow").filter({ hasText: "github" });
+  await row.getByRole("button", { name: "Actions for github" }).click();
+  await page.getByRole("menuitem", { name: "Replace or add a value…" }).click();
+  const sheet = page.getByRole("dialog", { name: "Replace or add a value" });
+  await expect(sheet.getByLabel("Field")).toHaveValue("password");
+  await expectWriteOnly(sheet.getByLabel("New value"));
+  await sheet.getByLabel("Field").selectOption("username");
+  const username = sheet.getByLabel("New value");
+  await expect(username).toHaveAttribute("type", "text");
+  await expect(username).toHaveAttribute("autocomplete", "off");
+  await username.fill("someone@example.test");
+  expect(await username.getAttribute("value")).toBeNull();
+});

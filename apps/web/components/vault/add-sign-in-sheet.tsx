@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent, type InputHTMLAttributes } from "react";
+import { useState, type FormEvent } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
@@ -10,6 +10,7 @@ import { TextField } from "@/components/ui/text-field.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
 import { errorCode } from "@/lib/api/errors.ts";
 import {
+  SECRET_INPUT,
   emptyVaultForm,
   suggestAlias,
   toCreateInput,
@@ -17,20 +18,6 @@ import {
   type VaultForm,
   type VaultFormField,
 } from "@/lib/vault/fields.ts";
-
-/**
- * Attributes every secret input carries: masked, no autofill from the browser or the user's own
- * password manager, no spellcheck (which can send text to a spelling service). Never pre-filled.
- */
-export const SECRET_INPUT: InputHTMLAttributes<HTMLInputElement> &
-  Record<"data-1p-ignore" | "data-lpignore", string> = {
-  type: "password",
-  autoComplete: "new-password",
-  spellCheck: false,
-  maxLength: 4_096,
-  "data-1p-ignore": "true",
-  "data-lpignore": "true",
-};
 
 const TOGGLES: Array<{ key: FieldToggle; label: string }> = [
   { key: "username", label: "Username" },
