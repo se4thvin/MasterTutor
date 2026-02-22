@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
+import { cancelNoteQueries } from "@/lib/notes/cache.ts";
 import { applyNoteFolder, restoreNote, snapshotNote } from "@/lib/notes/move-cache.ts";
 
 /** Optimistic move with an Undo toast. Undo is itself a move, so it never offers Undo again. */
@@ -18,6 +19,8 @@ export function useMoveNote() {
       options: { undo?: boolean } = {},
     ): Promise<void> {
       if (to === from) return;
+      // A read answered before the move must not land on top of the optimistic result.
+      await cancelNoteQueries(qc, noteId);
       const snapshot = snapshotNote(qc, noteId);
       applyNoteFolder(qc, noteId, to);
       try {
