@@ -1,7 +1,6 @@
 "use client";
 
 import type { NoteDetail } from "@mastertutor/contracts";
-import Link from "next/link";
 import { FidelityBadge } from "@/components/library/fidelity-badge.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { SOURCE_KIND_ICON } from "@/components/ui/icons.ts";
@@ -47,9 +46,8 @@ export function SourceStrip({ detail }: { detail: NoteDetail }) {
           {verified} of {captured} verified
         </span>
         {detail.note.runId ? (
-          <Link href={`/runs/${detail.note.runId}`} className="t-foot">
-            Run {detail.note.runId.slice(-6)}
-          </Link>
+          // Plain text until F3 builds /runs/<id>; then this becomes a link.
+          <span className="t-foot">Run {detail.note.runId.slice(-6)}</span>
         ) : null}
       </span>
     </div>

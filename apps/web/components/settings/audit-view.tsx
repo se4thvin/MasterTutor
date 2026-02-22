@@ -2,7 +2,6 @@
 
 import type { VaultAuditAction, VaultAuditView } from "@mastertutor/contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import Link from "next/link";
 import { Badge, type BadgeTone } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import type { IconName } from "@/components/ui/icon.tsx";
@@ -104,13 +103,7 @@ export function AuditView() {
                       {e.origin ? <span className="t-foot"> · {hostOf(e.origin)}</span> : null}
                     </td>
                     <td>{e.field ? fieldLabel(e.field) : "–"}</td>
-                    <td>
-                      {e.runId ? (
-                        <Link href={`/runs/${e.runId}`}>Run {e.runId.slice(-6)}</Link>
-                      ) : (
-                        "–"
-                      )}
-                    </td>
+                    <td>{e.runId ? <span className="mono">Run {e.runId.slice(-6)}</span> : "–"}</td>
                     <td>{e.outcome}</td>
                   </tr>
                 ))}

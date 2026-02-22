@@ -1,7 +1,6 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
@@ -100,7 +99,8 @@ export function UsageView() {
                   {data.perRun.map((r) => (
                     <tr key={r.runId}>
                       <td>
-                        <Link href={`/runs/${r.runId}`}>{r.goal}</Link>
+                        {/* Plain text until F3 builds /runs/<id>. */}
+                        {r.goal}
                       </td>
                       <td>{r.status}</td>
                       <td>{r.steps}</td>
