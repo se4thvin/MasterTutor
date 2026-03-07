@@ -15,6 +15,7 @@ export function isRiskyLabel(label: string): boolean {
 
 const PageUrl = z.string().min(1).max(4_096);
 const ScreenshotKey = z.string().min(1).max(1_024).nullable();
+const RecordExcerpt = z.string().max(240).nullable().optional();
 
 export const ApprovalRequest = z.discriminatedUnion("kind", [
   z.object({
@@ -30,12 +31,17 @@ export const ApprovalRequest = z.discriminatedUnion("kind", [
       )
       .max(20)
       .optional(),
+    /** The record the action targets (R29-3), cleaned and capped; for the approval card only, never the model. */
+    context: RecordExcerpt,
   }),
   z.object({
     kind: z.literal("form_submit"),
+    /** What triggers the submit (a click, Enter, a line break typed into a field). */
+    action: ComputerAction.optional(),
     url: PageUrl,
     formSummary: z.string().max(1_000),
     screenshotKey: ScreenshotKey,
+    context: RecordExcerpt,
   }),
   z.object({ kind: z.literal("download"), url: PageUrl, filename: z.string().max(255).nullable() }),
   z.object({ kind: z.literal("credential_first_use"), alias: Alias, origin: Origin }),
