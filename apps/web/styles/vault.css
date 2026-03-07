@@ -1,0 +1,208 @@
+@layer components {
+  .cutaway {
+    display: grid;
+    gap: 1.5rem;
+    margin: 0 0 2.5rem;
+    padding: 1.5rem;
+    border-radius: var(--r-xl);
+    background: var(--bg-2);
+    @variant md {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      padding: 2.5rem 1.5rem;
+    }
+  }
+  .cutaway-obj {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    gap: 0.6rem;
+    text-align: center;
+    & .cap {
+      max-width: 16rem;
+    }
+  }
+  .cutaway-art {
+    display: grid;
+    place-items: center;
+    width: 5.5rem;
+    height: 5.5rem;
+    border-radius: 1.6rem;
+    background: var(--elevated);
+    box-shadow: var(--e2);
+    color: var(--label);
+  }
+  .cutaway-link {
+    display: none;
+    @variant md {
+      display: block;
+      position: absolute;
+      top: 2.75rem;
+      left: calc(50% + 3.5rem);
+      width: calc(100% - 7rem + 1.5rem);
+      border-top: 1.5px dotted var(--label-3);
+    }
+  }
+  .group-h {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+    margin: 2rem 0.25rem 0.6rem;
+  }
+  .vlist {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .vrow {
+    position: relative;
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    gap: 0.75rem 1rem;
+    align-items: center;
+    padding: 0.9rem 1.1rem;
+    & > :nth-child(n + 3) {
+      grid-column: 2;
+    }
+    @variant lg {
+      grid-template-columns: 2.5rem minmax(0, 1.3fr) minmax(0, 1.6fr) minmax(0, 1fr) auto;
+      & > :nth-child(n + 3) {
+        grid-column: auto;
+      }
+    }
+    & + .vrow::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 4.6rem;
+      right: 0;
+      height: 1px;
+      background: var(--sep);
+    }
+  }
+  .vrow-art {
+    display: grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.625rem;
+    background: var(--bg-2);
+    color: var(--label-2);
+  }
+  .vrow-id {
+    display: grid;
+    min-width: 0;
+  }
+  .vrow-alias {
+    font-weight: 600;
+    font-size: 0.8125rem;
+    overflow-wrap: anywhere;
+  }
+  .vrow-host {
+    overflow-wrap: anywhere;
+  }
+  .ftypes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ft {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-height: 1.5rem;
+    padding: 0 0.5rem;
+    border-radius: var(--r-xs);
+    background: var(--fill-2);
+    color: var(--label);
+    font-size: 0.6875rem;
+    font-weight: 500;
+  }
+  /* Inherits the label colour so it stays above AA (the mockup's label-3 does not). */
+  .ft-seal {
+    font-family: var(--font-code);
+    letter-spacing: 0.05em;
+  }
+  .ft-tint {
+    background: var(--tint-wash);
+    color: var(--tint-text);
+  }
+  .vrow-session {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+  }
+  .dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--label-3);
+  }
+  .dot-ok {
+    background: var(--ok);
+  }
+  .vrow-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    @variant lg {
+      justify-content: flex-end;
+    }
+  }
+  .never {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 1rem;
+    margin: 2rem 0 5rem;
+    padding: 1.1rem 1.25rem;
+    border-radius: var(--r-lg);
+    background: var(--tint-wash);
+    color: var(--tint-text);
+    & p {
+      margin-top: 0.2rem;
+      color: var(--label);
+      font-size: 0.8125rem;
+      line-height: 1.5;
+    }
+    & h2 {
+      color: var(--label);
+    }
+  }
+  .vform {
+    display: grid;
+    gap: 0.9rem;
+  }
+  .vform-fields,
+  .vform-imap {
+    display: grid;
+    gap: 0.5rem;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .vform-imap {
+    gap: 0.9rem;
+  }
+  .vform-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: var(--hit);
+    & input {
+      width: 1.125rem;
+      height: 1.125rem;
+      accent-color: var(--tint);
+    }
+  }
+  .vform-note {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+}
