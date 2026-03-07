@@ -1,4 +1,5 @@
 import { toOrigin, type FunctionToolName } from "@mastertutor/contracts";
+import { NO_MASK_SOURCES, redactDeep, type MaskSources } from "../browser/masking.ts";
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import type { RegisteredTool, ToolContext } from "./types.ts";
@@ -24,10 +25,12 @@ function wroteBlocks(result: unknown): boolean {
 export class ToolRegistry {
   readonly #tools = new Map<FunctionToolName, RegisteredTool>();
   readonly #log: Log;
+  readonly #mask: MaskSources;
 
-  constructor(tools: readonly RegisteredTool[], log: Log) {
+  constructor(tools: readonly RegisteredTool[], log: Log, mask: MaskSources = NO_MASK_SOURCES) {
     for (const tool of tools) this.#tools.set(tool.name, tool);
     this.#log = log;
+    this.#mask = mask;
   }
 
   async run(
@@ -47,7 +50,8 @@ export class ToolRegistry {
       wait = reason;
     };
     try {
-      const result = await tool.invoke({ ...ctx, requestWait }, args);
+      // M13: a page can reflect a vault secret into its text; no tool result carries it out.
+      const result = redactDeep(await tool.invoke({ ...ctx, requestWait }, args), this.#mask);
       const text = JSON.stringify(result);
       const output = tool.untrusted ? wrapUntrusted(toOrigin(ctx.session.page.url()), text) : text;
       return { output, notesChanged: wroteBlocks(result), wait };

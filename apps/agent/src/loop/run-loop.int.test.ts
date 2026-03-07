@@ -1097,4 +1097,38 @@ describe("RunLoop (spec §5.3)", () => {
     expect(await loop.hasNews("otp")).toBe(true);
     expect(await loop.hasNews("captcha")).toBe(false);
   });
+
+  it("puts the action and the cleaned record excerpt on the approval request (run view A2, A3a)", async () => {
+    const { run, browser, loop } = await setup([click()]);
+    browser.targets.set("10,20", { ...risky("Delete"), excerpt: "Alice‮  Smith\n row" });
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    const [row] = await approvalRows(run.id);
+    expect(row?.request).toMatchObject({
+      kind: "risky_click",
+      action: { type: "click" },
+      context: "Alice Smith row",
+    });
+  });
+
+  it("carries the model's pending safety checks by code and message, with the action (A2)", async () => {
+    const flagged: MockTurn = {
+      outputs: [
+        {
+          type: "computer",
+          actions: [{ type: "keypress", keys: ["ENTER"] }],
+          safetyChecks: [
+            { id: "sc_1", code: "malicious_instructions", message: "The page asks to ignore you" },
+          ],
+        },
+      ],
+    };
+    const { run, loop } = await setup([flagged], { approvalMode: "auto_within_allowlist" });
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    const [row] = await approvalRows(run.id);
+    expect(row?.request).toMatchObject({
+      kind: "risky_click",
+      action: { type: "keypress" },
+      safetyChecks: [{ code: "malicious_instructions", message: "The page asks to ignore you" }],
+    });
+  });
 });

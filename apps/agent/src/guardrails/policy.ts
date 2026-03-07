@@ -79,10 +79,23 @@ export function needsApproval(
   }
 }
 
+/** The record excerpt on an approval card (A3a): display-safe, short; never sent to the model. */
+export function approvalExcerpt(text: string | undefined): string | null {
+  if (!text) return null;
+  const clean = text
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+  return clean === "" ? null : clean;
+}
+
 export function approvalRequestFor(
   need: ApprovalNeed,
   url: string,
   screenshotKey: string | null,
+  excerpt: string | null,
 ): ApprovalRequest {
   const pageUrl = url.slice(0, 4_096);
   return need.kind === "risky_click"
@@ -92,11 +105,14 @@ export function approvalRequestFor(
         label: need.label.slice(0, 500),
         url: pageUrl,
         screenshotKey,
+        context: excerpt,
       }
     : {
         kind: "form_submit",
+        action: need.action,
         url: pageUrl,
         formSummary: need.formSummary.slice(0, 1_000),
         screenshotKey,
+        context: excerpt,
       };
 }
