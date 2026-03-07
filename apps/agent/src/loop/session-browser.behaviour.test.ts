@@ -305,4 +305,77 @@ describe("SessionLoopBrowser", () => {
     // ...the row's own record does.
     expect((await browser.targetFor(at(first!.point!), null))!.context).not.toBe(row1);
   });
+
+  it.each([
+    ["scale", "top"],
+    ["object", "top"],
+    ["zoom", "top"],
+    ["padding", "bottom"],
+  ])(
+    "classifies the element really hit inside a same-origin %s frame (N5)",
+    async (variant, edge) => {
+      const browser = await connect();
+      await browser.navigate(`${SITE}/same-origin-frames.html?variant=${variant}`, signal);
+      await browser.observe(signal);
+      // Where the browser itself hit-tests "Delete account" (DOM.getNodeForLocation, which
+      // honours scale, zoom, padding and frames): the topmost such point, nearest to "Cancel".
+      const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
+      const page = remote
+        .contexts()[0]!
+        .pages()
+        .find((p) => p.url().includes("same-origin-frames"))!;
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("DOM.getDocument", { depth: 0 });
+      const buttonAt = async (x: number, y: number) => {
+        const { backendNodeId } = await cdp
+          .send("DOM.getNodeForLocation", { x, y })
+          .catch(() => ({ backendNodeId: 0 }));
+        if (!backendNodeId) return null;
+        const { object } = await cdp.send("DOM.resolveNode", { backendNodeId });
+        const { result } = await cdp.send("Runtime.callFunctionOn", {
+          objectId: object.objectId!,
+          returnByValue: true,
+          functionDeclaration:
+            "function () { const el = this.nodeType === 3 ? this.parentElement : this; return el && el.closest ? (el.closest('button') || {}).id || null : null; }",
+        });
+        return result.value as string | null;
+      };
+      const hits: number[] = [];
+      for (let y = 30; y < 700; y += 3) if ((await buttonAt(100, y)) === "delete") hits.push(y);
+      expect(hits.length).toBeGreaterThan(0);
+      // The edge of "Delete account" where an offset-only mapping would read something else:
+      // the top edge (toward "Cancel") for scale and zoom, the bottom edge for padding.
+      const point = { x: 100, y: edge === "top" ? hits[0]! + 2 : hits.at(-1)! - 2 };
+      const click = { type: "click" as const, ...point!, button: "left" as const };
+      const target = await browser.targetFor(click, null);
+      // Ground truth: what a real click at that point hits.
+      await page.mouse.click(click.x, click.y);
+      const clicked = await page.evaluate(
+        () => (window as unknown as { __clicked?: string }).__clicked,
+      );
+      await remote.close();
+      expect(clicked).toBe("delete");
+      expect(target).toMatchObject({ label: "Delete account" });
+      expect(needsApproval(click, target)?.kind).toBe("risky_click");
+    },
+  );
+
+  it("binds a lone form's button to the record around it, not just its label (N4 minor)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/button-to.html`, signal);
+    await browser.observe(signal);
+    const click = { type: "click" as const, x: 100, y: 120, button: "left" as const };
+    const alice = await browser.targetFor(click, null);
+    expect(alice).toMatchObject({ label: "Delete" });
+    const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
+    const page = remote
+      .contexts()[0]!
+      .pages()
+      .find((p) => p.url().includes("button-to"))!;
+    await page.evaluate(() => {
+      document.getElementById("record")!.textContent = "Bobby";
+    });
+    await remote.close();
+    expect((await browser.targetFor(click, null))!.context).not.toBe(alice!.context);
+  });
 });

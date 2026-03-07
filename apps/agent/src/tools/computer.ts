@@ -9,7 +9,7 @@ import {
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { pause } from "../runtime/abortable.ts";
+import { abortable, pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
 import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
@@ -21,6 +21,8 @@ export interface ComputerRun {
 
 export type ActionGate = (action: ComputerAction) => Promise<boolean>;
 
+export const FOCUS_MOVED_REFUSAL =
+  "Stopped typing: the page moved focus into another part of the page (another frame) while typing, and the rest was not typed there. Look at the screen and decide again.";
 export const SECRET_FIELD_REFUSAL =
   "Refused: typing into password, one-time-code or PIN fields is not allowed. Use fill_credential with the vault alias and the field's element ref.";
 const TYPE_CHUNK = 24;
@@ -279,7 +281,16 @@ export class ComputerExecutor {
     }
     let refusal = this.#typingRefusal(await focusTarget(this.#session));
     if (refusal) return refusal;
-    const disarm = await armSecretBlock(this.#session);
+    // Arming every document can take a round trip per frame: a takeover must not wait for it
+    // (target ≤ 300 ms). If aborted meanwhile, the arm finishes and is undone in the background.
+    const arming = armSecretBlock(this.#session);
+    const { focusMoved, disarm } = await abortable(arming, signal).catch((error: unknown) => {
+      void arming.then(
+        (block) => block.disarm(),
+        () => undefined,
+      );
+      throw error;
+    });
     try {
       for (let offset = 0; offset < text.length; offset += TYPE_CHUNK) {
         this.#session.guard.assertAgent(signal);
@@ -289,11 +300,15 @@ export class ComputerExecutor {
           if (refusal) return refusal;
         }
         await this.#session.page.keyboard.type(text.slice(offset, offset + TYPE_CHUNK));
+        // A page script moved focus into another document mid-chunk: the rest was cancelled
+        // there (armSecretBlock); stop and let the model look again.
+        if (await focusMoved()) return this.#refuse(FOCUS_MOVED_REFUSAL);
       }
       const focus = await focusTarget(this.#session);
       if (focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     } finally {
-      await disarm();
+      if (signal.aborted) void disarm();
+      else await disarm();
     }
     await settle(this.#session, signal);
     return null;
@@ -340,7 +355,7 @@ export class ComputerExecutor {
     const focus = await focusTarget(this.#session);
     if (typesText(keys) && focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     if (focus?.editable || focus?.isSecretField) {
-      const disarm = await armSecretBlock(this.#session);
+      const { disarm } = await armSecretBlock(this.#session);
       try {
         await this.#session.page.keyboard.press(combo);
       } finally {

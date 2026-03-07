@@ -43,7 +43,8 @@ export function hitTestScript(
       if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
         try {
           const doc: Document | null = (hit as HTMLIFrameElement).contentDocument ?? null;
-          if (doc) {
+          // Only a plain frame maps by offset; any other stops here for the CDP mapping (N5).
+          if (doc && h.frameIsPlain(hit)) {
             const r = hit.getBoundingClientRect();
             ox += r.left + (hit as HTMLElement).clientLeft;
             oy += r.top + (hit as HTMLElement).clientTop;
@@ -69,7 +70,7 @@ export function hitTestScript(
     } catch {
       readable = false;
     }
-    if (!readable)
+    if (!readable || !h.frameIsPlain(hit))
       return { target: null, snap: null, origin, opaqueFrame: h.describeTarget(hit).path };
   }
   const target = h.describeTarget(hit);
@@ -103,7 +104,7 @@ export function hitTestScript(
 }
 
 /** The cross-origin frame element at the point (same walk as hitTestScript), for a CDP handle. */
-export function frameAtPointScript(arg: { x: number; y: number }): Element | null {
+export function frameAtPointScript(arg: { x: number; y: number }, h: PageHelpers): Element | null {
   let root: Document | ShadowRoot = document;
   let ox = 0;
   let oy = 0;
@@ -124,7 +125,7 @@ export function frameAtPointScript(arg: { x: number; y: number }): Element | nul
     } catch {
       doc = null;
     }
-    if (!doc) return hit;
+    if (!doc || !h.frameIsPlain(hit)) return hit;
     const r = hit.getBoundingClientRect();
     ox += r.left + (hit as HTMLElement).clientLeft;
     oy += r.top + (hit as HTMLElement).clientTop;
@@ -190,7 +191,7 @@ export function focusScript(_arg: null, h: PageHelpers): FrameScan {
   return { ...none, target: h.describeTarget(active) };
 }
 
-export function scrollStateScript(arg: { x: number; y: number }): ScrollState {
+export function scrollStateScript(arg: { x: number; y: number }, h: PageHelpers): ScrollState {
   // Deepest element at the point through open shadow roots and same-origin frames.
   let root: Document | ShadowRoot = document;
   let ox = 0;
@@ -207,7 +208,7 @@ export function scrollStateScript(arg: { x: number; y: number }): ScrollState {
     if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
       try {
         const doc: Document | null = (hit as HTMLIFrameElement).contentDocument ?? null;
-        if (doc) {
+        if (doc && h.frameIsPlain(hit)) {
           const r = hit.getBoundingClientRect();
           ox += r.left + (hit as HTMLElement).clientLeft;
           oy += r.top + (hit as HTMLElement).clientTop;
@@ -310,7 +311,7 @@ async function resolve(
   let chain = "";
   let ownSession: string | null = null; // the cached out-of-process frame we are inside, if any
   const opaque = () => {
-    if (ownSession) session.forgetFrame(ownSession);
+    if (ownSession) void session.forgetFrame(ownSession);
     return { target: opaqueTarget(chain, topUrl), snap: null, world: { worlds, frameId } };
   };
   for (let depth = 0; ; depth++) {
@@ -451,12 +452,23 @@ type BlockHandle = { remove(): void };
  * (auto-advance, Tab) can never deliver model-typed text to a password, OTP or PIN input.
  * Armed only around the executor's own typing, so credential filling (B3) is unaffected.
  */
-export function armSecretBlockScript(_arg: null, h: PageHelpers): void {
-  const slot = globalThis as unknown as { __mtSecretBlock?: BlockHandle };
+/**
+ * While armed, keystrokes and text insertions are cancelled inside the page (isolated world
+ * listeners, capture phase): in the document that had focus when typing began ("home"), only those
+ * aimed at a secret field; in every other document, all of them, so text a page script redirects
+ * mid-typing into another document (a frame's password field) is never delivered. Armed only
+ * around the executor's own typing, so credential filling (B3) is unaffected.
+ */
+export function armSecretBlockScript(arg: { home: boolean }, h: PageHelpers): void {
+  const slot = globalThis as unknown as {
+    __mtSecretBlock?: BlockHandle;
+    __mtStart?: Element | null;
+  };
   slot.__mtSecretBlock?.remove();
+  slot.__mtStart = document.activeElement;
   const guard = (event: Event) => {
     const target = event.composedPath()[0];
-    if (target instanceof Element && h.isSecretField(target)) {
+    if (!arg.home || (target instanceof Element && h.isSecretField(target))) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
@@ -480,6 +492,23 @@ export function armSecretBlockScript(_arg: null, h: PageHelpers): void {
   };
 }
 
+const FRAME_OWNERS = ["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"];
+
+/** Whether this document holds the focused element itself (not just a frame that contains it). */
+export function focusProbeScript(owners: string[]): { holds: boolean; focused: boolean } {
+  const active = document.activeElement;
+  return { holds: !!active && !owners.includes(active.tagName), focused: document.hasFocus() };
+}
+
+/** In the home document: has focus left it (into a frame, or out to another document)? */
+export function focusMovedScript(owners: string[]): boolean {
+  const slot = globalThis as unknown as { __mtStart?: Element | null };
+  const active = document.activeElement;
+  if (active && owners.includes(active.tagName)) return true;
+  const idle = !active || active === document.body || active === document.documentElement;
+  return idle && slot.__mtStart !== active;
+}
+
 export function disarmSecretBlockScript(): void {
   const slot = globalThis as unknown as { __mtSecretBlock?: BlockHandle };
   slot.__mtSecretBlock?.remove();
@@ -487,24 +516,41 @@ export function disarmSecretBlockScript(): void {
 }
 
 /**
- * Arms the secret-field block in the top frame and in the frame that holds focus (a field inside
- * a cross-origin frame included); returns the matching disarm. The top frame is always armed.
+ * Arms the block in every document of the page (top, in-process and out-of-process frames). The
+ * home is the document holding the focused element (the top document if none claims it).
+ * `focusMoved()` reports whether a page script moved focus into another document since.
  */
-export async function armSecretBlock(session: BrowserSession): Promise<() => Promise<void>> {
-  const top = await session.worlds();
-  await top.evaluate(armSecretBlockScript, null);
-  const focused = await resolve(session, null)
-    .then((found) => found.world)
-    .catch(() => null);
-  const inner =
-    focused && (focused.worlds !== top || focused.frameId !== undefined) ? focused : null;
-  if (inner)
-    await inner.worlds.evaluate(armSecretBlockScript, null, inner.frameId).catch(() => undefined);
-  return async () => {
-    await top.evaluate(disarmSecretBlockScript, null).catch(() => undefined);
-    if (inner)
-      await inner.worlds
-        .evaluate(disarmSecretBlockScript, null, inner.frameId)
-        .catch(() => undefined);
+export async function armSecretBlock(session: BrowserSession): Promise<{
+  focusMoved: () => Promise<boolean>;
+  disarm: () => Promise<void>;
+}> {
+  const documents = await session.documents();
+  const probes = await Promise.all(
+    documents.map((doc) =>
+      doc.worlds.evaluate(focusProbeScript, FRAME_OWNERS, doc.frameId).catch(() => null),
+    ),
+  );
+  let homeIndex = probes.findIndex((probe) => probe?.holds && probe.focused);
+  if (homeIndex < 0) homeIndex = 0;
+  const home = documents[homeIndex];
+  await Promise.all(
+    documents.map((doc, index) =>
+      doc.worlds
+        .evaluate(armSecretBlockScript, { home: index === homeIndex }, doc.frameId)
+        .catch(() => undefined),
+    ),
+  );
+  return {
+    focusMoved: async () =>
+      home
+        ? home.worlds.evaluate(focusMovedScript, FRAME_OWNERS, home.frameId).catch(() => true)
+        : false,
+    disarm: async () => {
+      await Promise.all(
+        documents.map((doc) =>
+          doc.worlds.evaluate(disarmSecretBlockScript, null, doc.frameId).catch(() => undefined),
+        ),
+      );
+    },
   };
 }
