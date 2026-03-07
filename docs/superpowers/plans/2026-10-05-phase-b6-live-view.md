@@ -5356,3 +5356,6043 @@ The sleeping-takeover wake-priority lease itself is B1's `SlotPool` test. B6 cov
 3. takeover before connect: Task 8;
 4. download race: Task 9;
 5. rapid toggling: Task 8.
+
+
+---
+
+# Amendment — reconciliation with the built B1/FE code and B3 Amendment E (2026-10-06)
+
+# Phase B6 Live View: Amendment — reconciliation
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+> **Changes from the B3/B6 interface diff (2026-10-06).** B3 Amendment E (`docs/superpowers/plans/2026-10-05-phase-b3-vault.md`) is the source of truth; this plan was aligned to it per `.superpowers/plan-drafts/b3-b6-interface-diff.md` E1–E12:
+> - **E1/E5:** B6's release-side hook is `onLeaseEnding(slot: ReleasedSlot)`. B3's `onReleased(runId)` is untouched and single-owner; `composeRunHooks` merges `functionTools` (with a duplicate-name guard), `promptContext`, `onLeased` and `onLeaseEnding` only.
+> - **E2:** A2 inserts the unreleased `onLeaseEnding` call into B3's `finally` and keeps B3's `onReleased(this.runId)` after `close()`.
+> - **E3/E4/E6/E11:** A2 owns `onLeased`, `onLeaseEnding`, `browserCdp` and `composeRunHooks` unconditionally; a B3 name mismatch changes B6, never B3; §1 describes the post-B3 code; A9, A13 and A15 apply on top of B3's edits to the same files.
+> - **E7:** a failed takeover while an approval is pending returns straight to `waiting(approval)` (never `running`); new A2 test.
+> - **E8:** A2 Step 8 also fixes B3 E 0.5's A5 fixture in `run-loop.int.test.ts` (`controlUserId: "test-user"`).
+> - **E9:** `LeasedSlot`/`AttachedBrowser` carry the `BrowserSession`; A12 calls `vault.enrolment.begin` after a successful give and `finish` on hand-back or lease end; A13 passes `vault.enrolment`.
+> - **E10:** `requestTakeover` is idempotent for the holder and refuses other members; `requestHandBack` is accepted only from the controller or a workspace `owner` (`not_controller` → `FORBIDDEN`).
+> - **E12:** deviation 9 states that agent-side fetches (B5 PDF capture) are not downloads; new A11 inline-PDF test; §8 B5 note.
+
+**Goal:** Make the B6 plan (`docs/superpowers/plans/2026-10-05-phase-b6-live-view.md`, the "base plan") executable against the code that is actually built. The amendment closes the live security gap first, then ships the n.eko live view, ForwardAuth, takeover and hand-back through B1's existing control lock, user-only downloads and user uploads.
+
+**Architecture:**
+- **One control lock, B1's.** B1 already LISTENs on `run_control`, holds the `ControlGuard`, aborts the in-flight action and calls `hooks.control.onUserControl` / `onAgentControl` in the right order (pre-flight §0). B6 implements **only** those hooks (with `NekoLiveView`) plus the lease lifecycle hooks `onLeased` / `onLeaseEnding` (B3's `onReleased(runId)` stays the vault's). There is no second coordinator, no second `run_control` listener and no B6 write to `runs.status`.
+- **One RPC router, the frontend's.** `runs.openLive`, `runs.takeControl` and `runs.handBack` replace the `notWired` handlers in `apps/web/lib/server/rpc/live-router.ts`. `/api/rpc` gains `ResponseHeadersPlugin` so `openLive` can set cookies.
+- **Fail closed at the edges.** The n.eko `user` member boots unable to host. ForwardAuth answers 401 unless the request carries exactly one valid `live_slot` and exactly one well-formed `NEKO_SESSION`, and its 200 rewrites the upstream `Cookie` to `NEKO_SESSION` only. A takeover with no connected live view fails and the agent keeps control.
+- **v1 scope (D42).** No coturn, no TURN credentials (`openLive` returns `iceServers: []`). Production Traefik labels belong to Phase 9's `compose.prod.yml` (D41); B6 ships the test file-provider routers and the single rule source `liveRouterRule()`.
+
+**Tech Stack:** n.eko `ghcr.io/m1k1o/neko/chromium:3.1.6` (legacy client), Traefik v3.7.13 (file provider in tests), Node 24, Zod 4.6.5, Drizzle 0.45.3, postgres.js 3.4.9, `@orpc/server` 1.15.4 (already in `apps/web`), `playwright-core` 1.63.0 (already in `apps/agent`), Vitest 5.0.3.
+
+**Spec:** `docs/superpowers/specs/2026-10-05-agentic-notes-design.md` §1, §3.1, §5, §6, §10, §12. Decisions in `orchestration/STATE.md` override the spec, especially D19, D26, D27, D36–D43 (D41: ForwardAuth targets the static `.11` address, external `mastertutor-cdp`; D42: coturn is not in v1). Pre-flight: `.superpowers/sdd/2026-10-05-phase-b6-live-view/preflight.md` (finding IDs F*, E*, S*, G*, W* below refer to it). `CLAUDE.md` is mandatory.
+
+---
+
+## 0. How to use this amendment
+
+1. **This amendment supersedes the base plan's tasks.** Execute the tasks **in this document**, in this order: A1 → A15. Read the base plan only where a step here says "copy verbatim from base plan Task N, Step M"; that text is unchanged and binding.
+2. **B3 runs before B6.** B6 assumes the B3 seam commit (B3 "Amendment E", drafted in parallel in `.superpowers/plan-drafts/b3-amendment-e.md`) has landed. §3 lists exactly what B6 needs. From B3 E it consumes only the post-Task-0 `hooks.ts`, `worker.ts` and `run-loop.ts` (including `onReleased(runId)`, `onClick`, and `markTakeover` superseding a pending approval), plus `vault.enrolment` in `main.ts`; A2 adds `onLeased`, `onLeaseEnding`, `browserCdp` and `composeRunHooks`.
+3. **Before dispatching A2**, the orchestrator diffs §3 of this amendment against B3 Amendment E's seam section. B3 Amendment E is the source of truth for every name it defines. If B3 landed a hook under a different name or shape than §3 expects, change B6 (this plan) to match, never B3's call sites, and record it in the ledger.
+4. Never read `.env`. `.env.test` holds dummy values only; tests may read it, plan executors never print it.
+
+### Old task → new task
+
+| Base plan task | Fate | Amendment task |
+|---|---|---|
+| 3 (security part: `user` starts with `can_host=false`) | **Moved first**, delivered as an edit | **A1** |
+| — | New: B1 seams B6 needs (F3, F4, F5, F7, F8) | **A2** |
+| 1 Contracts, TURN, n.eko login | Changed: TURN removed (S7, G1); `liveForwardAuthAddress` added (D41) | **A3** |
+| 2 DB column + queries | Changed: drizzle, B1's `emitRunEvent`, no agent status writes (F2, F4, F7, F8, F9); the column and CHECK moved to A2 | **A4** |
+| 3 Slot image (rest) | Changed: edit, never replace (S1, S5, G2); no `turn-ice` (S7) | **A5** |
+| 4 NekoAdmin, NekoLiveView, idle probe, test slot | Changed: give waits for a *connected* session; tests run on the B1 behaviour stack (F9, F12, W5); `startTestSlot` dropped | **A6** |
+| 5 `openLive` | Changed: no TURN; drizzle; real-slot test on the behaviour stack | **A7** |
+| 6 ForwardAuth | Changed: 401 without `NEKO_SESSION` (S3, W4); `getViewer()`; fixture mode 403 (E3) | **A8** |
+| 7 oRPC procedures | **Replaced**: handlers wired into the FE `liveRouter` (E1, E2) | **A9** |
+| 10 Uploads | Changed: 401 → `signed_out` (E7); real-slot test on the behaviour stack without agent imports or locale-dependent window search (W5) | **A10** |
+| 9 Downloads | **Replaced**: user-only downloads (F6), streamed hash and upload (S10), attached through `onLeased` (F5) | **A11** |
+| 8 ControlCoordinator | **Replaced**: B6 implements `hooks.control`, `onLeased`, `onLeaseEnding` (F2, F3, F4, S2, S12) and drives B3's passkey enrolment | **A12** |
+| 13 Wire into B1 | **Replaced**: `main.ts` wiring and the takeover acceptance behaviour test (F1, F10, G3, W3, W6) | **A13** |
+| 11 Compose | **Replaced**: test file-provider routers only, `.11` ForwardAuth, security headers; no coturn, no production labels (S4, S6, S7, G7) | **A14** |
+| 12 Stack tests | Changed: no TURN; adds W1 (client through the prefix) and the openLive RPC path | **A15** |
+
+Base plan sections that are **superseded wholesale**: "B1 seam", "File Structure", "Recorded deviations", "Notes for later phases", "Self-Review". Their replacements are §3, §4, §7, §8 and §10 here; §9 maps every pre-flight finding to the task that handles it. "Planning-time verification" items 1–8, 10 and 11 still hold. Item 9 (ICE from static config) is moot in v1 (no TURN).
+
+---
+
+## 1. Ground truth this amendment was written against
+
+Branch `agentic-notes-browser-agent` at `546aedd` (frontend core merged). Read on 2026-10-06.
+
+| Area | What exists (and what the base plan got wrong) |
+|---|---|
+| Slot entrypoint | `apps/browser-slot/bin/slot-entrypoint`: default-DROP INPUT, IPv6 off with ip6tables fallback (exit 70), validated `SLOT_EGRESS_ALLOW_CIDRS` (private, prefix ≥ /16), validated mux ports, special-use egress REJECTs, `/home/neko` and `/tmp` wipe. **`user` profile is `can_host=true`** (`profile user false true false false`). |
+| `verify.sh` | Runs the slot with `--cap-add SYS_PTRACE`, reads `/proc/<neko>/environ` as root with non-empty guards, checks metadata/10-8 REJECT and IPv6. No n.eko hosting check. |
+| B1 hooks | `apps/agent/src/loop/hooks.ts` after B3 E Task 0: `RunHooks {onComplete, sessionStore, maskSources(runId), control, functionTools, functionApproval(call, run, url), promptContext(run), onClick(run, {label, url}), onReleased(runId)}`, `ControlTransitions {onUserControl(slot, runId): Promise<void>; onAgentControl(slot, runId): Promise<void>}`, `withHooks()`. Injected by `new Supervisor({hooks})`; `main.ts` passes `hooks: vaultHooks(vault)`. |
+| B1 control | `Supervisor.start` LISTENs `run_control` → `RunWorker.control()` (hold guard, abort). `#holdForUser`: hold → abort → `onUserControl` (**no catch**: a throw fails the run with `agent_error`, F3) → `markTakeover` (emits `control{user}`, `waiting(takeover)`; B3 E: also moves `waiting(approval)` to `waiting(takeover)` and supersedes the pending approval). Hand back: `onAgentControl` → `guard.release()` → new AbortController → `markHandBack` (`control{agent}`, running, re-observe). |
+| B1 lifecycle | No `onLeased`; B3's `onReleased(runId)` runs in `#main`'s `finally` after `close()` (too late for n.eko, S12); no browser-level CDP accessor (`BrowserSession.#browser` is private). `#release` seals storage, commits, closes Playwright, `pool.reset` (Browser.close), then `clearRunDownloads`. |
+| B3 vault (E) | `createVault(…)` in `main.ts` exposes `vault.enrolment: PasskeyEnrolment {begin(session: BrowserSession): Promise<EnrolmentHandle>; finish(handle, {workspaceId, runId}): Promise<number>}`; E.8 note 1 requires B6 to call `begin` on give and `finish` on hand-back. E.8 note 3: `takeControl` idempotent, `handBack` only from the current controller. |
+| B1 events | `emitRunEvent(tx, runId, event)` / `emitRunEvents` in `apps/agent/src/events/emit.ts` (drizzle `Tx`). Imported by `step-store.ts`, `claim.ts`, `worker.int.test.ts`, `run-loop.int.test.ts`, `events.int.test.ts`. |
+| Fixtures setting `controller` | `worker.int.test.ts` lines ~167, ~172, ~294, ~313, ~687; `run-loop.int.test.ts` ~924, ~927, ~949; `tests/behaviour/harness.ts` ~174, ~182; `testing/db.ts insertRun({controller})`; + B3 E 0.5's A5 test in `run-loop.int.test.ts` (`.set({ controller: "user" })` before `markTakeover`). |
+| Behaviour stack | `tests/behaviour/compose.yml`: two real slots, CDP published on `127.0.0.1:19223/19224`, `CDP_ALLOWED_IP: 0.0.0.0/0`, `NEKO_ALLOWED_IPS: 127.0.0.1`, n.eko not published. `startBehaviourAgent({scenarios, config, clock})` (no `hooks`). One `waitFor` in `apps/agent/src/testing/wait.ts`. |
+| Web RPC | `app/api/rpc/[[...rest]]/route.ts` serves `liveRouter` (`implement(apiContract).$context<LiveContext>().use(requireViewer)`, every handler `notWired`) with `context: { viewer }`; no plugins. `LiveContext = SessionContext = { viewer: Viewer \| null }`. After B3 E Task 4: `liveOs`/`LiveContext` live in `apps/web/lib/server/rpc/live-os.ts`, `live-router.ts` imports `liveOs as os`, `route.ts` imports `LiveContext` from `live-os.ts` and refuses cross-site writes (`isCrossSiteWrite`); `liveRouter.vault.*` and `runs.submitOtp` are wired. `getViewer()` handles fixture mode. `@orpc/server` 1.15.4 is installed. |
+| Web env | `WebEnv` has `NEKO_MEMBER_SECRET`, `LIVE_COOKIE_SECRET`, `TURN_SECRET`, `OPENAI_API_KEY` (D36). No `TURN_URLS`. |
+| Contracts | `live.ts`: `LIVE_SLOT_COOKIE`, `NEKO_MEMBERS`, `TURN_CREDENTIAL_TTL_SECONDS`, `livePath`, `liveEmbedPath` (`?embed=1`), `IceServer`, `OpenLiveResult`. `server/neko.ts`: `deriveNekoPassword`. `download_ready` has no `assetId`. |
+| Storage | `Storage {bucket, put(Uint8Array\|string), getBytes, head, delete, presignGet, ping}`; implementations: `packages/storage/src/s3.ts`, `apps/agent/src/testing/memory-storage.ts`. |
+| Compose | Slots: no labels; `NEKO_ALLOWED_IPS` = `.10,.11,.12`. `web` on `cdp` at `.11`; test Traefik on `cdp` at `.12`. `infra/traefik/test-dynamic.yml`: one `web` router. No `compose.prod.yml` yet (Phase 9 owns it). |
+| Agent runs as | `node` (uid 1000) in `mastertutor/node-runtime`; n.eko's `neko` user is uid 1000 too, so the agent can read and delete what Chromium writes in `/downloads`. |
+
+---
+
+## 2. Global Constraints (amended)
+
+The base plan's Global Constraints apply, with these changes. Every task implicitly includes this section.
+
+- **Dropped (S7, D42):** coturn, `TURN_URLS`, `TURN_SECRET` on slots, `turn.ts`, `turn-ice`, `turn-probe.ts`, `SLOT_TURN_CREDENTIAL_TTL_SECONDS`, `TURN_URL_PATTERN`, `PUBLIC_HOST`, `mastertutor_cdp` naming, the `coturn/coturn` and `curlimages/curl` pins for coturn. `openLive` returns `iceServers: []`. The compose-config ban on `TURN_SECRET` in slots **stays**.
+- **Live-view values (replaces the base table):**
+
+| Item | Value |
+|---|---|
+| Cookies | `live_slot` (`browser-N.<exp>.<hmac>`) and `NEKO_SESSION`, both `Path=/live/<runId>/; Max-Age=43200; HttpOnly; Secure; SameSite=Strict` |
+| Takeover | Abort target ≤ 300 ms (B1). Give waits ≤ **1 000 ms** for a connected live view (`TAKEOVER_GIVE_WAIT_MS`), ≤ **15 000 ms** when the takeover arrives with a fresh lease (`TAKEOVER_RESTORE_WAIT_MS`). Auto hand-back after **15 min** of user idle counted from the takeover (`AUTO_HAND_BACK_IDLE_MS`) |
+| Slot ports | CDP 9223, idle probe **9224**, PulseAudio 4713: agent IP only. n.eko 8080: agent `.10`, web `.11`, Traefik `.12`. Media 5900N |
+| Embed path | `/live/<runId>/?embed=1&usr=user&pwd=cookie` |
+| Traefik rule | `Host(\`<host>\`) && PathRegexp(\`^/live/[0-9a-f-]{36}/\`) && HeaderRegexp(\`Cookie\`, \`(?:^\|;\s*)live_slot=browser-N\.\`)` from `liveRouterRule()` only |
+| Middlewares, in order | `live-auth` (ForwardAuth to `http://<CDP prefix>.11:3000/api/live/auth`, `authResponseHeaders: [Cookie]`), `live-strip` (`^/live/[0-9a-f-]{36}`), `live-headers` (`frame-ancestors 'self'`, `nosniff`) |
+
+- **Commands (G5, G6):** never put `--` before a test path: `pnpm test <path>`, `pnpm test:int <path>`, `pnpm test:behaviour <path>`. Run `pnpm exec prettier --write <files you touched>` before every commit; `pnpm format:check` must pass.
+- **Real-slot tests (F9, F12):** only on the B1 behaviour stack (`tests/behaviour/compose.yml`, `pnpm test:behaviour`). No new container helper. Use `waitFor` from `apps/agent/src/testing/wait.ts`; never a bare `sleep` as an assertion (W5).
+- **Cross-app imports:** `apps/web` never imports `apps/agent` and vice versa. Cross-app tests live under `tests/`.
+- **Disk:** after any image build run `docker builder prune -f && docker image prune -f`. Never `docker system prune -a`.
+
+---
+
+## 3. The seam B6 consumes (B1 as built + B3 Amendment E)
+
+B6 code plugs in only through `new Supervisor({ hooks })`. The table is the contract; Task A2 makes it true.
+
+| Seam | Exact shape | Owner | Status before A2 |
+|---|---|---|---|
+| `ControlTransitions.onUserControl` | `(slotName: string, runId: string, context: { afterRestore: boolean }) => Promise<UserControlResult>`; `UserControlResult = { ok: true } \| { ok: false; code: "takeover_failed" }` | A2 (F3) | Returns `void`; a throw fails the run |
+| Worker on failure | One StepStore commit: `controller='agent'`, `control_user_id=null`, events `error{takeover_failed}` + `control{agent}`, `waiting(takeover)`→`running`, or back to `waiting(approval)` when an approval is pending (its row stays `pending`); then `guard.release()`, new AbortController, re-observe (or resume the pending approval). A run that was `waiting(otp)` resumes `running` and the model asks for the code again, as on B3 E's hand-back | A2 (F3, B3 A5) | Missing |
+| `ControlTransitions.onAgentControl` | `(slotName: string, runId: string) => Promise<void>` | B1 | Exists |
+| `RunHooks.onLeased` | `(slot: LeasedSlot) => Promise<void>`; `LeasedSlot = { runId; workspaceId; slotName; session: BrowserSession \| null; browserCdp(): Promise<CDPSession> }`; called once after `connect`, before restore | A2 (F5) | Missing (B3 E does not add it) |
+| `RunHooks.onLeaseEnding` | `(slot: ReleasedSlot) => Promise<void>`; `ReleasedSlot = { runId; slotName; slotReleased: boolean }`; `slotReleased: true` from `#release` **before** `Browser.close`/`pool.reset`; `false` once from the worker's `finally` (before `close()`) when `#release` never ran | A2 (F5, S12) | Missing |
+| `RunHooks.onReleased` (B3) | `(runId: string) => Promise<void>`, called once from `#main`'s `finally` **after** `close()`; vault `forgetRun`. B6 does not implement it | B3 Amendment E | Exists after B3 |
+| `AttachedBrowser.browserCdp` / `.session` | `browserCdp(): Promise<CDPSession>`, backed by `BrowserSession.browserCdp()` (cached `#browser.newBrowserCDPSession()`); `session: BrowserSession \| null` (null for fakes) | A2 (F5, B3 E.8 note 1) | Missing (B3 E does not add it) |
+| `composeRunHooks` | `(...parts: Partial<RunHooks>[]) => Partial<RunHooks>`: concatenates `functionTools` (throws on a duplicate tool name), flattens `promptContext`, sequences `onLeased`, settles every `onLeaseEnding`; every other key (B3's `onReleased`, `onClick`, `sessionStore`, `maskSources`, `functionApproval`, B6's `control`, …) may have one owner (throws otherwise) | A2 | Missing (B3 E does not add it) |
+| Passkey enrolment (B3 E.4, E.8 note 1) | `LiveHooksDeps.enrolment?: PasskeyEnrolmentPort = { begin(session: BrowserSession): Promise<unknown>; finish(handle: unknown, run: { workspaceId: string; runId: string }): Promise<number> }`, structurally matching B3's `PasskeyEnrolment`; `main.ts` passes `vault.enrolment` | A12, A13 | Missing |
+| `emitRunEvent` / `emitRunEvents` | `(tx: DbTx, runId, event)` in `@mastertutor/db` | A2 (F7) | In `apps/agent/src/events/emit.ts` |
+| `returnControlToAgent` / `notifyRunControl` / `readControlUser` | `(tx: DbTx, runId) => Promise<boolean>`, `(tx: DbTx, runId) => Promise<void>`, `(db: Database, runId) => Promise<string \| null>` in `@mastertutor/db` | A2 (F4) | Missing |
+| `runs.control_user_id` | `text`, CHECK `runs_control_user_matches_controller`: `(controller = 'user') = (control_user_id is not null)` | A2 (F8) | Missing |
+
+**Behaviours B6 relies on, already in B1 (pre-flight §0, do not re-test here):** exclusive ordering (no agent primitive runs after `onUserControl` starts; `onAgentControl` runs before `guard.release()`), takeover latency ≤ 2 s on DB timestamps, `run_control` sweep fallback, no sleep while `controller='user'`.
+
+---
+
+## 4. File Structure
+
+```
+apps/browser-slot/
+  bin/slot-entrypoint            (edit) A1: user can_host=false · A5: 9224 in the agent-only loop
+  bin/slot-idle-http             (new)  A5: X idle probe, one HTTP/1.0 exchange
+  Dockerfile                     (edit) A5: xprintidle, NEKO_* env, COPY slot-idle-http
+  supervisord/chromium.conf      (edit) A5: [program:idle-probe]
+  test/verify.sh                 (append) A1, A5
+packages/db/src/
+  client.ts                      (edit) A2: DbTx
+  schema/runs.ts                 (edit) A2: control_user_id + CHECK
+  queries/events.ts              (new)  A2: emitRunEvent(s) moved from the agent (F7)
+  queries/control.ts             (new)  A2: returnControlToAgent, notifyRunControl, readControlUser
+  queries/live.ts                (new)  A4: getRunForMember, canAccessLiveSlot, requestTakeover, requestHandBack
+  queries/downloads.ts           (new)  A4: findAssetBySha, recordDownload
+  testing.ts                     (edit) A4: seedMember, nextNotification
+packages/db/migrations/          (generated) A2: NNNN_live_control_user.sql
+packages/contracts/src/
+  live.ts, live.test.ts          (replace) A3
+  constants.ts                   (edit) A3: SLOT_IDLE_PORT
+  events.ts, events.test.ts      (edit) A3: download_ready.assetId
+  server/neko.ts, neko.test.ts   (append) A3: loginNeko, NekoLoginError, nekoTokenFromSetCookie
+packages/storage/src/
+  s3.ts, s3.int.test.ts          (edit) A11: Storage.putFile (streamed)
+apps/agent/src/
+  loop/hooks.ts                  (edit) A2: UserControlResult, afterRestore, lifecycle hooks onLeased/onLeaseEnding, composeRunHooks
+  loop/worker.ts                 (edit) A2: failed takeover, onLeased/onLeaseEnding calls (B3's onReleased kept)
+  loop/run-loop.ts               (edit) A2: revertTakeover()
+  loop/loop-browser.ts           (edit) A2: AttachedBrowser.browserCdp, .session
+  loop/session-browser.ts        (edit) A2: browserCdp and session wiring
+  browser/session.ts             (edit) A2: browserCdp()
+  events/emit.ts                 (delete) A2
+  runtime/types.ts               (edit) A2: Tx = DbTx
+  testing/db.ts                  (edit) A2: insertRun controlUserId
+  testing/fake-loop-browser.ts   (edit) A2: unavailableBrowserCdp
+  testing/memory-storage.ts      (edit) A11: putFile
+  live/live-view.ts              (new) A6
+  live/neko-admin.ts             (new) A6
+  live/neko-live-view.ts         (new) A6
+  live/idle-probe.ts             (new) A6
+  live/idle-watch.ts             (new) A12
+  live/downloads.ts              (new) A11
+  live/live-hooks.ts             (new) A12
+  main.ts                        (edit) A13
+apps/web/
+  lib/server/live/cookie.ts      (new) A7
+  lib/server/live/open-live.ts   (new) A7
+  lib/server/live/authorize.ts   (new) A8
+  lib/server/live/deps.ts        (new) A7/A8
+  lib/server/live/procedures.ts  (new) A9
+  lib/server/rpc/live-os.ts      (edit) A9: LiveContext gains ResponseHeadersPluginContext (file from B3 E Task 4)
+  lib/server/rpc/live-router.ts  (edit) A9 (on top of B3 E Task 4)
+  app/api/rpc/[[...rest]]/route.ts (edit) A9: ResponseHeadersPlugin (B3's isCrossSiteWrite kept)
+  app/api/live/auth/route.ts     (new) A8
+  lib/live/upload.ts             (new) A10
+tests/behaviour/
+  compose.yml, constants.ts, global-setup.ts, harness.ts   (edit) A2, A6, A11, A13
+  live-open.behaviour.test.ts    (new) A7
+  live-upload.behaviour.test.ts  (new) A10
+  live-downloads.behaviour.test.ts (new) A11
+apps/agent/src/live/neko-live-view.behaviour.test.ts (new) A6
+apps/agent/src/live/takeover.behaviour.test.ts       (new) A13
+infra/traefik/test-dynamic.yml   (replace) A14
+compose.live-test.yml            (new) A14
+tests/compose/live-routes.int.test.ts (new) A14
+tests/live/live-stack.int.test.ts     (new) A15
+package.json, .github/workflows/ci.yml (edit) A14, A15
+```
+
+Not created (base plan files that are dropped): `packages/contracts/src/server/turn.ts`, `apps/browser-slot/bin/turn-ice`, `apps/browser-slot/test/turn-ice.test.ts`, `infra/coturn/*`, `apps/agent/src/live/{ports,control,runtime,b1-adapters}.ts`, `tests/support/*`, `packages/db/src/queries/events.ts`'s `appendRunEvent` (A2 moves B1's function instead).
+
+---
+
+## 5. Review Focus (amended)
+
+The five inputs most likely to bite a real user that no base-plan test exercised. Each has its test in the named task.
+
+1. **A takeover click when the iframe is open but its WebSocket has not connected yet (or was closed in another tab).** Expect: within ~1 s an `error{takeover_failed}` and `control{agent}`; `runs.controller='agent'`; the agent continues; n.eko `user` still cannot host. Never `agent_error`. *Tests: A2 `worker.int.test.ts` (seam), A12 `live-hooks.test.ts`, A13 `takeover.behaviour.test.ts`.*
+2. **A user who last touched the remote screen long before taking over** (the agent ran 20 min; X idle is already 20 min). Expect: the 15-minute auto hand-back counts from the takeover, not from the last X input, so the user is not kicked out at once. *Test: A12 `idle-watch.test.ts`.*
+3. **A live iframe whose NEKO_SESSION cookie is missing, duplicated or malformed** (expired tab, cookie jar oddities, crafted request). Expect: ForwardAuth 401 and nothing reaches n.eko; the Better Auth cookie is never forwarded. *Tests: A8 `authorize.test.ts`, A15 stack test.*
+4. **The agent clicks a download link while it holds control** (v1: only the user downloads). Expect: the download is cancelled, nothing stays on disk or in Garage, and the user sees `error{download_blocked}`. *Test: A11 `live-downloads.behaviour.test.ts`.*
+5. **A run cancelled or killed while the user holds the n.eko host.** Expect: B6's `onLeaseEnding` takes host back and revokes `can_host` before `Browser.close`, within 1 s, even if n.eko is slow. *Test: A12 `live-hooks.test.ts` (timeout and ordering), A13 behaviour test (host is `agent` after a cancel during takeover).*
+
+---
+## 6. Tasks
+
+### Task A1: Security fix first — the n.eko `user` member cannot host
+
+Replaces the security half of base Task 3 (S2). **Edit only; never replace the entrypoint (S1).** The current image lets a user holding a live iframe `POST /api/room/control/request`, become n.eko host and send X input while the agent drives over CDP. After this task the `user` member boots with `can_host=false`; only B6's `NekoLiveView.giveControl` (A6, A12) grants it, and only while `controller='user'`. Slots restart on every release (`pool.reset`), so every lease starts from this boot profile.
+
+**Files:**
+- Modify: `apps/browser-slot/bin/slot-entrypoint` (one line plus a comment)
+- Test: `apps/browser-slot/test/verify.sh` (insert one block; nothing removed)
+
+**Interfaces:**
+- Consumes: the existing `verify.sh` helpers `from_ip`, `hmac`, `fail`, `pass` and variables `NET`, `PREFIX`, `CURL`, `ADMIN_SECRET`, `MEMBER_SECRET`.
+- Produces: image behaviour "user member starts unhosted". A6's behaviour test and A13's acceptance test rely on it.
+
+- [ ] **Step 1: Write the failing check.** In `apps/browser-slot/test/verify.sh`, insert this block **immediately after** the line `pass "n.eko member passwords derived from the secrets"`:
+
+```bash
+# A1 (S2): the user member cannot host until the agent grants it, so a live iframe can never send
+# X input while the agent drives over CDP. The whoami and admin checks keep the 403s meaningful:
+# the user session is authenticated, and hosting itself works for a member that has the right.
+neko_as() { # member password method path -> HTTP status, using that member's own session
+  docker run --rm -i --network "$NET" --ip "$PREFIX.11" --entrypoint sh "$CURL" -s -- \
+    "$1" "$2" "$3" "$4" "http://$PREFIX.20:8080" <<'SH'
+body=$(curl -s -m 4 -c /tmp/jar -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$1\",\"password\":\"$2\"}" "$5/api/login") || exit 1
+tok=$(printf '%s' "$body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+if [ -n "$tok" ]; then
+  curl -s -m 4 -b /tmp/jar -H "Authorization: Bearer $tok" -o /dev/null -w '%{http_code}' -X "$3" "$5$4"
+else
+  curl -s -m 4 -b /tmp/jar -o /dev/null -w '%{http_code}' -X "$3" "$5$4"
+fi
+SH
+}
+user_pw="$(hmac "$MEMBER_SECRET")"
+admin_pw="$(hmac "$ADMIN_SECRET")"
+[[ "$(neko_as user "$user_pw" GET /api/whoami)" == "200" ]] || fail "user member session is not authenticated"
+[[ "$(neko_as user "$user_pw" POST /api/room/control/request)" == "403" ]] \
+  || fail "user member can request host control at boot (can_host must be false)"
+[[ "$(neko_as user "$user_pw" GET /api/room/control)" == "403" ]] \
+  || fail "user member can read host control at boot (can_host must be false)"
+[[ "$(neko_as agent "$admin_pw" GET /api/room/control)" == "200" ]] \
+  || fail "control: the agent member cannot use host control"
+pass "user member cannot host until the agent grants it"
+```
+
+- [ ] **Step 2: Run it and watch it fail.**
+
+Run: `bash apps/browser-slot/test/verify.sh`
+Expected: the earlier checks print `ok - …`, then `VERIFY FAIL: user member can request host control at boot (can_host must be false)`.
+
+- [ ] **Step 3: Make the change.** In `apps/browser-slot/bin/slot-entrypoint`, replace exactly these two lines:
+
+```bash
+NEKO_MEMBER_OBJECT_USERS="[{\"username\":\"agent\",\"password\":\"${admin_password}\",\"profile\":$(profile agent true true true true)},{\"username\":\"user\",\"password\":\"${user_password}\",\"profile\":$(profile user false true false false)}]"
+export NEKO_MEMBER_OBJECT_USERS
+```
+
+with:
+
+```bash
+# The user member boots WITHOUT hosting or clipboard rights (spec §10.3 control lock): only the
+# agent's LiveView.giveControl grants can_host, and only while runs.controller = 'user'.
+NEKO_MEMBER_OBJECT_USERS="[{\"username\":\"agent\",\"password\":\"${admin_password}\",\"profile\":$(profile agent true true true true)},{\"username\":\"user\",\"password\":\"${user_password}\",\"profile\":$(profile user false false false false)}]"
+export NEKO_MEMBER_OBJECT_USERS
+```
+
+Nothing else in the entrypoint changes in this task.
+
+- [ ] **Step 4: Run it and watch it pass.**
+
+Run:
+```bash
+bash apps/browser-slot/test/verify.sh
+docker build -q -t mastertutor/browser-slot:local apps/browser-slot
+docker builder prune -f && docker image prune -f
+```
+Expected: every line `ok - …`, including `ok - user member cannot host until the agent grants it`, ending with `browser-slot verify: all checks passed`.
+
+- [ ] **Step 5: Commit.**
+```bash
+git add apps/browser-slot/bin/slot-entrypoint apps/browser-slot/test/verify.sh
+git commit -m "fix(browser-slot): the n.eko user member boots without hosting rights (S2)"
+```
+
+---
+
+### Task A2: B1 seams for B6 (F3, F4, F5, F7, F8)
+
+One task, two commits: **A2.1** (packages/db) and **A2.2** (agent). Land the B1 final fix wave and B3's seam commit first (pre-flight F11).
+
+**Files:**
+- Modify: `packages/db/src/client.ts`, `packages/db/src/schema/runs.ts`, `packages/db/src/index.ts`
+- Create: `packages/db/src/queries/events.ts`, `packages/db/src/queries/control.ts`, `packages/db/migrations/NNNN_live_control_user.sql` (generated)
+- Test: `packages/db/src/queries/control.int.test.ts`
+- Modify (fixtures, F8): `apps/agent/src/testing/db.ts`, `apps/agent/src/loop/worker.int.test.ts`, `apps/agent/src/loop/run-loop.int.test.ts`, `tests/behaviour/harness.ts`
+- Delete (F7): `apps/agent/src/events/emit.ts`; update its importers `apps/agent/src/loop/step-store.ts`, `apps/agent/src/loop/claim.ts`, `apps/agent/src/loop/worker.int.test.ts`, `apps/agent/src/loop/run-loop.int.test.ts`, `apps/agent/src/events/events.int.test.ts`; `apps/agent/src/runtime/types.ts`
+- Modify (F3, F5): `apps/agent/src/loop/hooks.ts`, `apps/agent/src/loop/worker.ts`, `apps/agent/src/loop/run-loop.ts`, `apps/agent/src/loop/loop-browser.ts`, `apps/agent/src/loop/session-browser.ts`, `apps/agent/src/browser/session.ts`, `apps/agent/src/testing/fake-loop-browser.ts`
+- Test: `apps/agent/src/loop/worker.int.test.ts` (new `describe`), `apps/agent/src/loop/hooks.test.ts` (new)
+
+**Interfaces:**
+- Consumes: B1 as listed in §1; `RunEvent`, `encodeNotify`.
+- Produces (exactly the §3 table):
+  - `@mastertutor/db`: `type DbTx`; `emitRunEvent(tx: DbTx, runId: string, event: RunEvent): Promise<string>`; `emitRunEvents(tx: DbTx, runId: string, events: readonly RunEvent[]): Promise<string[]>`; `returnControlToAgent(tx: DbTx, runId: string): Promise<boolean>`; `notifyRunControl(tx: DbTx, runId: string): Promise<void>`; `readControlUser(db: Database, runId: string): Promise<string | null>`; column `runs.controlUserId`.
+  - `apps/agent/src/loop/hooks.ts`: `UserControlResult`, `ControlTransitions` (new `onUserControl` signature), `LeasedSlot {runId; workspaceId; slotName; session: BrowserSession | null; browserCdp()}`, `ReleasedSlot`, `RunHooks.onLeased`, `RunHooks.onLeaseEnding`, `composeRunHooks`. B3 E's `RunHooks.onReleased(runId: string)` and its `finally` call are left as B3 wrote them.
+  - `AttachedBrowser.browserCdp(): Promise<CDPSession>`; `AttachedBrowser.session: BrowserSession | null`; `BrowserSession.browserCdp(): Promise<CDPSession>`; `RunLoop.revertTakeover(): Promise<void>` (returns to `waiting(approval)` when one is pending).
+  - `apps/agent/src/testing/fake-loop-browser.ts`: `unavailableBrowserCdp(): Promise<never>`; `apps/agent/src/testing/db.ts`: `InsertRunOptions.controlUserId?: string`.
+
+#### A2.1 — database (F4, F7, F8)
+
+- [ ] **Step 1: Check what B3 already landed.** Run:
+
+```bash
+grep -n "control_user_id\|controlUserId" packages/db/src/schema/runs.ts
+grep -rn "export async function emitRunEvent" packages/db/src apps/agent/src
+grep -n "onReleased(runId: string)" apps/agent/src/loop/hooks.ts
+grep -n "onLeased\|onLeaseEnding\|composeRunHooks\|LeasedSlot\|ReleasedSlot" apps/agent/src/loop/hooks.ts
+grep -n "browserCdp" apps/agent/src/loop/loop-browser.ts apps/agent/src/browser/session.ts apps/agent/src/loop/worker.ts
+grep -n "hooks.onReleased(this.runId)" apps/agent/src/loop/worker.ts
+```
+
+Record the output in the task report. Expected: `control_user_id` and `emitRunEvent` in `packages/db` absent; `onReleased(runId: string)` present in `hooks.ts` and `hooks.onReleased(this.runId)` present in `worker.ts` (B3 E); `onLeased`, `onLeaseEnding`, `composeRunHooks`, `LeasedSlot`, `ReleasedSlot` and `browserCdp` absent. Any other result: stop and report `NEEDS_CONTEXT` (orchestrator rule §0.3).
+
+- [ ] **Step 2: Write the failing test.** `packages/db/src/queries/control.int.test.ts`:
+
+```ts
+import { decodeNotify } from "@mastertutor/contracts";
+import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDb, type DbHandle } from "../client.ts";
+import { runEvents, runs, workspaces } from "../schema/index.ts";
+import { startTestDatabase, type TestDatabase } from "../testing.ts";
+import { notifyRunControl, readControlUser, returnControlToAgent } from "./control.ts";
+import { emitRunEvent } from "./events.ts";
+
+let testDb: TestDatabase;
+let owner: DbHandle;
+let agent: DbHandle;
+let workspaceId: string;
+
+beforeAll(async () => {
+  testDb = await startTestDatabase();
+  owner = createDb(testDb.ownerUrl, { max: 2 });
+  agent = createDb(testDb.agentUrl, { max: 2 });
+  const [workspace] = await owner.db
+    .insert(workspaces)
+    .values({ name: "Test" })
+    .returning({ id: workspaces.id });
+  workspaceId = workspace!.id;
+});
+afterAll(async () => {
+  await Promise.all([owner?.close(), agent?.close()]);
+  await testDb?.stop();
+});
+
+async function newRun(): Promise<string> {
+  const [run] = await owner.db
+    .insert(runs)
+    .values({ workspaceId, goal: "control", allowedOrigins: ["https://example.com"] })
+    .returning({ id: runs.id });
+  return run!.id;
+}
+
+describe("runs.control_user_id (F8)", () => {
+  it("is set exactly when the user holds control", async () => {
+    const runId = await newRun();
+    await expect(
+      owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, runId)),
+    ).rejects.toThrow(/runs_control_user_matches_controller/);
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: "user_a" })
+      .where(eq(runs.id, runId));
+    await expect(
+      owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, runId)),
+    ).rejects.toThrow(/runs_control_user_matches_controller/);
+  });
+});
+
+describe("control queries (F4)", () => {
+  it("returns control to the agent once, and reports who holds control", async () => {
+    const runId = await newRun();
+    expect(await readControlUser(agent.db, runId)).toBeNull();
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: "user_a" })
+      .where(eq(runs.id, runId));
+    expect(await readControlUser(agent.db, runId)).toBe("user_a");
+    expect(await agent.db.transaction((tx) => returnControlToAgent(tx, runId))).toBe(true);
+    expect(await agent.db.transaction((tx) => returnControlToAgent(tx, runId))).toBe(false);
+    const [row] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+    expect(row).toMatchObject({ controller: "agent", controlUserId: null });
+  });
+
+  it("notifies run_control with the run id only, on commit", async () => {
+    const runId = await newRun();
+    const received: string[] = [];
+    const { unlisten } = await owner.sql.listen("run_control", (payload) => received.push(payload));
+    try {
+      await agent.db.transaction(async (tx) => {
+        await notifyRunControl(tx, runId);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(received).toEqual([]);
+      });
+      const deadline = Date.now() + 3_000;
+      while (received.length === 0 && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(received.map((p) => decodeNotify("run_control", p))).toEqual([{ runId }]);
+    } finally {
+      await unlisten();
+    }
+  });
+});
+
+describe("emitRunEvent in @mastertutor/db (F7)", () => {
+  it("is usable by the web role inside a transaction", async () => {
+    const web = createDb(testDb.webUrl, { max: 1 });
+    try {
+      const runId = await newRun();
+      const eventId = await web.db.transaction((tx) =>
+        emitRunEvent(tx, runId, { type: "user_message", text: "Logged in" }),
+      );
+      const [row] = await owner.db
+        .select()
+        .from(runEvents)
+        .where(eq(runEvents.id, Number(eventId)));
+      expect(row?.payload).toEqual({ type: "user_message", text: "Logged in" });
+    } finally {
+      await web.close();
+    }
+  });
+});
+```
+
+`runEvents.id` is `bigserial({ mode: "number" })`, hence `Number(eventId)`.
+
+- [ ] **Step 3: Run it and watch it fail.**
+
+Run: `pnpm test:int packages/db/src/queries/control.int.test.ts`
+Expected: FAIL: `./control.ts` and `./events.ts` do not exist.
+
+- [ ] **Step 4: Add the column and the CHECK, then generate the migration.** In `packages/db/src/schema/runs.ts`, inside `runs`, directly after the `controller:` line, add:
+
+```ts
+    /** Better Auth user id of the member holding control; set iff controller = 'user' (B6, F8). */
+    controlUserId: text("control_user_id"),
+```
+
+and append to the `runs` constraint array, after `runs_wait_reason_matches_status`:
+
+```ts
+    check(
+      "runs_control_user_matches_controller",
+      sql`(${t.controller} = 'user') = (${t.controlUserId} is not null)`,
+    ),
+```
+
+Then run:
+```bash
+pnpm --filter @mastertutor/db generate --name live_control_user
+grep -c "control_user_id" packages/db/migrations/*_live_control_user.sql
+```
+Expected: one new migration; the count is at least 2.
+
+- [ ] **Step 5: Add `DbTx`.** Append to `packages/db/src/client.ts`:
+
+```ts
+/** A drizzle transaction handle. Writes that must commit with a NOTIFY take one of these. */
+export type DbTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+```
+
+- [ ] **Step 6: Move `emitRunEvent` (F7).** Create `packages/db/src/queries/events.ts` with the body of `apps/agent/src/events/emit.ts`, retyped to `DbTx`:
+
+```ts
+import { RunEvent, encodeNotify } from "@mastertutor/contracts";
+import { sql } from "drizzle-orm";
+import type { DbTx } from "../client.ts";
+import { runEvents } from "../schema/index.ts";
+
+/**
+ * Appends one RunEvent and NOTIFYs run_event {runId, eventId} (spec §6). Inside a transaction the
+ * notification is delivered on commit only, so the SSE route never sees an uncommitted event.
+ * The single implementation for agent and web (principle 6).
+ */
+export async function emitRunEvent(tx: DbTx, runId: string, event: RunEvent): Promise<string> {
+  const payload = RunEvent.parse(event);
+  const [row] = await tx
+    .insert(runEvents)
+    .values({ runId, type: payload.type, payload })
+    .returning({ id: runEvents.id });
+  if (!row) throw new Error("run_events insert returned no row");
+  const eventId = String(row.id);
+  await tx.execute(
+    sql`select pg_notify('run_event', ${encodeNotify("run_event", { runId, eventId })})`,
+  );
+  return eventId;
+}
+
+export async function emitRunEvents(
+  tx: DbTx,
+  runId: string,
+  events: readonly RunEvent[],
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (const event of events) ids.push(await emitRunEvent(tx, runId, event));
+  return ids;
+}
+```
+
+Then:
+- delete `apps/agent/src/events/emit.ts`;
+- in `apps/agent/src/loop/step-store.ts`, `apps/agent/src/loop/claim.ts`, `apps/agent/src/loop/worker.int.test.ts`, `apps/agent/src/loop/run-loop.int.test.ts` and `apps/agent/src/events/events.int.test.ts`, replace the import from `../events/emit.ts` (or `./emit.ts`) with the same names imported from `"@mastertutor/db"` (merge into the file's existing `@mastertutor/db` import);
+- replace the body of `apps/agent/src/runtime/types.ts` with:
+
+```ts
+import type { createLogger } from "@mastertutor/contracts/server";
+import type { DbTx } from "@mastertutor/db";
+
+export type Tx = DbTx;
+export type Log = ReturnType<typeof createLogger>;
+```
+
+Confirm nothing still imports the old path: `grep -rn "events/emit" apps tests` prints nothing.
+
+- [ ] **Step 7: Add the control queries (F4).** `packages/db/src/queries/control.ts`:
+
+```ts
+import { encodeNotify } from "@mastertutor/contracts";
+import { and, eq, sql } from "drizzle-orm";
+import type { Database, DbTx } from "../client.ts";
+import { runs } from "../schema/index.ts";
+
+/**
+ * The one "control goes back to the agent" write (F4): web hand back, the agent's failed-takeover
+ * revert and the 15-minute idle hand-back all use it. True if the user held control.
+ */
+export async function returnControlToAgent(tx: DbTx, runId: string): Promise<boolean> {
+  const rows = await tx
+    .update(runs)
+    .set({ controller: "agent", controlUserId: null })
+    .where(and(eq(runs.id, runId), eq(runs.controller, "user")))
+    .returning({ id: runs.id });
+  return rows.length === 1;
+}
+
+/** NOTIFY run_control {runId}; delivered when the transaction commits (spec §3.1 rule 2). */
+export async function notifyRunControl(tx: DbTx, runId: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_notify('run_control', ${encodeNotify("run_control", { runId })})`,
+  );
+}
+
+/** The member holding control of the run, or null while the agent holds it. */
+export async function readControlUser(db: Database, runId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ controller: runs.controller, userId: runs.controlUserId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  return row?.controller === "user" ? row.userId : null;
+}
+```
+
+Append to `packages/db/src/index.ts`:
+```ts
+export * from "./queries/events.ts";
+export * from "./queries/control.ts";
+```
+
+- [ ] **Step 8: Update every fixture that sets `controller` (F8, G4).** Each change keeps the CHECK true:
+
+| File | Old | New |
+|---|---|---|
+| `apps/agent/src/testing/db.ts` `InsertRunOptions` | `controller?: Controller;` | `controller?: Controller;` and, on the next line, `/** Required by runs_control_user_matches_controller when controller is 'user'. */ controlUserId?: string;` |
+| `apps/agent/src/testing/db.ts` `insertRun` values | `controller: options.controller ?? "agent",` | `controller: options.controller ?? "agent",` and `controlUserId: options.controller === "user" ? (options.controlUserId ?? "test-user") : null,` |
+| `apps/agent/src/loop/worker.int.test.ts` (3 sites: `takeOver`, the "takeover during an act" test, the "sweep notices a takeover" test) | `.set({ controller: "user", status: "waiting", waitReason: "takeover" })` | `.set({ controller: "user", controlUserId: "test-user", status: "waiting", waitReason: "takeover" })` |
+| `apps/agent/src/loop/worker.int.test.ts` (2 sites: `handBackTo`, the "takeover during an act" test) | `.set({ controller: "agent" })` | `.set({ controller: "agent", controlUserId: null })` |
+| `apps/agent/src/loop/run-loop.int.test.ts` (3 sites, including B3 E's "a takeover while an approval waits supersedes it…") | `.set({ controller: "user" })` | `.set({ controller: "user", controlUserId: "test-user" })` |
+| `apps/agent/src/loop/run-loop.int.test.ts` (1 site) | `.set({ controller: "agent" })` | `.set({ controller: "agent", controlUserId: null })` |
+| `tests/behaviour/harness.ts` `takeControl` | `.set({ controller: "user", status: "waiting", waitReason: "takeover" })` | `.set({ controller: "user", controlUserId: "behaviour-user", status: "waiting", waitReason: "takeover" })` |
+| `tests/behaviour/harness.ts` `handBack` | `.set({ controller: "agent" })` | `.set({ controller: "agent", controlUserId: null })` |
+
+B3 lands before A2.1 (§0.2), so its A5 run-loop test is already in the file and is one of the 3 `user` sites; `control_user_id` has no foreign key, so `"test-user"` needs no user row. Then confirm none is left: `grep -rnE "controller: \"(user|agent)\"" apps/agent/src tests | grep -v "toMatchObject\|controlUserId\|expect"` prints only the `insertRun` default line.
+
+- [ ] **Step 9: Run the database and B1 suites.**
+
+Run:
+```bash
+pnpm test:int packages/db
+pnpm test:int apps/agent
+pnpm typecheck && pnpm lint
+```
+Expected: PASS, including every B1 integration test (G4 fixed).
+
+- [ ] **Step 10: Commit A2.1.**
+```bash
+pnpm exec prettier --write packages/db apps/agent/src tests/behaviour/harness.ts
+git add packages/db apps/agent/src tests/behaviour/harness.ts
+git commit -m "feat(db): runs.control_user_id, control queries, emitRunEvent moved to @mastertutor/db (B6 seams F4 F7 F8)"
+```
+
+#### A2.2 — agent (F3, F5)
+
+- [ ] **Step 11: Write the failing tests.** Append to `apps/agent/src/loop/worker.int.test.ts` (it already has `start`, `queue`, `takeOver`, `handBackTo`, `controlEvents`, `until`, `row`, `stepsOf`, `click`, `done`, `browsers`, `counter`, `mock`):
+
+```ts
+describe("B6 seams (A2)", () => {
+  const hangUntilAborted = (_actions: unknown, signal: AbortSignal) =>
+    new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+  const eventsOf = async (id: string) =>
+    (
+      await owner.db
+        .select()
+        .from(runEvents)
+        .where(eq(runEvents.runId, id))
+        .orderBy(asc(runEvents.id))
+    ).map((e) => e.payload);
+
+  it("a takeover the live view cannot deliver returns control to the agent, never agent_error (F3)", async () => {
+    const seen: Array<{ afterRestore: boolean }> = [];
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async (_slot, _runId, context) => {
+            seen.push(context);
+            return { ok: false, code: "takeover_failed" };
+          },
+          onAgentControl: async () => undefined,
+        },
+      },
+    });
+    const { run, browser } = await queue([click, done]);
+    browser.computerHook = hangUntilAborted;
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("agent"), {
+      label: "control back to the agent",
+    });
+    browser.computerHook = null;
+    await until(run.id, (r) => r.status === "completed", "completed without any hand back");
+    const events = await eventsOf(run.id);
+    expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "takeover_failed" }));
+    expect(events.filter((e) => e.type === "control")).toEqual([{ type: "control", holder: "agent" }]);
+    expect(await row(run.id)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(seen).toEqual([{ afterRestore: false }]);
+  });
+
+  it("a throwing onUserControl is a failed takeover too, not a failed run (F3)", async () => {
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async () => {
+            throw new Error("n.eko unreachable");
+          },
+          onAgentControl: async () => undefined,
+        },
+      },
+    });
+    const { run, browser } = await queue([click, done]);
+    browser.computerHook = hangUntilAborted;
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("agent"), { label: "reverted" });
+    browser.computerHook = null;
+    await until(run.id, (r) => r.status === "completed", "completed");
+    expect((await row(run.id)).error).toBeNull();
+  });
+
+  it("tells onUserControl when the takeover arrives with a fresh lease (sleeping run woken)", async () => {
+    const seen: Array<{ afterRestore: boolean }> = [];
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async (_slot, _runId, context) => {
+            seen.push(context);
+            return { ok: true };
+          },
+          onAgentControl: async () => undefined,
+        },
+      },
+    });
+    const name = `w${++counter}`;
+    mock.setScenarios([{ name, turns: [done] }]);
+    const run = await insertRun(owner.db, {
+      workspaceId,
+      goal: `[scenario:${name}] task`,
+      status: "sleeping",
+      controller: "user",
+    });
+    browsers.set(run.id, new FakeLoopBrowser());
+    await owner.db.update(runs).set({ wakeRequestedAt: sql`now()` }).where(eq(runs.id, run.id));
+    await owner.sql.notify("run_wake", encodeNotify("run_wake", { runId: run.id, reason: "takeover" }));
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), { label: "held" });
+    expect(seen).toEqual([{ afterRestore: true }]);
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after hand back");
+  });
+
+  it("calls onLeased before the first navigation, onLeaseEnding(slotReleased) on release, and B3's onReleased(runId) after (F5)", async () => {
+    const calls: string[] = [];
+    await start({
+      hooks: {
+        onLeased: async (slot) => {
+          calls.push(
+            `leased ${slot.slotName} ${browsers.get(slot.runId)?.navigations.length ?? -1} ${slot.session}`,
+          );
+        },
+        onLeaseEnding: async (slot) => {
+          calls.push(`ending ${slot.slotName} ${slot.slotReleased}`);
+        },
+        onReleased: async (runId) => {
+          calls.push(`released ${runId}`);
+        },
+      },
+    });
+    const { run } = await queue([done]);
+    await until(run.id, (r) => r.status === "completed", "completed");
+    await waitFor(() => calls.length === 3, { label: "all lifecycle hooks" });
+    const slot = /^leased (browser-[12]) 0 null$/.exec(calls[0]!)?.[1];
+    expect(slot).toBeDefined();
+    expect(calls.slice(1)).toEqual([`ending ${slot} true`, `released ${run.id}`]);
+  });
+
+  it("a failed takeover while an approval is pending keeps it pending and the run waiting(approval) (B3 A5 + F3)", async () => {
+    const { clock } = gatedClock();
+    await start(
+      {
+        hooks: {
+          control: {
+            onUserControl: async () => ({ ok: false, code: "takeover_failed" }),
+            onAgentControl: async () => undefined,
+          },
+        },
+      },
+      clock,
+    );
+    const { run, browser } = await queue([click, done], "ask", (b) =>
+      b.targets.set("10,20", riskyTarget),
+    );
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "approval", "pending");
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("agent"), {
+      label: "reverted",
+    });
+    expect(await row(run.id)).toMatchObject({
+      status: "waiting",
+      waitReason: "approval",
+      controller: "agent",
+      controlUserId: null,
+    });
+    // Every committed transition emits status{…}: none may say running once the approval waited.
+    const statuses = (await eventsOf(run.id)).flatMap((e) =>
+      e.type === "status" ? [`${e.status}:${e.waitReason}`] : [],
+    );
+    const waited = statuses.indexOf("waiting:approval");
+    expect(waited).toBeGreaterThanOrEqual(0);
+    expect(statuses.slice(waited)).not.toContain("running:null");
+    expect(statuses.at(-1)).toBe("waiting:approval");
+    expect((await owner.db.select().from(approvals).where(eq(approvals.runId, run.id)))[0]?.status).toBe(
+      "pending",
+    );
+    expect(browser.computerRuns).toEqual([]);
+  });
+});
+```
+
+Add `import { FakeLoopBrowser } from "../testing/fake-loop-browser.ts";` only if the file does not import it yet (it does today). The approval test reuses B3 E's `gatedClock`, `riskyTarget`, `approvals` import and `queue(…, "ask", configure)` form from its A5 test (B3 E Task 0.5); `takeOver` sets `waiting(takeover)` from `waiting(approval)` the way the web does (A4). B3 E's own `onReleased(runId)` test ("calls hooks.onReleased once the worker ends (F11)") stays as B3 wrote it.
+
+`apps/agent/src/loop/hooks.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import type { RegisteredTool } from "../tools/types.ts";
+import { composeRunHooks, withHooks, type LeasedSlot } from "./hooks.ts";
+
+const slot: LeasedSlot = {
+  runId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  workspaceId: "11111111-1111-4111-8111-111111111111",
+  slotName: "browser-1",
+  session: null,
+  browserCdp: () => Promise.reject(new Error("unused")),
+};
+
+describe("composeRunHooks", () => {
+  it("runs every onLeased and onLeaseEnding in order, and merges tools and prompt context", async () => {
+    const calls: string[] = [];
+    const hooks = withHooks(
+      composeRunHooks(
+        {
+          onLeased: async () => void calls.push("a leased"),
+          onLeaseEnding: async () => void calls.push("a ending"),
+          promptContext: async () => ["Saved sign-ins: zybooks"],
+        },
+        {
+          onLeased: async () => void calls.push("b leased"),
+          onLeaseEnding: async () => void calls.push("b ending"),
+          promptContext: async () => ["Live view: open"],
+        },
+      ),
+    );
+    await hooks.onLeased(slot);
+    await hooks.onLeaseEnding({ runId: slot.runId, slotName: "browser-1", slotReleased: true });
+    expect(calls).toEqual(["a leased", "b leased", "a ending", "b ending"]);
+    expect(await hooks.promptContext({} as never)).toEqual([
+      "Saved sign-ins: zybooks",
+      "Live view: open",
+    ]);
+  });
+
+  it("still runs later onLeaseEnding hooks when an earlier one throws", async () => {
+    const calls: string[] = [];
+    const hooks = composeRunHooks(
+      { onLeaseEnding: async () => Promise.reject(new Error("boom")) },
+      { onLeaseEnding: async () => void calls.push("b ending") },
+    );
+    await expect(
+      hooks.onLeaseEnding!({ runId: slot.runId, slotName: "browser-1", slotReleased: true }),
+    ).rejects.toThrow("boom");
+    expect(calls).toEqual(["b ending"]);
+  });
+
+  it("keeps B3's onReleased(runId) single-owner and passes it through unchanged", async () => {
+    const released: string[] = [];
+    const onReleased = async (runId: string) => void released.push(runId);
+    await composeRunHooks({ onReleased }, { onLeaseEnding: async () => undefined }).onReleased!(
+      slot.runId,
+    );
+    expect(released).toEqual([slot.runId]);
+    expect(() => composeRunHooks({ onReleased }, { onReleased })).toThrow(/onReleased/);
+  });
+
+  it("refuses two owners of a single-owner hook, and two owners of one tool name", () => {
+    const control = {
+      onUserControl: async () => ({ ok: true }) as const,
+      onAgentControl: async () => undefined,
+    };
+    expect(() => composeRunHooks({ control }, { control })).toThrow(/control/);
+    const t: RegisteredTool = { name: "read_page", untrusted: true, invoke: async () => ({}) };
+    expect(() => composeRunHooks({ functionTools: [t] }, { functionTools: [t] })).toThrow(
+      /more than one owner/,
+    );
+  });
+});
+```
+
+- [ ] **Step 12: Run them and watch them fail.**
+
+Run: `pnpm test apps/agent/src/loop/hooks.test.ts && pnpm test:int apps/agent/src/loop/worker.int.test.ts`
+Expected: tsc-level failures (`afterRestore`, `onLeased`, `onLeaseEnding`, `composeRunHooks` unknown) and the F3 tests failing with the run ending `failed` (`agent_error`).
+
+- [ ] **Step 13: Change `hooks.ts`.** In `apps/agent/src/loop/hooks.ts`:
+
+(a) Replace the `ControlTransitions` interface with:
+
+```ts
+/** B6 reports whether the user's live view could take the browser (F3). */
+export type UserControlResult = { ok: true } | { ok: false; code: "takeover_failed" };
+
+export interface ControlTransitions {
+  /**
+   * B6: n.eko host → the user's member session, clipboard on. `afterRestore` is true when the
+   * takeover arrives with a fresh lease (a sleeping run woken into takeover), so the live view may
+   * still be connecting. Never throws on purpose; a throw is treated as `takeover_failed`.
+   */
+  onUserControl(
+    slotName: string,
+    runId: string,
+    context: { afterRestore: boolean },
+  ): Promise<UserControlResult>;
+  /** B6: n.eko host → agent admin session, clipboard off. */
+  onAgentControl(slotName: string, runId: string): Promise<void>;
+}
+```
+
+(b) In `DEFAULT_HOOKS`, replace `control: { onUserControl: async () => undefined, onAgentControl: async () => undefined },` with:
+
+```ts
+  control: {
+    onUserControl: async () => ({ ok: true }),
+    onAgentControl: async () => undefined,
+  },
+```
+
+(c) Add `import type { CDPSession } from "playwright-core";` and `import type { BrowserSession } from "../browser/session.ts";` to the imports, add these types above `RunHooks`:
+
+```ts
+/** A slot just leased to a run (after connect, before restore). */
+export interface LeasedSlot {
+  runId: string;
+  workspaceId: string;
+  slotName: string;
+  /** The page session (null for fakes); B3's passkey enrolment needs it. */
+  session: BrowserSession | null;
+  /** Browser-level CDP session (Browser.* domain), opened on first use and cached per lease. */
+  browserCdp(): Promise<CDPSession>;
+}
+
+/** A lease ending. slotReleased=false: the worker stopped without releasing (lease lost, crash). */
+export interface ReleasedSlot {
+  runId: string;
+  slotName: string;
+  slotReleased: boolean;
+}
+```
+
+add to `RunHooks` (after B3's `onReleased`, which stays as B3 wrote it):
+
+```ts
+  /** After the browser connects, before restore. B6 attaches downloads and seats n.eko's host. */
+  onLeased(slot: LeasedSlot): Promise<void>;
+  /**
+   * The lease is ending: from #release before Browser.close (slotReleased: true), or once from the
+   * worker's finally before close() when #release never ran. Distinct from B3's onReleased(runId),
+   * which runs after close() for per-run cleanup.
+   */
+  onLeaseEnding(slot: ReleasedSlot): Promise<void>;
+```
+
+and to `DEFAULT_HOOKS`:
+
+```ts
+  onLeased: async () => undefined,
+  onLeaseEnding: async () => undefined,
+```
+
+(d) Append `composeRunHooks`:
+
+```ts
+/** Hooks several phases provide together; the rest of RunHooks has exactly one owner. */
+const MERGED_HOOKS = new Set(["functionTools", "promptContext", "onLeased", "onLeaseEnding"]);
+
+/**
+ * Combines phase hook sets (B3 vault, B6 live view, B5, …) for one Supervisor (principle 5:
+ * explicit injection, no global registry). onLeased runs in argument order; every onLeaseEnding
+ * runs even if an earlier one throws (the first error is rethrown afterwards). B3's
+ * onReleased(runId), onClick, sessionStore, maskSources and functionApproval are single-owner.
+ * A function tool name may have one owner only.
+ */
+export function composeRunHooks(...parts: Partial<RunHooks>[]): Partial<RunHooks> {
+  const single: Record<string, unknown> = {};
+  for (const part of parts) {
+    for (const [key, value] of Object.entries(part)) {
+      if (value === undefined || MERGED_HOOKS.has(key)) continue;
+      if (key in single) throw new Error(`RunHooks.${key} has more than one owner`);
+      single[key] = value;
+    }
+  }
+  const tools = parts.flatMap((part) => part.functionTools ?? []);
+  const contexts = parts.flatMap((part) => (part.promptContext ? [part.promptContext] : []));
+  const leased = parts.flatMap((part) => (part.onLeased ? [part.onLeased] : []));
+  const ending = parts.flatMap((part) => (part.onLeaseEnding ? [part.onLeaseEnding] : []));
+  const names = tools.map((tool) => tool.name);
+  const duplicate = names.find((name, i) => names.indexOf(name) !== i);
+  if (duplicate) throw new Error(`function tool ${duplicate} has more than one owner`);
+  return {
+    ...(single as Partial<RunHooks>),
+    ...(tools.length > 0 ? { functionTools: tools } : {}),
+    ...(contexts.length > 0
+      ? {
+          promptContext: async (run: RunSnapshot) =>
+            (await Promise.all(contexts.map((context) => context(run)))).flat(),
+        }
+      : {}),
+    ...(leased.length > 0
+      ? {
+          onLeased: async (slot: LeasedSlot) => {
+            for (const hook of leased) await hook(slot);
+          },
+        }
+      : {}),
+    ...(ending.length > 0
+      ? {
+          onLeaseEnding: async (slot: ReleasedSlot) => {
+            const results = await Promise.allSettled(ending.map((hook) => hook(slot)));
+            const failed = results.find((result) => result.status === "rejected");
+            if (failed) throw failed.reason;
+          },
+        }
+      : {}),
+  };
+}
+```
+
+B5 imports this helper instead of defining its own `mergeHooks` (principle 6); the duplicate tool-name guard is the one its test expects.
+
+Note: `onLeaseEnding` hooks run concurrently (`allSettled`) because each is independent cleanup and the release path is latency-sensitive (principle 2); the test above only checks that both ran.
+
+- [ ] **Step 14: Add the browser-level CDP accessor and expose the session.**
+
+In `apps/agent/src/browser/session.ts`, add the field `#browserCdp: Promise<CDPSession> | null = null;` next to `#cdp`, and this method after `cdp()`:
+
+```ts
+  /** A browser-level CDP session (the Browser.* domain, e.g. downloads), opened once per lease. */
+  browserCdp(): Promise<CDPSession> {
+    if (this.#browserCdp === null) {
+      const attempt = this.#browser.newBrowserCDPSession();
+      this.#browserCdp = attempt;
+      attempt.catch(() => {
+        if (this.#browserCdp === attempt) this.#browserCdp = null;
+      });
+    }
+    return this.#browserCdp;
+  }
+```
+
+In `apps/agent/src/loop/loop-browser.ts`, add `import type { CDPSession } from "playwright-core";` and `import type { BrowserSession } from "../browser/session.ts";`, and replace `AttachedBrowser` with:
+
+```ts
+export interface AttachedBrowser {
+  browser: LoopBrowser;
+  /** The page session for lease hooks (B3 passkey enrolment); null for fakes. */
+  session: BrowserSession | null;
+  /** Browser-level CDP for lease hooks (RunHooks.onLeased). */
+  browserCdp(): Promise<CDPSession>;
+  close(): Promise<void>;
+}
+```
+
+In `apps/agent/src/loop/session-browser.ts`, replace `return { browser, close: () => session.close() };` with:
+
+```ts
+      return {
+        browser,
+        session,
+        browserCdp: () => session.browserCdp(),
+        close: () => session.close(),
+      };
+```
+
+In `apps/agent/src/testing/fake-loop-browser.ts`, append:
+
+```ts
+/** Fakes have no real browser: lease hooks that need Browser.* CDP must not run against them. */
+export const unavailableBrowserCdp = (): Promise<never> =>
+  Promise.reject(new Error("fake browsers have no browser-level CDP session"));
+```
+
+Then add `session: null, browserCdp: unavailableBrowserCdp` to every fake `AttachedBrowser` literal. Find them with `grep -rn "close: async () => undefined" apps/agent/src tests` (today: `worker.int.test.ts`'s `connect` and the `connect` in `fake-loop-browser.ts`); `pnpm typecheck` lists any you miss.
+
+- [ ] **Step 15: Add `RunLoop.revertTakeover`.** In `apps/agent/src/loop/run-loop.ts`, add `returnControlToAgent` to the imports from `"@mastertutor/db"` (add that import if the file only imports `type Database`), add this constant next to `DENIED`:
+
+```ts
+const TAKEOVER_FAILED =
+  "Taking control needs the live view to be open and connected. Open it, then try again.";
+```
+
+and this method directly after `markHandBack()`:
+
+```ts
+  /**
+   * The takeover could not be delivered to the user's live view (B6, F3): one commit returns
+   * control to the agent, tells the UI why, and the agent re-observes before acting again. A run
+   * that was waiting on an approval goes straight back to waiting(approval), never via running.
+   */
+  async revertTakeover(): Promise<void> {
+    const pending = this.#pending;
+    await this.#deps.store.commit({
+      events: [
+        { type: "error", code: "takeover_failed", message: TAKEOVER_FAILED },
+        { type: "control", holder: "agent" },
+      ],
+      // A takeover that interrupted waiting(approval) returns there: the approval was never
+      // superseded (markTakeover did not run), so the sheet stays and the decision still counts.
+      transition: pending
+        ? ({
+            from: ["waiting", "running"],
+            to: "waiting",
+            waitReason: "approval",
+            reason: pending.request.kind,
+          } as Transition)
+        : TO_RUNNING,
+      extra: async (tx) => {
+        await returnControlToAgent(tx, this.#run.id);
+      },
+    });
+    if (!pending) this.reobserve();
+  }
+```
+
+The worker then calls `resume()` when an approval is pending (Step 16(c)); `resume()` sees `status = 'waiting'` and commits no transition, so the run stays `waiting(approval)` (or acts on a decision that arrived meanwhile).
+
+- [ ] **Step 16: Change the worker.** In `apps/agent/src/loop/worker.ts`:
+
+(a) Add `type UserControlResult` to the import from `./hooks.ts` (`import type { RunHooks, UserControlResult } from "./hooks.ts";`), and add the field `#released = false;` next to `#started`.
+
+(b) In `#restore`, replace `if (run.controller === "user") return this.#holdForUser();` with `if (run.controller === "user") return this.#holdForUser(true);`.
+
+(c) Replace the whole `#holdForUser` method with:
+
+```ts
+  /** While the user holds control: no input, no screenshots, no model calls, no sleep (spec §5.1, §10.3). */
+  async #holdForUser(afterRestore = false): Promise<StepOutcome> {
+    const slot = this.#claim.slotName;
+    this.#guard.hold();
+    if (!this.#abort.signal.aborted) this.#abort.abort(new Interrupted("takeover"));
+    const given = await this.#deps.hooks.control
+      .onUserControl(slot, this.runId, { afterRestore })
+      .catch((): UserControlResult => ({ ok: false, code: "takeover_failed" }));
+    if (!given.ok) return this.#revertTakeover();
+    await this.#loop!.markTakeover();
+    for (;;) {
+      await this.#latch.wait();
+      if (this.#stop) return CONTINUE;
+      const run = await readRunControl(this.#deps.db, this.runId);
+      if (!run || isTerminal(run.status)) return { kind: "cancelled" };
+      if (run.controller === "agent") {
+        await this.#deps.hooks.control.onAgentControl(slot, this.runId);
+        this.#guard.release();
+        this.#abort = new AbortController();
+        await this.#loop!.markHandBack();
+        return CONTINUE;
+      }
+    }
+  }
+
+  /** The user's live view could not take the browser (F3): the agent keeps control and goes on. */
+  async #revertTakeover(): Promise<StepOutcome> {
+    this.#deps.log.warn({ runId: this.runId, errorCode: "takeover_failed" }, "takeover reverted");
+    await this.#loop!.revertTakeover();
+    this.#guard.release();
+    this.#abort = new AbortController();
+    return this.#loop!.hasPendingApproval ? this.#loop!.resume(this.#abort.signal) : CONTINUE;
+  }
+```
+
+(d) In `#main` directly after the `this.#attached = await this.#deps.connect({ … });` statement, add:
+
+```ts
+      await this.#deps.hooks.onLeased({
+        runId: this.runId,
+        workspaceId: this.workspaceId,
+        slotName: this.#claim.slotName,
+        session: this.#attached!.session,
+        browserCdp: () => this.#attached!.browserCdp(),
+      });
+```
+
+and in `#main`'s `finally` (as B3 E left it), insert directly **before** `await this.#attached?.close().catch(() => undefined);`:
+
+```ts
+      if (this.#attached && !this.#released)
+        await this.#deps.hooks
+          .onLeaseEnding({ runId: this.runId, slotName: this.#claim.slotName, slotReleased: false })
+          .catch(() => undefined);
+```
+
+Keep B3's `await this.#deps.hooks.onReleased(this.runId).catch(() => undefined);` after `close()` unchanged. The `finally` then reads, in order: `clearInterval(beat)`, `clearTimeout(this.#deadlineTimer)`, the `onLeaseEnding` block above, `close()`, B3's comment and `onReleased(this.runId)`.
+
+(e) In `#release`, replace `await this.#attached?.close().catch(() => undefined);` with:
+
+```ts
+    this.#released = true;
+    // Before Browser.close (pool.reset): B6 takes n.eko back from the user and detaches downloads.
+    await this.#deps.hooks
+      .onLeaseEnding({ runId: this.runId, slotName, slotReleased: true })
+      .catch(() =>
+        log.warn({ runId: this.runId, errorCode: "release_hook_failed" }, "release hook failed"),
+      );
+    await this.#attached?.close().catch(() => undefined);
+```
+
+- [ ] **Step 17: Run the tests and the B1 suites.**
+
+Run:
+```bash
+pnpm test apps/agent
+pnpm test:int apps/agent
+pnpm typecheck && pnpm lint
+```
+Expected: PASS, including the five new `B6 seams (A2)` tests, B3 E's `onReleased(runId)` (F11) and A5 tests, and every existing B1 test (takeover latency, I1–I3, M1–M7). The B1 behaviour suite runs in A13.
+
+- [ ] **Step 18: Commit A2.2.**
+```bash
+pnpm exec prettier --write apps/agent/src
+git add apps/agent/src
+git commit -m "feat(agent): failed takeover returns control to the agent; onLeased/onLeaseEnding and composeRunHooks (B6 seams F3 F5)"
+```
+
+---
+### Task A3: Live-view contracts and the n.eko login helper (base Task 1, trimmed)
+
+Changed from base Task 1: all TURN pieces are gone (S7, D42), so G1 (`env.test` used `OPENAI_EMBEDDINGS_KEY`) disappears with them; `liveForwardAuthAddress` is the single source of the D41 ForwardAuth address; takeover timing constants replace `TAKEOVER_ABORT_TARGET_MS` (B1 owns the abort target). Unused `TURN_CREDENTIAL_TTL_SECONDS` is deleted (nothing imports it).
+
+**Files:**
+- Replace: `packages/contracts/src/live.ts`, `packages/contracts/src/live.test.ts`
+- Modify: `packages/contracts/src/constants.ts`, `packages/contracts/src/events.ts`, `packages/contracts/src/events.test.ts`, `packages/contracts/src/server/neko.ts`, `packages/contracts/src/server/neko.test.ts`
+
+**Interfaces:**
+- Consumes: `Uuid`, `SlotName`, `RunEvent`, `deriveNekoPassword`.
+- Produces from `@mastertutor/contracts`:
+  - constants `LIVE_SLOT_COOKIE`, `NEKO_SESSION_COOKIE = "NEKO_SESSION"`, `NEKO_MEMBERS`, `LIVE_COOKIE_TTL_SECONDS = 43200`, `AUTO_HAND_BACK_IDLE_MS = 900000`, `TAKEOVER_GIVE_WAIT_MS = 1000`, `TAKEOVER_RESTORE_WAIT_MS = 15000`, `NEKO_EMBED_QUERY`, `LIVE_PATH_REGEX`, `LIVE_STRIP_REGEX`, `LIVE_AUTH_PATH = "/api/live/auth"`, `DEFAULT_CDP_SUBNET_PREFIX = "172.30.231"`, `SLOT_IDLE_PORT = 9224`;
+  - `livePath(runId): string`, `liveEmbedPath(runId): string`, `runIdFromLivePath(uri: string): string | null`, `liveSlotCookiePattern(slotName: string): string`, `liveRouterRule(slotName: string, host: string): string`, `liveForwardAuthAddress(cdpSubnetPrefix?: string): string`;
+  - `IceServer`, `OpenLiveResult` (embed regex with the placeholders; `iceServers` stays in the contract and is `[]` in v1);
+  - `RunEvent` `download_ready` = `{downloadId, assetId, filename, bytes}`.
+- Produces from `@mastertutor/contracts/server`: `loginNeko(o: {baseUrl, username, password, fetch?, timeoutMs?}): Promise<string>`, `NekoLoginError` (`status`), `nekoTokenFromSetCookie(headers: readonly string[]): string | null`.
+
+- [ ] **Step 1: Write the failing tests.**
+
+`packages/contracts/src/live.test.ts` (replace the whole file):
+
+```ts
+import { describe, expect, it } from "vitest";
+import {
+  LIVE_STRIP_REGEX,
+  OpenLiveResult,
+  liveEmbedPath,
+  liveForwardAuthAddress,
+  livePath,
+  liveRouterRule,
+  liveSlotCookiePattern,
+  runIdFromLivePath,
+} from "./live.ts";
+
+const runId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+describe("live view contracts", () => {
+  it("builds per-run paths with the legacy client's auto-connect placeholders", () => {
+    expect(livePath(runId)).toBe(`/live/${runId}/`);
+    expect(liveEmbedPath(runId)).toBe(`/live/${runId}/?embed=1&usr=user&pwd=cookie`);
+    expect(() => livePath("../etc")).toThrow();
+  });
+
+  it("parses both openLive shapes and rejects other embed paths", () => {
+    expect(OpenLiveResult.parse({ sleeping: true })).toEqual({ sleeping: true });
+    const awake = OpenLiveResult.parse({
+      sleeping: false,
+      slotName: "browser-3",
+      embedPath: liveEmbedPath(runId),
+      iceServers: [],
+    });
+    expect(awake.sleeping).toBe(false);
+    for (const embedPath of [
+      "/admin",
+      `/live/${runId}/?embed=1`,
+      `/live/${runId}/?embed=1&usr=user&pwd=x`,
+    ]) {
+      expect(
+        OpenLiveResult.safeParse({ sleeping: false, slotName: "browser-1", embedPath, iceServers: [] })
+          .success,
+        embedPath,
+      ).toBe(false);
+    }
+  });
+
+  it("extracts the run id from a forwarded URI", () => {
+    expect(runIdFromLivePath(`/live/${runId}/`)).toBe(runId);
+    expect(runIdFromLivePath(`/live/${runId}/api/ws?x=1`)).toBe(runId);
+    expect(runIdFromLivePath(`/live/${runId}`)).toBeNull();
+    expect(runIdFromLivePath("/live/zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz/")).toBeNull();
+    expect(runIdFromLivePath("/api/auth/session")).toBeNull();
+  });
+
+  it("matches only an exact live_slot cookie for the given slot", () => {
+    const pattern = new RegExp(liveSlotCookiePattern("browser-1"));
+    expect(pattern.test("live_slot=browser-1.1700000000.sig")).toBe(true);
+    expect(pattern.test("a=1; live_slot=browser-1.1700000000.sig")).toBe(true);
+    expect(pattern.test("a=1;live_slot=browser-1.1.s")).toBe(true);
+    expect(pattern.test("live_slot=browser-10.1700000000.sig")).toBe(false);
+    expect(pattern.test("xlive_slot=browser-1.1700000000.sig")).toBe(false);
+    expect(() => liveSlotCookiePattern("postgres")).toThrow();
+  });
+
+  it("renders the one Traefik rule used by the test routers and Phase 9's labels", () => {
+    expect(liveRouterRule("browser-2", "notes.example.com")).toBe(
+      "Host(`notes.example.com`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\\s*)live_slot=browser-2\\.`)",
+    );
+    expect(LIVE_STRIP_REGEX).toBe("^/live/[0-9a-f-]{36}");
+    expect(() => liveRouterRule("browser-1", "bad host`")).toThrow();
+  });
+
+  it("points ForwardAuth at web's static cdp address, never the ambiguous `web` name (D41)", () => {
+    expect(liveForwardAuthAddress()).toBe("http://172.30.231.11:3000/api/live/auth");
+    expect(liveForwardAuthAddress("10.42.7")).toBe("http://10.42.7.11:3000/api/live/auth");
+    for (const bad of ["web", "1.2.3.4", "1.2", "a.b.c", "300.1.1"]) {
+      expect(() => liveForwardAuthAddress(bad), bad).toThrow();
+    }
+  });
+});
+```
+
+In `packages/contracts/src/events.test.ts`, replace the `download_ready` sample line with:
+```ts
+      download_ready: {
+        type: "download_ready",
+        downloadId: id,
+        assetId: id,
+        filename: "a.pdf",
+        bytes: 10,
+      },
+```
+
+Append to `packages/contracts/src/server/neko.test.ts`: **copy verbatim from base plan Task 1, Step 1** (the block starting `import { createServer, type Server } from "node:http";` through the end of `describe("loginNeko", …)`). Move its imports to the top of the file.
+
+- [ ] **Step 2: Run them and watch them fail.**
+
+Run: `pnpm test packages/contracts`
+Expected: FAIL: `liveForwardAuthAddress`, `liveRouterRule`, `runIdFromLivePath`, `loginNeko` missing; `download_ready` rejects `assetId`.
+
+- [ ] **Step 3: Implement.**
+
+`packages/contracts/src/live.ts` (replace the whole file):
+
+```ts
+import { z } from "zod";
+import { SlotName, Uuid } from "./primitives.ts";
+
+/** Signed cookie naming the slot for Traefik's per-slot routers (spec §10.2). */
+export const LIVE_SLOT_COOKIE = "live_slot";
+/** n.eko's session cookie name; web re-issues it scoped to /live/<runId>/. */
+export const NEKO_SESSION_COOKIE = "NEKO_SESSION";
+/** n.eko members in every slot; passwords are HMAC(secret, slotName). Session id = member id. */
+export const NEKO_MEMBERS = { agent: "agent", user: "user" } as const;
+export const LIVE_COOKIE_TTL_SECONDS = 12 * 60 * 60;
+/** Spec §5.1: takeover ends after 15 minutes with no user input, counted from the takeover. */
+export const AUTO_HAND_BACK_IDLE_MS = 15 * 60 * 1000;
+/** How long a live takeover waits for the user's n.eko session to be connected (F3: inside F3's 2 s). */
+export const TAKEOVER_GIVE_WAIT_MS = 1_000;
+/** A takeover that arrives with a fresh lease waits longer: the iframe reconnects after the slot event. */
+export const TAKEOVER_RESTORE_WAIT_MS = 15_000;
+/**
+ * n.eko 3.1.6 embeds its legacy client, which auto-connects only when usr/pwd are in the URL.
+ * pwd is a placeholder: the legacy /ws handler authenticates with the NEKO_SESSION cookie first.
+ */
+export const NEKO_EMBED_QUERY = "embed=1&usr=user&pwd=cookie";
+/** Traefik PathRegexp for live requests (Go RE2 and JS agree on this pattern). */
+export const LIVE_PATH_REGEX = "^/live/[0-9a-f-]{36}/";
+/** Traefik StripPrefixRegex: n.eko is served at / behind it. */
+export const LIVE_STRIP_REGEX = "^/live/[0-9a-f-]{36}";
+/** web's ForwardAuth endpoint for the live routers. */
+export const LIVE_AUTH_PATH = "/api/live/auth";
+/** Compose default for CDP_SUBNET_PREFIX (agent .10, web .11, Traefik .12). */
+export const DEFAULT_CDP_SUBNET_PREFIX = "172.30.231";
+
+export function livePath(runId: string): string {
+  return `/live/${Uuid.parse(runId)}/`;
+}
+
+export function liveEmbedPath(runId: string): string {
+  return `${livePath(runId)}?${NEKO_EMBED_QUERY}`;
+}
+
+/** The run id from an X-Forwarded-Uri such as /live/<uuid>/api/ws, or null. */
+export function runIdFromLivePath(uri: string): string | null {
+  const match = /^\/live\/([0-9a-f-]{36})\//.exec(uri);
+  if (!match) return null;
+  const parsed = Uuid.safeParse(match[1]);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Cookie-header regex selecting one slot's router; the trailing "\." stops browser-1 matching browser-10. */
+export function liveSlotCookiePattern(slotName: string): string {
+  return `(?:^|;\\s*)${LIVE_SLOT_COOKIE}=${SlotName.parse(slotName)}\\.`;
+}
+
+/** The single source of the per-slot Traefik rule (test file provider here, labels in Phase 9). */
+export function liveRouterRule(slotName: string, host: string): string {
+  if (!/^[A-Za-z0-9.-]+$/.test(host)) throw new TypeError("Invalid router host");
+  return `Host(\`${host}\`) && PathRegexp(\`${LIVE_PATH_REGEX}\`) && HeaderRegexp(\`Cookie\`, \`${liveSlotCookiePattern(slotName)}\`)`;
+}
+
+/**
+ * ForwardAuth target by web's static cdp address (D41): on Dokploy's shared network the name `web`
+ * can resolve to another app's container, so the live routers never use it.
+ */
+export function liveForwardAuthAddress(cdpSubnetPrefix: string = DEFAULT_CDP_SUBNET_PREFIX): string {
+  const octets = cdpSubnetPrefix.split(".");
+  const valid =
+    octets.length === 3 && octets.every((o) => /^[0-9]{1,3}$/.test(o) && Number(o) <= 255);
+  if (!valid) throw new TypeError("Invalid CDP subnet prefix");
+  return `http://${cdpSubnetPrefix}.11:3000${LIVE_AUTH_PATH}`;
+}
+
+export const IceServer = z.object({
+  urls: z.array(z.string().regex(/^(stun|turns?):/)).min(1),
+  username: z.string().max(256).optional(),
+  credential: z.string().max(256).optional(),
+});
+export type IceServer = z.infer<typeof IceServer>;
+
+/** Output of oRPC runs.openLive. A sleeping run holds no slot. v1 has no TURN, so iceServers is []. */
+export const OpenLiveResult = z.discriminatedUnion("sleeping", [
+  z.object({ sleeping: z.literal(true) }),
+  z.object({
+    sleeping: z.literal(false),
+    slotName: SlotName,
+    embedPath: z.string().regex(/^\/live\/[0-9a-f-]{36}\/\?embed=1&usr=user&pwd=cookie$/),
+    iceServers: z.array(IceServer).max(4),
+  }),
+]);
+export type OpenLiveResult = z.infer<typeof OpenLiveResult>;
+```
+
+`packages/contracts/src/constants.ts`: directly after `PULSE_TCP_PORT`, add:
+```ts
+/** Slot X-idle probe (xprintidle over socat); agent IP only. */
+export const SLOT_IDLE_PORT = 9224;
+```
+
+`packages/contracts/src/events.ts`: replace the `download_ready` member with:
+```ts
+  z.object({
+    type: z.literal("download_ready"),
+    downloadId: Uuid,
+    assetId: Uuid,
+    filename: z.string().max(255),
+    bytes: z.number().int().nonnegative(),
+  }),
+```
+
+`packages/contracts/src/server/neko.ts`: **append verbatim from base plan Task 1, Step 3** (the block starting `import { NEKO_SESSION_COOKIE } from "../live.ts";` through the end of `loginNeko`), moving the new `import` to the top of the file. Do **not** create `server/turn.ts` and do not touch `server/index.ts`.
+
+- [ ] **Step 4: Run the tests and checks.**
+
+Run: `pnpm test packages/contracts && pnpm typecheck && pnpm lint`
+Expected: PASS. `grep -rn "TURN_CREDENTIAL_TTL_SECONDS" apps packages tests` prints nothing.
+
+- [ ] **Step 5: Commit.**
+```bash
+pnpm exec prettier --write packages/contracts
+git add packages/contracts
+git commit -m "feat(contracts): live-view routing helpers, D41 ForwardAuth address, n.eko login, download_ready assetId"
+```
+
+---
+
+### Task A4: Live access and control-request queries (base Task 2, rewritten)
+
+Changed from base Task 2: drizzle instead of postgres.js `ISql` (one style, like B1 and `queries/workspace.ts`); events go through B1's `emitRunEvent` (F7, moved in A2); the agent-side status writers `markTakeoverWaiting`, `markHandBackRunning`, `revertToAgent` and the download-approval lookup are **not** written (F2, F4, F6); the column and CHECK already landed in A2 (F8). Shared seeds live in `@mastertutor/db/testing` (F9); there is no `tests/support/`.
+
+**Files:**
+- Create: `packages/db/src/queries/live.ts`, `packages/db/src/queries/downloads.ts`
+- Modify: `packages/db/src/index.ts`, `packages/db/src/testing.ts`
+- Test: `packages/db/src/queries/live.int.test.ts`
+
+**Interfaces:**
+- Consumes: A2's `emitRunEvent`, `returnControlToAgent`, `notifyRunControl`, `DbTx`; tables `runs`, `browserSlots`, `workspaceMembers`, `assets`, `downloads`, `user`, `workspaces`.
+- Produces from `@mastertutor/db`:
+  - `MemberRun {id, workspaceId, status, controller, slotName, slotLeased}`; `getRunForMember(db: Database, runId: string, userId: string): Promise<MemberRun | null>`;
+  - `canAccessLiveSlot(db: Database, q: {runId: string; slotName: string; userId: string}): Promise<boolean>`;
+  - `ControlRequestResult = {ok: true; via: "control" | "wake" | "none"} | {ok: false; reason: "not_found" | "finished" | "not_controller"}`;
+  - `requestTakeover(db: Database, input: {runId: string; userId: string}): Promise<ControlRequestResult>`: idempotent for the member already holding control (`via: "none"`, no write, no NOTIFY); `not_controller` while another member holds it (B3 E.8 note 3);
+  - `requestHandBack(db: Database, input: {runId: string; userId: string; note: string | null}): Promise<ControlRequestResult>`: while a member holds control, accepted only from that member or a workspace `owner`, else `not_controller`;
+  - `findAssetBySha(db: Database, workspaceId: string, sha256: string): Promise<{id: string; key: string} | null>`;
+  - `DownloadRecordInput`; `recordDownload(tx: DbTx, input: DownloadRecordInput): Promise<{downloadId: string; assetId: string}>`.
+- Produces from `@mastertutor/db/testing`: `seedMember(db: Database, options?: {workspaceId?: string; role?: "owner" | "member"}): Promise<{userId: string; workspaceId: string}>`; `seedRun(db: Database, options: {workspaceId: string; status?: RunStatus; waitReason?: WaitReason | null}): Promise<string>`; `leaseSlotForTest(db: Database, slotName: string, runId: string): Promise<void>`; `releaseSlotForTest(db: Database, slotName: string): Promise<void>` (back to `idle`); `nextNotification(sql: Sql, channel: string, action: () => Promise<unknown>, timeoutMs?: number): Promise<string>`.
+
+- [ ] **Step 1: Add the test seeds.** Append to `packages/db/src/testing.ts` (merge the imports into the top of the file):
+
+```ts
+import { randomUUID } from "node:crypto";
+import type { RunStatus, WaitReason } from "@mastertutor/contracts";
+import { eq } from "drizzle-orm";
+import type { Sql } from "postgres";
+import type { Database } from "./client.ts";
+import { browserSlots, runs, user, workspaceMembers, workspaces } from "./schema/index.ts";
+
+/** A Better Auth user plus (new or given) workspace membership. Use the owner connection. */
+export async function seedMember(
+  db: Database,
+  options: { workspaceId?: string; role?: "owner" | "member" } = {},
+): Promise<{ userId: string; workspaceId: string }> {
+  const userId = `user_${randomUUID().replaceAll("-", "")}`;
+  await db.insert(user).values({ id: userId, name: "Test", email: `${userId}@example.test` });
+  const workspaceId =
+    options.workspaceId ??
+    (await db.insert(workspaces).values({ name: "Test" }).returning({ id: workspaces.id }))[0]!.id;
+  await db
+    .insert(workspaceMembers)
+    .values({ workspaceId, userId, role: options.role ?? "owner" });
+  return { userId, workspaceId };
+}
+
+export async function seedRun(
+  db: Database,
+  options: { workspaceId: string; status?: RunStatus; waitReason?: WaitReason | null },
+): Promise<string> {
+  const [run] = await db
+    .insert(runs)
+    .values({
+      workspaceId: options.workspaceId,
+      goal: "live test",
+      status: options.status ?? "running",
+      waitReason: options.waitReason ?? null,
+      allowedOrigins: ["https://example.com"],
+    })
+    .returning({ id: runs.id });
+  return run!.id;
+}
+
+/** Marks a slot leased to a run the way a claim does (one transaction, both sides). */
+export async function leaseSlotForTest(db: Database, slotName: string, runId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(browserSlots)
+      .set({ state: "leased", runId, leaseOwner: "test", leaseExpiresAt: new Date(Date.now() + 3_600_000) })
+      .where(eq(browserSlots.name, slotName));
+    await tx.update(runs).set({ slotName }).where(eq(runs.id, runId));
+  });
+}
+
+/** Frees a slot back to idle (tests that drive a real slot must leave it idle for the next file). */
+export async function releaseSlotForTest(db: Database, slotName: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.update(runs).set({ slotName: null }).where(eq(runs.slotName, slotName));
+    await tx
+      .update(browserSlots)
+      .set({ state: "idle", runId: null, leaseOwner: null, leaseExpiresAt: null })
+      .where(eq(browserSlots.name, slotName));
+  });
+}
+
+/** Runs action while LISTENing on channel and returns the first payload. */
+export async function nextNotification(
+  sql: Sql,
+  channel: string,
+  action: () => Promise<unknown>,
+  timeoutMs = 3_000,
+): Promise<string> {
+  let deliver!: (payload: string) => void;
+  const received = new Promise<string>((resolve) => {
+    deliver = resolve;
+  });
+  const { unlisten } = await sql.listen(channel, (payload) => deliver(payload));
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await action();
+    return await Promise.race([
+      received,
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`No NOTIFY on ${channel}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    await unlisten();
+  }
+}
+```
+
+- [ ] **Step 2: Write the failing test.** `packages/db/src/queries/live.int.test.ts`:
+
+```ts
+import { decodeNotify } from "@mastertutor/contracts";
+import { asc, eq } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDb, type DbHandle } from "../client.ts";
+import { runEvents, runs } from "../schema/index.ts";
+import {
+  leaseSlotForTest,
+  nextNotification,
+  releaseSlotForTest,
+  seedMember,
+  seedRun,
+  startTestDatabase,
+  type TestDatabase,
+} from "../testing.ts";
+import { findAssetBySha, recordDownload } from "./downloads.ts";
+import { canAccessLiveSlot, getRunForMember, requestHandBack, requestTakeover } from "./live.ts";
+
+let testDb: TestDatabase;
+let owner: DbHandle;
+let web: DbHandle;
+let agent: DbHandle;
+let member: { userId: string; workspaceId: string };
+let outsider: { userId: string; workspaceId: string };
+
+beforeAll(async () => {
+  testDb = await startTestDatabase({ slots: ["browser-1", "browser-2"] });
+  owner = createDb(testDb.ownerUrl, { max: 2 });
+  web = createDb(testDb.webUrl, { max: 2 });
+  agent = createDb(testDb.agentUrl, { max: 2 });
+  member = await seedMember(owner.db);
+  outsider = await seedMember(owner.db);
+});
+afterAll(async () => {
+  await Promise.all([owner?.close(), web?.close(), agent?.close()]);
+  await testDb?.stop();
+});
+
+const runRow = async (runId: string) =>
+  (await owner.db.select().from(runs).where(eq(runs.id, runId)))[0]!;
+
+describe("member and slot access", () => {
+  it("shows a run only to members, with its lease state", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    expect(await getRunForMember(web.db, runId, outsider.userId)).toBeNull();
+    expect(await getRunForMember(web.db, runId, member.userId)).toMatchObject({
+      id: runId,
+      status: "running",
+      controller: "agent",
+      slotName: null,
+      slotLeased: false,
+    });
+    await leaseSlotForTest(owner.db, "browser-1", runId);
+    expect(await getRunForMember(web.db, runId, member.userId)).toMatchObject({
+      slotName: "browser-1",
+      slotLeased: true,
+    });
+    await releaseSlotForTest(owner.db, "browser-1");
+  });
+
+  it("grants a live slot only for the leased run, to its members", async () => {
+    const runA = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const runB = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, "browser-1", runA);
+    const ok = { runId: runA, slotName: "browser-1", userId: member.userId };
+    expect(await canAccessLiveSlot(web.db, ok)).toBe(true);
+    expect(await canAccessLiveSlot(web.db, { ...ok, userId: outsider.userId })).toBe(false);
+    expect(await canAccessLiveSlot(web.db, { ...ok, runId: runB })).toBe(false);
+    expect(await canAccessLiveSlot(web.db, { ...ok, slotName: "browser-2" })).toBe(false);
+    await releaseSlotForTest(owner.db, "browser-1");
+    expect(await canAccessLiveSlot(web.db, ok)).toBe(false);
+  });
+});
+
+describe("takeover and hand back (web role)", () => {
+  it("takes control of a running run and notifies run_control", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const payload = await nextNotification(owner.sql, "run_control", async () => {
+      expect(await requestTakeover(web.db, { runId, userId: member.userId })).toEqual({
+        ok: true,
+        via: "control",
+      });
+    });
+    expect(decodeNotify("run_control", payload)).toEqual({ runId });
+    expect(await runRow(runId)).toMatchObject({
+      status: "waiting",
+      waitReason: "takeover",
+      controller: "user",
+      controlUserId: member.userId,
+    });
+  });
+
+  it("wakes a sleeping run with reason takeover", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId, status: "sleeping" });
+    const payload = await nextNotification(owner.sql, "run_wake", async () => {
+      expect(await requestTakeover(web.db, { runId, userId: member.userId })).toEqual({
+        ok: true,
+        via: "wake",
+      });
+    });
+    expect(decodeNotify("run_wake", payload)).toEqual({ runId, reason: "takeover" });
+    const row = await runRow(runId);
+    expect(row).toMatchObject({ status: "sleeping", controller: "user", controlUserId: member.userId });
+    expect(row.wakeRequestedAt).not.toBeNull();
+  });
+
+  it("refuses finished runs and non-members", async () => {
+    const done = await seedRun(owner.db, { workspaceId: member.workspaceId, status: "completed" });
+    expect(await requestTakeover(web.db, { runId: done, userId: member.userId })).toEqual({
+      ok: false,
+      reason: "finished",
+    });
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    expect(await requestTakeover(web.db, { runId, userId: outsider.userId })).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+    expect(await requestHandBack(web.db, { runId, userId: outsider.userId, note: null })).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+  });
+
+  it("is idempotent for the holder and refuses another member (B3 E.8 note 3)", async () => {
+    const colleague = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: colleague.userId });
+    const received: string[] = [];
+    const { unlisten } = await owner.sql.listen("run_control", (payload) => received.push(payload));
+    try {
+      expect(await requestTakeover(web.db, { runId, userId: colleague.userId })).toEqual({
+        ok: true,
+        via: "none",
+      });
+      expect(await requestTakeover(web.db, { runId, userId: member.userId })).toEqual({
+        ok: false,
+        reason: "not_controller",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(received).toEqual([]);
+    } finally {
+      await unlisten();
+    }
+    expect(await runRow(runId)).toMatchObject({ controller: "user", controlUserId: colleague.userId });
+  });
+
+  it("accepts hand-back only from the controller or a workspace owner", async () => {
+    const holder = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const other = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: holder.userId });
+    expect(await requestHandBack(web.db, { runId, userId: other.userId, note: "mine now" })).toEqual({
+      ok: false,
+      reason: "not_controller",
+    });
+    expect(await runRow(runId)).toMatchObject({ controller: "user", controlUserId: holder.userId });
+    // member is the workspace owner (seedMember's default role): owners may end any takeover.
+    expect(await requestHandBack(web.db, { runId, userId: member.userId, note: null })).toEqual({
+      ok: true,
+      via: "control",
+    });
+    expect(await runRow(runId)).toMatchObject({ controller: "agent", controlUserId: null });
+    // Once the agent holds control, any member's late note is still delivered.
+    expect(await requestHandBack(web.db, { runId, userId: other.userId, note: "FYI" })).toEqual({
+      ok: true,
+      via: "none",
+    });
+  });
+
+  it("hands back with a note as a user_message, and keeps a late note", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const payload = await nextNotification(owner.sql, "run_control", async () => {
+      expect(
+        await requestHandBack(web.db, { runId, userId: member.userId, note: "Logged in; continue" }),
+      ).toEqual({ ok: true, via: "control" });
+    });
+    expect(decodeNotify("run_control", payload)).toEqual({ runId });
+    expect(await runRow(runId)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(await requestHandBack(web.db, { runId, userId: member.userId, note: null })).toEqual({
+      ok: true,
+      via: "none",
+    });
+    // The agent already took control back (e.g. the idle hand-back): the note still reaches it.
+    expect(
+      await requestHandBack(web.db, { runId, userId: member.userId, note: "Also open chapter 2" }),
+    ).toEqual({ ok: true, via: "none" });
+    const notes = (
+      await owner.db
+        .select()
+        .from(runEvents)
+        .where(eq(runEvents.runId, runId))
+        .orderBy(asc(runEvents.id))
+    )
+      .map((e) => e.payload)
+      .filter((p) => p.type === "user_message");
+    expect(notes).toEqual([
+      { type: "user_message", text: "Logged in; continue" },
+      { type: "user_message", text: "Also open chapter 2" },
+    ]);
+  });
+});
+
+describe("download records (agent role)", () => {
+  it("dedupes assets per workspace by sha256 and records every download", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const sha256 = "a".repeat(64);
+    const input = {
+      runId,
+      workspaceId: member.workspaceId,
+      filename: "a.pdf",
+      sha256,
+      bucket: "mastertutor",
+      key: `downloads/${runId}/aaaaaaaaaaaa-a.pdf`,
+      mime: "application/pdf",
+      bytes: 3,
+      sourceUrl: "https://example.com/a.pdf",
+      approvedBy: member.userId,
+    };
+    expect(await findAssetBySha(agent.db, member.workspaceId, sha256)).toBeNull();
+    const first = await agent.db.transaction((tx) => recordDownload(tx, input));
+    const second = await agent.db.transaction((tx) => recordDownload(tx, input));
+    expect(second.assetId).toBe(first.assetId);
+    expect(second.downloadId).not.toBe(first.downloadId);
+    expect(await findAssetBySha(agent.db, member.workspaceId, sha256)).toEqual({
+      id: first.assetId,
+      key: input.key,
+    });
+  });
+});
+```
+
+- [ ] **Step 3: Run it and watch it fail.**
+
+Run: `pnpm test:int packages/db/src/queries/live.int.test.ts`
+Expected: FAIL: `./live.ts` and `./downloads.ts` do not exist.
+
+- [ ] **Step 4: Implement.**
+
+`packages/db/src/queries/live.ts`:
+
+```ts
+import {
+  TERMINAL_RUN_STATUSES,
+  encodeNotify,
+  type Controller,
+  type MemberRole,
+  type RunStatus,
+} from "@mastertutor/contracts";
+import { and, eq, sql } from "drizzle-orm";
+import type { Database, DbTx } from "../client.ts";
+import { browserSlots, runs, workspaceMembers } from "../schema/index.ts";
+import { notifyRunControl, returnControlToAgent } from "./control.ts";
+import { emitRunEvent } from "./events.ts";
+
+const TERMINAL: ReadonlySet<string> = new Set(TERMINAL_RUN_STATUSES);
+
+export interface MemberRun {
+  id: string;
+  workspaceId: string;
+  status: RunStatus;
+  controller: Controller;
+  slotName: string | null;
+  slotLeased: boolean;
+}
+
+const memberOf = (userId: string) =>
+  and(eq(workspaceMembers.workspaceId, runs.workspaceId), eq(workspaceMembers.userId, userId));
+
+/** The run if userId is a member of its workspace; slotLeased means browser_slots agrees. */
+export async function getRunForMember(
+  db: Database,
+  runId: string,
+  userId: string,
+): Promise<MemberRun | null> {
+  const [row] = await db
+    .select({
+      id: runs.id,
+      workspaceId: runs.workspaceId,
+      status: runs.status,
+      controller: runs.controller,
+      slotName: runs.slotName,
+      slotLeased: sql<boolean>`coalesce(${browserSlots.state} = 'leased' and ${browserSlots.runId} = ${runs.id}, false)`,
+    })
+    .from(runs)
+    .innerJoin(workspaceMembers, memberOf(userId))
+    .leftJoin(browserSlots, eq(browserSlots.name, runs.slotName))
+    .where(eq(runs.id, runId));
+  return row ?? null;
+}
+
+/** ForwardAuth's DB check (spec §10.2): slot leased to exactly this run, and the user is a member. */
+export async function canAccessLiveSlot(
+  db: Database,
+  query: { runId: string; slotName: string; userId: string },
+): Promise<boolean> {
+  const rows = await db
+    .select({ one: sql<number>`1` })
+    .from(browserSlots)
+    .innerJoin(runs, and(eq(runs.id, browserSlots.runId), eq(runs.slotName, browserSlots.name)))
+    .innerJoin(workspaceMembers, memberOf(query.userId))
+    .where(
+      and(
+        eq(browserSlots.name, query.slotName),
+        eq(browserSlots.runId, query.runId),
+        eq(browserSlots.state, "leased"),
+      ),
+    )
+    .limit(1);
+  return rows.length === 1;
+}
+
+export type ControlRequestResult =
+  | { ok: true; via: "control" | "wake" | "none" }
+  | { ok: false; reason: "not_found" | "finished" | "not_controller" };
+
+interface LockedRun {
+  status: RunStatus;
+  controller: Controller;
+  controlUserId: string | null;
+  /** The requesting member's role in the run's workspace. */
+  role: MemberRole;
+}
+
+async function lockMemberRun(tx: DbTx, runId: string, userId: string): Promise<LockedRun | null> {
+  const [row] = await tx
+    .select({
+      status: runs.status,
+      controller: runs.controller,
+      controlUserId: runs.controlUserId,
+      role: workspaceMembers.role,
+    })
+    .from(runs)
+    .innerJoin(workspaceMembers, memberOf(userId))
+    .where(eq(runs.id, runId))
+    .for("update", { of: runs });
+  return row ?? null;
+}
+
+/**
+ * Spec §10.3 takeover, in one transaction. A run holding (or about to hold) a slot moves to
+ * waiting(takeover) and NOTIFYs run_control; a sleeping or queued run is woken with reason takeover.
+ * Idempotent for the member who already holds control; another member cannot take a held run.
+ */
+export async function requestTakeover(
+  db: Database,
+  input: { runId: string; userId: string },
+): Promise<ControlRequestResult> {
+  return db.transaction(async (tx): Promise<ControlRequestResult> => {
+    const run = await lockMemberRun(tx, input.runId, input.userId);
+    if (!run) return { ok: false, reason: "not_found" };
+    if (TERMINAL.has(run.status)) return { ok: false, reason: "finished" };
+    // B3 E.8 note 3: a double click must not re-NOTIFY, and nobody steals a held takeover.
+    if (run.controller === "user")
+      return run.controlUserId === input.userId
+        ? { ok: true, via: "none" }
+        : { ok: false, reason: "not_controller" };
+    if (run.status === "sleeping" || run.status === "queued") {
+      await tx
+        .update(runs)
+        .set({
+          controller: "user",
+          controlUserId: input.userId,
+          ...(run.status === "sleeping" ? { wakeRequestedAt: sql`now()` } : {}),
+        })
+        .where(eq(runs.id, input.runId));
+      await tx.execute(
+        sql`select pg_notify('run_wake', ${encodeNotify("run_wake", { runId: input.runId, reason: "takeover" })})`,
+      );
+      return { ok: true, via: "wake" };
+    }
+    await tx
+      .update(runs)
+      .set({
+        controller: "user",
+        controlUserId: input.userId,
+        status: "waiting",
+        waitReason: "takeover",
+        lastActivityAt: sql`now()`,
+      })
+      .where(eq(runs.id, input.runId));
+    await notifyRunControl(tx, input.runId);
+    return { ok: true, via: "control" };
+  });
+}
+
+/**
+ * Spec §10.3 hand back: controller='agent' (the shared F4 write), the optional note as a
+ * user_message, and NOTIFY run_control. While a member holds control, only that member or a
+ * workspace owner may hand back (B3 E.8 note 3). A note sent after the agent already took control
+ * back (idle hand-back) is still delivered.
+ */
+export async function requestHandBack(
+  db: Database,
+  input: { runId: string; userId: string; note: string | null },
+): Promise<ControlRequestResult> {
+  return db.transaction(async (tx): Promise<ControlRequestResult> => {
+    const run = await lockMemberRun(tx, input.runId, input.userId);
+    if (!run) return { ok: false, reason: "not_found" };
+    if (TERMINAL.has(run.status)) return { ok: false, reason: "finished" };
+    if (run.controller === "user" && run.controlUserId !== input.userId && run.role !== "owner")
+      return { ok: false, reason: "not_controller" };
+    const changed = run.controller === "user" && (await returnControlToAgent(tx, input.runId));
+    if (input.note) await emitRunEvent(tx, input.runId, { type: "user_message", text: input.note });
+    if (changed || input.note) await notifyRunControl(tx, input.runId);
+    return { ok: true, via: changed ? "control" : "none" };
+  });
+}
+```
+
+`packages/db/src/queries/downloads.ts`:
+
+```ts
+import { and, eq } from "drizzle-orm";
+import type { Database, DbTx } from "../client.ts";
+import { assets, downloads } from "../schema/index.ts";
+
+export async function findAssetBySha(
+  db: Database,
+  workspaceId: string,
+  sha256: string,
+): Promise<{ id: string; key: string } | null> {
+  const [row] = await db
+    .select({ id: assets.id, key: assets.key })
+    .from(assets)
+    .where(and(eq(assets.workspaceId, workspaceId), eq(assets.sha256, sha256)));
+  return row ?? null;
+}
+
+export interface DownloadRecordInput {
+  runId: string;
+  workspaceId: string;
+  filename: string;
+  sha256: string;
+  bucket: string;
+  key: string;
+  mime: string;
+  bytes: number;
+  sourceUrl: string;
+  /** The member who held control when the download began (v1: only the user downloads). */
+  approvedBy: string;
+}
+
+/** assets (deduped per workspace by sha256) + downloads, inside the caller's transaction (spec §10.2.9). */
+export async function recordDownload(
+  tx: DbTx,
+  input: DownloadRecordInput,
+): Promise<{ downloadId: string; assetId: string }> {
+  const [inserted] = await tx
+    .insert(assets)
+    .values({
+      workspaceId: input.workspaceId,
+      sha256: input.sha256,
+      bucket: input.bucket,
+      key: input.key,
+      mime: input.mime,
+      bytes: input.bytes,
+      sourceUrl: input.sourceUrl.slice(0, 4_096),
+    })
+    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
+    .returning({ id: assets.id });
+  const assetId =
+    inserted?.id ??
+    (
+      await tx
+        .select({ id: assets.id })
+        .from(assets)
+        .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)))
+    )[0]?.id;
+  if (!assetId) throw new Error("asset row missing after insert");
+  const [download] = await tx
+    .insert(downloads)
+    .values({
+      runId: input.runId,
+      filename: input.filename,
+      assetId,
+      bytes: input.bytes,
+      approvedBy: input.approvedBy,
+    })
+    .returning({ id: downloads.id });
+  if (!download) throw new Error("downloads insert returned no row");
+  return { downloadId: download.id, assetId };
+}
+```
+
+Append to `packages/db/src/index.ts`:
+```ts
+export * from "./queries/live.ts";
+export * from "./queries/downloads.ts";
+```
+
+- [ ] **Step 5: Run the tests.**
+
+Run: `pnpm test:int packages/db && pnpm typecheck && pnpm lint`
+Expected: PASS, including the Phase 0 db tests and A2's `control.int.test.ts`.
+
+- [ ] **Step 6: Commit.**
+```bash
+pnpm exec prettier --write packages/db
+git add packages/db
+git commit -m "feat(db): live access, takeover/hand-back requests and download records on drizzle (B6)"
+```
+
+---
+
+### Task A5: Slot image — legacy client, cookie auth, X idle probe (rest of base Task 3, as edits)
+
+Changed from base Task 3: **every change is an edit** (S1). The entrypoint gains only `9224` in the agent-only port loop (A1 already changed the user profile). No `turn-ice`, no TURN env (S7). `verify.sh` is appended to, keeping `SYS_PTRACE`, the root environ read and its non-empty guards (G2). n.eko chat is off (S4). S5's legacy side endpoints are checked.
+
+**Files:**
+- Modify: `apps/browser-slot/Dockerfile`, `apps/browser-slot/bin/slot-entrypoint`, `apps/browser-slot/supervisord/chromium.conf`
+- Create: `apps/browser-slot/bin/slot-idle-http`
+- Test: `apps/browser-slot/test/verify.sh` (insert one block)
+
+**Interfaces:**
+- Consumes: A1's image; `SLOT_IDLE_PORT` (A3) as documentation of the port number.
+- Produces: image `mastertutor/browser-slot:local` with: `GET :9224/` → `HTTP/1.0 200` and the X idle milliseconds, agent IP only; `NEKO_LEGACY=true` (legacy `/ws`); cookie auth on (not Secure); implicit hosting off; file-chooser dialog and upload drop on; chat off.
+
+- [ ] **Step 1: Confirm the n.eko setting names before relying on them.** Run:
+
+```bash
+docker run --rm --entrypoint sh ghcr.io/m1k1o/neko/chromium:3.1.6 -c \
+  'neko serve --help 2>&1 | grep -E -- "--(legacy|session\.cookie\.enabled|session\.cookie\.secure|session\.implicit_hosting|desktop\.file_chooser_dialog|desktop\.upload_drop|chat\.enabled)\b"'
+```
+
+Expected: seven lines, one per flag. n.eko maps `a.b_c` to `NEKO_A_B_C`, which gives the env names in Step 4. If any flag is missing, stop and report `BLOCKED` with the output; do not guess another name.
+
+- [ ] **Step 2: Write the failing checks.** In `apps/browser-slot/test/verify.sh`, insert this block **immediately after** the line `pass "raw secrets scrubbed before supervisord"` (where `$neko_environ` is already read):
+
+```bash
+# A5: legacy client, cookie auth, chat off, implicit hosting off (read from the n.eko process itself).
+for setting in NEKO_LEGACY=true NEKO_SESSION_COOKIE_ENABLED=true NEKO_SESSION_COOKIE_SECURE=false \
+  NEKO_SESSION_IMPLICIT_HOSTING=false NEKO_DESKTOP_FILE_CHOOSER_DIALOG=true \
+  NEKO_DESKTOP_UPLOAD_DROP=true NEKO_CHAT_ENABLED=false; do
+  grep -qx "$setting" <<<"$neko_environ" || fail "n.eko runs without $setting"
+done
+pass "n.eko legacy, cookie, hosting, upload and chat settings"
+[[ "$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080/ws")" != "404" ]] \
+  || fail "legacy client endpoint /ws missing (NEKO_LEGACY)"
+from_ip "$PREFIX.11" -o /dev/null -D - -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"user\",\"password\":\"$(hmac "$MEMBER_SECRET")\"}" \
+  "http://$PREFIX.20:8080/api/login" | grep -qi '^set-cookie: NEKO_SESSION=' \
+  || fail "n.eko login does not set the NEKO_SESSION cookie (cookie auth off)"
+pass "legacy /ws endpoint and cookie auth enabled"
+# S5: the legacy side endpoints never answer without credentials.
+for path in /stats /screenshot.jpg /file; do
+  code="$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080$path")"
+  [[ "$code" != "200" ]] || fail "n.eko $path answers 200 without credentials"
+done
+pass "legacy side endpoints need credentials"
+
+# A5: X idle probe on 9224, agent IP only; it grows without input and XTest (n.eko's path) resets it.
+idle_ms() { from_ip "$PREFIX.10" "http://$PREFIX.20:9224/" | tr -d '\r\n'; }
+first="$(idle_ms)"
+[[ "$first" =~ ^[0-9]+$ ]] || fail "idle probe did not return milliseconds ($first)"
+if from_ip "$PREFIX.11" "http://$PREFIX.20:9224/" >/dev/null; then fail "idle probe reachable from a non-agent IP"; fi
+grown=""
+for _ in $(seq 1 20); do
+  now_ms="$(idle_ms)"
+  if [[ "$now_ms" =~ ^[0-9]+$ ]] && (( now_ms >= first + 1500 )); then grown=1; break; fi
+  sleep 0.5
+done
+[[ -n "$grown" ]] || fail "X idle time does not grow without input"
+docker exec -u neko "$SLOT" sh -c 'DISPLAY=:99.0 xdotool mousemove 37 41 && DISPLAY=:99.0 xdotool mousemove 51 63'
+reset=""
+for _ in $(seq 1 10); do
+  now_ms="$(idle_ms)"
+  if [[ "$now_ms" =~ ^[0-9]+$ ]] && (( now_ms < 1000 )); then reset=1; break; fi
+  sleep 0.3
+done
+[[ -n "$reset" ]] || fail "XTest input did not reset the X idle time"
+pass "idle probe measures XTest input and is agent-only"
+```
+
+- [ ] **Step 3: Run it and watch it fail.**
+
+Run: `bash apps/browser-slot/test/verify.sh`
+Expected: `VERIFY FAIL: n.eko runs without NEKO_LEGACY=true`.
+
+- [ ] **Step 4: Implement (edits only).**
+
+`apps/browser-slot/bin/slot-idle-http` (new): **copy verbatim from base plan Task 3, Step 3** (the `slot-idle-http` script).
+
+`apps/browser-slot/supervisord/chromium.conf`: **append verbatim from base plan Task 3, Step 3** (the `[program:idle-probe]` block).
+
+`apps/browser-slot/bin/slot-entrypoint`: replace exactly these lines:
+
+```bash
+# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223)
+# and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
+```
+```bash
+for port in 9223 4713; do
+```
+
+with:
+
+```bash
+# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223),
+# the X idle probe (9224) and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
+```
+```bash
+for port in 9223 9224 4713; do
+```
+
+Nothing else in the entrypoint changes.
+
+`apps/browser-slot/Dockerfile`, three edits:
+1. In the `apt-get install` line, change `socat iptables;` to `socat iptables xprintidle;`.
+2. Replace the `COPY --chmod=0755 …` line with:
+```dockerfile
+COPY --chmod=0755 bin/slot-entrypoint bin/exit-on-chromium bin/slot-health bin/slot-idle-http /usr/local/bin/
+```
+3. Replace the `ENV …` block with:
+```dockerfile
+# NEKO_LEGACY: the bundled client speaks the legacy /ws protocol.
+# Cookie auth: web relays NEKO_SESSION scoped to /live/<runId>/; the legacy /ws handler
+# authenticates with that cookie (whoami) before any password. n.eko's own Set-Cookie never
+# reaches browsers (web re-issues the token), so it need not be Secure.
+# Implicit hosting off and the user member unhosted (entrypoint): only the agent grants control.
+# Chat off: the n.eko page is served same-origin, so it must render no attacker-controlled text (S4).
+ENV NEKO_DESKTOP_SCREEN=1280x800@30 \
+    NEKO_LOG_LEVEL=warn \
+    NEKO_FILETRANSFER_ENABLED=false \
+    NEKO_LEGACY=true \
+    NEKO_SESSION_COOKIE_ENABLED=true \
+    NEKO_SESSION_COOKIE_SECURE=false \
+    NEKO_SESSION_IMPLICIT_HOSTING=false \
+    NEKO_DESKTOP_FILE_CHOOSER_DIALOG=true \
+    NEKO_DESKTOP_UPLOAD_DROP=true \
+    NEKO_CHAT_ENABLED=false
+```
+
+- [ ] **Step 5: Run it and watch it pass.**
+
+Run:
+```bash
+bash apps/browser-slot/test/verify.sh
+docker build -q -t mastertutor/browser-slot:local apps/browser-slot
+docker builder prune -f && docker image prune -f
+```
+Expected: every line `ok - …` (the Phase 0, B1 and A1 checks included), ending `browser-slot verify: all checks passed`. If "X idle time does not grow", Chromium is resetting the X screensaver timer: inspect with `docker exec … xprintidle` before changing code; never remove the check.
+
+- [ ] **Step 6: Commit.**
+```bash
+git add apps/browser-slot
+git commit -m "feat(browser-slot): legacy n.eko client with cookie auth, chat off, agent-only X idle probe"
+```
+
+---
+### Task A6: n.eko admin client, `NekoLiveView`, idle-probe client (base Task 4, changed)
+
+Changed from base Task 4: `giveControl` grants `can_host` only after the user's n.eko session is **connected** (a session that merely exists after `openLive`'s login is not a live view), which is what makes Review Focus 1 hold. Real-slot tests run on the B1 behaviour stack (F9, F12); `tests/support/slot.ts` is not written; timing uses `waitFor` (W5).
+
+**Files:**
+- Create: `apps/agent/src/live/live-view.ts`, `apps/agent/src/live/neko-admin.ts`, `apps/agent/src/live/neko-live-view.ts`, `apps/agent/src/live/idle-probe.ts`, `tests/behaviour/slot-tools.ts`
+- Modify: `tests/behaviour/compose.yml`, `tests/behaviour/constants.ts`
+- Test: `apps/agent/src/live/neko-admin.test.ts`, `apps/agent/src/live/neko-live-view.test.ts`, `apps/agent/src/live/neko-live-view.behaviour.test.ts`
+
+**Interfaces:**
+- Consumes: `loginNeko`, `deriveNekoPassword`, `NEKO_MEMBERS`, `NEKO_PORT`, `SLOT_IDLE_PORT`, `TAKEOVER_GIVE_WAIT_MS` (A3); the image from A1/A5.
+- Produces:
+  - `live-view.ts`: `interface Slot { readonly name: string }`; `interface LiveView { giveControl(slot: Slot, userId: string): Promise<void>; takeControl(slot: Slot): Promise<void>; setClipboardAccess(slot: Slot, on: boolean): Promise<void> }` (spec §10.1).
+  - `neko-admin.ts`: `NekoApiError` (`status`, `path`); `NekoAdmin { request(slotName, method: "GET" | "POST" | "DELETE", path, body?): Promise<unknown>; forget(slotName): void }`; `createNekoAdmin({adminSecret, baseUrl?, fetch?, timeoutMs?})`.
+  - `neko-live-view.ts`: `LiveViewError` (`code: "user_not_connected"`); `createNekoLiveView({admin, giveTimeoutMs?, retryDelayMs?}): LiveView`.
+  - `idle-probe.ts`: `SlotIdleProbe { userIdleMs(slotName): Promise<number> }`; `createSlotIdleProbe({url?, fetch?, timeoutMs?})`.
+  - `tests/behaviour/constants.ts`: `SLOT_NEKO`, `SLOT_IDLE`, `BEHAVIOUR_NEKO_ADMIN_SECRET`, `BEHAVIOUR_NEKO_MEMBER_SECRET`, `nekoBaseUrlForTests(name)`, `idleUrlForTests(name)`.
+  - `tests/behaviour/slot-tools.ts`: `xdotool(slotName, ...args): Promise<string>`; `restartSlot(slotName): Promise<void>` (fresh boot profile, waits for CDP and n.eko).
+
+- [ ] **Step 1: Publish n.eko and the idle probe on the behaviour stack (test only).**
+
+In `tests/behaviour/compose.yml`:
+- in `x-slot-env`, replace `NEKO_ALLOWED_IPS: 127.0.0.1` with `NEKO_ALLOWED_IPS: 0.0.0.0/0`, and extend the file's header comment with: `n.eko (8080) and the idle probe (9224) are published on 127.0.0.1 too, for the B6 live-view tests (F9); the same allow-all rule as CDP applies (F12).`;
+- `browser-1`: `ports: ["127.0.0.1:19223:9223", "127.0.0.1:18091:8080", "127.0.0.1:18191:9224"]`;
+- `browser-2`: `ports: ["127.0.0.1:19224:9223", "127.0.0.1:18092:8080", "127.0.0.1:18192:9224"]`.
+
+Append to `tests/behaviour/constants.ts`:
+
+```ts
+/** n.eko and the X idle probe of each behaviour slot, published on loopback (compose.yml). */
+export const SLOT_NEKO: Record<string, string> = {
+  "browser-1": "http://127.0.0.1:18091",
+  "browser-2": "http://127.0.0.1:18092",
+};
+export const SLOT_IDLE: Record<string, string> = {
+  "browser-1": "http://127.0.0.1:18191/",
+  "browser-2": "http://127.0.0.1:18192/",
+};
+/** The test-only n.eko secrets in compose.yml's x-slot-env (dummy values, never production). */
+export const BEHAVIOUR_NEKO_ADMIN_SECRET = "behaviour-admin-secret-0123456789abcdef";
+export const BEHAVIOUR_NEKO_MEMBER_SECRET = "behaviour-member-secret-0123456789abcde";
+
+export function nekoBaseUrlForTests(name: string): string {
+  const url = SLOT_NEKO[name];
+  if (!url) throw new Error(`unknown behaviour slot ${name}`);
+  return url;
+}
+
+export function idleUrlForTests(name: string): string {
+  const url = SLOT_IDLE[name];
+  if (!url) throw new Error(`unknown behaviour slot ${name}`);
+  return url;
+}
+```
+
+`tests/behaviour/slot-tools.ts`:
+
+```ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { waitFor } from "../../apps/agent/src/testing/wait.ts";
+import { COMPOSE_FILE, SLOT_CDP, nekoBaseUrlForTests } from "./constants.ts";
+
+const run = promisify(execFile);
+const compose = async (...args: string[]) =>
+  (await run("docker", ["compose", "-f", COMPOSE_FILE, ...args], { maxBuffer: 10 * 1024 * 1024 }))
+    .stdout;
+
+/** XTest input on the slot's X display: the same path n.eko uses for the user's input. */
+export function xdotool(slotName: string, ...args: string[]): Promise<string> {
+  return compose("exec", "-T", "-u", "neko", "-e", "DISPLAY=:99.0", slotName, "xdotool", ...args);
+}
+
+const answers = (url: string) =>
+  fetch(url, { signal: AbortSignal.timeout(2_000) }).then(
+    (response) => response.ok,
+    () => false,
+  );
+
+/** Restarts a slot so it runs the boot profile again, then waits for CDP and n.eko. */
+export async function restartSlot(slotName: string): Promise<void> {
+  await compose("restart", slotName);
+  await waitFor(
+    async () =>
+      (await answers(`${SLOT_CDP[slotName]}/json/version`)) &&
+      (await answers(`${nekoBaseUrlForTests(slotName)}/health`)),
+    { label: `${slotName} back after restart`, timeoutMs: 90_000, intervalMs: 500 },
+  );
+}
+```
+
+- [ ] **Step 2: Confirm n.eko's session list shape before relying on it.** Run:
+
+```bash
+docker build -q -t mastertutor/browser-slot:local apps/browser-slot
+docker compose -f tests/behaviour/compose.yml up -d --wait browser-1
+jar="$(mktemp)"
+pw="$(printf '%s' browser-1 | openssl dgst -sha256 -hmac behaviour-admin-secret-0123456789abcdef -r | cut -d' ' -f1)"
+curl -s -c "$jar" -H 'content-type: application/json' \
+  -d "{\"username\":\"agent\",\"password\":\"$pw\"}" http://127.0.0.1:18091/api/login >/dev/null
+curl -s -b "$jar" http://127.0.0.1:18091/api/sessions; echo
+rm -f "$jar"
+```
+
+Expected: a JSON array whose `agent` entry has `"state":{… "is_connected":false …}`. `NekoLiveView` reads exactly `id` and `state.is_connected`. If the array or those fields are absent, stop and report `BLOCKED` with the output. Leave the stack up; `pnpm test:behaviour` reuses it with `KEEP_BEHAVIOUR_STACK=1`, otherwise it is recreated.
+
+- [ ] **Step 3: Write the failing tests.**
+
+`apps/agent/src/live/neko-admin.test.ts`: **copy verbatim from base plan Task 4, Step 2.**
+
+`apps/agent/src/live/neko-live-view.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { NekoApiError, type NekoAdmin } from "./neko-admin.ts";
+import { LiveViewError, createNekoLiveView } from "./neko-live-view.ts";
+
+function fakeAdmin(script: { connectedAfterPolls: number; giveFails404?: boolean }) {
+  const calls: string[] = [];
+  let polls = 0;
+  const admin: NekoAdmin = {
+    async request(_slot, method, path, body) {
+      calls.push(`${method} ${path}${body ? ` ${JSON.stringify(body)}` : ""}`);
+      if (path === "/api/sessions") {
+        polls += 1;
+        const connected = polls > script.connectedAfterPolls;
+        return [
+          { id: "agent", state: { is_connected: false } },
+          { id: "user", state: { is_connected: connected } },
+        ];
+      }
+      if (path === "/api/room/control/give/user" && script.giveFails404)
+        throw new NekoApiError(404, path);
+      return null;
+    },
+    forget() {},
+  };
+  return { admin, calls };
+}
+
+const slot = { name: "browser-2" };
+
+describe("NekoLiveView", () => {
+  it("waits for the user's live view to connect, then grants hosting and gives control", async () => {
+    const { admin, calls } = fakeAdmin({ connectedAfterPolls: 2 });
+    await createNekoLiveView({ admin, retryDelayMs: 1 }).giveControl(slot, "user_1");
+    expect(calls).toEqual([
+      "GET /api/sessions",
+      "GET /api/sessions",
+      "GET /api/sessions",
+      'POST /api/members/user {"can_host":true}',
+      "POST /api/room/control/give/user",
+    ]);
+  });
+
+  it("never grants hosting when the live view does not connect in time", async () => {
+    const { admin, calls } = fakeAdmin({ connectedAfterPolls: 1_000 });
+    const view = createNekoLiveView({ admin, giveTimeoutMs: 30, retryDelayMs: 5 });
+    const error = await view.giveControl(slot, "user_1").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LiveViewError);
+    expect((error as LiveViewError).code).toBe("user_not_connected");
+    expect(calls.some((c) => c.startsWith("POST /api/members/user"))).toBe(false);
+  });
+
+  it("revokes hosting again if the session vanished between the check and the give", async () => {
+    const { admin, calls } = fakeAdmin({ connectedAfterPolls: 0, giveFails404: true });
+    await expect(createNekoLiveView({ admin }).giveControl(slot, "user_1")).rejects.toBeInstanceOf(
+      LiveViewError,
+    );
+    expect(calls.at(-1)).toBe('POST /api/members/user {"can_host":false}');
+  });
+
+  it("takes control as the agent before revoking the user's hosting right", async () => {
+    const { admin, calls } = fakeAdmin({ connectedAfterPolls: 0 });
+    const view = createNekoLiveView({ admin });
+    await view.takeControl(slot);
+    await view.setClipboardAccess(slot, true);
+    expect(calls).toEqual([
+      "POST /api/room/control/take",
+      'POST /api/members/user {"can_host":false}',
+      'POST /api/members/user {"can_access_clipboard":true}',
+    ]);
+  });
+});
+```
+
+`apps/agent/src/live/neko-live-view.behaviour.test.ts`:
+
+```ts
+import { deriveNekoPassword, loginNeko } from "@mastertutor/contracts/server";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  BEHAVIOUR_NEKO_ADMIN_SECRET,
+  BEHAVIOUR_NEKO_MEMBER_SECRET,
+  idleUrlForTests,
+  nekoBaseUrlForTests,
+} from "../../../../tests/behaviour/constants.ts";
+import { restartSlot, xdotool } from "../../../../tests/behaviour/slot-tools.ts";
+import { waitFor } from "../testing/wait.ts";
+import { createSlotIdleProbe } from "./idle-probe.ts";
+import { createNekoAdmin, type NekoAdmin } from "./neko-admin.ts";
+import { LiveViewError, createNekoLiveView } from "./neko-live-view.ts";
+
+const SLOT = "browser-1";
+const slot = { name: SLOT };
+const base = nekoBaseUrlForTests(SLOT);
+let admin: NekoAdmin;
+const sockets: WebSocket[] = [];
+
+beforeAll(async () => {
+  // A fresh boot profile, whatever earlier behaviour files did to this slot's n.eko.
+  await restartSlot(SLOT);
+  admin = createNekoAdmin({ adminSecret: BEHAVIOUR_NEKO_ADMIN_SECRET, baseUrl: () => base });
+});
+afterAll(() => {
+  for (const socket of sockets) socket.close();
+});
+
+const userToken = () =>
+  loginNeko({
+    baseUrl: base,
+    username: "user",
+    password: deriveNekoPassword(BEHAVIOUR_NEKO_MEMBER_SECRET, SLOT),
+  });
+const asUser = (token: string, method: "GET" | "POST", path: string) =>
+  fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${token}` } }).then(
+    (response) => response.status,
+  );
+async function connectUser(token: string): Promise<WebSocket> {
+  const socket = new WebSocket(`${base.replace("http", "ws")}/api/ws?token=${token}`);
+  sockets.push(socket);
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener("open", () => resolve());
+    socket.addEventListener("error", () => reject(new Error("n.eko websocket failed")));
+  });
+  return socket;
+}
+
+describe("NekoLiveView against a real slot (spec §10.1)", () => {
+  it("the user member cannot host at boot (A1)", async () => {
+    const token = await userToken();
+    expect(await asUser(token, "GET", "/api/whoami")).toBe(200);
+    expect(await asUser(token, "POST", "/api/room/control/request")).toBe(403);
+  });
+
+  it("refuses to give control while the user's live view is not connected", async () => {
+    await userToken(); // the session exists, as after openLive, but no websocket is open
+    const view = createNekoLiveView({ admin, giveTimeoutMs: 500 });
+    const started = Date.now();
+    await expect(view.giveControl(slot, "user_1")).rejects.toBeInstanceOf(LiveViewError);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(await admin.request(SLOT, "GET", "/api/members/user")).toMatchObject({
+      can_host: false,
+    });
+  });
+
+  it("moves the n.eko host and the user's rights both ways once connected", async () => {
+    const token = await userToken();
+    const socket = await connectUser(token);
+    const view = createNekoLiveView({ admin });
+    await view.takeControl(slot);
+    expect(await admin.request(SLOT, "GET", "/api/room/control")).toMatchObject({
+      host_id: "agent",
+    });
+
+    await view.giveControl(slot, "user_1");
+    await view.setClipboardAccess(slot, true);
+    expect(await admin.request(SLOT, "GET", "/api/room/control")).toMatchObject({
+      host_id: "user",
+    });
+    expect(await admin.request(SLOT, "GET", "/api/members/user")).toMatchObject({
+      can_host: true,
+      can_access_clipboard: true,
+    });
+    expect(await asUser(token, "GET", "/api/room/clipboard")).toBe(200);
+
+    await view.takeControl(slot);
+    await view.setClipboardAccess(slot, false);
+    expect(await admin.request(SLOT, "GET", "/api/room/control")).toMatchObject({
+      host_id: "agent",
+    });
+    expect(await admin.request(SLOT, "GET", "/api/members/user")).toMatchObject({
+      can_host: false,
+      can_access_clipboard: false,
+    });
+    expect(await asUser(token, "POST", "/api/room/control/request")).toBe(403);
+    socket.close();
+  });
+
+  it("reads the X idle time, which XTest input resets", async () => {
+    const probe = createSlotIdleProbe({ url: () => idleUrlForTests(SLOT) });
+    await waitFor(async () => (await probe.userIdleMs(SLOT)) >= 1_000, {
+      label: "X idle grows without input",
+      timeoutMs: 10_000,
+      intervalMs: 200,
+    });
+    await xdotool(SLOT, "mousemove", "211", "157");
+    await waitFor(async () => (await probe.userIdleMs(SLOT)) < 800, {
+      label: "XTest input resets X idle",
+      timeoutMs: 5_000,
+      intervalMs: 100,
+    });
+  });
+});
+```
+
+- [ ] **Step 4: Run them and watch them fail.**
+
+Run: `pnpm test apps/agent/src/live && pnpm test:behaviour apps/agent/src/live/neko-live-view.behaviour.test.ts`
+Expected: FAIL: the `live/` modules do not exist.
+
+- [ ] **Step 5: Implement.**
+
+`apps/agent/src/live/live-view.ts`, `apps/agent/src/live/neko-admin.ts` and `apps/agent/src/live/idle-probe.ts`: **copy verbatim from base plan Task 4, Step 4.**
+
+`apps/agent/src/live/neko-live-view.ts`:
+
+```ts
+import { NEKO_MEMBERS, TAKEOVER_GIVE_WAIT_MS } from "@mastertutor/contracts";
+import type { LiveView, Slot } from "./live-view.ts";
+import { NekoApiError, type NekoAdmin } from "./neko-admin.ts";
+
+export class LiveViewError extends Error {
+  readonly code: "user_not_connected";
+  constructor(code: "user_not_connected") {
+    super("The user's live view is not connected");
+    this.name = "LiveViewError";
+    this.code = code;
+  }
+}
+
+export interface NekoLiveViewOptions {
+  admin: NekoAdmin;
+  /** How long giveControl waits for the user's n.eko websocket to be connected. */
+  giveTimeoutMs?: number;
+  retryDelayMs?: number;
+}
+
+interface NekoSession {
+  id?: unknown;
+  state?: { is_connected?: unknown };
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The only LiveView (spec §10.1), over n.eko's admin REST API. The user member boots unhosted
+ * (A1); giveControl grants can_host only once the user's live view is actually connected, so a
+ * takeover with no live view fails instead of handing the browser to nobody.
+ */
+export function createNekoLiveView(options: NekoLiveViewOptions): LiveView {
+  const { admin } = options;
+  const user = NEKO_MEMBERS.user;
+  const profile = (slot: Slot, patch: Record<string, boolean>) =>
+    admin.request(slot.name, "POST", `/api/members/${user}`, patch);
+
+  async function userConnected(slot: Slot): Promise<boolean> {
+    const sessions = await admin.request(slot.name, "GET", "/api/sessions");
+    return (
+      Array.isArray(sessions) &&
+      (sessions as NekoSession[]).some(
+        (session) => session.id === user && session.state?.is_connected === true,
+      )
+    );
+  }
+
+  return {
+    async giveControl(slot, _userId) {
+      const deadline = Date.now() + (options.giveTimeoutMs ?? TAKEOVER_GIVE_WAIT_MS);
+      while (!(await userConnected(slot))) {
+        if (Date.now() >= deadline) throw new LiveViewError("user_not_connected");
+        await sleep(options.retryDelayMs ?? 100);
+      }
+      await profile(slot, { can_host: true });
+      try {
+        await admin.request(slot.name, "POST", `/api/room/control/give/${user}`);
+      } catch (error) {
+        await profile(slot, { can_host: false }).catch(() => undefined);
+        if (error instanceof NekoApiError && error.status === 404)
+          throw new LiveViewError("user_not_connected");
+        throw error;
+      }
+    },
+    async takeControl(slot) {
+      await admin.request(slot.name, "POST", "/api/room/control/take");
+      await profile(slot, { can_host: false });
+    },
+    async setClipboardAccess(slot, on) {
+      await profile(slot, { can_access_clipboard: on });
+    },
+  };
+}
+```
+
+- [ ] **Step 6: Run the tests.**
+
+Run:
+```bash
+pnpm test apps/agent/src/live
+pnpm test:behaviour apps/agent/src/live/neko-live-view.behaviour.test.ts
+pnpm typecheck && pnpm lint
+```
+Expected: PASS.
+
+- [ ] **Step 7: Commit.**
+```bash
+pnpm exec prettier --write apps/agent/src/live tests/behaviour
+git add apps/agent/src/live tests/behaviour
+git commit -m "feat(agent): NekoLiveView gives control only to a connected live view; slot idle probe client"
+```
+
+---
+
+### Task A7: `openLive` — server-side n.eko login and the signed `live_slot` (base Task 5, changed)
+
+Changed from base Task 5: no TURN (`iceServers: []`); drizzle `Database` instead of `sql`; the real-slot test moves to the behaviour stack (F9). `cookie.ts` and its unit test are unchanged.
+
+**Files:**
+- Create: `apps/web/lib/server/live/cookie.ts`, `apps/web/lib/server/live/open-live.ts`, `apps/web/lib/server/live/deps.ts`
+- Test: `apps/web/lib/server/live/cookie.test.ts`, `tests/behaviour/live-open.behaviour.test.ts`
+
+**Interfaces:**
+- Consumes: `getRunForMember` (A4), `loginNeko`, `NekoLoginError`, `deriveNekoPassword`, `OpenLiveResult`, `liveEmbedPath`, `livePath`, cookie constants (A3); behaviour constants (A6); `seedMember`, `seedRun`, `leaseSlotForTest`, `releaseSlotForTest` (A4).
+- Produces:
+  - `cookie.ts` (unchanged from base Task 5): `LiveSlotClaim`, `signLiveSlot(secret, claim)`, `verifyLiveSlot(secret, value, expected): string | null`, `parseCookies(header): Map<string, string[]>`, `liveSetCookies(runId, cookies, maxAgeSeconds): string[]`.
+  - `open-live.ts`: `LiveDeps {db: Database; nekoMemberSecret: string; liveCookieSecret: string; nekoBaseUrl?(slotName): string; fetch?: typeof fetch; nowSeconds?(): number}`; `LiveAccessError` (`code: "not_found" | "in_use" | "unavailable"`); `OpenLiveOutcome {result: OpenLiveResult; setCookies: string[]}`; `openLive(deps, {runId, userId}): Promise<OpenLiveOutcome>`.
+  - `deps.ts`: `getLiveDeps(): LiveDeps` (memoized; reads `getWebEnv()` and `getDb()` on first call only).
+
+- [ ] **Step 1: Write the failing tests.**
+
+`apps/web/lib/server/live/cookie.test.ts`: **copy verbatim from base plan Task 5, Step 1.**
+
+`tests/behaviour/live-open.behaviour.test.ts`:
+
+```ts
+import { LIVE_SLOT_COOKIE, NEKO_SESSION_COOKIE, liveEmbedPath } from "@mastertutor/contracts";
+import { createDb, type DbHandle } from "@mastertutor/db";
+import {
+  leaseSlotForTest,
+  releaseSlotForTest,
+  seedMember,
+  seedRun,
+} from "@mastertutor/db/testing";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { waitFor } from "../../apps/agent/src/testing/wait.ts";
+import { parseCookies, verifyLiveSlot } from "../../apps/web/lib/server/live/cookie.ts";
+import {
+  LiveAccessError,
+  openLive,
+  type LiveDeps,
+} from "../../apps/web/lib/server/live/open-live.ts";
+import { BEHAVIOUR_NEKO_MEMBER_SECRET, nekoBaseUrlForTests } from "./constants.ts";
+import { behaviourEnv } from "./env.ts";
+
+const SLOT = "browser-2";
+const now = 1_700_000_000;
+let owner: DbHandle;
+let web: DbHandle;
+let deps: LiveDeps;
+let member: { userId: string; workspaceId: string };
+let outsider: { userId: string; workspaceId: string };
+const sockets: WebSocket[] = [];
+
+beforeAll(async () => {
+  const env = behaviourEnv();
+  owner = createDb(env.ownerUrl, { max: 2 });
+  web = createDb(env.webUrl, { max: 2 });
+  member = await seedMember(owner.db);
+  outsider = await seedMember(owner.db);
+  deps = {
+    db: web.db,
+    nekoMemberSecret: BEHAVIOUR_NEKO_MEMBER_SECRET,
+    liveCookieSecret: "live-cookie-secret-for-tests-0123456789",
+    nekoBaseUrl: () => nekoBaseUrlForTests(SLOT),
+    nowSeconds: () => now,
+  };
+});
+afterEach(async () => {
+  for (const socket of sockets.splice(0)) socket.close();
+  await releaseSlotForTest(owner.db, SLOT);
+});
+afterAll(async () => {
+  await Promise.all([owner?.close(), web?.close()]);
+});
+
+const cookieValue = (setCookies: string[], name: string) =>
+  parseCookies(setCookies.map((c) => c.split(";")[0]!).join("; ")).get(name)![0]!;
+
+describe("openLive against a real slot (spec §10.2.1)", () => {
+  it("says sleeping when the run holds no slot", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId, status: "sleeping" });
+    expect(await openLive(deps, { runId, userId: member.userId })).toEqual({
+      result: { sleeping: true },
+      setCookies: [],
+    });
+  });
+
+  it("logs into n.eko server-side and returns run-scoped cookies, no ICE servers in v1", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, SLOT, runId);
+    const { result, setCookies } = await openLive(deps, { runId, userId: member.userId });
+    expect(result).toEqual({
+      sleeping: false,
+      slotName: SLOT,
+      embedPath: liveEmbedPath(runId),
+      iceServers: [],
+    });
+    expect(setCookies).toHaveLength(2);
+    for (const cookie of setCookies) {
+      expect(cookie).toContain(
+        `; Path=/live/${runId}/; Max-Age=43200; HttpOnly; Secure; SameSite=Strict`,
+      );
+    }
+    const slotValue = cookieValue(setCookies, LIVE_SLOT_COOKIE);
+    expect(
+      verifyLiveSlot(deps.liveCookieSecret, slotValue, {
+        runId,
+        userId: member.userId,
+        nowSeconds: now,
+      }),
+    ).toBe(SLOT);
+    const whoami = await fetch(`${nekoBaseUrlForTests(SLOT)}/api/whoami`, {
+      headers: { cookie: `${NEKO_SESSION_COOKIE}=${cookieValue(setCookies, NEKO_SESSION_COOKIE)}` },
+    });
+    expect(whoami.status).toBe(200);
+    expect(await whoami.json()).toMatchObject({ id: "user" });
+    expect(JSON.stringify(setCookies)).not.toContain(BEHAVIOUR_NEKO_MEMBER_SECRET);
+  });
+
+  it("hides other workspaces' runs", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await expect(openLive(deps, { runId, userId: outsider.userId })).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
+
+  it("reports in_use while another tab is connected, then recovers when it closes (base Review Focus 2)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, SLOT, runId);
+    const first = await openLive(deps, { runId, userId: member.userId });
+    const token = cookieValue(first.setCookies, NEKO_SESSION_COOKIE);
+    const socket = new WebSocket(
+      `${nekoBaseUrlForTests(SLOT).replace("http", "ws")}/api/ws?token=${token}`,
+    );
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve());
+      socket.addEventListener("error", () => reject(new Error("ws failed")));
+    });
+    const error = await openLive(deps, { runId, userId: member.userId }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LiveAccessError);
+    expect((error as LiveAccessError).code).toBe("in_use");
+    socket.close();
+    await waitFor(
+      () =>
+        openLive(deps, { runId, userId: member.userId }).then(
+          (r) => !r.result.sleeping,
+          () => false,
+        ),
+      { label: "openLive after the other tab closed", timeoutMs: 15_000, intervalMs: 500 },
+    );
+  });
+
+  it("reports unavailable when the slot does not answer", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, SLOT, runId);
+    await expect(
+      openLive(
+        { ...deps, nekoBaseUrl: () => "http://127.0.0.1:9" },
+        { runId, userId: member.userId },
+      ),
+    ).rejects.toMatchObject({ code: "unavailable" });
+  });
+});
+```
+
+- [ ] **Step 2: Run them and watch them fail.**
+
+Run: `pnpm test apps/web/lib/server/live && pnpm test:behaviour tests/behaviour/live-open.behaviour.test.ts`
+Expected: FAIL: `./cookie.ts` and `./open-live.ts` are missing.
+
+- [ ] **Step 3: Implement.**
+
+`apps/web/lib/server/live/cookie.ts`: **copy verbatim from base plan Task 5, Step 3.**
+
+`apps/web/lib/server/live/open-live.ts`:
+
+```ts
+import {
+  LIVE_COOKIE_TTL_SECONDS,
+  LIVE_SLOT_COOKIE,
+  NEKO_MEMBERS,
+  NEKO_PORT,
+  NEKO_SESSION_COOKIE,
+  OpenLiveResult,
+  liveEmbedPath,
+} from "@mastertutor/contracts";
+import { NekoLoginError, deriveNekoPassword, loginNeko } from "@mastertutor/contracts/server";
+import { getRunForMember, type Database } from "@mastertutor/db";
+import { liveSetCookies, signLiveSlot } from "./cookie.ts";
+
+export interface LiveDeps {
+  db: Database;
+  nekoMemberSecret: string;
+  liveCookieSecret: string;
+  nekoBaseUrl?: (slotName: string) => string;
+  fetch?: typeof fetch;
+  nowSeconds?: () => number;
+}
+
+export class LiveAccessError extends Error {
+  readonly code: "not_found" | "in_use" | "unavailable";
+  constructor(code: "not_found" | "in_use" | "unavailable") {
+    super(`live view ${code}`);
+    this.name = "LiveAccessError";
+    this.code = code;
+  }
+}
+
+export interface OpenLiveOutcome {
+  result: OpenLiveResult;
+  setCookies: string[];
+}
+
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+const defaultNekoBaseUrl = (slot: string) => `http://${slot}:${NEKO_PORT}`;
+
+/**
+ * Spec §10.2.1. The caller has already authenticated the user. n.eko credentials never leave
+ * the server; the browser gets the session token and the signed slot cookie, both scoped to
+ * /live/<runId>/. v1 has no TURN (D42), so iceServers is empty.
+ */
+export async function openLive(
+  deps: LiveDeps,
+  input: { runId: string; userId: string },
+): Promise<OpenLiveOutcome> {
+  const run = await getRunForMember(deps.db, input.runId, input.userId);
+  if (!run) throw new LiveAccessError("not_found");
+  if (!run.slotLeased || run.slotName === null)
+    return { result: { sleeping: true }, setCookies: [] };
+  const slotName = run.slotName;
+
+  let token: string;
+  try {
+    token = await loginNeko({
+      baseUrl: (deps.nekoBaseUrl ?? defaultNekoBaseUrl)(slotName),
+      username: NEKO_MEMBERS.user,
+      password: deriveNekoPassword(deps.nekoMemberSecret, slotName),
+      fetch: deps.fetch,
+    });
+  } catch (error) {
+    if (error instanceof NekoLoginError && error.status === 422) throw new LiveAccessError("in_use");
+    throw new LiveAccessError("unavailable");
+  }
+
+  const liveSlot = signLiveSlot(deps.liveCookieSecret, {
+    slotName,
+    runId: run.id,
+    userId: input.userId,
+    expiresAt: (deps.nowSeconds ?? nowSeconds)() + LIVE_COOKIE_TTL_SECONDS,
+  });
+  const setCookies = liveSetCookies(
+    run.id,
+    [
+      { name: NEKO_SESSION_COOKIE, value: token },
+      { name: LIVE_SLOT_COOKIE, value: liveSlot },
+    ],
+    LIVE_COOKIE_TTL_SECONDS,
+  );
+  const result = OpenLiveResult.parse({
+    sleeping: false,
+    slotName,
+    embedPath: liveEmbedPath(run.id),
+    iceServers: [],
+  });
+  return { result, setCookies };
+}
+```
+
+`apps/web/lib/server/live/deps.ts`:
+
+```ts
+import { getDb } from "../db.ts";
+import { getWebEnv } from "../env.ts";
+import type { LiveDeps } from "./open-live.ts";
+
+let liveDeps: LiveDeps | undefined;
+
+/** Built on first use, so importing the live router never reads env or opens the database. */
+export function getLiveDeps(): LiveDeps {
+  if (!liveDeps) {
+    const env = getWebEnv();
+    liveDeps = {
+      db: getDb().db,
+      nekoMemberSecret: env.NEKO_MEMBER_SECRET,
+      liveCookieSecret: env.LIVE_COOKIE_SECRET,
+    };
+  }
+  return liveDeps;
+}
+```
+
+- [ ] **Step 4: Run the tests.**
+
+Run:
+```bash
+pnpm test apps/web/lib/server/live
+pnpm test:behaviour tests/behaviour/live-open.behaviour.test.ts
+pnpm typecheck && pnpm lint
+```
+Expected: PASS.
+
+- [ ] **Step 5: Commit.**
+```bash
+pnpm exec prettier --write apps/web/lib/server/live tests/behaviour
+git add apps/web/lib/server/live tests/behaviour/live-open.behaviour.test.ts
+git commit -m "feat(web): openLive with server-side n.eko login and a signed live_slot cookie"
+```
+
+---
+
+### Task A8: `/api/live/auth` ForwardAuth (base Task 6, changed)
+
+Changed from base Task 6: **no `NEKO_SESSION`, no entry** (S3): exactly one well-formed `NEKO_SESSION` is required, so every 200 replaces the browser's `Cookie` header and the Better Auth cookie never reaches n.eko; the base test that locked in the leak is flipped (W4). The session comes from the FE's `getViewer()` (E3), and fixture builds always answer 403.
+
+**Files:**
+- Create: `apps/web/lib/server/live/authorize.ts`, `apps/web/app/api/live/auth/route.ts`
+- Replace: `apps/web/lib/server/live/deps.ts`
+- Test: `apps/web/lib/server/live/authorize.test.ts`
+
+**Interfaces:**
+- Consumes: `parseCookies`, `verifyLiveSlot` (A7), `runIdFromLivePath`, `LIVE_SLOT_COOKIE`, `NEKO_SESSION_COOKIE` (A3), `canAccessLiveSlot` (A4), `getViewer`, `getWebEnv`, `getDb`.
+- Produces:
+  - `AuthorizeDeps {liveCookieSecret: string; canAccess(q: {runId; slotName; userId}): Promise<boolean>; nowSeconds?(): number}`;
+  - `AuthorizeInput {forwardedUri: string | null; cookieHeader: string | null; userId: string | null}`;
+  - `AuthorizeDecision = {allow: true; upstreamCookie: string} | {allow: false; status: 401 | 403}` (on allow, `upstreamCookie` is always `NEKO_SESSION=<token>`);
+  - `authorizeLive(deps, input): Promise<AuthorizeDecision>`;
+  - `getAuthorizeDeps(): AuthorizeDeps`;
+  - route `GET /api/live/auth`: 200 with `Cookie: NEKO_SESSION=…` and `Cache-Control: no-store`, or 401/403.
+
+- [ ] **Step 1: Write the failing test.** `apps/web/lib/server/live/authorize.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { authorizeLive, type AuthorizeDeps } from "./authorize.ts";
+import { signLiveSlot } from "./cookie.ts";
+
+const secret = "live-cookie-secret-for-tests-0123456789";
+const runId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const userId = "user_a";
+const now = 1_700_000_000;
+const SESSION = "better-auth.session_token=s3cr3t";
+const NEKO = "NEKO_SESSION=tok123";
+const slotCookie = (slotName: string, forRun = runId, forUser = userId) =>
+  `live_slot=${signLiveSlot(secret, { slotName, runId: forRun, userId: forUser, expiresAt: now + 600 })}`;
+
+function deps(leased: Record<string, string>): AuthorizeDeps & { queries: unknown[] } {
+  const queries: unknown[] = [];
+  return {
+    queries,
+    liveCookieSecret: secret,
+    nowSeconds: () => now,
+    canAccess: async (q) => {
+      queries.push(q);
+      return leased[q.slotName] === q.runId && q.userId === userId;
+    },
+  };
+}
+
+const input = (
+  cookies: string[],
+  uri = `/live/${runId}/api/ws`,
+  user: string | null = userId,
+) => ({ forwardedUri: uri, cookieHeader: cookies.join("; ") || null, userId: user });
+
+describe("authorizeLive (spec §10.2.2, §12 live-view auth)", () => {
+  it("allows a signed cookie for the leased slot and forwards only NEKO_SESSION upstream", async () => {
+    const d = deps({ "browser-1": runId });
+    const decision = await authorizeLive(d, input([SESSION, slotCookie("browser-1"), NEKO]));
+    expect(decision).toEqual({ allow: true, upstreamCookie: NEKO });
+    expect(JSON.stringify(decision)).not.toContain("better-auth");
+    expect(JSON.stringify(decision)).not.toContain("live_slot");
+    expect(d.queries).toEqual([{ runId, slotName: "browser-1", userId }]);
+  });
+
+  it("refuses a request without an n.eko session, so the Better Auth cookie never reaches n.eko (S3)", async () => {
+    const d = deps({ "browser-1": runId });
+    expect(await authorizeLive(d, input([SESSION, slotCookie("browser-1")]))).toEqual({
+      allow: false,
+      status: 401,
+    });
+    expect(d.queries).toEqual([]);
+  });
+
+  it("refuses duplicate or malformed n.eko sessions", async () => {
+    const d = deps({ "browser-1": runId });
+    for (const neko of [
+      [NEKO, "NEKO_SESSION=other"],
+      ["NEKO_SESSION=a\r\nX: y"],
+      ["NEKO_SESSION="],
+      [`NEKO_SESSION=${"a".repeat(257)}`],
+    ]) {
+      expect(
+        await authorizeLive(d, input([SESSION, slotCookie("browser-1"), ...neko])),
+        neko.join("; "),
+      ).toEqual({ allow: false, status: 401 });
+    }
+    expect(d.queries).toEqual([]);
+  });
+
+  it("rejects no session, bad paths, missing or forged slot cookies", async () => {
+    const d = deps({ "browser-1": runId });
+    const valid = slotCookie("browser-1");
+    expect(await authorizeLive(d, input([valid, NEKO], undefined, null))).toEqual({
+      allow: false,
+      status: 401,
+    });
+    expect(await authorizeLive(d, input([valid, NEKO], "/api/auth/session"))).toEqual({
+      allow: false,
+      status: 403,
+    });
+    expect(await authorizeLive(d, input([NEKO]))).toEqual({ allow: false, status: 401 });
+    const forged = valid.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+    expect(await authorizeLive(d, input([forged, NEKO]))).toEqual({ allow: false, status: 401 });
+    expect(await authorizeLive(d, input([slotCookie("browser-1", runId, "user_b"), NEKO]))).toEqual({
+      allow: false,
+      status: 401,
+    });
+    expect(d.queries).toEqual([]);
+  });
+
+  it("rejects duplicate live_slot cookies so Traefik and auth can never disagree", async () => {
+    const d = deps({ "browser-1": runId });
+    expect(
+      await authorizeLive(
+        d,
+        input([slotCookie("browser-1"), "live_slot=browser-2.1700000600.x", NEKO]),
+      ),
+    ).toEqual({ allow: false, status: 401 });
+    expect(d.queries).toEqual([]);
+  });
+
+  it("rejects a slot leased to another run, an idle slot or a stale cookie", async () => {
+    expect(
+      await authorizeLive(deps({ "browser-1": "other-run" }), input([slotCookie("browser-1"), NEKO])),
+    ).toEqual({ allow: false, status: 403 });
+    expect(await authorizeLive(deps({}), input([slotCookie("browser-2"), NEKO]))).toEqual({
+      allow: false,
+      status: 403,
+    });
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail.**
+
+Run: `pnpm test apps/web/lib/server/live/authorize.test.ts`
+Expected: FAIL: `./authorize.ts` is missing.
+
+- [ ] **Step 3: Implement.**
+
+`apps/web/lib/server/live/authorize.ts`:
+
+```ts
+import { LIVE_SLOT_COOKIE, NEKO_SESSION_COOKIE, runIdFromLivePath } from "@mastertutor/contracts";
+import { parseCookies, verifyLiveSlot } from "./cookie.ts";
+
+export interface AuthorizeDeps {
+  liveCookieSecret: string;
+  canAccess(query: { runId: string; slotName: string; userId: string }): Promise<boolean>;
+  nowSeconds?: () => number;
+}
+
+export interface AuthorizeInput {
+  /** Traefik's X-Forwarded-Uri (ForwardAuth runs before StripPrefixRegex). */
+  forwardedUri: string | null;
+  cookieHeader: string | null;
+  /** The signed-in user (getViewer), or null. */
+  userId: string | null;
+}
+
+export type AuthorizeDecision =
+  | { allow: true; upstreamCookie: string }
+  | { allow: false; status: 401 | 403 };
+
+const NEKO_TOKEN = /^[A-Za-z0-9_-]{1,256}$/;
+
+/**
+ * Spec §10.2.2: 200 only if the live_slot signature is valid, browser_slots[N].run_id equals the
+ * path's run, and the user belongs to that run's workspace. Exactly one live_slot (the one Traefik
+ * routed on) and exactly one well-formed NEKO_SESSION are accepted. Traefik copies the 200's
+ * Cookie header over the browser's (authResponseHeaders), so n.eko only ever sees NEKO_SESSION;
+ * without one there is nothing to replace the browser's cookies with, so the answer is 401 (S3).
+ */
+export async function authorizeLive(
+  deps: AuthorizeDeps,
+  input: AuthorizeInput,
+): Promise<AuthorizeDecision> {
+  if (!input.userId) return { allow: false, status: 401 };
+  const runId = input.forwardedUri ? runIdFromLivePath(input.forwardedUri) : null;
+  if (!runId) return { allow: false, status: 403 };
+  const cookies = parseCookies(input.cookieHeader);
+  const slotCookies = cookies.get(LIVE_SLOT_COOKIE) ?? [];
+  if (slotCookies.length !== 1) return { allow: false, status: 401 };
+  const slotName = verifyLiveSlot(deps.liveCookieSecret, slotCookies[0]!, {
+    runId,
+    userId: input.userId,
+    nowSeconds: (deps.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))(),
+  });
+  if (!slotName) return { allow: false, status: 401 };
+  const neko = cookies.get(NEKO_SESSION_COOKIE) ?? [];
+  if (neko.length !== 1 || !NEKO_TOKEN.test(neko[0]!)) return { allow: false, status: 401 };
+  if (!(await deps.canAccess({ runId, slotName, userId: input.userId })))
+    return { allow: false, status: 403 };
+  return { allow: true, upstreamCookie: `${NEKO_SESSION_COOKIE}=${neko[0]}` };
+}
+```
+
+`apps/web/lib/server/live/deps.ts` (replace the whole file):
+
+```ts
+import { canAccessLiveSlot } from "@mastertutor/db";
+import { getDb } from "../db.ts";
+import { getWebEnv } from "../env.ts";
+import type { AuthorizeDeps } from "./authorize.ts";
+import type { LiveDeps } from "./open-live.ts";
+
+let liveDeps: LiveDeps | undefined;
+let authorizeDeps: AuthorizeDeps | undefined;
+
+/** Built on first use, so importing the live router never reads env or opens the database. */
+export function getLiveDeps(): LiveDeps {
+  if (!liveDeps) {
+    const env = getWebEnv();
+    liveDeps = {
+      db: getDb().db,
+      nekoMemberSecret: env.NEKO_MEMBER_SECRET,
+      liveCookieSecret: env.LIVE_COOKIE_SECRET,
+    };
+  }
+  return liveDeps;
+}
+
+export function getAuthorizeDeps(): AuthorizeDeps {
+  authorizeDeps ??= {
+    liveCookieSecret: getWebEnv().LIVE_COOKIE_SECRET,
+    canAccess: (query) => canAccessLiveSlot(getDb().db, query),
+  };
+  return authorizeDeps;
+}
+```
+
+`apps/web/app/api/live/auth/route.ts`:
+
+```ts
+import { getWebEnv } from "@/lib/server/env.ts";
+import { authorizeLive } from "@/lib/server/live/authorize.ts";
+import { getAuthorizeDeps } from "@/lib/server/live/deps.ts";
+import { getViewer } from "@/lib/server/viewer.ts";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * Traefik ForwardAuth for /live/<runId>/ (spec §10.2.2). Traefik copies this response's Cookie
+ * header onto the upstream request (authResponseHeaders: Cookie), replacing the browser's, so
+ * n.eko only ever receives NEKO_SESSION, never the Better Auth or live_slot cookies.
+ */
+export async function GET(request: Request): Promise<Response> {
+  const headers = new Headers({ "cache-control": "no-store" });
+  // A fixture build signs in a fake viewer; it must never authorize a real slot (E3).
+  if (__FIXTURE_BUILD__ && getWebEnv().WEB_FIXTURE_API)
+    return new Response(null, { status: 403, headers });
+  const viewer = await getViewer().catch(() => null);
+  const decision = await authorizeLive(getAuthorizeDeps(), {
+    forwardedUri: request.headers.get("x-forwarded-uri"),
+    cookieHeader: request.headers.get("cookie"),
+    userId: viewer?.id ?? null,
+  });
+  if (!decision.allow) return new Response(null, { status: decision.status, headers });
+  headers.set("cookie", decision.upstreamCookie);
+  return new Response(null, { status: 200, headers });
+}
+```
+
+- [ ] **Step 4: Run the tests and the production build.**
+
+Run:
+```bash
+pnpm test apps/web
+pnpm typecheck && pnpm lint
+pnpm --filter @mastertutor/web build
+pnpm --filter @mastertutor/web check:bundle
+```
+Expected: PASS; the build lists `/api/live/auth` as dynamic (ƒ); `check:bundle` finds no fixture code.
+
+- [ ] **Step 5: Commit.**
+```bash
+pnpm exec prettier --write apps/web/lib/server/live apps/web/app/api/live
+git add apps/web/lib/server/live apps/web/app/api/live
+git commit -m "feat(web): /api/live/auth ForwardAuth: one live_slot, one NEKO_SESSION, upstream cookie rewrite (S3)"
+```
+
+---
+
+### Task A9: `runs.openLive`, `runs.takeControl`, `runs.handBack` on the FE `liveRouter` (base Task 7, replaced)
+
+Replaces base Task 7 (E1, E2). There is one router: the frontend's `liveRouter` on `/api/rpc`, already behind `requireViewer`. This task fills its three `notWired` handlers and adds `ResponseHeadersPlugin` to the live handler so `openLive` can set cookies. No second `implement(apiContract)`, no `RequestHeadersPlugin`, no `sessionUserId`, no `getLiveProcedures`.
+
+**Files:**
+- Create: `apps/web/lib/server/live/procedures.ts`
+- Modify (all on top of B3 E Task 4's edits): `apps/web/lib/server/rpc/live-os.ts`, `apps/web/lib/server/rpc/live-router.ts`, `apps/web/app/api/rpc/[[...rest]]/route.ts`
+- Test: `apps/web/lib/server/live/procedures.int.test.ts`, `apps/web/lib/server/rpc/live-router.test.ts`
+
+**Interfaces:**
+- Consumes: `openLive`, `LiveAccessError`, `LiveDeps` (A7), `getLiveDeps` (A8's `deps.ts`), `requestTakeover`, `requestHandBack`, `ControlRequestResult` (A4), `RunRef`, `HandBackInput`, `OpenLiveResult`; B3 E Task 4's `liveOs`/`LiveContext` from `apps/web/lib/server/rpc/live-os.ts` (`live-router.ts` already imports `liveOs as os`; `route.ts` already imports `LiveContext` from `live-os.ts` and has B3's `isCrossSiteWrite` check, which stays).
+- Produces:
+  - `LiveHandlerContext {viewer: {id: string}; resHeaders?: Headers}`;
+  - `createLiveHandlers(deps: () => LiveDeps): { openLive(input: RunRef, context): Promise<OpenLiveResult>; takeControl(input: RunRef, context): Promise<{ok: true}>; handBack(input: HandBackInput, context): Promise<{ok: true}> }`;
+  - `LiveContext = SessionContext & ResponseHeadersPluginContext` (still exported from `live-os.ts`, widened here);
+  - error mapping: `not_found` → `NOT_FOUND`; `in_use` → `CONFLICT`; `unavailable` → `SERVICE_UNAVAILABLE`; finished run → `CONFLICT`; `not_controller` (another member holds control) → `FORBIDDEN`; signed out → `UNAUTHORIZED` (from `requireViewer`).
+
+- [ ] **Step 1: Write the failing tests.**
+
+`apps/web/lib/server/live/procedures.int.test.ts`:
+
+```ts
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { decodeNotify } from "@mastertutor/contracts";
+import { createDb, type DbHandle } from "@mastertutor/db";
+import {
+  leaseSlotForTest,
+  nextNotification,
+  releaseSlotForTest,
+  seedMember,
+  seedRun,
+  startTestDatabase,
+  type TestDatabase,
+} from "@mastertutor/db/testing";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { LiveDeps } from "./open-live.ts";
+import { createLiveHandlers } from "./procedures.ts";
+
+let testDb: TestDatabase;
+let owner: DbHandle;
+let web: DbHandle;
+let fakeNeko: Server;
+let nekoStatus = 200;
+let member: { userId: string; workspaceId: string };
+let handlers: ReturnType<typeof createLiveHandlers>;
+
+beforeAll(async () => {
+  testDb = await startTestDatabase({ slots: ["browser-1"] });
+  owner = createDb(testDb.ownerUrl, { max: 2 });
+  web = createDb(testDb.webUrl, { max: 2 });
+  member = await seedMember(owner.db);
+  fakeNeko = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      if (nekoStatus !== 200) return void res.writeHead(nekoStatus).end();
+      res
+        .writeHead(200, { "set-cookie": "NEKO_SESSION=faketoken; Path=/" })
+        .end('{"id":"user"}');
+    });
+  });
+  await new Promise<void>((resolve) => fakeNeko.listen(0, "127.0.0.1", resolve));
+  const port = (fakeNeko.address() as AddressInfo).port;
+  const deps: LiveDeps = {
+    db: web.db,
+    nekoMemberSecret: "neko-member-secret-for-tests-0123456789",
+    liveCookieSecret: "live-cookie-secret-for-tests-0123456789",
+    nekoBaseUrl: () => `http://127.0.0.1:${port}`,
+  };
+  handlers = createLiveHandlers(() => deps);
+});
+afterAll(async () => {
+  fakeNeko?.close();
+  await Promise.all([owner?.close(), web?.close()]);
+  await testDb?.stop();
+});
+
+const as = (userId: string) => ({ viewer: { id: userId }, resHeaders: new Headers() });
+
+describe("live handlers on liveRouter", () => {
+  it("openLive sets both cookies through resHeaders", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, "browser-1", runId);
+    const context = as(member.userId);
+    expect(await handlers.openLive({ runId }, context)).toMatchObject({
+      sleeping: false,
+      slotName: "browser-1",
+      iceServers: [],
+    });
+    expect(context.resHeaders.getSetCookie()).toHaveLength(2);
+  });
+
+  it("openLive refuses to run without ResponseHeadersPlugin", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await expect(
+      handlers.openLive({ runId }, { viewer: { id: member.userId } }),
+    ).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+  });
+
+  it("maps n.eko conflicts and outages to CONFLICT and SERVICE_UNAVAILABLE", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await releaseSlotForTest(owner.db, "browser-1");
+    await leaseSlotForTest(owner.db, "browser-1", runId);
+    nekoStatus = 422;
+    await expect(handlers.openLive({ runId }, as(member.userId))).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    nekoStatus = 500;
+    await expect(handlers.openLive({ runId }, as(member.userId))).rejects.toMatchObject({
+      code: "SERVICE_UNAVAILABLE",
+    });
+    nekoStatus = 200;
+  });
+
+  it("takeControl and handBack drive the DB and NOTIFY, with NOT_FOUND and CONFLICT errors", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const takeover = await nextNotification(owner.sql, "run_control", () =>
+      handlers.takeControl({ runId }, as(member.userId)),
+    );
+    expect(decodeNotify("run_control", takeover)).toEqual({ runId });
+    const back = await nextNotification(owner.sql, "run_control", () =>
+      handlers.handBack({ runId, note: "All yours" }, as(member.userId)),
+    );
+    expect(decodeNotify("run_control", back)).toEqual({ runId });
+    const outsider = await seedMember(owner.db);
+    await expect(handlers.takeControl({ runId }, as(outsider.userId))).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    const done = await seedRun(owner.db, { workspaceId: member.workspaceId, status: "cancelled" });
+    await expect(
+      handlers.handBack({ runId: done, note: null }, as(member.userId)),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("maps another member's takeover or hand-back of a held run to FORBIDDEN", async () => {
+    const holder = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const other = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await handlers.takeControl({ runId }, as(holder.userId));
+    await expect(handlers.takeControl({ runId }, as(holder.userId))).resolves.toEqual({ ok: true });
+    await expect(handlers.takeControl({ runId }, as(other.userId))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(
+      handlers.handBack({ runId, note: null }, as(other.userId)),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+```
+
+`apps/web/lib/server/rpc/live-router.test.ts`:
+
+```ts
+import { createRouterClient } from "@orpc/server";
+import { describe, expect, it } from "vitest";
+import { liveRouter } from "./live-router.ts";
+
+const runId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+describe("liveRouter live-view procedures", () => {
+  it("require a signed-in viewer (typed UNAUTHORIZED, never a bare 401)", async () => {
+    const client = createRouterClient(liveRouter, { context: { viewer: null } });
+    await expect(client.runs.openLive({ runId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(client.runs.takeControl({ runId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(client.runs.handBack({ runId, note: null })).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+  });
+});
+```
+
+- [ ] **Step 2: Run them and watch them fail.**
+
+Run: `pnpm test apps/web/lib/server/rpc && pnpm test:int apps/web/lib/server/live/procedures.int.test.ts`
+Expected: FAIL: `./procedures.ts` is missing.
+
+- [ ] **Step 3: Implement.**
+
+`apps/web/lib/server/live/procedures.ts`:
+
+```ts
+import type { HandBackInput, OpenLiveResult, RunRef } from "@mastertutor/contracts";
+import { requestHandBack, requestTakeover, type ControlRequestResult } from "@mastertutor/db";
+import { ORPCError } from "@orpc/server";
+import { LiveAccessError, openLive, type LiveDeps } from "./open-live.ts";
+
+/** What liveRouter's handlers receive after requireViewer; resHeaders comes from ResponseHeadersPlugin. */
+export interface LiveHandlerContext {
+  viewer: { id: string };
+  resHeaders?: Headers;
+}
+
+function accessError(error: LiveAccessError): Error {
+  switch (error.code) {
+    case "not_found":
+      return new ORPCError("NOT_FOUND", { message: "Run not found" });
+    case "in_use":
+      return new ORPCError("CONFLICT", { message: "The live view is open in another tab" });
+    case "unavailable":
+      return new ORPCError("SERVICE_UNAVAILABLE", {
+        message: "The browser is not answering; retry shortly",
+      });
+  }
+}
+
+function controlError(result: Extract<ControlRequestResult, { ok: false }>): Error {
+  switch (result.reason) {
+    case "not_found":
+      return new ORPCError("NOT_FOUND", { message: "Run not found" });
+    case "finished":
+      return new ORPCError("CONFLICT", { message: "The run has finished" });
+    case "not_controller":
+      return new ORPCError("FORBIDDEN", { message: "Another member is in control of this run" });
+  }
+}
+
+/** runs.openLive / takeControl / handBack for the one RPC router (E1). deps is read per call. */
+export function createLiveHandlers(deps: () => LiveDeps) {
+  return {
+    async openLive(input: RunRef, context: LiveHandlerContext): Promise<OpenLiveResult> {
+      const resHeaders = context.resHeaders;
+      if (!resHeaders)
+        throw new ORPCError("INTERNAL_SERVER_ERROR", {
+          message: "runs.openLive needs ResponseHeadersPlugin",
+        });
+      try {
+        const outcome = await openLive(deps(), { runId: input.runId, userId: context.viewer.id });
+        for (const cookie of outcome.setCookies) resHeaders.append("set-cookie", cookie);
+        return outcome.result;
+      } catch (error) {
+        if (error instanceof LiveAccessError) throw accessError(error);
+        throw error;
+      }
+    },
+    async takeControl(input: RunRef, context: LiveHandlerContext): Promise<{ ok: true }> {
+      const result = await requestTakeover(deps().db, {
+        runId: input.runId,
+        userId: context.viewer.id,
+      });
+      if (!result.ok) throw controlError(result);
+      return { ok: true };
+    },
+    async handBack(input: HandBackInput, context: LiveHandlerContext): Promise<{ ok: true }> {
+      const result = await requestHandBack(deps().db, {
+        runId: input.runId,
+        userId: context.viewer.id,
+        note: input.note,
+      });
+      if (!result.ok) throw controlError(result);
+      return { ok: true };
+    },
+  };
+}
+```
+
+`apps/web/lib/server/rpc/live-os.ts` (B3 E Task 4's file), replace `export type LiveContext = SessionContext;` with the following, and add `import type { ResponseHeadersPluginContext } from "@orpc/server/plugins";` to its imports:
+```ts
+/** The session's viewer plus resHeaders from ResponseHeadersPlugin (B6: openLive sets cookies). */
+export type LiveContext = SessionContext & ResponseHeadersPluginContext;
+```
+
+`apps/web/lib/server/rpc/live-router.ts` (as B3 E Task 4 left it, importing `liveOs as os` from `./live-os.ts`), three edits:
+1. Add to the imports:
+```ts
+import { getLiveDeps } from "../live/deps.ts";
+import { createLiveHandlers } from "../live/procedures.ts";
+```
+2. Directly after B3's `const vault = createVaultProcedures({ sealer: getSealer, db: getDb });` line, add:
+```ts
+/** B6: the live view and the control lock (spec §10.2, §10.3). */
+const live = createLiveHandlers(getLiveDeps);
+```
+3. In `runs`, replace the three `notWired` lines for `takeControl`, `handBack` and `openLive` with:
+```ts
+    takeControl: os.runs.takeControl.handler(({ input, context }) =>
+      live.takeControl(input, context),
+    ),
+    handBack: os.runs.handBack.handler(({ input, context }) => live.handBack(input, context)),
+    openLive: os.runs.openLive.handler(({ input, context }) => live.openLive(input, context)),
+```
+
+`apps/web/app/api/rpc/[[...rest]]/route.ts` (B3's `LiveContext` import from `live-os.ts` and its `isCrossSiteWrite` check stay as they are), two edits:
+1. Add `import { ResponseHeadersPlugin } from "@orpc/server/plugins";` after the `RPCHandler` import.
+2. Replace `liveHandler ??= new RPCHandler(liveRouter);` with:
+```ts
+  // openLive sets the live cookies through context.resHeaders (B6).
+  liveHandler ??= new RPCHandler(liveRouter, { plugins: [new ResponseHeadersPlugin()] });
+```
+
+- [ ] **Step 4: Run the tests and the build.**
+
+Run:
+```bash
+pnpm test apps/web
+pnpm test:int apps/web/lib/server/live/procedures.int.test.ts
+pnpm typecheck && pnpm lint
+pnpm --filter @mastertutor/web build && pnpm --filter @mastertutor/web check:bundle
+```
+Expected: PASS. `lib/fixtures/router.test.ts` still passes (`settings.get` is still `NOT_IMPLEMENTED`), and so do B3's `same-origin.test.ts` and `vault.int.test.ts`.
+
+- [ ] **Step 5: Commit.**
+```bash
+pnpm exec prettier --write apps/web/lib/server apps/web/app/api/rpc
+git add apps/web/lib/server apps/web/app/api/rpc
+git commit -m "feat(web): runs.openLive/takeControl/handBack on liveRouter, with ResponseHeadersPlugin"
+```
+
+---
+### Task A10: User uploads through n.eko `upload/dialog` and `upload/drop` (base Task 10, changed)
+
+Changed from base Task 10: a 401 (ForwardAuth: session ended) maps to `signed_out`, which F3 turns into its typed sign-in redirect; only 403 means `not_in_control` (E7). The real-slot test lives under `tests/behaviour/` and drives n.eko with raw admin `fetch`, never agent modules (E7). It opens the native chooser with a trusted CDP click and waits on n.eko's own dialog detection, not on the locale-dependent "Open File" title or `xdotool key space` (W5). The stub fixture page becomes a real file input.
+
+**Files:**
+- Create: `apps/web/lib/live/upload.ts`
+- Replace: `tests/fixtures/sites/site/upload.html`
+- Test: `apps/web/lib/live/upload.test.ts`, `tests/behaviour/live-upload.behaviour.test.ts`
+
+**Interfaces:**
+- Consumes: `livePath`, `VIEWPORT` (contracts); behaviour constants (A6).
+- Produces (browser-safe, for F3): `UploadOutcome = "uploaded" | "no_file_dialog" | "not_in_control" | "signed_out" | "failed"`; `UploadOptions {base?, fetch?, headers?}`; `MAX_UPLOAD_FILES = 10`; `uploadToFileDialog(runId, files, options?)`; `dropFiles(runId, files, point, options?)`.
+
+- [ ] **Step 1: Write the failing tests.**
+
+`apps/web/lib/live/upload.test.ts`: **copy verbatim from base plan Task 10, Step 1**, then replace its status table with:
+```ts
+    for (const [status, outcome] of [
+      [422, "no_file_dialog"],
+      [403, "not_in_control"],
+      [401, "signed_out"],
+      [500, "failed"],
+    ] as const) {
+```
+
+`tests/fixtures/sites/site/upload.html` (replace the stub):
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>File input</title>
+  </head>
+  <body>
+    <label for="file">Attach a file</label>
+    <input id="file" type="file" />
+  </body>
+</html>
+```
+
+`tests/behaviour/live-upload.behaviour.test.ts`:
+
+```ts
+import { deriveNekoPassword, loginNeko } from "@mastertutor/contracts/server";
+import { chromium, type Browser, type Page } from "playwright-core";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { waitFor } from "../../apps/agent/src/testing/wait.ts";
+import { uploadToFileDialog } from "../../apps/web/lib/live/upload.ts";
+import {
+  BEHAVIOUR_NEKO_ADMIN_SECRET,
+  BEHAVIOUR_NEKO_MEMBER_SECRET,
+  SITE,
+  SLOT_CDP,
+  nekoBaseUrlForTests,
+} from "./constants.ts";
+
+const SLOT = "browser-2";
+const runId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const base = nekoBaseUrlForTests(SLOT);
+let adminToken = "";
+let browser: Browser;
+let page: Page;
+let socket: WebSocket | undefined;
+
+/** Raw n.eko admin calls: a web-side test never imports the agent's NekoLiveView (E7). */
+async function admin(method: "GET" | "POST", path: string, body?: unknown): Promise<void> {
+  const response = await fetch(`${base}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${adminToken}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  await response.body?.cancel();
+  if (!response.ok) throw new Error(`n.eko ${path} answered HTTP ${response.status}`);
+}
+
+beforeAll(async () => {
+  adminToken = await loginNeko({
+    baseUrl: base,
+    username: "agent",
+    password: deriveNekoPassword(BEHAVIOUR_NEKO_ADMIN_SECRET, SLOT),
+  });
+  browser = await chromium.connectOverCDP(SLOT_CDP[SLOT]!);
+  const context = browser.contexts()[0]!;
+  page = context.pages()[0] ?? (await context.newPage());
+});
+afterAll(async () => {
+  await admin("POST", "/api/room/control/take").catch(() => undefined);
+  await admin("POST", "/api/members/user", { can_host: false }).catch(() => undefined);
+  socket?.close();
+  await browser?.close(); // connectOverCDP: disconnects Playwright, the slot browser keeps running
+});
+
+describe("user uploads through n.eko (spec §10.2.8)", () => {
+  it("fills an open file chooser only while the user holds control", async () => {
+    const token = await loginNeko({
+      baseUrl: base,
+      username: "user",
+      password: deriveNekoPassword(BEHAVIOUR_NEKO_MEMBER_SECRET, SLOT),
+    });
+    socket = new WebSocket(`${base.replace("http", "ws")}/api/ws?token=${token}`);
+    await new Promise<void>((resolve, reject) => {
+      socket!.addEventListener("open", () => resolve());
+      socket!.addEventListener("error", () => reject(new Error("n.eko websocket failed")));
+    });
+    const options = { base: `${base}/`, headers: { authorization: `Bearer ${token}` } };
+    const file = () => new File(["hello"], "notes.txt", { type: "text/plain" });
+
+    await admin("POST", "/api/room/control/take");
+    expect(await uploadToFileDialog(runId, [file()], options)).toBe("not_in_control");
+    expect(await uploadToFileDialog(runId, [file()], { base: `${base}/` })).toBe("signed_out");
+
+    await admin("POST", "/api/members/user", { can_host: true });
+    await admin("POST", "/api/room/control/give/user");
+    expect(await uploadToFileDialog(runId, [file()], options)).toBe("no_file_dialog");
+
+    await page.goto(`${SITE}/upload`);
+    await page.bringToFront();
+    // A trusted CDP click opens Chromium's native chooser (Playwright intercepts only with a
+    // filechooser listener); n.eko detects the dialog itself, so no window title is matched.
+    await page.click("#file");
+    await waitFor(async () => (await uploadToFileDialog(runId, [file()], options)) === "uploaded", {
+      label: "n.eko filled the open file chooser",
+      timeoutMs: 15_000,
+      intervalMs: 500,
+    });
+    expect(
+      await waitFor(
+        () =>
+          page.evaluate(
+            () => (document.querySelector("#file") as HTMLInputElement).files?.[0]?.name ?? null,
+          ),
+        { label: "file in the input", timeoutMs: 5_000 },
+      ),
+    ).toBe("notes.txt");
+  });
+});
+```
+
+- [ ] **Step 2: Run them and watch them fail.**
+
+Run: `pnpm test apps/web/lib/live && pnpm test:behaviour tests/behaviour/live-upload.behaviour.test.ts`
+Expected: FAIL: `./upload.ts` is missing.
+
+- [ ] **Step 3: Implement.** `apps/web/lib/live/upload.ts`:
+
+```ts
+import { VIEWPORT, livePath } from "@mastertutor/contracts";
+
+/** Browser-side helper for the run view (F3). Only the user uploads, and only while in control. */
+export type UploadOutcome = "uploaded" | "no_file_dialog" | "not_in_control" | "signed_out" | "failed";
+
+export interface UploadOptions {
+  /** Defaults to /live/<runId>/ (through Traefik and ForwardAuth); tests point at n.eko directly. */
+  base?: string;
+  fetch?: typeof fetch;
+  headers?: HeadersInit;
+}
+
+export const MAX_UPLOAD_FILES = 10;
+
+function filesForm(files: readonly File[]): FormData {
+  if (files.length === 0 || files.length > MAX_UPLOAD_FILES) {
+    throw new RangeError(`Upload between 1 and ${MAX_UPLOAD_FILES} files`);
+  }
+  const form = new FormData();
+  for (const file of files) form.append("files", file, file.name);
+  return form;
+}
+
+/** 401 is ForwardAuth's "session ended" (F3 redirects to sign-in); 403 is n.eko's "not the host". */
+function outcome(status: number): UploadOutcome {
+  if (status >= 200 && status < 300) return "uploaded";
+  if (status === 422) return "no_file_dialog";
+  if (status === 401) return "signed_out";
+  if (status === 403) return "not_in_control";
+  return "failed";
+}
+
+async function post(
+  runId: string,
+  endpoint: string,
+  form: FormData,
+  options: UploadOptions,
+): Promise<UploadOutcome> {
+  const base = options.base ?? livePath(runId);
+  try {
+    const response = await (options.fetch ?? fetch)(`${base}${endpoint}`, {
+      method: "POST",
+      body: form,
+      credentials: "same-origin",
+      headers: options.headers,
+    });
+    await response.body?.cancel();
+    return outcome(response.status);
+  } catch {
+    return "failed";
+  }
+}
+
+const clamp = (value: number, size: number) => Math.min(size - 1, Math.max(0, Math.round(value)));
+
+/** Fills the site's open native file chooser (n.eko upload/dialog). */
+export function uploadToFileDialog(
+  runId: string,
+  files: readonly File[],
+  options: UploadOptions = {},
+): Promise<UploadOutcome> {
+  return post(runId, "api/room/upload/dialog", filesForm(files), options);
+}
+
+/** Drops files at a point of the 1280×800 remote screen (n.eko upload/drop). */
+export function dropFiles(
+  runId: string,
+  files: readonly File[],
+  point: { x: number; y: number },
+  options: UploadOptions = {},
+): Promise<UploadOutcome> {
+  const form = filesForm(files);
+  form.append("x", String(clamp(point.x, VIEWPORT.width)));
+  form.append("y", String(clamp(point.y, VIEWPORT.height)));
+  return post(runId, "api/room/upload/drop", form, options);
+}
+```
+
+- [ ] **Step 4: Run the tests.**
+
+Run:
+```bash
+pnpm test apps/web/lib/live
+pnpm test:behaviour tests/behaviour/live-upload.behaviour.test.ts
+pnpm typecheck && pnpm lint
+```
+Expected: PASS.
+
+- [ ] **Step 5: Commit.**
+```bash
+pnpm exec prettier --write apps/web/lib/live tests/behaviour tests/fixtures/sites/site/upload.html
+git add apps/web/lib/live tests/behaviour/live-upload.behaviour.test.ts tests/fixtures/sites/site/upload.html
+git commit -m "feat(web): user uploads through n.eko; 401 means signed out, 403 means not in control"
+```
+
+---
+
+### Task A11: User-only downloads into Garage (base Task 9, replaced)
+
+Replaces base Task 9 (F5, F6, S10). B1 approvals are bound to a model step, so an agent-initiated download has no approval home in v1. **Only the member holding control downloads; taking over is the approval** (recorded deviation). While the agent holds control a download is cancelled, its partial file removed, and the user sees `error{download_blocked}`. The ingestor attaches through `onLeased` (A12) on the lease's browser-level CDP session, which B6 sets **after** Playwright connected (last writer). The hash is streamed and the file is uploaded as a stream (S10). B1's release already deletes `/downloads/<runId>`, so `detach` only removes listeners.
+
+**Files:**
+- Create: `apps/agent/src/live/downloads.ts`, `tests/fixtures/sites/site/files/notes.txt`, `tests/fixtures/sites/site/files/notes-copy.txt`, `tests/fixtures/sites/site/files/doc.pdf` (E12)
+- Replace: `tests/fixtures/sites/site/download.html`
+- Modify: `packages/storage/src/s3.ts`, `apps/agent/src/testing/memory-storage.ts`, `tests/behaviour/compose.yml`, `tests/behaviour/constants.ts`, `tests/behaviour/global-setup.ts`, `tests/behaviour/harness.ts`
+- Test: `apps/agent/src/live/downloads.test.ts`, `packages/storage/src/s3.int.test.ts` (one case), `tests/behaviour/live-downloads.behaviour.test.ts`
+
+**Interfaces:**
+- Consumes: `LeasedSlot` (A2); `readControlUser`, `emitRunEvent` (A2); `findAssetBySha`, `recordDownload` (A4); `objectKeys`, `safeFilename`, `Storage`.
+- Produces:
+  - `Storage.putFile(key: string, path: string, options: PutOptions): Promise<void>` (both implementations);
+  - `MAX_DOWNLOAD_BYTES = 200 MiB`; `downloadMime(filename): string` (inert allowlist; anything else `application/octet-stream`);
+  - `DownloadIngestorDeps {db: Database; storage: Storage; log: Log; slotRoot?: string; localRoot?: string; dirMode?: number; maxBytes?: number}`;
+  - `DownloadIngestor {attach(slot: LeasedSlot): Promise<void>; detach(runId: string): Promise<void>}`; `createDownloadIngestor(deps)`;
+  - events: `download_ready {downloadId, assetId, filename, bytes}`, `error{download_blocked}`, `error{download_too_large}`;
+  - `tests/behaviour/constants.ts`: `BEHAVIOUR_DOWNLOADS_DIR`.
+
+- [ ] **Step 1: Mount the downloads volume on the behaviour slots (test only), and add the fixtures.**
+
+`tests/behaviour/constants.ts`, append:
+```ts
+/** Host folder mounted at /downloads in both behaviour slots (compose.yml); agent tests read it. */
+export const BEHAVIOUR_DOWNLOADS_DIR = "/tmp/mastertutor-behaviour-downloads";
+```
+
+`tests/behaviour/compose.yml`: in the `x-slot` anchor add
+```yaml
+  volumes:
+    # Same path as BEHAVIOUR_DOWNLOADS_DIR in constants.ts; global-setup creates it world-writable.
+    - /tmp/mastertutor-behaviour-downloads:/downloads
+```
+
+`tests/behaviour/global-setup.ts`: add `import { chmodSync, mkdirSync } from "node:fs";`, import `BEHAVIOUR_DOWNLOADS_DIR` from `./constants.ts`, and as the first two lines of `setup`:
+```ts
+  // The slot entrypoint chowns /downloads to neko (uid 1000); 0777 keeps it writable for this host user.
+  mkdirSync(BEHAVIOUR_DOWNLOADS_DIR, { recursive: true });
+  chmodSync(BEHAVIOUR_DOWNLOADS_DIR, 0o777);
+```
+
+`tests/behaviour/harness.ts`: replace `downloadsDir: "/tmp/mastertutor-behaviour-downloads",` with `downloadsDir: BEHAVIOUR_DOWNLOADS_DIR,` and add `BEHAVIOUR_DOWNLOADS_DIR` to its import from `./constants.ts`.
+
+`tests/fixtures/sites/site/download.html` (replace the stub):
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Downloads</title>
+  </head>
+  <body>
+    <a id="notes" href="/files/notes.txt" download>Download notes</a>
+    <a id="copy" href="/files/notes-copy.txt" download>Download the same notes again</a>
+  </body>
+</html>
+```
+
+`tests/fixtures/sites/site/files/notes.txt` and `tests/fixtures/sites/site/files/notes-copy.txt`: both contain exactly the line `Hello from the fixture site` (identical bytes; the dedupe test relies on it).
+
+- [ ] **Step 2: Write the failing tests.**
+
+`apps/agent/src/live/downloads.test.ts`: **copy verbatim from base plan Task 9, Step 1** (`downloadMime`).
+
+Append to `packages/storage/src/s3.int.test.ts`, inside `describe("Storage against Garage", …)` (add `import { mkdtemp, writeFile } from "node:fs/promises"; import { tmpdir } from "node:os"; import { join } from "node:path";` at the top):
+
+```ts
+  it("streams a local file in with putFile", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "putfile-"));
+    const file = join(dir, "blob.bin");
+    const bytes = new Uint8Array(3 * 1024 * 1024).map((_, i) => i % 251);
+    await writeFile(file, bytes);
+    await agent.putFile("downloads/00000000-0000-4000-8000-000000000001/blob.bin", file, {
+      contentType: "application/octet-stream",
+      sha256: "b".repeat(64),
+    });
+    expect(
+      await agent.getBytes("downloads/00000000-0000-4000-8000-000000000001/blob.bin"),
+    ).toEqual(bytes);
+    expect(
+      await agent.head("downloads/00000000-0000-4000-8000-000000000001/blob.bin"),
+    ).toMatchObject({ bytes: bytes.length, sha256: "b".repeat(64) });
+  });
+```
+
+`tests/behaviour/live-downloads.behaviour.test.ts`:
+
+```ts
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { RunEvent } from "@mastertutor/contracts";
+import { createLogger } from "@mastertutor/contracts/server";
+import { assets, createDb, downloads, runEvents, runs, type DbHandle } from "@mastertutor/db";
+import {
+  leaseSlotForTest,
+  releaseSlotForTest,
+  seedMember,
+  seedRun,
+} from "@mastertutor/db/testing";
+import { asc, eq } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { BrowserSession } from "../../apps/agent/src/browser/session.ts";
+import {
+  createDownloadIngestor,
+  type DownloadIngestor,
+} from "../../apps/agent/src/live/downloads.ts";
+import { createMemoryStorage } from "../../apps/agent/src/testing/memory-storage.ts";
+import { waitFor } from "../../apps/agent/src/testing/wait.ts";
+import { BEHAVIOUR_DOWNLOADS_DIR, SITE, SLOT_CDP } from "./constants.ts";
+import { behaviourEnv } from "./env.ts";
+
+const SLOT = "browser-2";
+const FIXTURE = fileURLToPath(new URL("../fixtures/sites/site/files/notes.txt", import.meta.url));
+const log = createLogger({ service: "behaviour", level: "silent" });
+const storage = createMemoryStorage();
+let owner: DbHandle;
+let agentDb: DbHandle;
+let session: BrowserSession;
+let ingestor: DownloadIngestor;
+let member: { userId: string; workspaceId: string };
+let current: string | null = null;
+
+beforeAll(async () => {
+  const env = behaviourEnv();
+  owner = createDb(env.ownerUrl, { max: 2 });
+  agentDb = createDb(env.agentUrl, { max: 4 });
+  member = await seedMember(owner.db);
+  // The real BrowserSession: Playwright connects first, then the ingestor sets the behaviour (F6).
+  session = await BrowserSession.connect({
+    cdpBaseUrl: SLOT_CDP[SLOT]!,
+    allowedOrigins: () => [SITE],
+    testMode: true,
+    log,
+  });
+  ingestor = createDownloadIngestor({
+    db: agentDb.db,
+    storage,
+    log,
+    localRoot: BEHAVIOUR_DOWNLOADS_DIR,
+    dirMode: 0o777,
+  });
+});
+afterEach(async () => {
+  if (current) await ingestor.detach(current);
+  current = null;
+  await releaseSlotForTest(owner.db, SLOT);
+});
+afterAll(async () => {
+  await session?.close();
+  await Promise.all([owner?.close(), agentDb?.close()]);
+});
+
+async function leasedRun(controller: "agent" | "user"): Promise<string> {
+  const runId = await seedRun(
+    owner.db,
+    controller === "user"
+      ? { workspaceId: member.workspaceId, status: "waiting", waitReason: "takeover" }
+      : { workspaceId: member.workspaceId },
+  );
+  if (controller === "user")
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: member.userId })
+      .where(eq(runs.id, runId));
+  await leaseSlotForTest(owner.db, SLOT, runId);
+  await ingestor.attach({
+    runId,
+    workspaceId: member.workspaceId,
+    slotName: SLOT,
+    session,
+    browserCdp: () => session.browserCdp(),
+  });
+  current = runId;
+  return runId;
+}
+async function clickDownload(id: "notes" | "copy") {
+  expect(await session.goto(`${SITE}/download`, new AbortController().signal)).toBe(true);
+  await session.page.click(`#${id}`);
+}
+const rowsFor = (runId: string) =>
+  owner.db.select().from(downloads).where(eq(downloads.runId, runId));
+const eventsFor = async (runId: string): Promise<RunEvent[]> =>
+  (
+    await owner.db
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, runId))
+      .orderBy(asc(runEvents.id))
+  ).map((e) => e.payload);
+const localFiles = (runId: string) =>
+  readdir(join(BEHAVIOUR_DOWNLOADS_DIR, runId)).catch(() => [] as string[]);
+
+describe("downloads (spec §10.2.9; v1: only the member in control downloads)", () => {
+  it("ingests a download made while the user holds control", async () => {
+    const runId = await leasedRun("user");
+    await clickDownload("notes");
+    const [row] = await waitFor(async () => {
+      const rows = await rowsFor(runId);
+      return rows.length === 1 ? rows : null;
+    }, { label: "download recorded", timeoutMs: 15_000 });
+    expect(row).toMatchObject({ filename: "notes.txt", approvedBy: member.userId });
+    const [asset] = await owner.db.select().from(assets).where(eq(assets.id, row!.assetId!));
+    expect(asset!.key).toMatch(new RegExp(`^downloads/${runId}/[0-9a-f]{12}-notes\\.txt$`));
+    expect(asset!.mime).toBe("text/plain");
+    expect(Buffer.from(storage.objects.get(asset!.key)!)).toEqual(await readFile(FIXTURE));
+    expect(await eventsFor(runId)).toContainEqual({
+      type: "download_ready",
+      downloadId: row!.id,
+      assetId: row!.assetId,
+      filename: "notes.txt",
+      bytes: (await readFile(FIXTURE)).length,
+    });
+    await waitFor(async () => (await localFiles(runId)).length === 0, {
+      label: "local copy deleted",
+    });
+  });
+
+  it("blocks a download while the agent holds control and leaves nothing behind (Review Focus 4)", async () => {
+    const before = storage.objects.size;
+    const runId = await leasedRun("agent");
+    await clickDownload("notes");
+    await waitFor(
+      async () =>
+        (await eventsFor(runId)).some((e) => e.type === "error" && e.code === "download_blocked"),
+      { label: "download_blocked event", timeoutMs: 15_000 },
+    );
+    await waitFor(async () => (await localFiles(runId)).length === 0, {
+      label: "partial file removed",
+    });
+    expect(await rowsFor(runId)).toHaveLength(0);
+    expect(storage.objects.size).toBe(before);
+  });
+
+  it("stores identical content once and records both downloads", async () => {
+    const runId = await leasedRun("user");
+    await clickDownload("notes");
+    await waitFor(async () => (await rowsFor(runId)).length === 1, { label: "first", timeoutMs: 15_000 });
+    await clickDownload("copy");
+    const rows = await waitFor(async () => {
+      const all = await rowsFor(runId);
+      return all.length === 2 ? all : null;
+    }, { label: "second", timeoutMs: 15_000 });
+    expect(rows[0]!.assetId).toBe(rows[1]!.assetId);
+  });
+
+  it("an inline PDF the agent opens is not a download (B5 capture path)", async () => {
+    const before = storage.objects.size;
+    const runId = await leasedRun("agent");
+    await session.goto(`${SITE}/files/doc.pdf`, new AbortController().signal);
+    await waitFor(() => session.page.url().endsWith("/doc.pdf"), { label: "PDF shown inline" });
+    // Sentinel: a real download after the PDF. Events are ordered, so exactly one download_blocked
+    // (the sentinel's) proves the inline PDF never started a download.
+    await clickDownload("notes");
+    await waitFor(
+      async () =>
+        (await eventsFor(runId)).some((e) => e.type === "error" && e.code === "download_blocked"),
+      { label: "sentinel blocked", timeoutMs: 15_000 },
+    );
+    const blocked = (await eventsFor(runId)).filter(
+      (e) => e.type === "error" && e.code === "download_blocked",
+    );
+    expect(blocked).toHaveLength(1);
+    await waitFor(async () => (await localFiles(runId)).length === 0, { label: "nothing on disk" });
+    expect(storage.objects.size).toBe(before);
+  });
+});
+```
+
+`tests/fixtures/sites/site/files/doc.pdf`: a one-page PDF served inline (nginx answers `.pdf` with `Content-Type: application/pdf` and no `Content-Disposition`). Generate it once and commit the bytes:
+
+```bash
+node -e '
+const objs = ["<< /Type /Catalog /Pages 2 0 R >>",
+  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+  "<< /Length 41 >>\nstream\nBT /F1 18 Tf 20 60 Td (Fixture PDF) Tj ET\nendstream",
+  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
+let out = "%PDF-1.4\n"; const offsets = [];
+objs.forEach((o, i) => { offsets.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+const xref = out.length;
+out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map((n) => `${String(n).padStart(10, "0")} 00000 n \n`).join("");
+out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+require("node:fs").writeFileSync("tests/fixtures/sites/site/files/doc.pdf", out, "latin1");'
+```
+
+- [ ] **Step 3: Run them and watch them fail.**
+
+Run:
+```bash
+pnpm test apps/agent/src/live/downloads.test.ts
+pnpm test:int packages/storage/src/s3.int.test.ts
+pnpm test:behaviour tests/behaviour/live-downloads.behaviour.test.ts
+```
+Expected: FAIL: `putFile` and `./downloads.ts` are missing.
+
+- [ ] **Step 4: Implement.**
+
+`packages/storage/src/s3.ts`:
+- add `import { createReadStream } from "node:fs"; import { stat } from "node:fs/promises";` to the imports;
+- in `interface Storage`, after `put`, add:
+```ts
+  /** Streams a local file in without buffering it (downloads up to 200 MiB, spec §10.2.9). */
+  putFile(key: string, path: string, options: PutOptions): Promise<void>;
+```
+- in `createStorage`'s returned object, after `put`, add:
+```ts
+    async putFile(key, path, options) {
+      assertKey(key);
+      const { size } = await stat(path);
+      await client.send(
+        new PutObjectCommand({
+          Bucket,
+          Key: key,
+          Body: createReadStream(path),
+          ContentLength: size,
+          ContentType: options.contentType,
+          Metadata: options.sha256 ? { sha256: options.sha256 } : undefined,
+        }),
+      );
+    },
+```
+If the Garage test fails with a checksum or `aws-chunked` error, add `requestChecksumCalculation: "WHEN_REQUIRED"` to the `new S3Client({…})` options (the other cases must keep passing) and note it in the report.
+
+`apps/agent/src/testing/memory-storage.ts`: add `import { readFile } from "node:fs/promises";` and, after `put`, add:
+```ts
+    async putFile(key: string, path: string, options: PutOptions) {
+      objects.set(key, new Uint8Array(await readFile(path)));
+      types.set(key, options.contentType);
+    },
+```
+
+`apps/agent/src/live/downloads.ts`:
+
+```ts
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { chmod, mkdir, rm, stat } from "node:fs/promises";
+import path from "node:path";
+import type { RunEvent } from "@mastertutor/contracts";
+import {
+  emitRunEvent,
+  findAssetBySha,
+  readControlUser,
+  recordDownload,
+  type Database,
+} from "@mastertutor/db";
+import { objectKeys, safeFilename, type Storage } from "@mastertutor/storage";
+import type { CDPSession } from "playwright-core";
+import type { LeasedSlot } from "../loop/hooks.ts";
+import type { Log } from "../runtime/types.ts";
+
+export const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
+
+/** Inert types only; anything that could render as active content is served as a plain download. */
+const SAFE_MIME: Readonly<Record<string, string>> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
+  zip: "application/zip",
+  epub: "application/epub+zip",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+
+export function downloadMime(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  return (dot > 0 && SAFE_MIME[filename.slice(dot + 1).toLowerCase()]) || "application/octet-stream";
+}
+
+export interface DownloadIngestorDeps {
+  db: Database;
+  storage: Storage;
+  log: Log;
+  /** Download folder root as the slot's Chromium sees it. */
+  slotRoot?: string;
+  /** The same volume as mounted in this process. */
+  localRoot?: string;
+  /** Mode for /downloads/<runId>; tests whose host user differs from the slot's need 0o777. */
+  dirMode?: number;
+  maxBytes?: number;
+}
+
+export interface DownloadIngestor {
+  attach(slot: LeasedSlot): Promise<void>;
+  detach(runId: string): Promise<void>;
+}
+
+interface Approved {
+  filename: string;
+  url: string;
+  approvedBy: string;
+}
+
+const BLOCKED = "Downloads need you in control: take over, then download it.";
+
+async function sha256Of(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+/**
+ * Spec §10.2.9. Browser.setDownloadBehavior("allowAndName") writes <root>/<runId>/<guid>, never an
+ * untrusted name. v1 (F6): a download is approved only by the member holding control when it
+ * begins; otherwise it is cancelled and removed. Each decision is taken once, at begin, and
+ * progress events wait for it, so a file that finishes instantly is never ingested unapproved
+ * and never left on disk.
+ */
+export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadIngestor {
+  const slotRoot = deps.slotRoot ?? "/downloads";
+  const localRoot = deps.localRoot ?? "/downloads";
+  const maxBytes = deps.maxBytes ?? MAX_DOWNLOAD_BYTES;
+  const attached = new Map<string, () => void>();
+  const localFile = (runId: string, guid: string) => path.join(localRoot, runId, guid);
+  const emit = (runId: string, event: RunEvent) =>
+    deps.db.transaction((tx) => emitRunEvent(tx, runId, event));
+
+  async function removeFile(runId: string, guid: string): Promise<void> {
+    await rm(localFile(runId, guid), { force: true });
+    await rm(`${localFile(runId, guid)}.crdownload`, { force: true });
+  }
+
+  async function decide(
+    slot: LeasedSlot,
+    cdp: CDPSession,
+    guid: string,
+    url: string,
+    suggested: string,
+  ): Promise<Approved | null> {
+    const filename = safeFilename(suggested || "download");
+    const approvedBy = await readControlUser(deps.db, slot.runId);
+    if (approvedBy) return { filename, url: url.slice(0, 4_096), approvedBy };
+    await cdp.send("Browser.cancelDownload", { guid }).catch(() => undefined);
+    await removeFile(slot.runId, guid);
+    await emit(slot.runId, {
+      type: "error",
+      code: "download_blocked",
+      message: `${filename}: ${BLOCKED}`.slice(0, 500),
+    });
+    return null;
+  }
+
+  async function ingest(slot: LeasedSlot, guid: string, approved: Approved): Promise<void> {
+    const file = localFile(slot.runId, guid);
+    try {
+      const { size } = await stat(file);
+      if (size > maxBytes) {
+        await emit(slot.runId, {
+          type: "error",
+          code: "download_too_large",
+          message: `${approved.filename} is larger than ${Math.round(maxBytes / 1024 / 1024)} MiB`.slice(0, 500),
+        });
+        return;
+      }
+      const sha256 = await sha256Of(file);
+      const mime = downloadMime(approved.filename);
+      const existing = await findAssetBySha(deps.db, slot.workspaceId, sha256);
+      const key =
+        existing?.key ?? objectKeys.download(slot.runId, `${sha256.slice(0, 12)}-${approved.filename}`);
+      if (!existing) await deps.storage.putFile(key, file, { contentType: mime, sha256 });
+      await deps.db.transaction(async (tx) => {
+        const record = await recordDownload(tx, {
+          runId: slot.runId,
+          workspaceId: slot.workspaceId,
+          filename: approved.filename,
+          sha256,
+          bucket: deps.storage.bucket,
+          key,
+          mime,
+          bytes: size,
+          sourceUrl: approved.url,
+          approvedBy: approved.approvedBy,
+        });
+        await emitRunEvent(tx, slot.runId, {
+          type: "download_ready",
+          downloadId: record.downloadId,
+          assetId: record.assetId,
+          filename: approved.filename,
+          bytes: size,
+        });
+      });
+    } finally {
+      await rm(file, { force: true });
+    }
+  }
+
+  const failed = (runId: string, errorCode: string) => (error: unknown) =>
+    deps.log.error(
+      { runId, errorCode, err: error instanceof Error ? error.name : "unknown" },
+      "download handling failed",
+    );
+
+  return {
+    async attach(slot) {
+      const dir = path.join(localRoot, slot.runId);
+      await mkdir(dir, { recursive: true, mode: deps.dirMode ?? 0o700 });
+      if (deps.dirMode !== undefined) await chmod(dir, deps.dirMode);
+      const cdp = await slot.browserCdp();
+      const decisions = new Map<string, Promise<Approved | null>>();
+      const onBegin = (event: { guid: string; url: string; suggestedFilename: string }) => {
+        decisions.set(
+          event.guid,
+          decide(slot, cdp, event.guid, event.url, event.suggestedFilename).catch((error) => {
+            failed(slot.runId, "download_decision_failed")(error);
+            return null;
+          }),
+        );
+      };
+      const onProgress = (event: { guid: string; state: "inProgress" | "completed" | "canceled" }) => {
+        if (event.state === "inProgress") return;
+        const decision = decisions.get(event.guid) ?? Promise.resolve(null);
+        decisions.delete(event.guid);
+        void decision
+          .then((approved) =>
+            event.state === "completed" && approved
+              ? ingest(slot, event.guid, approved)
+              : removeFile(slot.runId, event.guid),
+          )
+          .catch(failed(slot.runId, "download_ingest_failed"));
+      };
+      cdp.on("Browser.downloadWillBegin", onBegin);
+      cdp.on("Browser.downloadProgress", onProgress);
+      const behaviour = {
+        behavior: "allowAndName" as const,
+        downloadPath: path.posix.join(slotRoot, slot.runId),
+        eventsEnabled: true,
+      };
+      // Browser-wide, and again for the default context in case Playwright set one for it on connect.
+      await cdp.send("Browser.setDownloadBehavior", behaviour);
+      const { targetInfos } = await cdp.send("Target.getTargets");
+      const contextId = targetInfos.find((target) => target.type === "page")?.browserContextId;
+      if (contextId)
+        await cdp.send("Browser.setDownloadBehavior", { ...behaviour, browserContextId: contextId });
+      attached.set(slot.runId, () => {
+        cdp.off("Browser.downloadWillBegin", onBegin);
+        cdp.off("Browser.downloadProgress", onProgress);
+      });
+    },
+    async detach(runId) {
+      // The CDP session belongs to the lease (BrowserSession); B1's release deletes the folder.
+      attached.get(runId)?.();
+      attached.delete(runId);
+    },
+  };
+}
+```
+
+- [ ] **Step 5: Run the tests.**
+
+Run:
+```bash
+pnpm test apps/agent/src/live/downloads.test.ts
+pnpm test:int packages/storage
+pnpm test:behaviour tests/behaviour/live-downloads.behaviour.test.ts
+pnpm typecheck && pnpm lint
+```
+Expected: PASS.
+
+- [ ] **Step 6: Commit.**
+```bash
+pnpm exec prettier --write apps/agent/src packages/storage tests/behaviour tests/fixtures/sites/site
+git add apps/agent/src packages/storage tests/behaviour tests/fixtures/sites/site
+git commit -m "feat(agent): user-only downloads streamed into Garage with download_ready (F6, S10)"
+```
+
+---
+
+### Task A12: B6 live hooks — the n.eko side of B1's control lock (base Task 8, replaced)
+
+Replaces base Task 8 (F2, F3, F4, S2, S11, S12). B6 implements **only** `hooks.control`, `onLeased` and `onLeaseEnding` (B3's `onReleased(runId)` stays the vault's). B1 keeps `run_control`, the guard, the abort, the status transitions and the `control` events. The ordering guarantees come from B1 (§3); these hooks add the n.eko side and fail closed:
+- `onUserControl`: give (waits ≤ 1 s, or ≤ 15 s after a fresh lease) → clipboard on → begin B3's passkey enrolment (best effort, B3 E.8 note 1) → arm the idle hand-back. No connected live view: take the host back and return `takeover_failed` (B1 then reverts, A2); enrolment never begins.
+- `onAgentControl`: disarm → take the host back (must succeed, or the run fails closed) → finish the enrolment (B3 seals what the user registered; best effort) → clipboard off.
+- `onLeased`: remember the lease's `BrowserSession` and workspace for enrolment, seat the agent as host and attach downloads, both best effort within 1 s.
+- `onLeaseEnding`: disarm, finish any open enrolment (best effort), detach downloads, and when the slot is really released take the host back within 1 s (S12).
+- Idle: 15 minutes with no user input **since the takeover** → `returnControlToAgent` + `error{idle_hand_back}` + `NOTIFY run_control` in one transaction; B1's existing hand-back path does the rest (F4).
+
+**Files:**
+- Create: `apps/agent/src/live/idle-watch.ts`, `apps/agent/src/live/live-hooks.ts`
+- Test: `apps/agent/src/live/idle-watch.test.ts`, `apps/agent/src/live/live-hooks.test.ts`
+
+**Interfaces:**
+- Consumes: `LiveView`, `LiveViewError`, `SlotIdleProbe` (A6); `DownloadIngestor` (A11); `RunHooks`, `LeasedSlot`, `ReleasedSlot`, `UserControlResult` (A2); `BrowserSession` (B1); `readControlUser`, `returnControlToAgent`, `notifyRunControl`, `emitRunEvent` (A2); `AUTO_HAND_BACK_IDLE_MS`, `TAKEOVER_RESTORE_WAIT_MS` (A3); structurally, B3 E's `PasskeyEnrolment` (Task 11), with no import from `apps/agent/src/vault`.
+- Produces:
+  - `IdleWatch {arm(slotName, runId): void; disarm(runId): void}`; `createIdleWatch({probe, limitMs, pollMs, onIdle(runId): Promise<void>, log, now?})`;
+  - `LiveControlStore {controlUser(runId): Promise<string | null>; handBackIdle(runId): Promise<void>}`; `liveControlStore(db: Database): LiveControlStore`;
+  - `PasskeyEnrolmentPort {begin(session: BrowserSession): Promise<unknown>; finish(handle: unknown, run: {workspaceId: string; runId: string}): Promise<number>}`;
+  - `LiveHooksDeps {store; liveView; idleProbe; downloads; log; enrolment?: PasskeyEnrolmentPort; idleLimitMs?; idlePollMs?; restoreWaitMs?; nekoTimeoutMs?}`;
+  - `LiveHooks = Pick<RunHooks, "control" | "onLeased" | "onLeaseEnding">`; `createLiveHooks(deps): LiveHooks`.
+
+- [ ] **Step 1: Write the failing tests.**
+
+`apps/agent/src/live/idle-watch.test.ts`:
+
+```ts
+import { createLogger } from "@mastertutor/contracts/server";
+import { describe, expect, it } from "vitest";
+import { waitFor } from "../testing/wait.ts";
+import { createIdleWatch } from "./idle-watch.ts";
+
+const log = createLogger({ service: "test", level: "silent" });
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("idle hand-back watch (spec §5.1)", () => {
+  it("counts from the takeover, even when the X idle time was already huge (Review Focus 2)", async () => {
+    const calls: number[] = [];
+    const watch = createIdleWatch({
+      probe: { userIdleMs: async () => 99_000_000 },
+      limitMs: 80,
+      pollMs: 10,
+      log,
+      onIdle: async () => void calls.push(performance.now()),
+    });
+    const armedAt = performance.now();
+    watch.arm("browser-1", "run-1");
+    await waitFor(() => calls.length === 1, { label: "idle hand-back", timeoutMs: 2_000 });
+    expect(calls[0]! - armedAt).toBeGreaterThanOrEqual(80);
+    await pause(60);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("never hands back while the user keeps giving input", async () => {
+    const calls: string[] = [];
+    const watch = createIdleWatch({
+      probe: { userIdleMs: async () => 5 },
+      limitMs: 40,
+      pollMs: 10,
+      log,
+      onIdle: async (runId) => void calls.push(runId),
+    });
+    watch.arm("browser-1", "run-2");
+    await pause(200);
+    watch.disarm("run-2");
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps watching through probe failures and retries a failed hand-back", async () => {
+    let probes = 0;
+    let attempts = 0;
+    const watch = createIdleWatch({
+      probe: {
+        userIdleMs: async () => {
+          probes += 1;
+          if (probes <= 3) throw new Error("slot busy");
+          return 99_000_000;
+        },
+      },
+      limitMs: 30,
+      pollMs: 10,
+      log,
+      onIdle: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("db blip");
+      },
+    });
+    watch.arm("browser-1", "run-3");
+    await waitFor(() => attempts === 2, { label: "second attempt", timeoutMs: 2_000 });
+    await pause(60);
+    expect(attempts).toBe(2);
+  });
+
+  it("stops when disarmed", async () => {
+    const calls: string[] = [];
+    const watch = createIdleWatch({
+      probe: { userIdleMs: async () => 99_000_000 },
+      limitMs: 50,
+      pollMs: 10,
+      log,
+      onIdle: async (runId) => void calls.push(runId),
+    });
+    watch.arm("browser-1", "run-4");
+    watch.disarm("run-4");
+    await pause(150);
+    expect(calls).toEqual([]);
+  });
+});
+```
+
+`apps/agent/src/live/live-hooks.test.ts`:
+
+```ts
+import { createLogger } from "@mastertutor/contracts/server";
+import { describe, expect, it } from "vitest";
+import type { BrowserSession } from "../browser/session.ts";
+import { waitFor } from "../testing/wait.ts";
+import type { DownloadIngestor } from "./downloads.ts";
+import { createLiveHooks, type LiveControlStore, type PasskeyEnrolmentPort } from "./live-hooks.ts";
+import type { LiveView } from "./live-view.ts";
+import { LiveViewError } from "./neko-live-view.ts";
+
+const log = createLogger({ service: "test", level: "silent" });
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const SLOT = "browser-1";
+const RUN = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+function harness(
+  options: {
+    /** How many giveControl calls fail with "not connected" first (Infinity: never connects). */
+    notConnectedFor?: number;
+    take?: "ok" | "fails" | "hangs";
+    controlUser?: string | null;
+    restoreWaitMs?: number;
+    /** Wire a fake B3 passkey enrolment; "begin-fails" makes begin reject. */
+    enrolment?: "ok" | "begin-fails";
+  } = {},
+) {
+  const calls: string[] = [];
+  let failures = options.notConnectedFor ?? 0;
+  let idleMs = 0;
+  const liveView: LiveView = {
+    async giveControl(slot, userId) {
+      calls.push(`give ${slot.name} ${userId}`);
+      if (failures > 0) {
+        failures -= 1;
+        throw new LiveViewError("user_not_connected");
+      }
+    },
+    async takeControl(slot) {
+      calls.push(`take ${slot.name}`);
+      if (options.take === "hangs") await new Promise(() => undefined);
+      if (options.take === "fails") throw new Error("n.eko down");
+    },
+    async setClipboardAccess(_slot, on) {
+      calls.push(`clipboard ${on}`);
+    },
+  };
+  const store: LiveControlStore = {
+    controlUser: async () => (options.controlUser === undefined ? "user_1" : options.controlUser),
+    handBackIdle: async (runId) => void calls.push(`idle hand-back ${runId}`),
+  };
+  const downloads: DownloadIngestor = {
+    attach: async (slot) => void calls.push(`attach ${slot.runId}`),
+    detach: async (runId) => void calls.push(`detach ${runId}`),
+  };
+  const enrolment: PasskeyEnrolmentPort = {
+    async begin(session) {
+      calls.push(`enrol begin ${session === SESSION}`);
+      if (options.enrolment === "begin-fails") throw new Error("CDP gone");
+      return "handle-1";
+    },
+    async finish(handle, run) {
+      calls.push(`enrol finish ${String(handle)} ${run.workspaceId} ${run.runId}`);
+      return 1;
+    },
+  };
+  const hooks = createLiveHooks({
+    store,
+    liveView,
+    idleProbe: { userIdleMs: async () => idleMs },
+    downloads,
+    log,
+    ...(options.enrolment ? { enrolment } : {}),
+    idleLimitMs: 50,
+    idlePollMs: 10,
+    restoreWaitMs: options.restoreWaitMs ?? 2_000,
+    nekoTimeoutMs: 100,
+  });
+  return { hooks, calls, userGoesIdle: () => (idleMs = 99_000_000) };
+}
+
+const WORKSPACE = "11111111-1111-4111-8111-111111111111";
+/** Enrolment only passes the session through to B3; identity is all the test checks. */
+const SESSION = {} as BrowserSession;
+const leased = {
+  runId: RUN,
+  workspaceId: WORKSPACE,
+  slotName: SLOT,
+  session: SESSION,
+  browserCdp: () => Promise.reject(new Error("unused")),
+};
+
+describe("createLiveHooks: the n.eko side of B1's control lock", () => {
+  it("gives control to a connected live view, turns the clipboard on, then arms the idle hand-back", async () => {
+    const { hooks, calls, userGoesIdle } = harness();
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false })).toEqual({
+      ok: true,
+    });
+    expect(calls).toEqual([`give ${SLOT} user_1`, "clipboard true"]);
+    userGoesIdle();
+    await waitFor(() => calls.includes(`idle hand-back ${RUN}`), { label: "idle hand-back" });
+  });
+
+  it("fails the takeover and seats the agent again when no live view is connected (Review Focus 1)", async () => {
+    const { hooks, calls, userGoesIdle } = harness({ notConnectedFor: Infinity });
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false })).toEqual({
+      ok: false,
+      code: "takeover_failed",
+    });
+    expect(calls).toEqual([`give ${SLOT} user_1`, `take ${SLOT}`]);
+    userGoesIdle();
+    await pause(100);
+    expect(calls).not.toContain(`idle hand-back ${RUN}`);
+  });
+
+  it("keeps trying for the live view when the takeover arrives with a fresh lease", async () => {
+    const { hooks, calls } = harness({ notConnectedFor: 3 });
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: true })).toEqual({
+      ok: true,
+    });
+    expect(calls.filter((c) => c.startsWith("give"))).toHaveLength(4);
+  });
+
+  it("gives up after the restore wait", async () => {
+    const { hooks } = harness({ notConnectedFor: Infinity, restoreWaitMs: 50 });
+    const started = performance.now();
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: true })).toEqual({
+      ok: false,
+      code: "takeover_failed",
+    });
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("leaves n.eko alone when control was already handed back", async () => {
+    const { hooks, calls } = harness({ controlUser: null });
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false })).toEqual({
+      ok: true,
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("hand back disarms the idle watch, takes the host back, then turns the clipboard off", async () => {
+    const { hooks, calls, userGoesIdle } = harness();
+    await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false });
+    await hooks.control.onAgentControl(SLOT, RUN);
+    expect(calls.slice(-2)).toEqual([`take ${SLOT}`, "clipboard false"]);
+    userGoesIdle();
+    await pause(100);
+    expect(calls).not.toContain(`idle hand-back ${RUN}`);
+  });
+
+  it("hand back fails closed when n.eko cannot take the host back", async () => {
+    const { hooks } = harness({ take: "fails" });
+    await expect(hooks.control.onAgentControl(SLOT, RUN)).rejects.toThrow("n.eko down");
+  });
+
+  it("onLeased seats the agent and attaches downloads, and never fails the lease", async () => {
+    const { hooks, calls } = harness({ take: "fails" });
+    await hooks.onLeased(leased);
+    expect(calls).toEqual(expect.arrayContaining([`take ${SLOT}`, `attach ${RUN}`]));
+  });
+
+  it("onLeaseEnding takes the host back within the bound even if n.eko hangs (Review Focus 5, S12)", async () => {
+    const { hooks, calls } = harness({ take: "hangs" });
+    const started = performance.now();
+    await hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: true });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(calls).toEqual([`detach ${RUN}`, `take ${SLOT}`]);
+  });
+
+  it("an unreleased stop only cleans up and never touches n.eko", async () => {
+    const { hooks, calls } = harness();
+    await hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: false });
+    expect(calls).toEqual([`detach ${RUN}`]);
+  });
+});
+
+describe("createLiveHooks: B3 passkey enrolment during takeover (B3 E.8 note 1)", () => {
+  it("begins enrolment after a successful give and finishes it on hand-back", async () => {
+    const { hooks, calls } = harness({ enrolment: "ok" });
+    await hooks.onLeased(leased);
+    calls.length = 0;
+    await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false });
+    expect(calls).toEqual([`give ${SLOT} user_1`, "clipboard true", "enrol begin true"]);
+    await hooks.control.onAgentControl(SLOT, RUN);
+    expect(calls.slice(3)).toEqual([
+      `take ${SLOT}`,
+      `enrol finish handle-1 ${WORKSPACE} ${RUN}`,
+      "clipboard false",
+    ]);
+    // A second hand-back has nothing left to seal.
+    await hooks.control.onAgentControl(SLOT, RUN);
+    expect(calls.filter((c) => c.startsWith("enrol finish"))).toHaveLength(1);
+  });
+
+  it("a failed give never begins enrolment", async () => {
+    const { hooks, calls } = harness({ enrolment: "ok", notConnectedFor: Infinity });
+    await hooks.onLeased(leased);
+    await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false });
+    await hooks.control.onAgentControl(SLOT, RUN);
+    expect(calls.some((c) => c.startsWith("enrol"))).toBe(false);
+  });
+
+  it("a failing begin never fails the takeover, and leaves nothing to finish", async () => {
+    const { hooks, calls } = harness({ enrolment: "begin-fails" });
+    await hooks.onLeased(leased);
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false })).toEqual({
+      ok: true,
+    });
+    await hooks.control.onAgentControl(SLOT, RUN);
+    expect(calls.some((c) => c.startsWith("enrol finish"))).toBe(false);
+  });
+
+  it("a lease ending during takeover finishes enrolment, then forgets the lease", async () => {
+    const { hooks, calls } = harness({ enrolment: "ok" });
+    await hooks.onLeased(leased);
+    await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false });
+    await hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: true });
+    expect(calls).toContain(`enrol finish handle-1 ${WORKSPACE} ${RUN}`);
+    calls.length = 0;
+    await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false });
+    expect(calls.some((c) => c.startsWith("enrol"))).toBe(false);
+  });
+
+  it("without a session (fake browser) or without the vault, takeover still works", async () => {
+    const { hooks, calls } = harness({ enrolment: "ok" });
+    await hooks.onLeased({ ...leased, session: null });
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: false })).toEqual({
+      ok: true,
+    });
+    expect(calls.some((c) => c.startsWith("enrol"))).toBe(false);
+    const plain = harness();
+    await plain.hooks.onLeased(leased);
+    expect(await plain.hooks.control.onUserControl(SLOT, RUN, { afterRestore: false })).toEqual({
+      ok: true,
+    });
+  });
+});
+```
+
+- [ ] **Step 2: Run them and watch them fail.**
+
+Run: `pnpm test apps/agent/src/live`
+Expected: FAIL: `./idle-watch.ts` and `./live-hooks.ts` are missing.
+
+- [ ] **Step 3: Implement.**
+
+`apps/agent/src/live/idle-watch.ts`:
+
+```ts
+import type { Log } from "../runtime/types.ts";
+import type { SlotIdleProbe } from "./idle-probe.ts";
+
+export interface IdleWatchDeps {
+  probe: SlotIdleProbe;
+  limitMs: number;
+  pollMs: number;
+  /** Returns control to the agent; a throw is retried on the next poll. */
+  onIdle(runId: string): Promise<void>;
+  log: Log;
+  now?: () => number;
+}
+
+export interface IdleWatch {
+  arm(slotName: string, runId: string): void;
+  disarm(runId: string): void;
+}
+
+/**
+ * Spec §5.1: a takeover ends after limitMs with no user input. The slot's X idle time counts
+ * only the user's input (n.eko injects it through XTest; CDP never touches X), and it is capped
+ * by the time since the takeover, so the minutes before the user took over never count.
+ */
+export function createIdleWatch(deps: IdleWatchDeps): IdleWatch {
+  const now = deps.now ?? (() => performance.now());
+  const timers = new Map<string, NodeJS.Timeout>();
+  const disarm = (runId: string) => {
+    clearInterval(timers.get(runId));
+    timers.delete(runId);
+  };
+  return {
+    arm(slotName, runId) {
+      disarm(runId);
+      const since = now();
+      let checking = false;
+      const timer: NodeJS.Timeout = setInterval(() => {
+        if (checking) return;
+        checking = true;
+        deps.probe
+          .userIdleMs(slotName)
+          .then(async (idleMs) => {
+            if (timers.get(runId) !== timer) return;
+            if (Math.min(idleMs, now() - since) < deps.limitMs) return;
+            await deps.onIdle(runId);
+            if (timers.get(runId) === timer) disarm(runId);
+          })
+          .catch(() =>
+            deps.log.warn({ runId, errorCode: "idle_hand_back_retry" }, "idle check failed"),
+          )
+          .finally(() => {
+            checking = false;
+          });
+      }, deps.pollMs);
+      timer.unref();
+      timers.set(runId, timer);
+    },
+    disarm,
+  };
+}
+```
+
+`apps/agent/src/live/live-hooks.ts`:
+
+```ts
+import { AUTO_HAND_BACK_IDLE_MS, TAKEOVER_RESTORE_WAIT_MS } from "@mastertutor/contracts";
+import {
+  emitRunEvent,
+  notifyRunControl,
+  readControlUser,
+  returnControlToAgent,
+  type Database,
+} from "@mastertutor/db";
+import type { BrowserSession } from "../browser/session.ts";
+import type { RunHooks, UserControlResult } from "../loop/hooks.ts";
+import type { Log } from "../runtime/types.ts";
+import type { DownloadIngestor } from "./downloads.ts";
+import type { SlotIdleProbe } from "./idle-probe.ts";
+import { createIdleWatch } from "./idle-watch.ts";
+import type { LiveView } from "./live-view.ts";
+import { LiveViewError } from "./neko-live-view.ts";
+
+const IDLE_MESSAGE = "Control went back to the agent after 15 minutes without input.";
+const FAILED: UserControlResult = { ok: false, code: "takeover_failed" };
+const RETRY_MS = 100;
+
+/** The two run-row facts the live hooks need; liveControlStore is the database implementation. */
+export interface LiveControlStore {
+  /** The member holding control, or null once the agent holds it again. */
+  controlUser(runId: string): Promise<string | null>;
+  /** Idle hand-back: control → agent, a notice for the user, NOTIFY run_control (B1 does the rest). */
+  handBackIdle(runId: string): Promise<void>;
+}
+
+export function liveControlStore(db: Database): LiveControlStore {
+  return {
+    controlUser: (runId) => readControlUser(db, runId),
+    handBackIdle: (runId) =>
+      db.transaction(async (tx) => {
+        if (!(await returnControlToAgent(tx, runId))) return;
+        await emitRunEvent(tx, runId, { type: "error", code: "idle_hand_back", message: IDLE_MESSAGE });
+        await notifyRunControl(tx, runId);
+      }),
+  };
+}
+
+/**
+ * B3's passkey enrolment (E.8 note 1), described structurally so the live view never imports the
+ * vault: `main.ts` passes `vault.enrolment`. Registrations the user makes during a takeover land
+ * in the authenticator begin() installs; finish() seals them and removes it.
+ */
+export interface PasskeyEnrolmentPort {
+  begin(session: BrowserSession): Promise<unknown>;
+  finish(handle: unknown, run: { workspaceId: string; runId: string }): Promise<number>;
+}
+
+export interface LiveHooksDeps {
+  store: LiveControlStore;
+  liveView: LiveView;
+  idleProbe: SlotIdleProbe;
+  downloads: DownloadIngestor;
+  log: Log;
+  /** Absent in tests that run without the vault. */
+  enrolment?: PasskeyEnrolmentPort;
+  idleLimitMs?: number;
+  idlePollMs?: number;
+  /** Patience for a takeover that arrives with a fresh lease (the iframe is still reconnecting). */
+  restoreWaitMs?: number;
+  /** Bound on the best-effort n.eko calls at lease and release. */
+  nekoTimeoutMs?: number;
+}
+
+export type LiveHooks = Pick<RunHooks, "control" | "onLeased" | "onLeaseEnding">;
+
+/** Per-lease facts enrolment needs; handle is set while an enrolment is open. */
+interface Lease {
+  session: BrowserSession | null;
+  workspaceId: string;
+  handle?: unknown;
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** B6's RunHooks: the n.eko side of B1's control lock, plus downloads (spec §10.1–10.3). */
+export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
+  const restoreWaitMs = deps.restoreWaitMs ?? TAKEOVER_RESTORE_WAIT_MS;
+  const nekoTimeoutMs = deps.nekoTimeoutMs ?? 1_000;
+  const idle = createIdleWatch({
+    probe: deps.idleProbe,
+    limitMs: deps.idleLimitMs ?? AUTO_HAND_BACK_IDLE_MS,
+    pollMs: deps.idlePollMs ?? 30_000,
+    onIdle: (runId) => deps.store.handBackIdle(runId),
+    log: deps.log,
+  });
+  const leases = new Map<string, Lease>();
+
+  /** Best effort: begin B3's enrolment on the leased page session; a failure never fails the takeover. */
+  async function beginEnrolment(runId: string): Promise<void> {
+    const lease = leases.get(runId);
+    if (!lease?.session || !deps.enrolment) return;
+    lease.handle = await deps.enrolment.begin(lease.session).catch((): undefined => {
+      deps.log.warn({ runId, errorCode: "enrolment_begin_failed" }, "passkey enrolment");
+      return undefined;
+    });
+  }
+
+  /** Best effort: seal what the user enrolled and close the enrolment (at most once per begin). */
+  async function finishEnrolment(runId: string): Promise<void> {
+    const lease = leases.get(runId);
+    if (lease?.handle === undefined || !deps.enrolment) return;
+    const handle = lease.handle;
+    lease.handle = undefined;
+    await deps.enrolment
+      .finish(handle, { workspaceId: lease.workspaceId, runId })
+      .catch(() => deps.log.warn({ runId, errorCode: "enrolment_finish_failed" }, "passkey enrolment"));
+  }
+
+  /**
+   * Best effort within nekoTimeoutMs: the agent's admin session becomes n.eko host and the user
+   * loses can_host. Retried, because n.eko may still be starting right after a slot restart.
+   */
+  async function seatAgent(slotName: string, runId: string, errorCode: string): Promise<void> {
+    const deadline = performance.now() + nekoTimeoutMs;
+    for (;;) {
+      try {
+        const left = Math.max(1, deadline - performance.now());
+        await withTimeout(deps.liveView.takeControl({ name: slotName }), left);
+        return;
+      } catch {
+        if (performance.now() >= deadline - RETRY_MS) {
+          deps.log.warn({ runId, errorCode }, "n.eko host not reset");
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+      }
+    }
+  }
+
+  async function give(
+    slotName: string,
+    runId: string,
+    userId: string,
+    patienceMs: number,
+  ): Promise<boolean> {
+    const deadline = performance.now() + patienceMs;
+    for (;;) {
+      try {
+        await deps.liveView.giveControl({ name: slotName }, userId);
+        return true;
+      } catch (error) {
+        if (!(error instanceof LiveViewError) || performance.now() >= deadline) {
+          deps.log.warn(
+            { runId, errorCode: error instanceof LiveViewError ? error.code : "neko_give_failed" },
+            "takeover not delivered",
+          );
+          return false;
+        }
+      }
+    }
+  }
+
+  return {
+    control: {
+      async onUserControl(slotName, runId, { afterRestore }) {
+        let userId: string | null;
+        try {
+          userId = await deps.store.controlUser(runId);
+        } catch {
+          return FAILED;
+        }
+        // Handed back before n.eko was touched: nothing to give; B1 hands back next.
+        if (userId === null) return { ok: true };
+        if (!(await give(slotName, runId, userId, afterRestore ? restoreWaitMs : 0))) {
+          await seatAgent(slotName, runId, "neko_take_failed");
+          return FAILED;
+        }
+        await deps.liveView
+          .setClipboardAccess({ name: slotName }, true)
+          .catch(() => deps.log.warn({ runId, errorCode: "clipboard_on_failed" }, "clipboard off"));
+        await beginEnrolment(runId);
+        idle.arm(slotName, runId);
+        return { ok: true };
+      },
+      async onAgentControl(slotName, runId) {
+        idle.disarm(runId);
+        // Must succeed before B1 releases the guard: if n.eko cannot take the host back, the run
+        // fails closed rather than let the user and the agent drive at once (spec §10.3).
+        await deps.liveView.takeControl({ name: slotName });
+        await finishEnrolment(runId);
+        await deps.liveView
+          .setClipboardAccess({ name: slotName }, false)
+          .catch(() => deps.log.warn({ runId, errorCode: "clipboard_off_failed" }, "clipboard"));
+      },
+    },
+    async onLeased(slot) {
+      leases.set(slot.runId, { session: slot.session, workspaceId: slot.workspaceId });
+      await Promise.all([
+        seatAgent(slot.slotName, slot.runId, "neko_seat_failed"),
+        deps.downloads
+          .attach(slot)
+          .catch(() =>
+            deps.log.warn({ runId: slot.runId, errorCode: "downloads_attach_failed" }, "downloads"),
+          ),
+      ]);
+    },
+    async onLeaseEnding(slot) {
+      idle.disarm(slot.runId);
+      // A run cancelled during a takeover still seals what the user enrolled (before Browser.close).
+      await finishEnrolment(slot.runId);
+      leases.delete(slot.runId);
+      await deps.downloads.detach(slot.runId).catch(() => undefined);
+      // S12: a released run must not leave the user with X input until the container restarts.
+      if (slot.slotReleased) await seatAgent(slot.slotName, slot.runId, "neko_release_failed");
+    },
+  };
+}
+```
+
+Note: `setClipboardAccess(…, false)` failing after a successful `takeControl` is harmless: n.eko's clipboard routes need host status, which the user no longer has.
+
+- [ ] **Step 4: Run the tests.**
+
+Run: `pnpm test apps/agent/src/live && pnpm typecheck && pnpm lint`
+Expected: PASS.
+
+- [ ] **Step 5: Commit.**
+```bash
+pnpm exec prettier --write apps/agent/src/live
+git add apps/agent/src/live
+git commit -m "feat(agent): B6 live hooks: give/take n.eko inside B1's lock, idle hand-back, lease lifecycle"
+```
+
+---
+### Task A13: Wire B6 into the agent and run the takeover acceptance tests (base Task 13, replaced)
+
+Replaces base Task 13 (F1, F10, G3, W3, W6). There is no `b1-adapters.ts`, `ports.ts` or `runtime.ts`: `main.ts` builds the live hooks and composes them with B3's through `composeRunHooks`. The acceptance tests run the real `Supervisor` on the B1 behaviour stack with the B6 hooks; page-level SSRF is already B1's (`network-policy`), so the base test's `/12` allow-list (G3) is gone.
+
+**Files:**
+- Modify: `apps/agent/src/main.ts`, `tests/behaviour/harness.ts`
+- Test: `apps/agent/src/live/takeover.behaviour.test.ts`, `apps/agent/src/live/idle-hand-back.behaviour.test.ts`
+
+**Interfaces:**
+- Consumes: everything from A2–A12; `startBehaviourAgent`, `createRun`, `takeControl`, `handBack`, `events`, `steps`, `slotOf`, `waitForRun` (harness); B3 E Task 13's `vault` and `vaultHooks(vault)` in `main.ts` (`vault.enrolment` satisfies `PasskeyEnrolmentPort`).
+- Produces: `startBehaviourAgent(options: {scenarios?; config?; clock?; hooks?: Partial<RunHooks>})`; production agent with `composeRunHooks(vaultHooks(vault), liveHooks)`.
+
+- [ ] **Step 1: Write the failing acceptance tests.**
+
+`apps/agent/src/live/takeover.behaviour.test.ts`:
+
+```ts
+import { encodeNotify, type RunEvent } from "@mastertutor/contracts";
+import { createLogger, deriveNekoPassword, loginNeko } from "@mastertutor/contracts/server";
+import { createDb, runs, type DbHandle } from "@mastertutor/db";
+import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { MockTurn } from "../../../../tests/llm-mock/src/scenario.ts";
+import {
+  BEHAVIOUR_DOWNLOADS_DIR,
+  BEHAVIOUR_NEKO_ADMIN_SECRET,
+  BEHAVIOUR_NEKO_MEMBER_SECRET,
+  SITE,
+  idleUrlForTests,
+  nekoBaseUrlForTests,
+} from "../../../../tests/behaviour/constants.ts";
+import { behaviourEnv } from "../../../../tests/behaviour/env.ts";
+import {
+  createRun,
+  events,
+  handBack,
+  slotOf,
+  startBehaviourAgent,
+  steps,
+  takeControl,
+  waitForRun,
+  type BehaviourAgent,
+} from "../../../../tests/behaviour/harness.ts";
+import { createMemoryStorage } from "../testing/memory-storage.ts";
+import { waitFor } from "../testing/wait.ts";
+import { createDownloadIngestor } from "./downloads.ts";
+import { createSlotIdleProbe } from "./idle-probe.ts";
+import { createLiveHooks, liveControlStore } from "./live-hooks.ts";
+import type { LiveView } from "./live-view.ts";
+import { createNekoAdmin } from "./neko-admin.ts";
+import { createNekoLiveView } from "./neko-live-view.ts";
+
+const log = createLogger({ service: "behaviour", level: "silent" });
+const admin = createNekoAdmin({
+  adminSecret: BEHAVIOUR_NEKO_ADMIN_SECRET,
+  baseUrl: (slot) => nekoBaseUrlForTests(slot),
+});
+const real = createNekoLiveView({ admin });
+/** Database-clock marks of every give (after it completed) and take (before it started), for W6. */
+const marks: Array<{ kind: "give" | "take"; slot: string; at: Date }> = [];
+let agentDb: DbHandle;
+let owner: DbHandle;
+let agent: BehaviourAgent;
+const sockets: WebSocket[] = [];
+
+const dbNow = async () =>
+  new Date(String((await owner.sql<Array<{ now: string }>>`select now()::text as now`)[0]!.now));
+const recorded: LiveView = {
+  async giveControl(slot, userId) {
+    await real.giveControl(slot, userId);
+    marks.push({ kind: "give", slot: slot.name, at: await dbNow() });
+  },
+  async takeControl(slot) {
+    marks.push({ kind: "take", slot: slot.name, at: await dbNow() });
+    await real.takeControl(slot);
+  },
+  setClipboardAccess: (slot, on) => real.setClipboardAccess(slot, on),
+};
+
+beforeAll(async () => {
+  const env = behaviourEnv();
+  owner = createDb(env.ownerUrl, { max: 2 });
+  agentDb = createDb(env.agentUrl, { max: 2 });
+  agent = await startBehaviourAgent({
+    hooks: createLiveHooks({
+      store: liveControlStore(agentDb.db),
+      liveView: recorded,
+      idleProbe: createSlotIdleProbe({ url: (slot) => idleUrlForTests(slot) }),
+      downloads: createDownloadIngestor({
+        db: agentDb.db,
+        storage: createMemoryStorage(),
+        log,
+        localRoot: BEHAVIOUR_DOWNLOADS_DIR,
+        dirMode: 0o777,
+      }),
+      log,
+    }),
+  });
+});
+afterAll(async () => {
+  for (const socket of sockets) socket.close();
+  await agent?.stop();
+  await Promise.all([owner?.close(), agentDb?.close()]);
+});
+
+const scenario = (name: string, turns: MockTurn[]) => {
+  agent.mock.setScenarios([{ name, turns }]);
+  return name;
+};
+const readInteractive: MockTurn = {
+  outputs: [{ type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } }],
+};
+const clickNotes: MockTurn = { outputs: [{ type: "click_named", name: "Notes" }] };
+const typeLong: MockTurn = {
+  outputs: [{ type: "computer", actions: [{ type: "type", text: "y".repeat(5_000) }] }],
+};
+const done: MockTurn = { outputs: [{ type: "turn", status: "done", reason: "Finished" }] };
+const isTyping = (action: unknown) =>
+  ((action as { summary?: string } | null)?.summary ?? "").startsWith("type");
+const typingStarted = (runId: string) =>
+  waitFor(
+    async () =>
+      (await steps(agent, runId)).some(
+        (s) => s.phase === "act" && s.state === "started" && isTyping(s.action),
+      ),
+    { label: "typing", timeoutMs: 60_000, intervalMs: 10 },
+  );
+const controlEvents = async (runId: string) =>
+  (await events(agent, runId)).flatMap((e: RunEvent) => (e.type === "control" ? [e.holder] : []));
+const hostOf = async (slot: string) =>
+  ((await admin.request(slot, "GET", "/api/room/control")) as { host_id?: string }).host_id;
+const userCanHost = async (slot: string) =>
+  ((await admin.request(slot, "GET", "/api/members/user")) as { can_host?: boolean }).can_host;
+/** What the iframe does: openLive's server-side login, then the n.eko websocket. */
+async function connectLiveView(slot: string): Promise<string> {
+  const base = nekoBaseUrlForTests(slot);
+  const token = await loginNeko({
+    baseUrl: base,
+    username: "user",
+    password: deriveNekoPassword(BEHAVIOUR_NEKO_MEMBER_SECRET, slot),
+  });
+  const socket = new WebSocket(`${base.replace("http", "ws")}/api/ws?token=${token}`);
+  sockets.push(socket);
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener("open", () => resolve());
+    socket.addEventListener("error", () => reject(new Error("n.eko websocket failed")));
+  });
+  return token;
+}
+const closeLiveViews = () => {
+  for (const socket of sockets.splice(0)) socket.close();
+};
+
+describe("takeover through B1's lock with the n.eko live view (spec §10.3, §12)", () => {
+  it("seats the agent as n.eko host at lease, so the user cannot take the browser (A1, S2)", async () => {
+    const name = scenario("seat", [readInteractive, clickNotes, typeLong, done]);
+    const runId = await createRun(agent, `[scenario:${name}] ${SITE}/interactive.html`);
+    await typingStarted(runId);
+    const slot = (await slotOf(agent, runId))!;
+    expect(await hostOf(slot)).toBe("agent");
+    const token = await loginNeko({
+      baseUrl: nekoBaseUrlForTests(slot),
+      username: "user",
+      password: deriveNekoPassword(BEHAVIOUR_NEKO_MEMBER_SECRET, slot),
+    });
+    const request = await fetch(`${nekoBaseUrlForTests(slot)}/api/room/control/request`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(request.status).toBe(403);
+    await waitForRun(agent, runId, (run) => run.status === "completed", "completed");
+  });
+
+  it("a takeover with no live view connected fails, and the agent keeps control (Review Focus 1)", async () => {
+    closeLiveViews();
+    const name = scenario("no-view", [readInteractive, clickNotes, typeLong, done]);
+    const runId = await createRun(agent, `[scenario:${name}] ${SITE}/interactive.html`);
+    await typingStarted(runId);
+    const slot = (await slotOf(agent, runId))!;
+    await takeControl(agent, runId);
+    await waitFor(
+      async () =>
+        (await events(agent, runId)).some((e) => e.type === "error" && e.code === "takeover_failed"),
+      { label: "takeover_failed", timeoutMs: 5_000 },
+    );
+    expect(await controlEvents(runId)).toEqual(["agent"]);
+    const [row] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+    expect(row).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(await hostOf(slot)).toBe("agent");
+    expect(await userCanHost(slot)).toBe(false);
+    await waitForRun(agent, runId, (run) => run.status === "completed", "completed without hand back");
+  });
+
+  it("gives n.eko to a connected live view, and never lets agent input overlap it (W6, base Review Focus 5)", async () => {
+    const name = scenario("toggle", [
+      readInteractive,
+      clickNotes,
+      typeLong,
+      typeLong,
+      typeLong,
+      typeLong,
+      done,
+    ]);
+    const runId = await createRun(agent, `[scenario:${name}] ${SITE}/interactive.html`);
+    await typingStarted(runId);
+    const slot = (await slotOf(agent, runId))!;
+    await connectLiveView(slot);
+
+    await takeControl(agent, runId);
+    await waitFor(async () => (await controlEvents(runId)).at(-1) === "user", { label: "user" });
+    expect(await hostOf(slot)).toBe("user");
+    expect(await userCanHost(slot)).toBe(true);
+
+    // Rapid double-clicks: hand back, take over, hand back, without waiting in between.
+    await handBack(agent, runId);
+    await takeControl(agent, runId);
+    await handBack(agent, runId);
+    await waitFor(
+      async () =>
+        (await controlEvents(runId)).at(-1) === "agent" &&
+        (await owner.db.select().from(runs).where(eq(runs.id, runId)))[0]?.controller === "agent",
+      { label: "settled on the agent", timeoutMs: 10_000 },
+    );
+    expect(await hostOf(slot)).toBe("agent");
+    expect(await userCanHost(slot)).toBe(false);
+    await waitForRun(agent, runId, (run) => run.status === "completed", "completed");
+
+    // Never both: no act started while the user held the n.eko host for this slot.
+    const windows: Array<[Date, Date]> = [];
+    const mine = marks.filter((m) => m.slot === slot);
+    mine.forEach((mark, i) => {
+      if (mark.kind !== "give") return;
+      const next = mine.slice(i + 1).find((m) => m.kind === "take");
+      windows.push([mark.at, next?.at ?? new Date(8.64e15)]);
+    });
+    expect(windows.length).toBeGreaterThan(0);
+    for (const step of (await steps(agent, runId)).filter((s) => s.phase === "act")) {
+      for (const [given, taken] of windows) {
+        const started = step.createdAt.getTime();
+        expect(started > given.getTime() && started < taken.getTime(), `act ${step.seq}`).toBe(false);
+      }
+    }
+    closeLiveViews();
+  });
+
+  it("a cancel while the user holds control takes the n.eko host back before the slot restarts (Review Focus 5, S12)", async () => {
+    const name = scenario("cancel-held", [readInteractive, clickNotes, typeLong, done]);
+    const runId = await createRun(agent, `[scenario:${name}] ${SITE}/interactive.html`);
+    await typingStarted(runId);
+    const slot = (await slotOf(agent, runId))!;
+    await connectLiveView(slot);
+    await takeControl(agent, runId);
+    await waitFor(async () => (await controlEvents(runId)).at(-1) === "user", { label: "user" });
+    const givenAt = marks.filter((m) => m.slot === slot && m.kind === "give").length;
+    await agent.web.db
+      .update(runs)
+      .set({ status: "cancelled", waitReason: null })
+      .where(eq(runs.id, runId));
+    await agent.web.sql.notify("run_control", encodeNotify("run_control", { runId }));
+    await waitForRun(agent, runId, (run) => run.status === "cancelled" && run.slotName === null, "released");
+    const after = marks.filter((m) => m.slot === slot).slice(givenAt);
+    expect(after.some((m) => m.kind === "take")).toBe(true);
+    closeLiveViews();
+  });
+});
+```
+
+`apps/agent/src/live/idle-hand-back.behaviour.test.ts` (its own file: one agent per file, and this one needs a short idle limit):
+
+```ts
+import type { RunEvent } from "@mastertutor/contracts";
+import { createLogger, deriveNekoPassword, loginNeko } from "@mastertutor/contracts/server";
+import { createDb, type DbHandle } from "@mastertutor/db";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { MockTurn } from "../../../../tests/llm-mock/src/scenario.ts";
+import {
+  BEHAVIOUR_DOWNLOADS_DIR,
+  BEHAVIOUR_NEKO_ADMIN_SECRET,
+  BEHAVIOUR_NEKO_MEMBER_SECRET,
+  SITE,
+  idleUrlForTests,
+  nekoBaseUrlForTests,
+} from "../../../../tests/behaviour/constants.ts";
+import { behaviourEnv } from "../../../../tests/behaviour/env.ts";
+import {
+  createRun,
+  events,
+  slotOf,
+  startBehaviourAgent,
+  steps,
+  takeControl,
+  waitForRun,
+  type BehaviourAgent,
+} from "../../../../tests/behaviour/harness.ts";
+import { createMemoryStorage } from "../testing/memory-storage.ts";
+import { waitFor } from "../testing/wait.ts";
+import { createDownloadIngestor } from "./downloads.ts";
+import { createSlotIdleProbe } from "./idle-probe.ts";
+import { createLiveHooks, liveControlStore } from "./live-hooks.ts";
+import { createNekoAdmin } from "./neko-admin.ts";
+import { createNekoLiveView } from "./neko-live-view.ts";
+
+const log = createLogger({ service: "behaviour", level: "silent" });
+const admin = createNekoAdmin({
+  adminSecret: BEHAVIOUR_NEKO_ADMIN_SECRET,
+  baseUrl: (slot) => nekoBaseUrlForTests(slot),
+});
+let agentDb: DbHandle;
+let agent: BehaviourAgent;
+let socket: WebSocket | undefined;
+
+beforeAll(async () => {
+  agentDb = createDb(behaviourEnv().agentUrl, { max: 2 });
+  agent = await startBehaviourAgent({
+    hooks: createLiveHooks({
+      store: liveControlStore(agentDb.db),
+      liveView: createNekoLiveView({ admin }),
+      idleProbe: createSlotIdleProbe({ url: (slot) => idleUrlForTests(slot) }),
+      downloads: createDownloadIngestor({
+        db: agentDb.db,
+        storage: createMemoryStorage(),
+        log,
+        localRoot: BEHAVIOUR_DOWNLOADS_DIR,
+        dirMode: 0o777,
+      }),
+      log,
+      idleLimitMs: 1_500,
+      idlePollMs: 200,
+    }),
+  });
+});
+afterAll(async () => {
+  socket?.close();
+  await agent?.stop();
+  await agentDb?.close();
+});
+
+const turn = (outputs: MockTurn["outputs"]): MockTurn => ({ outputs });
+
+describe("15-minute idle hand-back, with a 1.5 s limit (spec §5.1)", () => {
+  it("returns control to the agent when the user gives no input, and the run goes on", async () => {
+    agent.mock.setScenarios([
+      {
+        name: "idle",
+        turns: [
+          turn([{ type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } }]),
+          turn([{ type: "click_named", name: "Notes" }]),
+          turn([{ type: "computer", actions: [{ type: "type", text: "y".repeat(5_000) }] }]),
+          turn([{ type: "turn", status: "done", reason: "Finished" }]),
+        ],
+      },
+    ]);
+    const runId = await createRun(agent, `[scenario:idle] ${SITE}/interactive.html`);
+    await waitFor(
+      async () => (await steps(agent, runId)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting", timeoutMs: 60_000, intervalMs: 10 },
+    );
+    const slot = (await slotOf(agent, runId))!;
+    const base = nekoBaseUrlForTests(slot);
+    const token = await loginNeko({
+      baseUrl: base,
+      username: "user",
+      password: deriveNekoPassword(BEHAVIOUR_NEKO_MEMBER_SECRET, slot),
+    });
+    socket = new WebSocket(`${base.replace("http", "ws")}/api/ws?token=${token}`);
+    await new Promise<void>((resolve, reject) => {
+      socket!.addEventListener("open", () => resolve());
+      socket!.addEventListener("error", () => reject(new Error("n.eko websocket failed")));
+    });
+    const takenAt = performance.now();
+    await takeControl(agent, runId);
+    const held = (e: RunEvent) => e.type === "control" && e.holder === "user";
+    await waitFor(async () => (await events(agent, runId)).some(held), { label: "user holds" });
+    await waitFor(
+      async () =>
+        (await events(agent, runId)).some((e) => e.type === "error" && e.code === "idle_hand_back"),
+      { label: "idle hand-back", timeoutMs: 10_000 },
+    );
+    expect(performance.now() - takenAt).toBeGreaterThanOrEqual(1_500);
+    await waitForRun(agent, runId, (run) => run.controller === "agent", "agent holds again");
+    expect(
+      ((await admin.request(slot, "GET", "/api/room/control")) as { host_id?: string }).host_id,
+    ).toBe("agent");
+    await waitForRun(agent, runId, (run) => run.status === "completed", "completed");
+  });
+});
+```
+
+- [ ] **Step 2: Run them and watch them fail.**
+
+Run: `pnpm test:behaviour apps/agent/src/live/takeover.behaviour.test.ts apps/agent/src/live/idle-hand-back.behaviour.test.ts`
+Expected: FAIL: the harness ignores `hooks`, so the agent runs B1's default hooks: no `takeover_failed`, no `idle_hand_back`, and n.eko's host is never `agent`.
+
+- [ ] **Step 3: Let the behaviour harness take hooks.** In `tests/behaviour/harness.ts`:
+- add `import type { RunHooks } from "../../apps/agent/src/loop/hooks.ts";`;
+- change the `startBehaviourAgent` options type to `{ scenarios?: Scenario[]; config?: Partial<RuntimeConfig>; clock?: Clock; hooks?: Partial<RunHooks> } = {}`;
+- in `make`, add `hooks: options.hooks,` to the `new Supervisor({ … })` options.
+
+Run the two files again: they PASS now (A2–A12 are in). If one fails, fix the owning task's code, never the assertion.
+
+- [ ] **Step 4: Wire the hooks into `main.ts`.** In `apps/agent/src/main.ts`:
+
+(a) Add the imports:
+```ts
+import { createDownloadIngestor } from "./live/downloads.ts";
+import { createSlotIdleProbe } from "./live/idle-probe.ts";
+import { createLiveHooks, liveControlStore } from "./live/live-hooks.ts";
+import { createNekoAdmin } from "./live/neko-admin.ts";
+import { createNekoLiveView } from "./live/neko-live-view.ts";
+import { composeRunHooks } from "./loop/hooks.ts";
+import { DEFAULT_RUNTIME_CONFIG } from "./runtime/config.ts";
+```
+B3 E Task 13 already added `vaultKeys`, `vault` (`createVault({…})`) and `hooks: vaultHooks(vault)`; B6 edits on top of that.
+
+(b) Directly after B3's `const vault = createVault({…});` statement (and so before `const supervisor = new Supervisor({`), add:
+```ts
+// B6: n.eko live view and downloads, plugged into B1's control lock (spec §10). B3's passkey
+// enrolment runs while the user holds control (B3 E.8 note 1).
+const liveHooks = createLiveHooks({
+  enrolment: vault.enrolment,
+  store: liveControlStore(database.db),
+  liveView: createNekoLiveView({
+    admin: createNekoAdmin({ adminSecret: env.NEKO_ADMIN_SECRET }),
+  }),
+  idleProbe: createSlotIdleProbe(),
+  downloads: createDownloadIngestor({
+    db: database.db,
+    storage,
+    log,
+    localRoot: DEFAULT_RUNTIME_CONFIG.downloadsDir,
+  }),
+  log,
+});
+```
+
+(c) In `new Supervisor({ … })`, change B3's `hooks: vaultHooks(vault),` to `hooks: composeRunHooks(vaultHooks(vault), liveHooks),`. The composition has no clash: B3 owns `onReleased`, `onClick`, `sessionStore`, `maskSources`, `functionApproval`, `functionTools`, `promptContext`; B6 owns `control`, `onLeased`, `onLeaseEnding`.
+
+Passkey enrolment end to end (a passkey the user registers during takeover is sealed on hand-back) needs a WebAuthn fixture inside a slot, which needs `--unsafely-treat-insecure-origin-as-secure` for the fixture origin (B3 E.8 note 3); the behaviour slots do not have it, so that case is a Phase 7 E2E item (§8). A12's `live-hooks.test.ts` covers the call order.
+
+- [ ] **Step 5: Run every agent suite.**
+
+Run:
+```bash
+docker build -q -t mastertutor/browser-slot:local apps/browser-slot
+pnpm test apps/agent
+pnpm test:int apps/agent
+pnpm test:behaviour
+pnpm typecheck && pnpm lint
+docker builder prune -f && docker image prune -f
+```
+Expected: PASS. The whole behaviour project passes, including B1's own `runs.behaviour.test.ts` (whose agent runs with the default hooks) and the new B6 files.
+
+- [ ] **Step 6: Commit.**
+```bash
+pnpm exec prettier --write apps/agent/src tests/behaviour
+git add apps/agent/src tests/behaviour/harness.ts
+git commit -m "feat(agent): wire B6 live hooks into the agent; takeover and idle hand-back acceptance tests"
+```
+
+---
+
+### Task A14: Traefik live routers in the test stack (base Task 11, replaced)
+
+Replaces base Task 11 (S4, S6, S7, G7, D41, D42). B6 ships **only** the test file-provider routers. Production labels belong to Phase 9's `compose.prod.yml` (§8 hands it the exact rule, address and middleware order). No coturn, no `TURN_URLS`, no `PUBLIC_HOST`, no labels or network renames in `compose.yml`. The ForwardAuth address is web's static `.11` (D41), even in tests, so the test stack exercises the production path. A headers middleware adds `frame-ancestors 'self'` and `nosniff` to everything n.eko serves (S4).
+
+**Files:**
+- Replace: `infra/traefik/test-dynamic.yml`
+- Create: `compose.live-test.yml`
+- Modify: `package.json` (scripts)
+- Test: `tests/compose/live-routes.int.test.ts`
+
+**Interfaces:**
+- Consumes: `liveRouterRule`, `LIVE_STRIP_REGEX`, `liveForwardAuthAddress` (A3); `/api/live/auth` (A8).
+- Produces: routers `live-browser-1`, `live-browser-2` (priority 1000; middlewares `live-auth`, `live-strip`, `live-headers`, in that order); scripts `pnpm compose:live <args>` and `pnpm test:live-stack`.
+
+- [ ] **Step 1: Write the failing test.** `tests/compose/live-routes.int.test.ts`:
+
+```ts
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { LIVE_STRIP_REGEX, liveForwardAuthAddress, liveRouterRule } from "@mastertutor/contracts";
+import { beforeAll, describe, expect, it } from "vitest";
+
+interface Service {
+  labels?: Record<string, string>;
+  environment?: Record<string, string | null>;
+  networks?: Record<string, { ipv4_address?: string } | null>;
+  profiles?: string[];
+}
+interface Config {
+  services: Record<string, Service>;
+}
+
+const root = fileURLToPath(new URL("../..", import.meta.url));
+const load = (files: string[]): Config =>
+  JSON.parse(
+    execFileSync(
+      "docker",
+      ["compose", "--env-file", ".env.test", ...files.flatMap((f) => ["-f", f]), "config", "--format", "json"],
+      { cwd: root, encoding: "utf8" },
+    ),
+  ) as Config;
+const dynamic = readFileSync(new URL("../../infra/traefik/test-dynamic.yml", import.meta.url), "utf8");
+let base: Config;
+let live: Config;
+
+beforeAll(() => {
+  base = load(["compose.yml"]);
+  live = load(["compose.yml", "compose.test.yml", "compose.live-test.yml"]);
+});
+
+describe("test file-provider live routers (spec §10.2.2)", () => {
+  it("route each slot with the single rule source", () => {
+    for (const slot of ["browser-1", "browser-2"]) {
+      expect(dynamic).toContain(`rule: '${liveRouterRule(slot, "localhost")}'`);
+      expect(dynamic).toContain(`url: http://${slot}:8080`);
+    }
+    expect(dynamic.match(/middlewares: \[live-auth, live-strip, live-headers\]/g)).toHaveLength(2);
+    expect(dynamic.match(/priority: 1000/g)).toHaveLength(2);
+    expect(dynamic).toContain(`- '${LIVE_STRIP_REGEX}'`);
+  });
+
+  it("send ForwardAuth to web's static cdp address and copy back only the Cookie header (D41, S3)", () => {
+    const webIp = base.services.web!.networks!.cdp!.ipv4_address!;
+    const address = `http://${webIp}:3000/api/live/auth`;
+    expect(address).toBe(liveForwardAuthAddress(webIp.split(".").slice(0, 3).join(".")));
+    expect(dynamic).toContain(`address: ${address}`);
+    expect(dynamic).not.toContain("http://web:3000/api/live/auth");
+    expect(dynamic).toMatch(/authResponseHeaders:\s*\n\s*- Cookie\s*\n/);
+  });
+
+  it("add the frame and sniffing guards to everything n.eko serves (S4)", () => {
+    expect(dynamic).toContain(`contentSecurityPolicy: "frame-ancestors 'self'"`);
+    expect(dynamic).toContain("contentTypeNosniff: true");
+  });
+});
+
+describe("compose stays production-neutral (S6, S7, D42)", () => {
+  it("puts no Traefik labels and no TURN settings on slots; Phase 9 owns production routing", () => {
+    for (const [name, service] of Object.entries(base.services)) {
+      expect(Object.keys(service.labels ?? {}).filter((k) => k.startsWith("traefik.")), name).toEqual([]);
+      if (name.startsWith("browser-"))
+        expect(Object.keys(service.environment ?? {}).filter((k) => k.startsWith("TURN_")), name).toEqual([]);
+    }
+    expect(base.services.coturn).toBeUndefined();
+  });
+
+  it("the live overlay runs two slots and tells migrate about both", () => {
+    expect(
+      Object.entries(live.services)
+        .filter(([name, s]) => name.startsWith("browser-") && (s.profiles ?? []).length === 0)
+        .map(([name]) => name)
+        .sort(),
+    ).toEqual(["browser-1", "browser-2"]);
+    expect(live.services.migrate!.environment!.BROWSER_SLOTS).toBe("browser-1,browser-2");
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail.**
+
+Run: `pnpm test:int tests/compose/live-routes.int.test.ts`
+Expected: FAIL: no live routers in `test-dynamic.yml`, no `compose.live-test.yml`.
+
+- [ ] **Step 3: Implement.**
+
+`infra/traefik/test-dynamic.yml` (replace the whole file):
+
+```yaml
+# Test overlay routes. The live routers use liveRouterRule() and liveForwardAuthAddress() (D41:
+# web's static .11 on the cdp network, never the name `web`); tests/compose/live-routes.int.test.ts
+# asserts both. ForwardAuth runs BEFORE the strip so it sees /live/<runId>/. Phase 9's
+# compose.prod.yml carries the same routers as labels.
+http:
+  routers:
+    web:
+      rule: PathPrefix(`/`)
+      entryPoints: [web]
+      service: web
+    live-browser-1:
+      rule: 'Host(`localhost`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-1\.`)'
+      priority: 1000
+      entryPoints: [web]
+      middlewares: [live-auth, live-strip, live-headers]
+      service: live-browser-1
+    live-browser-2:
+      rule: 'Host(`localhost`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-2\.`)'
+      priority: 1000
+      entryPoints: [web]
+      middlewares: [live-auth, live-strip, live-headers]
+      service: live-browser-2
+  middlewares:
+    live-auth:
+      forwardAuth:
+        address: http://172.30.231.11:3000/api/live/auth
+        authResponseHeaders:
+          - Cookie
+    live-strip:
+      stripPrefixRegex:
+        regex:
+          - '^/live/[0-9a-f-]{36}'
+    live-headers:
+      headers:
+        contentSecurityPolicy: "frame-ancestors 'self'"
+        contentTypeNosniff: true
+  services:
+    web:
+      loadBalancer:
+        servers:
+          - url: http://web:3000
+    live-browser-1:
+      loadBalancer:
+        servers:
+          - url: http://browser-1:8080
+    live-browser-2:
+      loadBalancer:
+        servers:
+          - url: http://browser-2:8080
+```
+
+`compose.live-test.yml`:
+
+```yaml
+# Live-view test overlay (B6) on top of compose.test.yml: a second slot for the cross-slot auth
+# cases. Run: pnpm compose:live up -d --wait traefik browser-1 browser-2
+services:
+  browser-2:
+    profiles: !reset []
+  migrate:
+    environment:
+      BROWSER_SLOTS: browser-1,browser-2
+```
+
+Root `package.json` `scripts`, add:
+```json
+"compose:live": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml -f compose.live-test.yml",
+"test:live-stack": "RUN_LIVE_STACK=1 vitest run --project integration tests/live"
+```
+
+- [ ] **Step 4: Run the tests.**
+
+Run:
+```bash
+pnpm test:int tests/compose
+pnpm compose:live config --quiet
+```
+Expected: PASS (the Phase 0 `compose-config.int.test.ts`, including its `TURN_SECRET`-not-on-slots rule, is unchanged and passes); `config` prints nothing and exits 0.
+
+- [ ] **Step 5: Commit.**
+```bash
+pnpm exec prettier --write tests/compose package.json
+git add infra/traefik/test-dynamic.yml compose.live-test.yml package.json tests/compose/live-routes.int.test.ts
+git commit -m "feat(infra): test live routers with D41 ForwardAuth, auth-then-strip and frame guards"
+```
+
+---
+
+### Task A15: Stack-level §12 live-view tests through Traefik (base Task 12, changed)
+
+Changed from base Task 12: no TURN probe and no coturn (S7); `openLive` is called through the real `/api/rpc` route, so the FE router wiring and `ResponseHeadersPlugin` are covered (E1); the n.eko client is loaded **through the `/live/<id>/` prefix** and its WebSocket upgrades through it (W1); a request without `NEKO_SESSION` is refused (S3, Review Focus 3). Cookie isolation upstream (W2) is proved by A8's unit test plus that refusal: every request that reaches n.eko carries a Cookie header written by ForwardAuth.
+
+**Files:**
+- Create: `tests/live/live-stack.int.test.ts`
+- Modify: `.github/workflows/ci.yml`
+
+**Interfaces:**
+- Consumes: the A14 stack; `signLiveSlot` (A7), `livePath`, `LIVE_SLOT_COOKIE`, `NEKO_SESSION_COOKIE` (A3). The suite runs only with `RUN_LIVE_STACK=1` (`pnpm test:live-stack`).
+- Produces: CI coverage of the live view through the real stack.
+
+- [ ] **Step 1: Write the suite.** `tests/live/live-stack.int.test.ts`:
+
+```ts
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { request } from "node:http";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { LIVE_SLOT_COOKIE, NEKO_SESSION_COOKIE, livePath } from "@mastertutor/contracts";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { signLiveSlot } from "../../apps/web/lib/server/live/cookie.ts";
+
+const run = promisify(execFile);
+const root = fileURLToPath(new URL("../..", import.meta.url));
+const BASE = "http://localhost:18080";
+const COMPOSE = [
+  "compose",
+  "--env-file",
+  ".env.test",
+  "-f",
+  "compose.yml",
+  "-f",
+  "compose.test.yml",
+  "-f",
+  "compose.live-test.yml",
+];
+const compose = async (args: string[]) =>
+  (await run("docker", [...COMPOSE, ...args], { cwd: root, maxBuffer: 50 * 1024 * 1024 })).stdout.trim();
+const docker = async (args: string[]) => (await run("docker", args, { cwd: root })).stdout.trim();
+const psql = (query: string) =>
+  compose(["exec", "-T", "postgres", "psql", "-U", "owner", "-d", "mastertutor", "-v", "ON_ERROR_STOP=1", "-q", "-At", "-c", query]);
+
+let env: Record<string, string>;
+let session = "";
+let userId = "";
+let ws1 = "";
+let ws2 = "";
+const now = () => Math.floor(Date.now() / 1000);
+
+async function newRun(workspaceId: string): Promise<string> {
+  return psql(`with r as (insert into runs (workspace_id, goal, status, allowed_origins)
+    values ('${workspaceId}', 'live stack', 'running', '{https://example.com}') returning id) select id from r`);
+}
+async function release(slot: string) {
+  await psql(`update runs set slot_name = null where slot_name = '${slot}';
+    update browser_slots set state = 'restarting', run_id = null where name = '${slot}'`);
+}
+async function lease(slot: string, runId: string) {
+  await release(slot);
+  await psql(`update browser_slots set state = 'leased', run_id = '${runId}', lease_owner = 'test',
+      lease_expires_at = now() + interval '1 hour' where name = '${slot}';
+    update runs set slot_name = '${slot}' where id = '${runId}'`);
+}
+const slotCookie = (slot: string, runId: string, forUser = userId) =>
+  `${LIVE_SLOT_COOKIE}=${signLiveSlot(env.LIVE_COOKIE_SECRET!, { slotName: slot, runId, userId: forUser, expiresAt: now() + 600 })}`;
+const get = (path: string, cookies: string[]) =>
+  fetch(`${BASE}${path}`, { redirect: "manual", headers: { cookie: cookies.join("; ") } });
+/** runs.openLive through the real /api/rpc route (oRPC RPC wire format). Returns the live cookies. */
+async function openLive(runId: string): Promise<string[]> {
+  const response = await fetch(`${BASE}/api/rpc/runs/openLive`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: session, origin: BASE },
+    body: JSON.stringify({ json: { runId } }),
+  });
+  expect(response.status).toBe(200);
+  expect(((await response.json()) as { json: { sleeping: boolean } }).json.sleeping).toBe(false);
+  const cookies = response.headers.getSetCookie().map((c) => c.split(";")[0]!);
+  expect(cookies.map((c) => c.slice(0, c.indexOf("="))).sort()).toEqual([
+    LIVE_SLOT_COOKIE,
+    NEKO_SESSION_COOKIE,
+  ]);
+  return cookies;
+}
+/** A raw WebSocket upgrade with our cookies: the status, and whether n.eko sent a first frame. */
+function upgrade(path: string, cookies: string[]): Promise<{ status: number; frame: boolean }> {
+  return new Promise((resolve, reject) => {
+    const req = request(`${BASE}${path}`, {
+      headers: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": randomBytes(16).toString("base64"),
+        cookie: cookies.join("; "),
+      },
+    });
+    req.on("upgrade", (res, socket) => {
+      const timer = setTimeout(() => {
+        socket.destroy();
+        resolve({ status: res.statusCode ?? 0, frame: false });
+      }, 5_000);
+      socket.once("data", () => {
+        clearTimeout(timer);
+        socket.destroy();
+        resolve({ status: res.statusCode ?? 0, frame: true });
+      });
+    });
+    req.on("response", (res) => {
+      res.resume();
+      resolve({ status: res.statusCode ?? 0, frame: false });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+describe.skipIf(process.env.RUN_LIVE_STACK !== "1")("live view through the real stack (spec §12)", () => {
+  beforeAll(async () => {
+    env = Object.fromEntries(
+      (await readFile(new URL("../../.env.test", import.meta.url), "utf8"))
+        .split("\n")
+        .filter((line) => /^[A-Z_]+=/.test(line))
+        .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+    );
+    await compose(["down", "-v", "--remove-orphans"]);
+    await compose(["up", "-d", "--wait", "traefik", "browser-1", "browser-2"]);
+    const signUp = await fetch(`${BASE}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: BASE },
+      body: JSON.stringify({ email: "owner@example.test", password: "correct-horse-battery-staple", name: "Owner" }),
+    });
+    expect(signUp.ok).toBe(true);
+    session = signUp.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0]!)
+      .find((c) => c.startsWith("better-auth.session_token="))!;
+    userId = await psql(`select id from "user" where email = 'owner@example.test'`);
+    ws1 = await psql(`select workspace_id from workspace_members where user_id = '${userId}'`);
+    ws2 = await psql(`with w as (insert into workspaces (name) values ('Other') returning id) select id from w`);
+  }, 300_000);
+  afterAll(async () => {
+    if (process.env.RUN_LIVE_STACK === "1") await compose(["down", "-v", "--remove-orphans"]);
+  });
+
+  it("openLive over /api/rpc, then the n.eko client loads and connects through the prefix (W1, E1)", async () => {
+    const run1 = await newRun(ws1);
+    await lease("browser-1", run1);
+    const cookies = [session, ...(await openLive(run1))];
+    const index = await get(`${livePath(run1)}?embed=1&usr=user&pwd=cookie`, cookies);
+    expect(index.status).toBe(200);
+    expect(index.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+    const html = await index.text();
+    const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map((m) => m[1]!);
+    expect(assets.length).toBeGreaterThan(0);
+    for (const asset of assets) {
+      // An absolute asset URL would escape /live/<id>/ and the client would load blank.
+      expect(asset, asset).not.toMatch(/^(?:\/|https?:)/);
+      expect((await get(`${livePath(run1)}${asset.replace(/^\.\//, "")}`, cookies)).status, asset).toBe(200);
+    }
+    expect(await upgrade(`${livePath(run1)}ws?usr=user&pwd=cookie`, cookies)).toEqual({
+      status: 101,
+      frame: true,
+    });
+  });
+
+  it("rejects every §12 live-view auth case, and never reaches n.eko without NEKO_SESSION (S3)", async () => {
+    const run1 = await newRun(ws1);
+    const run2 = await newRun(ws1);
+    const run3 = await newRun(ws2);
+    await lease("browser-1", run1);
+    const live1 = await openLive(run1);
+    const neko = live1.find((c) => c.startsWith(`${NEKO_SESSION_COOKIE}=`))!;
+    const valid = live1.find((c) => c.startsWith(`${LIVE_SLOT_COOKIE}=`))!;
+    const path1 = livePath(run1);
+    expect((await get(path1, [session, valid, neko])).status).toBe(200);
+    // no Better Auth session
+    expect((await get(path1, [valid, neko])).status).toBe(401);
+    // no n.eko session: refused before n.eko, so the Better Auth cookie is never forwarded
+    expect((await get(path1, [session, valid])).status).toBe(401);
+    // forged signature
+    expect((await get(path1, [session, `${valid.slice(0, -1)}${valid.endsWith("A") ? "B" : "A"}`, neko])).status).toBe(401);
+    // duplicate live_slot cookies
+    expect((await get(path1, [session, valid, `${LIVE_SLOT_COOKIE}=browser-2.${now() + 600}.x`, neko])).status).toBe(401);
+    // a cookie for a slot leased to a different run
+    await lease("browser-2", run2);
+    expect((await get(path1, [session, slotCookie("browser-2", run1), neko])).status).toBe(403);
+    // another workspace's run
+    await lease("browser-2", run3);
+    expect((await get(livePath(run3), [session, slotCookie("browser-2", run3), neko])).status).toBe(403);
+    // an idle slot
+    await release("browser-2");
+    await psql(`update browser_slots set state = 'idle' where name = 'browser-2'`);
+    expect((await get(livePath(run2), [session, slotCookie("browser-2", run2), neko])).status).toBe(403);
+    // a stale cookie after release
+    await release("browser-1");
+    expect((await get(path1, [session, valid, neko])).status).toBe(403);
+    // no live_slot at all never reaches n.eko (the web router answers)
+    const plain = await get(path1, [session, neko]);
+    expect(await plain.text()).not.toMatch(/n\.eko|neko/i);
+  });
+
+  it("blocks SSRF from inside a slot (spec §12 security 5)", async () => {
+    const browser2 = await compose(["ps", "-q", "browser-2"]);
+    const ip2 = await docker(["inspect", "-f", '{{(index .NetworkSettings.Networks "mastertutor_cdp").IPAddress}}', browser2]);
+    const prefix = env.CDP_SUBNET_PREFIX ?? "172.30.231";
+    const targets = [
+      "http://postgres:5432/", "http://garage:3900/", "http://web:3000/healthz",
+      `http://${prefix}.10:8787/healthz`, `http://${prefix}.11:3000/healthz`,
+      "http://169.254.169.254/latest/meta-data/",
+      `http://${ip2}:9223/json/version`, `http://${ip2}:4713/`, `http://${ip2}:9224/`, `http://${ip2}:8080/health`,
+    ];
+    for (const target of targets) {
+      const reached = await compose(["exec", "-T", "browser-1", "curl", "-s", "-m", "3", "-o", "/dev/null", target]).then(
+        () => true,
+        () => false,
+      );
+      expect(reached, target).toBe(false);
+    }
+  });
+
+  it("keeps n.eko, CDP and the idle probe off the host and the edge network", async () => {
+    const browser1 = await compose(["ps", "-q", "browser-1"]);
+    for (const line of (await docker(["port", browser1])).split("\n")) expect(line).toContain("59001");
+    const ip1 = await docker(["inspect", "-f", '{{(index .NetworkSettings.Networks "mastertutor_cdp").IPAddress}}', browser1]);
+    for (const url of [
+      "http://browser-1:8080/health",
+      `http://${ip1}:8080/health`,
+      `http://${ip1}:9223/json/version`,
+      `http://${ip1}:9224/`,
+    ]) {
+      const reached = await docker(["run", "--rm", "--network", "mastertutor_edge", "curlimages/curl:8.22.0", "-s", "-m", "3", "-o", "/dev/null", url]).then(
+        () => true,
+        () => false,
+      );
+      expect(reached, url).toBe(false);
+    }
+  });
+});
+```
+
+- [ ] **Step 2: Build and run it.** Tasks A1–A14 provide everything, so it should pass; if it fails, fix the owning task's code, not the test. If the W1 case fails because the legacy client references absolute (`/…`) asset or WebSocket URLs, stop and report `BLOCKED`: prefix routing would need a ruling, and the check must not be weakened.
+
+Run:
+```bash
+pnpm compose:live build
+pnpm test:live-stack
+pnpm compose:live down -v
+docker builder prune -f && docker image prune -f
+```
+Expected: 4 tests PASS. Without `RUN_LIVE_STACK=1` (plain `pnpm test:int`) the suite is skipped.
+
+- [ ] **Step 3: Add CI.** In `.github/workflows/ci.yml`, job `compose-smoke`:
+1. after `- uses: actions/checkout@v4`, add the same three setup steps the `integration` job uses, in the same order: `- uses: pnpm/action-setup@v4`, `- uses: actions/setup-node@v4` with `node-version: 24` and `cache: pnpm`, and `- run: pnpm install --frozen-lockfile`;
+2. after `- run: bash scripts/compose-smoke.sh`, add:
+```yaml
+      - name: Live view stack tests (B6)
+        run: |
+          pnpm compose:live build
+          pnpm test:live-stack
+      - name: Live view stack teardown
+        if: always()
+        run: pnpm compose:live down -v
+```
+
+Keep B3 E's `security` job and its Chromium install step in `integration` unchanged (B3 E Task 13 added them to the same file).
+
+- [ ] **Step 4: Commit.**
+```bash
+pnpm exec prettier --write tests/live .github/workflows/ci.yml
+git add tests/live .github/workflows/ci.yml
+git commit -m "test(live): live view through Traefik: openLive RPC, client through the prefix, §12 auth cases"
+```
+
+---
+## 7. Recorded deviations from the spec (replaces the base list)
+
+1. **Embedded client auth.** n.eko 3.1.6 embeds a legacy client that needs `usr`/`pwd` in the URL. The embed path carries the placeholders `usr=user&pwd=cookie`; authentication is the relayed `NEKO_SESSION` cookie through the legacy handler's `whoami`-first path. `liveEmbedPath` and `OpenLiveResult` changed accordingly.
+2. **No TURN in v1 (D42).** `openLive` returns `iceServers: []`; the TCP mux covers UDP-hostile networks (run 28). Spec §10.2.5 and the `coturn` row of §3.1 are deferred.
+3. **Middleware order.** ForwardAuth runs **before** StripPrefixRegex (spec §10.2.2 lists the strip first), so auth sees `/live/<runId>/`.
+4. **Cookie rewrite and 401 without an n.eko session.** ForwardAuth's 200 always replaces the upstream `Cookie` with `NEKO_SESSION` only; a request without exactly one well-formed `NEKO_SESSION` gets 401.
+5. **ForwardAuth address.** `http://<CDP prefix>.11:3000/api/live/auth`, not `http://web:3000/…` (D41).
+6. **User idle.** Measured by the X server's idle timer via an agent-only probe on 9224, capped by the time since the takeover. CDP input never resets it.
+7. **Unhosted user member.** The `user` member boots with `can_host=false` (spec §10.1 lists `can_host`). n.eko runs with legacy mode, cookie auth (not Secure), implicit hosting off, file-chooser and drop handling on, chat off.
+8. **Takeover needs a connected live view.** A takeover with no connected n.eko session fails (`error{takeover_failed}`, `control{agent}`); after a fresh lease the agent waits up to 15 s for the iframe to reconnect.
+9. **Downloads: taking over is the approval (F6).** Only the member holding control downloads; agent-initiated downloads are cancelled with `error{download_blocked}`. Spec §5.5's "any download needs approval" is met by the takeover itself. This covers only Chromium's file-download path (`Browser.downloadWillBegin` → `Browser.cancelDownload`). Agent-side resource fetches (`Network.loadNetworkResource` via B5's `fetchInBrowser`, under B1's network policy) are not downloads and B6 never touches them. B5's PDF capture reads a PDF the page shows inline, in Chromium's PDF viewer, which is enabled because `policies.json` sets no `AlwaysOpenPdfExternally`, so it keeps working (A11 "an inline PDF the agent opens is not a download"). A PDF served as `Content-Disposition: attachment` is a download and is blocked for the agent in v1. That is a known limit for B5 (see §8).
+10. **New column and event fields.** `runs.control_user_id` (with CHECK); `download_ready.assetId`; informational error codes `takeover_failed`, `idle_hand_back`, `download_blocked`, `download_too_large`.
+11. **Same-origin n.eko client (S4, accepted risk).** The n.eko legacy client is served same-origin at `/live/<runId>/` and could read the parent DOM. Mitigations: pinned image tag, chat and file transfer off, `frame-ancestors 'self'` and `nosniff` on every live response. Record in spec §15.
+
+## 8. Notes for later phases (replaces the base list)
+
+- **Phase 9 (`compose.prod.yml`, D41).** The production slot labels must use, for each slot: rule = `liveRouterRule(slot, DOMAIN)` (the anchored `(?:^|;\s*)live_slot=browser-N\.` form); middlewares **in this order** `<prefix>-live-auth, <prefix>-live-strip, <prefix>-live-headers` (the current Phase 9 draft lists `strip, auth`, which would hide the run id from ForwardAuth); ForwardAuth `address` = `liveForwardAuthAddress(CDP_SUBNET_PREFIX)` with `authResponseHeaders: Cookie` and `trustForwardHeader: false`; headers middleware `contentSecurityPolicy: "frame-ancestors 'self'"`, `contentTypeNosniff: true`; `traefik.docker.network=mastertutor-cdp` (external). `prod-overlay.int.test.ts` must assert the rule and address against the two helpers. Open host ports 59001–59006 (UDP and TCP) only; no 3478. LAN and tailnet clients need router NAT loopback or a second NAT1TO1 (runbook, S8).
+- **Phase 7 / F3 (live UI).** Set the iframe `src` to `embedPath` only after `openLive` resolves, and call `openLive` again on every `slot` event and on Reconnecting. `CONFLICT` (`in_use`) shows "Open in another tab" with no retry loop (E4); one live iframe per run per tab (the PiP and the main view hand the frame off). Revert the optimistic takeover on `error{takeover_failed}` or when no `control{user}` arrives in 2 s; a late `control{user}` after a revert re-applies the user state (E5). Show `idle_hand_back` as an info toast, not an error. Upload outcomes: `signed_out` → the typed sign-in redirect; `no_file_dialog` → "Click the site's upload button first". Show `download_blocked` as "Take over to download".
+- **B2.** `assets.url` uses a 300 s TTL for downloads (spec §10.2.9) and never serves active content inline; downloads are stored as `application/octet-stream` unless their type is inert.
+- **B3.** B3 E's `onReleased(runId)` (after `close()`, vault `forgetRun`) and `onClick` are single-owner hooks that B6 leaves alone. B6's release-side hook is `onLeaseEnding`. B6 drives B3's passkey enrolment (`vault.enrolment.begin` after a successful give, `finish` on hand-back or lease end) and implements E.8 note 3 (`takeControl` idempotent, `handBack` only from the controller or a workspace owner).
+- **B5.** PDF capture (`capturePdf` → `fetchInBrowser`) is unaffected by deviation 9. Attachment-served PDFs cannot be captured by the agent in v1. Either the user takes over and downloads them, or B5 adds a `capture({url})` that fetches the link through `fetchInBrowser` without navigating. B5 imports `composeRunHooks` (A2) instead of defining its own `mergeHooks`, and its seam table reads `RunHooks.onLeased / onLeaseEnding — B6`.
+- **Phase 7 E2E (passkeys).** "A passkey enrolled by the user during takeover is sealed on hand-back": needs the WebAuthn fixture in a slot with `--unsafely-treat-insecure-origin-as-secure` for the fixture origin (B3 E.8 note 3). A12 covers the call order with fakes.
+- **Spec §15.** Add risk S4 (item 11 above) and the n.eko session-list dependency (`GET /api/sessions` → `state.is_connected`), which A6 Step 2 verifies on every image bump.
+
+## 9. Pre-flight findings: where each one is handled
+
+| IDs | Disposition |
+|---|---|
+| F1 | A13: no fictional seam; hooks through `new Supervisor({hooks})` |
+| F2, S11 | A12: B6 implements only `hooks.control`; no coordinator, no second `run_control` listener, no status writes |
+| F3 | A2 (seam + revert), A12 (`takeover_failed`), tests in A2, A12, A13 |
+| F4 | A2 `returnControlToAgent`; used by A4 hand back, A2 revert, A12 idle |
+| F5 | A2 (`onLeased`, `onLeaseEnding`, `browserCdp`, `session`); B3 E's `onReleased(runId)` untouched |
+| F6, S10 | A11: user-only downloads, streamed hash and upload, real `BrowserSession` test |
+| F7 | A2: `emitRunEvent` moved to `@mastertutor/db` |
+| F8, G4 | A2: column + CHECK + every fixture updated, B1 suites re-run |
+| F9, F12, W5 | A6/A7/A10/A11/A13 on the behaviour stack; `waitFor`; no `tests/support/`; no locale-dependent window search |
+| F10, G3, W3, W6 | A13 behaviour acceptance tests (abort latency stays B1's; never-both checked on DB clocks) |
+| F11 | §0.2 and A2 preamble: B1 fix wave and B3 seam land first |
+| F13 | §2 live-view table (`.10` reaches 8080) |
+| E1, E2 | A9: handlers on the FE `liveRouter`, `ResponseHeadersPlugin`; fe-track is merged |
+| E3 | A8: `getViewer()`; fixture builds answer 403 |
+| E4, E5 | §8 handoff to F3 / Phase 7 |
+| E6, G1 | Moot: D36 key is in `WebEnv`; no new env tests (TURN dropped) |
+| E7 | A10: 401 → `signed_out`; no cross-app import |
+| S1, G2 | A1, A5: edits only; `verify.sh` appended, its guards kept |
+| S2 | **A1 first** (boot profile), A12 `onLeased` seat, tests in A1, A6, A13 |
+| S3, W4 | A8 (401 without `NEKO_SESSION`; flipped test), A15 stack case |
+| S4 | A5 chat off, A14 headers middleware, §7 item 11 |
+| S5 | A5 `verify.sh` side-endpoint check |
+| S6, G7 | A14: no production labels or `PUBLIC_HOST` in `compose.yml`; §8 Phase 9 handoff |
+| S7 | Dropped everywhere (§2) |
+| S8 | §8 Phase 9 runbook note |
+| S12 | A2 `onLeaseEnding` before `Browser.close`, A12 bounded take, A13 cancel test |
+| G5, G6 | §2: no `--`; `prettier --write` in every commit step |
+| W1 | A15: assets and WebSocket through the prefix |
+| W2 | A8 unit test + A15 "no `NEKO_SESSION` → 401" (every forwarded request carries ForwardAuth's Cookie) |
+
+## 10. Self-Review
+
+**1. Spec and ruling coverage.**
+
+| Requirement | Task |
+|---|---|
+| Ruling: `user` cannot host while `controller='agent'`, fixed first, edit-only, with a test | A1 (verify.sh), A6 and A13 behaviour checks |
+| Ruling: takeover only through `hooks.control`, no second coordinator | A2 seam, A12 |
+| Ruling: takeover with no live view returns failure, agent keeps control | A2 (worker revert), A6 (connected check), A12, A13 |
+| Ruling: ForwardAuth 401 without an n.eko cookie, never forwards Better Auth's | A8, A15 |
+| Ruling: production routing per D41/D42 | A3 `liveForwardAuthAddress`, A14, §8 Phase 9 |
+| Ruling: use `liveRouter`, no new router | A9 |
+| §10.1 `LiveView` / `NekoLiveView` | A6 |
+| §10.2.1 `openLive` | A7, A9 |
+| §10.2.2 per-slot routers and ForwardAuth | A8, A14, A15 |
+| §10.2.3 re-open on slot change | §8 F3 note (client) |
+| §10.2.4 media mux / §10.2.5 TURN | unchanged Phase 0 / deferred (D42, §7 item 2) |
+| §10.2.7 clipboard only while the user holds control | A6, A12 |
+| §10.2.8 uploads | A10 |
+| §10.2.9 downloads | A11 (§7 item 9) |
+| §10.3 takeover, hand back, sleeping wake into takeover | B1 + A2 (`afterRestore`), A4, A9, A12, A13 |
+| B3 E: failed takeover during a pending approval stays `waiting(approval)` | A2 (`revertTakeover`, worker test) |
+| B3 E.8 note 1: passkey enrolment during takeover | A2 (`LeasedSlot.session`), A12, A13 (`vault.enrolment`); E2E in §8 |
+| B3 E.8 note 3: idempotent takeover, hand-back only from the controller (or owner) | A4, A9 (`FORBIDDEN`) |
+| B3 E 0.5 fixture vs `runs_control_user_matches_controller` | A2 Step 8 |
+| Deviation 9 vs B5 PDF capture | A11 inline-PDF test, §7 item 9, §8 B5 |
+| §5.1 15-minute idle hand-back | A12, A13 |
+| §12 live-view auth cases, 8080/9223 isolation, SSRF | A8, A15 |
+| §12 takeover lock | B1 tests + A13 |
+
+**2. Placeholder scan.** No "TBD"/"TODO"/"similar to". Unchanged code is referenced as "copy verbatim from base plan Task N, Step M" (binding text that exists). Conditional steps are each decided by a named command's output: A2 Step 1 (a precondition: any result other than the expected post-B3 state stops with `NEEDS_CONTEXT`), A5 Step 1 (n.eko flag names), A6 Step 2 (session list shape), A11 Step 4 (Garage checksum fallback), A15 Step 2 (absolute asset URLs → `BLOCKED`).
+
+**3. Type and name consistency.** `UserControlResult`, `LeasedSlot{runId, workspaceId, slotName, session, browserCdp}`, `ReleasedSlot{runId, slotName, slotReleased}`, `RunHooks.onLeaseEnding` (never B3's `onReleased(runId)`), `composeRunHooks` (A2 → A12, A13); `ControlRequestResult.reason: "not_found" | "finished" | "not_controller"` (A4 → A9); `PasskeyEnrolmentPort` (A12 → A13, satisfied by B3's `vault.enrolment`); `DbTx`, `emitRunEvent`, `returnControlToAgent`, `notifyRunControl`, `readControlUser` (A2 → A4, A11, A12); `seedMember`, `seedRun`, `leaseSlotForTest`, `releaseSlotForTest`, `nextNotification` (A4 → A7, A9, A11); `LiveDeps{db, nekoMemberSecret, liveCookieSecret, nekoBaseUrl?, fetch?, nowSeconds?}` (A7 → A8, A9); `createLiveHandlers(deps: () => LiveDeps)` (A9); `LiveViewError("user_not_connected")` (A6 → A12); `DownloadIngestor{attach(slot: LeasedSlot), detach(runId)}` (A11 → A12, A13); `LiveControlStore`, `liveControlStore`, `createLiveHooks` (A12 → A13); behaviour constants `SLOT_NEKO`, `SLOT_IDLE`, `BEHAVIOUR_NEKO_*`, `BEHAVIOUR_DOWNLOADS_DIR`, `nekoBaseUrlForTests`, `idleUrlForTests` (A6, A11 → A7, A10, A11, A13). `TAKEOVER_GIVE_WAIT_MS` (A3 → A6), `TAKEOVER_RESTORE_WAIT_MS` and `AUTO_HAND_BACK_IDLE_MS` (A3 → A12).
+
+**4. Review Focus.** Each §5 item has a test in its owning task: 1 → A2, A12, A13; 2 → A12 `idle-watch.test.ts`; 3 → A8, A15; 4 → A11; 5 → A12, A13. The base plan's five items stay covered: duplicate `live_slot` (A8, A15), second tab `in_use` (A7), takeover before connect (now §5.1), download race (A11's decide-at-begin path), rapid toggles (A13).
+
+---
+
+**Execution handoff.** Execute A1 → A15 in order with superpowers:subagent-driven-development (recommended: the tasks lean on each other's interfaces, and a shipped mistake here is a security regression in the control lock). A1 can ship on its own immediately; it does not depend on B3.
