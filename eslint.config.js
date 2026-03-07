@@ -20,9 +20,11 @@ const MOTION_COMPONENT_BAN = ["motion/react", "motion/react-client"].map((name) 
   importNames: ["motion"],
   message: "Use m.* inside LazyMotion (spec §11.4).",
 }));
+// Every apps/web no-restricted-imports block replaces the earlier one, so it must carry the D38
+// OpenAI import ban too.
 const webImports = (patterns) => [
   "error",
-  { paths: MOTION_COMPONENT_BAN, patterns: [ANIMATION_BANS, ...patterns] },
+  { paths: MOTION_COMPONENT_BAN, patterns: [ANIMATION_BANS, OPENAI_IMPORTS, ...patterns] },
 ];
 
 // D38: stateful OpenAI APIs. Every block that sets no-restricted-syntax for apps/** must include

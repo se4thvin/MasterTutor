@@ -27,6 +27,25 @@ describe("ESLint OpenAI data policy (D38)", () => {
     ).toHaveLength(1);
   });
 
+  it("bans importing openai from apps/web too", async () => {
+    for (const filePath of [
+      "apps/web/lib/probe.ts",
+      "apps/web/components/ui/icons.ts",
+      "apps/web/components/hero/probe.tsx",
+    ]) {
+      const [result] = await eslint.lintText(
+        'import OpenAI from "openai";\nexport default OpenAI;\n',
+        {
+          filePath,
+        },
+      );
+      expect(
+        (result?.messages ?? []).filter((m) => m.ruleId === "no-restricted-imports"),
+        filePath,
+      ).toHaveLength(1);
+    }
+  });
+
   it("does not flag DOM and other objects that have a files property", async () => {
     for (const code of [
       "export const a = (input: HTMLInputElement) => input.files;",
