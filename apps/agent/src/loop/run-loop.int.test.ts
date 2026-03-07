@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { MockTurn } from "../../../../tests/llm-mock/src/scenario.ts";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { ModelCaller } from "../llm/caller.ts";
+import { NUDGE } from "../llm/instructions.ts";
 import { FORBIDDEN_RESPONSE_FIELDS } from "../llm/openai.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
 import { instantClock } from "../runtime/clock.ts";
@@ -1017,5 +1018,30 @@ describe("RunLoop (spec §5.3)", () => {
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       expect(browser.functionRuns).toEqual([]);
     });
+  });
+
+  it("treats a computer_call that carries no agent_turn message as continue, without a nudge (run 30)", async () => {
+    const { browser, loop } = await setup([
+      click(),
+      {
+        ...done(),
+        check: (r) => {
+          if (JSON.stringify(r.body.input).includes(NUDGE)) throw new Error("the loop nudged");
+        },
+      },
+    ]);
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.computerRuns).toHaveLength(1);
+  });
+
+  it("emits the pointer kind on computer step events (run view A1)", async () => {
+    const { run, loop } = await setup([click(), done()]);
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const actions = (
+      await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id))
+    ).flatMap((event) =>
+      event.payload.type === "step" && event.payload.action ? [event.payload.action] : [],
+    );
+    expect(actions).toContainEqual(expect.objectContaining({ tool: "computer", pointer: "click" }));
   });
 });

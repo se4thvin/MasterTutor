@@ -43,7 +43,7 @@ export interface RecordedRequest {
 export interface MockTurn {
   outputs?: MockOutput[];
   error?: { status: number; code?: string; message?: string };
-  usage?: { input?: number; cached?: number; output?: number };
+  usage?: { input?: number; cached?: number; cacheWrite?: number; output?: number };
   /** Assertions on the request that reached this turn; a throw becomes a 418 and a recorded failure. */
   check?(request: RecordedRequest): void;
   /** Delays the answer, for example to take over while the model "thinks". */
