@@ -1,6 +1,6 @@
 import { ApprovalEdit, ApprovalRequest, type ApprovalStatus } from "@mastertutor/contracts";
-import { approvals, runEvents, runSteps, type Database } from "@mastertutor/db";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { approvals, otpCodes, runEvents, runSteps, type Database } from "@mastertutor/db";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Tx } from "../runtime/types.ts";
 import { CallResult } from "./call-result.ts";
@@ -21,6 +21,8 @@ export const ItemDecision = z.object({
   target: z.string().nullable().default(null),
   /** The approved element's record context digest (TargetDescription.context), R29-3. */
   context: z.string().nullable().default(null),
+  /** Who decided: the user's id, or POLICY_DECIDER. Null on rows written before this field. */
+  decidedBy: z.string().nullable().default(null),
 });
 export type ItemDecision = z.infer<typeof ItemDecision>;
 
@@ -76,14 +78,14 @@ export async function insertApprovals(
 export async function loadApprovalDecision(
   db: Database,
   id: string,
-): Promise<{ status: ApprovalStatus; edit: ApprovalEdit | null } | null> {
+): Promise<{ status: ApprovalStatus; edit: ApprovalEdit | null; decidedBy: string | null } | null> {
   const [row] = await db
-    .select({ status: approvals.status, edit: approvals.edit })
+    .select({ status: approvals.status, edit: approvals.edit, decidedBy: approvals.decidedBy })
     .from(approvals)
     .where(eq(approvals.id, id));
   if (!row) return null;
   const edit = row.edit ? ApprovalEdit.safeParse(row.edit) : null;
-  return { status: row.status, edit: edit?.success ? edit.data : null };
+  return { status: row.status, edit: edit?.success ? edit.data : null, decidedBy: row.decidedBy };
 }
 
 export async function markApprovalSuperseded(tx: Tx, id: string): Promise<void> {
@@ -161,4 +163,20 @@ export async function loadUserMessages(
   return rows.flatMap((row) =>
     row.payload.type === "user_message" ? [{ id: String(row.id), text: row.payload.text }] : [],
   );
+}
+
+/** A one-time code the user submitted for this run that is still usable (spec §9 CodeSlots). */
+export async function hasUnusedOtpCode(db: Database, runId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: otpCodes.id })
+    .from(otpCodes)
+    .where(
+      and(
+        eq(otpCodes.runId, runId),
+        isNull(otpCodes.consumedAt),
+        gt(otpCodes.expiresAt, sql`now()`),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
 }

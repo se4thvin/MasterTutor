@@ -3,12 +3,24 @@ import type { z } from "zod";
 import type { BrowserSession } from "../browser/session.ts";
 import type { Log } from "../runtime/types.ts";
 
+/** The decision that cleared this exact call (same call id and arguments) for execution. */
+export interface CallApproval {
+  /** The approval request's kind, e.g. "credential_first_use". */
+  kind: string;
+  /** The deciding user's id, or POLICY_DECIDER for auto mode. */
+  decidedBy: string;
+}
+
 export interface ToolContext {
   runId: string;
   workspaceId: string;
   session: BrowserSession;
   signal: AbortSignal;
   log: Log;
+  /** Spec §5.3 approve → act: the decision for this call, or null when it needed none. */
+  approval: CallApproval | null;
+  /** Asks the loop to enter waiting(reason) once this act step commits (spec §9 OTP). */
+  requestWait(reason: "otp"): void;
 }
 
 /** Spec §3.3 `tools`: one function tool. `untrusted` results carry page-derived text. */

@@ -29,7 +29,7 @@ import { matchAccelerator } from "../tools/accelerators.ts";
 import { ComputerExecutor, type ActionGate } from "../tools/computer.ts";
 import { readPage, readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry } from "../tools/registry.ts";
-import { register } from "../tools/types.ts";
+import { register, type CallApproval } from "../tools/types.ts";
 import type { RunHooks } from "./hooks.ts";
 import type { ConnectBrowser, LoopBrowser, Observation } from "./loop-browser.ts";
 import type { RunSnapshot } from "./run-state.ts";
@@ -205,7 +205,12 @@ export class SessionLoopBrowser implements LoopBrowser {
     return this.#executor.run(actions, signal, gate);
   }
 
-  runFunction(name: FunctionToolName, args: unknown, signal: AbortSignal) {
+  runFunction(
+    name: FunctionToolName,
+    args: unknown,
+    signal: AbortSignal,
+    approval: CallApproval | null,
+  ) {
     const run = this.#run();
     return this.#registry.run(name, args, {
       runId: run.id,
@@ -213,6 +218,7 @@ export class SessionLoopBrowser implements LoopBrowser {
       session: this.#session,
       signal,
       log: this.#log,
+      approval,
     });
   }
 

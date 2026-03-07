@@ -70,6 +70,7 @@ describe("SessionLoopBrowser", () => {
       "read_page",
       { mode: "interactive", sinceHash: null },
       signal,
+      null,
     );
     expect(output.startsWith('<untrusted_page_content origin="http://site.fixtures.test">')).toBe(
       true,
@@ -84,8 +85,14 @@ describe("SessionLoopBrowser", () => {
     );
     expect(target?.label).toBe("Delete account");
     expect(
-      (await browser.runFunction("capture", { scope: "page", selector: null, kind: null }, signal))
-        .output,
+      (
+        await browser.runFunction(
+          "capture",
+          { scope: "page", selector: null, kind: null },
+          signal,
+          null,
+        )
+      ).output,
     ).toBe('{"error":"tool_unavailable"}');
   });
 
@@ -275,6 +282,7 @@ describe("SessionLoopBrowser", () => {
       "read_page",
       { mode: "interactive", sinceHash: null },
       signal,
+      null,
     );
     const json = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1)) as {
       elements: Array<{ name: string; point: { x: number; y: number } | null }>;

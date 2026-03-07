@@ -1018,6 +1018,37 @@ describe("RunLoop (spec §5.3)", () => {
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       expect(browser.functionRuns).toEqual([]);
     });
+
+    it("hands a human decision to the tool with who decided it (F4, W4)", async () => {
+      const { run, browser, loop, reload } = await setup([readPage, done()], {
+        hooks: { functionApproval: firstUse },
+      });
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      await decideApproval(run.id, "approved");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.functionApprovals).toEqual([
+        { kind: "credential_first_use", decidedBy: "user-1" },
+      ]);
+    });
+
+    it("hands a policy decision to the tool as decided by policy (auto mode, D33)", async () => {
+      const { browser, loop } = await setup([readPage, done()], {
+        approvalMode: "auto_within_allowlist",
+        hooks: { functionApproval: firstUse },
+      });
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.functionApprovals).toEqual([
+        { kind: "credential_first_use", decidedBy: "policy" },
+      ]);
+    });
+
+    it("hands no approval to a call that needed none", async () => {
+      const { browser, loop } = await setup([readPage, done()]);
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.functionApprovals).toEqual([null]);
+    });
   });
 
   it("treats a computer_call that carries no agent_turn message as continue, without a nudge (run 30)", async () => {
@@ -1043,5 +1074,27 @@ describe("RunLoop (spec §5.3)", () => {
       event.payload.type === "step" && event.payload.action ? [event.payload.action] : [],
     );
     expect(actions).toContainEqual(expect.objectContaining({ tool: "computer", pointer: "click" }));
+  });
+
+  it("enters waiting(otp) when a tool asks for a code; later calls of the turn do not run (F5)", async () => {
+    const fillOtp: MockTurn = {
+      outputs: [
+        {
+          type: "function",
+          name: "fill_credential",
+          args: { alias: "site", field: "otp", target: "e1" },
+        },
+        { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+      ],
+    };
+    const { run, browser, loop } = await setup([fillOtp]);
+    browser.functionWait = (name) => (name === "fill_credential" ? "otp" : null);
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
+    expect(browser.functionRuns.map((call) => call.name)).toEqual(["fill_credential"]);
+    expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
+    expect(await loop.hasNews("otp")).toBe(false);
+    await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([1])})`;
+    expect(await loop.hasNews("otp")).toBe(true);
+    expect(await loop.hasNews("captcha")).toBe(false);
   });
 });

@@ -17,6 +17,7 @@ import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
 import { approvalRequestFor, needsApproval, type ApprovalNeed } from "../guardrails/policy.ts";
+import type { CallApproval } from "../tools/types.ts";
 import { wrapUntrusted } from "../tools/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
 import { AGENT_INSTRUCTIONS, NUDGE, goalText } from "../llm/instructions.ts";
@@ -41,6 +42,7 @@ import {
   functionItem,
   insertApprovals,
   loadActResult,
+  hasUnusedOtpCode,
   loadApprovalDecision,
   loadPendingApproval,
   loadUserMessages,
@@ -53,6 +55,7 @@ import {
 import {
   INTERRUPTED,
   NOT_STARTED,
+  OTP_PENDING,
   PAGE_CHANGED,
   RESTARTED,
   notRun,
@@ -213,15 +216,17 @@ export class RunLoop {
   }
 
   /**
-   * Whether a wake brought something only a person can supply: a decided approval or a new user
-   * message. A stale wake (a message already read, a repeated NOTIFY) does not end a wait (I1).
+   * Whether a wake brought something only a person can supply: a decided approval, a new user
+   * message, or (while waiting for a code) a submitted one-time code. A stale wake does not end a
+   * wait (I1).
    */
-  async hasNews(): Promise<boolean> {
+  async hasNews(waitReason: WaitReason | null = null): Promise<boolean> {
     const pending = this.#pending;
     if (pending) {
       const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
       if (decision && decision.status !== "pending") return true;
     }
+    if (waitReason === "otp" && (await hasUnusedOtpCode(this.#deps.db, this.#run.id))) return true;
     return (await loadUserMessages(this.#deps.db, this.#run.id, this.#userCursor)).length > 0;
   }
 
@@ -722,6 +727,7 @@ export class RunLoop {
         ...riskOf(item.request),
         target: item.target,
         context: item.context,
+        decidedBy: POLICY_DECIDER,
       });
     }
     if (rows.length > 0) {
@@ -826,7 +832,7 @@ export class RunLoop {
   async #execute(
     call: PendingCall,
     signal: AbortSignal,
-  ): Promise<{ result: CallResult; ran: boolean }> {
+  ): Promise<{ result: CallResult; ran: boolean; wait: "otp" | null }> {
     if (call.kind === "computer") {
       const refusals: string[] = [];
       let index = -1;
@@ -863,20 +869,35 @@ export class RunLoop {
       return {
         result: { kind: "computer", notes: [...run.notes, ...refusals], acknowledged },
         ran: run.executed > 0,
+        wait: null,
       };
     }
-    if (!isFunctionTool(call.name)) return { result: notRun(call, "Unknown tool."), ran: false };
-    const run = await this.#deps.browser.runFunction(call.name, call.args, signal);
+    if (!isFunctionTool(call.name))
+      return { result: notRun(call, "Unknown tool."), ran: false, wait: null };
+    // The decision for exactly this call (same call id and arguments), so a tool can tell a human
+    // approval (a lasting vault grant) from a policy one (this call only).
+    const decision = this.#decided.get(functionItem(call.callId));
+    const approval: CallApproval | null =
+      decision?.approved && decision.kind !== null && decision.decidedBy !== null
+        ? { kind: decision.kind, decidedBy: decision.decidedBy }
+        : null;
+    const run = await this.#deps.browser.runFunction(call.name, call.args, signal, approval);
     if (run.notesChanged) this.#notesChanged = true;
-    return { result: { kind: "function", output: run.output }, ran: true };
+    return { result: { kind: "function", output: run.output }, ran: true, wait: run.wait };
   }
 
   async #act(signal: AbortSignal): Promise<StepOutcome> {
     const { store, browser } = this.#deps;
     const obs = this.#obs();
     let ran = false;
+    let wait: "otp" | null = null;
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
+      // A call asked for a one-time code: nothing after it runs before the user supplies one.
+      if (wait) {
+        this.#results.set(call.callId, notRun(call, OTP_PENDING));
+        continue;
+      }
       const seq = store.nextSeq();
       const action = {
         ...(describeCall(call, obs.screenshot.scale) ?? {
@@ -887,7 +908,7 @@ export class RunLoop {
         callId: call.callId,
       };
       await store.commit({ steps: [{ seq, phase: "act", state: "started", action }] });
-      let executed: { result: CallResult; ran: boolean };
+      let executed: { result: CallResult; ran: boolean; wait: "otp" | null };
       try {
         executed = await this.#execute(call, signal);
       } catch (error) {
@@ -900,6 +921,7 @@ export class RunLoop {
         throw error;
       }
       ran ||= executed.ran;
+      wait ??= executed.wait;
       this.#results.set(call.callId, executed.result);
       const storage = await browser.collectStorage().catch(() => null);
       await store.commit({
@@ -930,6 +952,7 @@ export class RunLoop {
         `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
       );
     }
+    if (wait) return this.#wait("otp", "A one-time code is needed to sign in");
     // The page (URL, DOM, position) is part of the signature: scrolling or paging is not a loop.
     const signature = `${this.#calls.map(callSignature).join("|")}@${obs.url}#${obs.domHash}#${obs.scroll.x},${obs.scroll.y}`;
     if (ran && this.#loops.recordAction(signature, obs.phash))
@@ -1085,6 +1108,7 @@ export class RunLoop {
         ...riskOf(pending.request),
         target: pending.target,
         context: pending.context,
+        decidedBy: decision.decidedBy,
         approved: decision.status === "approved",
         note:
           decision.status === "approved"

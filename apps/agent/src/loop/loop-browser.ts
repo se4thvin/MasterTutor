@@ -6,6 +6,7 @@ import type { ModelScreenshot } from "../browser/screenshot.ts";
 import type { BrowserStorageState } from "../browser/storage-state.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
+import type { CallApproval } from "../tools/types.ts";
 import type { RunSnapshot } from "./run-state.ts";
 
 export interface Observation {
@@ -32,7 +33,12 @@ export interface LoopBrowser {
     signal: AbortSignal,
     gate: ActionGate,
   ): Promise<ComputerRun>;
-  runFunction(name: FunctionToolName, args: unknown, signal: AbortSignal): Promise<ToolRun>;
+  runFunction(
+    name: FunctionToolName,
+    args: unknown,
+    signal: AbortSignal,
+    approval: CallApproval | null,
+  ): Promise<ToolRun>;
   navigate(url: string, signal: AbortSignal): Promise<boolean>;
   restoreView(view: { scroll: ScrollPosition | null; videoTime: number | null }): Promise<void>;
   drainBlockedNavigations(): BlockedNavigation[];
