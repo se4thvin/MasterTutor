@@ -17,6 +17,7 @@ import { typingGuardIncomplete } from "../browser/typing-guard.ts";
 import {
   applyStorageState,
   collectStorageState,
+  type CollectedStorage,
   type BrowserStorageState,
 } from "../browser/storage-state.ts";
 import { isCaptchaFrameUrl, isChallengePage } from "../guardrails/captcha.ts";
@@ -257,7 +258,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     return this.#session.drainBlockedNavigations();
   }
 
-  collectStorage(): Promise<BrowserStorageState> {
+  collectStorage(): Promise<CollectedStorage> {
     return collectStorageState(this.#session);
   }
 

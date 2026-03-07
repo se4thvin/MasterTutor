@@ -3,7 +3,7 @@ import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { ModelScreenshot } from "../browser/screenshot.ts";
-import type { BrowserStorageState } from "../browser/storage-state.ts";
+import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
 import type { CallApproval } from "../tools/types.ts";
@@ -42,7 +42,7 @@ export interface LoopBrowser {
   navigate(url: string, signal: AbortSignal): Promise<boolean>;
   restoreView(view: { scroll: ScrollPosition | null; videoTime: number | null }): Promise<void>;
   drainBlockedNavigations(): BlockedNavigation[];
-  collectStorage(): Promise<BrowserStorageState>;
+  collectStorage(): Promise<CollectedStorage>;
   applyStorage(state: BrowserStorageState): Promise<() => Promise<void>>;
 }
 

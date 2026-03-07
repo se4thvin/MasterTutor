@@ -28,6 +28,10 @@ export interface RunHooks {
     url: string,
   ): Promise<ApprovalRequest | null>;
   promptContext(run: RunSnapshot): Promise<string[]>;
+  /** After an executed computer click (B3 logout detection): the target's accessible name and the page URL. */
+  onClick(run: RunSnapshot, click: { label: string; url: string }): Promise<void>;
+  /** This run's worker has ended (released, slept, lost its lease or failed): drop per-run state. */
+  onReleased(runId: string): Promise<void>;
 }
 
 export const DEFAULT_HOOKS: RunHooks = {
@@ -38,6 +42,8 @@ export const DEFAULT_HOOKS: RunHooks = {
   functionTools: [],
   functionApproval: async () => null,
   promptContext: async () => [],
+  onClick: async () => undefined,
+  onReleased: async () => undefined,
 };
 
 export function withHooks(overrides: Partial<RunHooks> = {}): RunHooks {

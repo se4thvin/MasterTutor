@@ -1,8 +1,13 @@
-import type { ComputerAction, FunctionToolName, ScrollPosition } from "@mastertutor/contracts";
+import {
+  toOrigin,
+  type ComputerAction,
+  type FunctionToolName,
+  type ScrollPosition,
+} from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import type { BrowserStorageState } from "../browser/storage-state.ts";
+import type { CollectedStorage } from "../browser/storage-state.ts";
 import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
@@ -135,8 +140,11 @@ export class FakeLoopBrowser implements LoopBrowser {
     return this.blocked.splice(0);
   }
 
-  async collectStorage(): Promise<BrowserStorageState> {
-    return { cookies: [], origins: [] };
+  async collectStorage(): Promise<CollectedStorage> {
+    return {
+      state: { cookies: [], origins: [] },
+      page: { origin: toOrigin(this.url), passwordFieldVisible: false },
+    };
   }
 
   async applyStorage(): Promise<() => Promise<void>> {

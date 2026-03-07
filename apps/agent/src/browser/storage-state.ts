@@ -24,33 +24,67 @@ export const BrowserStorageState = z.object({
 });
 export type BrowserStorageState = z.infer<typeof BrowserStorageState>;
 
-function localStorageScript(): Array<[string, string]> {
+/** What a session store needs to decide whether this state is a signed-in one (F9). */
+export interface PageSignals {
+  /** The main frame's origin, or null for about:blank and the like. */
+  origin: string | null;
+  /** A visible password input on the main frame: a login form, so not signed in yet. */
+  passwordFieldVisible: boolean;
+}
+
+export interface CollectedStorage {
+  state: BrowserStorageState;
+  page: PageSignals;
+}
+
+function pageStorageScript(): {
+  entries: Array<[string, string]>;
+  passwordFieldVisible: boolean;
+} {
+  let entries: Array<[string, string]>;
   try {
-    return Object.entries(localStorage);
+    entries = Object.entries(localStorage);
   } catch {
-    return [];
+    entries = [];
   }
+  const passwordFieldVisible = Array.from(document.querySelectorAll("input")).some((input) => {
+    if (input.type !== "password") return false;
+    const rect = input.getBoundingClientRect();
+    const style = getComputedStyle(input);
+    return (
+      rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
+    );
+  });
+  return { entries, passwordFieldVisible };
 }
 
 /**
  * Our own collection (spec §5.6). Playwright's context.storageState() may open hidden pages to
  * read other origins, which would flash tabs in the user's live view.
  */
-export async function collectStorageState(session: BrowserSession): Promise<BrowserStorageState> {
+export async function collectStorageState(session: BrowserSession): Promise<CollectedStorage> {
   const cookies = await session.context.cookies();
   const origins: BrowserStorageState["origins"] = [];
   const origin = toOrigin(session.page.url());
+  // Unreadable page: claim a password field, so nothing is ever saved from it.
+  let page = { entries: [] as Array<[string, string]>, passwordFieldVisible: origin !== null };
   if (origin !== null) {
-    const entries = await (
+    page = await (
       await session.worlds()
     )
-      .evaluate(localStorageScript, null)
-      .catch(() => []);
-    if (entries.length > 0) {
-      origins.push({ origin, localStorage: entries.map(([name, value]) => ({ name, value })) });
+      .evaluate(pageStorageScript, null)
+      .catch(() => ({ entries: [], passwordFieldVisible: true }));
+    if (page.entries.length > 0) {
+      origins.push({
+        origin,
+        localStorage: page.entries.map(([name, value]) => ({ name, value })),
+      });
     }
   }
-  return BrowserStorageState.parse({ cookies, origins });
+  return {
+    state: BrowserStorageState.parse({ cookies, origins }),
+    page: { origin, passwordFieldVisible: page.passwordFieldVisible },
+  };
 }
 
 /** Applies sealed state on lease (spec §5.2 rule 6). Returns a remover for the localStorage script. */

@@ -179,6 +179,8 @@ export class RunWorker {
       clearInterval(beat);
       clearTimeout(this.#deadlineTimer);
       await this.#attached?.close().catch(() => undefined);
+      // Every way a worker ends passes here, exactly once (F11).
+      await this.#deps.hooks.onReleased(this.runId).catch(() => undefined);
     }
   }
 
