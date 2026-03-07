@@ -14,7 +14,7 @@ export class PageScriptError extends Error {
 
 /** Builds `(() => { helpers; return (fn)(arg, h); })()` so helpers resolve lexically. */
 export function pageExpression<A, R>(fn: PageFunction<A, R>, arg: A): string {
-  return `(() => {\n${PAGE_HELPERS_SOURCE}\nconst h = { isSecretField, describeTarget, frameIsPlain };\nreturn (${fn.toString()})(${JSON.stringify(arg ?? null)}, h);\n})()`;
+  return `(() => {\n${PAGE_HELPERS_SOURCE}\nconst h = { isSecretField, describeTarget };\nreturn (${fn.toString()})(${JSON.stringify(arg ?? null)}, h);\n})()`;
 }
 
 function isStaleContext(error: unknown): boolean {
@@ -89,6 +89,33 @@ export class IsolatedWorlds {
           result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
         );
       }
+      return result.result.value as R;
+    });
+  }
+
+  /**
+   * Calls `functionDeclaration` with `this` bound to a DOM node (by backend id) in our world, so it
+   * can compare the node with elements our scripts kept there; returns its value.
+   */
+  async callOnNode<R>(
+    backendNodeId: number,
+    functionDeclaration: string,
+    arg: unknown,
+    frameId?: string,
+  ): Promise<R> {
+    return this.#withContext(frameId, async (executionContextId) => {
+      const { object } = await this.#cdp.send("DOM.resolveNode", {
+        backendNodeId,
+        executionContextId,
+      });
+      if (!object.objectId) throw new PageScriptError("node not found");
+      const result = await this.#cdp.send("Runtime.callFunctionOn", {
+        objectId: object.objectId,
+        functionDeclaration,
+        arguments: [{ value: arg }],
+        returnByValue: true,
+      });
+      if (result.exceptionDetails) throw new PageScriptError(result.exceptionDetails.text);
       return result.result.value as R;
     });
   }

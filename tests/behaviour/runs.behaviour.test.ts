@@ -1,5 +1,5 @@
 import { POLICY_DECIDER } from "@mastertutor/contracts";
-import { approvals } from "@mastertutor/db";
+import { approvals, browserSlots } from "@mastertutor/db";
 import { eq } from "drizzle-orm";
 import { chromium, type Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -356,4 +356,78 @@ describe("agent behaviour on real slots (spec §12)", () => {
     }
     await waitForRun(agent, runId, (run) => run.status === "completed", "completed");
   });
+
+  it("a hung frame never stalls a run: typing fails closed, then runs once approved, and takeover and kill stay quick", async () => {
+    const clickNotesThenType = (text: string): MockTurn => ({
+      outputs: [{ type: "click_named", name: "Notes", then: [{ type: "type", text }] }],
+    });
+    const name = scenario("hung", [
+      readInteractive,
+      clickNotesThenType("hello"),
+      { ...clickNotesThenType("y".repeat(5_000)), check: expectIn("could not all be guarded") },
+      // After hand back the model "thinks" while the advert still hangs: the kill lands here.
+      {
+        ...done,
+        check: expectIn("Interrupted: the user took control"),
+        hold: () => new Promise((resolve) => setTimeout(resolve, 10_000)),
+      },
+    ]);
+    // The advert hangs for 8 s from each load (the restore after approval loads it again).
+    const HANG_MS = 8_000;
+    const page = `${SITE}/hung-frame.html?ms=${HANG_MS}`;
+    const runId = await createRun(agent, `[scenario:${name}] ${page}`);
+    // Acts are summarised as `click … (+1 more)`.
+    const acts = async () =>
+      (await steps(agent, runId)).filter(
+        (s) => s.phase === "act" && JSON.stringify(s.action).includes("+1 more"),
+      );
+    // The first typing fails closed within its budget; the second needs a person.
+    await waitForRun(
+      agent,
+      runId,
+      (run) => run.status === "sleeping" && run.slotName === null,
+      "asleep awaiting approval",
+    );
+    const [failedClosed] = await acts();
+    expect(failedClosed!.state).not.toBe("started");
+    expect(failedClosed!.updatedAt.getTime() - failedClosed!.createdAt.getTime()).toBeLessThan(
+      CI_BOUND_MS,
+    );
+    await decideApproval(agent, runId, "approved");
+    await waitFor(async () => (await acts()).length === 2, {
+      label: "approved typing",
+      timeoutMs: 60_000,
+      intervalMs: 10,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500)); // well into the 5,000 characters
+    const takenAt = await takeControl(agent, runId);
+    const aborted = await waitFor(
+      async () => (await steps(agent, runId)).find((s) => s.state === "aborted"),
+      { label: "aborted", intervalMs: 10 },
+    );
+    const takeoverMs = aborted.updatedAt.getTime() - takenAt.getTime();
+    console.info(`hung frame: takeover → act aborted: ${takeoverMs} ms (spec target 300 ms)`);
+    expect(takeoverMs).toBeLessThan(1_000);
+    // The approved typing was still running 500 ms in (arming alone ends within 250 ms), so it
+    // typed rather than failing closed again. (A second CDP client cannot attach to this slot while
+    // its advert hangs, so the field is not read here; computer.behaviour checks the text.)
+    expect((await acts())[1]!.state).toBe("aborted");
+    await handBack(agent, runId);
+    await waitFor(() => agent.mock.requestsFor(name).length === 4, { label: "holding" });
+    try {
+      const killedAt = await killSwitch(agent, true);
+      const run = await waitForRun(agent, runId, (r) => r.status === "cancelled", "killed", 5_000);
+      const killMs = run.finishedAt!.getTime() - killedAt.getTime();
+      console.info(`hung frame: kill switch → cancelled: ${killMs} ms (spec target 1000 ms)`);
+      expect(killMs).toBeLessThan(1_000);
+    } finally {
+      await killSwitch(agent, false);
+    }
+    // Other files drive these slots directly: let them restart before this file ends.
+    await waitFor(
+      async () =>
+        (await agent.owner.db.select().from(browserSlots)).every((slot) => slot.state === "idle"),
+      { label: "slots idle", timeoutMs: 90_000, intervalMs: 250 },
+    );
+  }, 240_000);
 });

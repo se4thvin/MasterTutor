@@ -4,7 +4,8 @@ export type MockOutput =
       actions: Array<Record<string, unknown>>;
       safetyChecks?: Array<{ id: string; code: string; message: string }>;
     }
-  | { type: "click_named"; name: string }
+  /** A click on the element read_page named, then any further actions in the same call. */
+  | { type: "click_named"; name: string; then?: Array<Record<string, unknown>> }
   /** A computer_call in the single-`action` shape some model versions emit instead of `actions`. */
   | { type: "computer_single"; action: Record<string, unknown> }
   /** A reasoning item, as returned when reasoning effort is above none. */

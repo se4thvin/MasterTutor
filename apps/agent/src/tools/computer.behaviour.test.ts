@@ -6,10 +6,17 @@ import { hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { captureModelScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
+import { ARM_BUDGET_MS, typingGuardIncomplete } from "../browser/typing-guard.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { waitFor } from "../testing/wait.ts";
-import { ComputerExecutor, FOCUS_MOVED_REFUSAL, SECRET_FIELD_REFUSAL } from "./computer.ts";
+import {
+  ComputerExecutor,
+  FOCUS_MOVED_REFUSAL,
+  PAGE_CHANGED_REFUSAL,
+  SECRET_FIELD_REFUSAL,
+  UNRESPONSIVE_REFUSAL,
+} from "./computer.ts";
 import { readPage } from "./read-page.ts";
 
 const log = createLogger({ service: "test", level: "silent" });
@@ -418,4 +425,83 @@ describe("ComputerExecutor inside cross-origin frames (targeted fix)", () => {
     await s.forgetFrame(id);
     await expect(worlds.cdp.send("Runtime.evaluate", { expression: "1" })).rejects.toThrow();
   });
+});
+
+describe("ComputerExecutor with a hung frame and frames added mid-typing (fix round 4)", () => {
+  const value = (s: BrowserSession, frameSelector: string | null, id: string) =>
+    frameSelector
+      ? s.page.frameLocator(frameSelector).locator(`#${id}`).inputValue()
+      : s.page.locator(`#${id}`).inputValue();
+  /** hung-frame.html: Code (top) at 40,20; a same-origin frame with Note at 40,80; a hung advert. */
+  async function hungPage() {
+    // The advert hangs for 3 s, so leaving the page afterwards does not wait long.
+    const { s, executor } = await setup("/hung-frame.html?ms=3000");
+    await new Promise((resolve) => setTimeout(resolve, 800)); // the advert hangs once loaded
+    expect(await executor.execute(click({ x: 100, y: 35 }), signal)).toBeNull();
+    return { s, executor };
+  }
+
+  it.each([
+    [{ type: "type", text: "hello" }, "hello"],
+    [{ type: "keypress", keys: ["a"] }, "a"],
+  ] satisfies Array<[ComputerAction, string]>)(
+    "%o fails closed within the budget, then needs approval, then runs once approved",
+    async (action, typed) => {
+      const { s, executor } = await hungPage();
+      const started = Date.now();
+      expect(await executor.execute(action, signal)).toBe(UNRESPONSIVE_REFUSAL);
+      const elapsed = Date.now() - started;
+      console.info(JSON.stringify({ metric: "hung_frame_fail_closed_ms", elapsed }));
+      expect(elapsed).toBeLessThan(ARM_BUDGET_MS + 750);
+      expect(await value(s, null, "code")).toBe("");
+      // The loop's next classification asks a person first (runs.behaviour covers that flow)...
+      expect(typingGuardIncomplete(s)).toBe(true);
+      // ...and once a person approved it, it runs.
+      expect(await executor.execute(action, signal, true)).toBeNull();
+      expect(await value(s, null, "code")).toBe(typed);
+    },
+  );
+
+  it.each(["type", "keypress"] as const)(
+    "a takeover during %s on a hung page aborts at once and never drops a person's keystrokes",
+    async (kind) => {
+      const { s, executor } = await hungPage();
+      const controller = new AbortController();
+      const action: ComputerAction =
+        kind === "type" ? { type: "type", text: "agent" } : { type: "keypress", keys: ["a"] };
+      const running = executor.execute(action, controller.signal);
+      await new Promise((resolve) => setTimeout(resolve, 40)); // mid-arm: the advert never answers
+      const abortedAt = Date.now();
+      controller.abort(new Interrupted("takeover"));
+      await expect(running).rejects.toBeInstanceOf(Interrupted);
+      const latency = Date.now() - abortedAt;
+      console.info(JSON.stringify({ metric: "hung_frame_abort_ms", kind, latency }));
+      expect(latency).toBeLessThan(1_000);
+      // The person types into the other document (armed to cancel everything while the agent typed).
+      const note = s.page.frameLocator("#widget").locator("#note");
+      await note.focus();
+      await s.page.keyboard.type("human");
+      expect(await note.inputValue()).toBe("human");
+      expect(await value(s, null, "code")).toBe("");
+    },
+  );
+
+  it.each([
+    ["", PAGE_CHANGED_REFUSAL],
+    ["&frames=40", PAGE_CHANGED_REFUSAL],
+    ["&frames=70", UNRESPONSIVE_REFUSAL],
+  ])(
+    "stops typing at once when a frame is added mid-typing (%s), and fails closed past the document cap",
+    async (frames, refusal) => {
+      // After 4 characters the page creates a frame with a password field and focuses it.
+      const { s, executor } = await setup(`/advance-into-frame.html?into=new${frames}`);
+      expect(await executor.execute(click({ x: 100, y: 35 }), signal)).toBeNull();
+      expect(await executor.execute({ type: "type", text: "1234abcdef" }, signal)).toBe(refusal);
+      const leaked = await s.page.evaluate(() =>
+        (window as { __leaked?: () => string }).__leaked?.(),
+      );
+      expect(leaked ?? "").toBe("");
+      expect(await value(s, null, "code")).toBe(refusal === UNRESPONSIVE_REFUSAL ? "" : "1234");
+    },
+  );
 });

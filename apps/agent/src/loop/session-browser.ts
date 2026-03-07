@@ -13,6 +13,7 @@ import { perceptualHash } from "../browser/phash.ts";
 import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
+import { typingGuardIncomplete } from "../browser/typing-guard.ts";
 import {
   applyStorageState,
   collectStorageState,
@@ -189,8 +190,14 @@ export class SessionLoopBrowser implements LoopBrowser {
       const point = await this.#executor.toPage(action.x, action.y);
       return point ? (await hitTest(this.#session, point)).target : null;
     }
-    if (action.type === "type" || action.type === "keypress")
-      return previous ?? (await focusTarget(this.#session));
+    if (action.type === "type" || action.type === "keypress") {
+      const target = previous ?? (await focusTarget(this.#session));
+      // While some document of the page could not be armed against misdirected typing (a frame
+      // that hangs), typing counts as acting inside an uninspectable page: it needs approval.
+      return target && typingGuardIncomplete(this.#session)
+        ? { ...target, opaqueFrame: true }
+        : target;
+    }
     return null;
   }
 

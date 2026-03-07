@@ -7,6 +7,7 @@ import { needsApproval } from "../guardrails/policy.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { SlotPool } from "../slots/pool.ts";
+import { waitFor } from "../testing/wait.ts";
 import { withHooks } from "./hooks.ts";
 import type { AttachedBrowser } from "./loop-browser.ts";
 import type { RunSnapshot } from "./run-state.ts";
@@ -306,57 +307,127 @@ describe("SessionLoopBrowser", () => {
     expect((await browser.targetFor(at(first!.point!), null))!.context).not.toBe(row1);
   });
 
+  // Every frame is mapped through its real geometry, level by level (fix round 4). Ground truth is a
+  // real click: at points inside the widget's "Delete account" the agent must classify that button
+  // (mapped variants) or at least gate the click (variants that are not a plain rectangle).
   it.each([
-    ["scale", "top"],
-    ["object", "top"],
-    ["zoom", "top"],
-    ["padding", "bottom"],
+    ...[
+      "scale",
+      "object",
+      "embed",
+      "zoom",
+      "padding",
+      "ancestor-zoom",
+      "shadow-scale",
+      "cross-origin-scale",
+      "nested",
+      "scroll-page",
+      "scroll-container",
+      "scroll-inside",
+    ].map((variant) => [variant, "mapped"] as const),
+    ...[
+      "flip",
+      "rotate",
+      "ancestor-rotate",
+      "offset-rotate",
+      "shadow-flip",
+      "shadow-rotate",
+      "flip-3d",
+      "cross-origin-flip",
+    ].map((variant) => [variant, "gated"] as const),
   ])(
-    "classifies the element really hit inside a same-origin %s frame (N5)",
-    async (variant, edge) => {
+    "frame geometry %s: a click inside is %s, never classified as another element",
+    async (variant, expected) => {
       const browser = await connect();
-      await browser.navigate(`${SITE}/same-origin-frames.html?variant=${variant}`, signal);
+      await browser.navigate(`${SITE}/frame-geometry.html?variant=${variant}`, signal);
       await browser.observe(signal);
-      // Where the browser itself hit-tests "Delete account" (DOM.getNodeForLocation, which
-      // honours scale, zoom, padding and frames): the topmost such point, nearest to "Cancel".
       const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
-      const page = remote
-        .contexts()[0]!
-        .pages()
-        .find((p) => p.url().includes("same-origin-frames"))!;
-      const cdp = await page.context().newCDPSession(page);
-      await cdp.send("DOM.getDocument", { depth: 0 });
-      const buttonAt = async (x: number, y: number) => {
-        const { backendNodeId } = await cdp
-          .send("DOM.getNodeForLocation", { x, y })
-          .catch(() => ({ backendNodeId: 0 }));
-        if (!backendNodeId) return null;
-        const { object } = await cdp.send("DOM.resolveNode", { backendNodeId });
-        const { result } = await cdp.send("Runtime.callFunctionOn", {
-          objectId: object.objectId!,
-          returnByValue: true,
-          functionDeclaration:
-            "function () { const el = this.nodeType === 3 ? this.parentElement : this; return el && el.closest ? (el.closest('button') || {}).id || null : null; }",
-        });
-        return result.value as string | null;
-      };
-      const hits: number[] = [];
-      for (let y = 30; y < 700; y += 3) if ((await buttonAt(100, y)) === "delete") hits.push(y);
-      expect(hits.length).toBeGreaterThan(0);
-      // The edge of "Delete account" where an offset-only mapping would read something else:
-      // the top edge (toward "Cancel") for scale and zoom, the bottom edge for padding.
-      const point = { x: 100, y: edge === "top" ? hits[0]! + 2 : hits.at(-1)! - 2 };
-      const click = { type: "click" as const, ...point!, button: "left" as const };
-      const target = await browser.targetFor(click, null);
-      // Ground truth: what a real click at that point hits.
-      await page.mouse.click(click.x, click.y);
-      const clicked = await page.evaluate(
-        () => (window as unknown as { __clicked?: string }).__clicked,
-      );
-      await remote.close();
-      expect(clicked).toBe("delete");
-      expect(target).toMatchObject({ label: "Delete account" });
-      expect(needsApproval(click, target)?.kind).toBe("risky_click");
+      try {
+        const page = remote
+          .contexts()[0]!
+          .pages()
+          .find((p) => p.url().includes("frame-geometry"))!;
+        // Frames already out of process when this connection attached are not fully known to it:
+        // reload so it sees every frame load, then find the widget by its content.
+        await page.reload();
+        const widget = await waitFor(
+          async () => {
+            for (const frame of page.frames().slice(1))
+              if (
+                await frame
+                  .locator("#delete")
+                  .isVisible()
+                  .catch(() => false)
+              )
+                return frame;
+            return null;
+          },
+          { label: "widget frame" },
+        );
+        await page.waitForTimeout(200); // scroll positions are set on load
+        let outer = widget;
+        while (outer.parentFrame() !== page.mainFrame()) outer = outer.parentFrame()!;
+        const box = (await (await outer.frameElement()).boundingBox())!;
+        /** What a real click at the point hits in the widget: "cancel", "delete" or null. */
+        const realHit = async (x: number, y: number) => {
+          await page.mouse.click(x, y);
+          return widget.evaluate(() => {
+            const holder = window as { __clicked?: string };
+            const clicked = holder.__clicked ?? null;
+            holder.__clicked = undefined;
+            return clicked;
+          });
+        };
+        // Each button is an axis-aligned rectangle on screen: find it by real clicks down a column
+        // of the outermost frame, then along a row through the button's middle (the hits found are
+        // inside the button, so points between them are too).
+        const STEP = 8; // every button is at least 20 px tall on screen
+        const rects = new Map<string, { x0: number; x1: number; y0: number; y1: number }>();
+        for (const fx of [0.5, 0.25]) {
+          const x = Math.round(box.x + box.width * fx);
+          const column = new Map<string, number[]>();
+          for (let y = Math.max(0, Math.ceil(box.y)); y < box.y + box.height; y += STEP) {
+            const hit = await realHit(x, y);
+            if (hit) column.set(hit, [...(column.get(hit) ?? []), y]);
+          }
+          if (!column.has("delete") || !column.has("cancel")) continue;
+          for (const [id, ys] of column) {
+            const y = ys[Math.floor(ys.length / 2)]!;
+            const xs: number[] = [];
+            for (let i = 1; i < 12; i++) {
+              const rowX = Math.round(box.x + (box.width * i) / 12);
+              if ((await realHit(rowX, y)) === id) xs.push(rowX);
+            }
+            rects.set(id, { x0: xs[0]!, x1: xs.at(-1)!, y0: ys[0]!, y1: ys.at(-1)! });
+          }
+          break;
+        }
+        expect([...rects.keys()].sort()).toEqual(["cancel", "delete"]);
+        for (const [id, rect] of rects) {
+          // Nine points inside "Delete account", four inside "Cancel".
+          const fractions = id === "delete" ? [0.2, 0.5, 0.8] : [0.25, 0.75];
+          for (const fx of fractions) {
+            for (const fy of fractions) {
+              const point = {
+                x: Math.round(rect.x0 + (rect.x1 - rect.x0) * fx),
+                y: Math.round(rect.y0 + (rect.y1 - rect.y0) * fy),
+              };
+              const at = `${variant} ${id} at ${point.x},${point.y}`;
+              const click = { type: "click" as const, ...point, button: "left" as const };
+              const target = await browser.targetFor(click, null);
+              expect(await realHit(point.x, point.y), at).toBe(id);
+              const need = needsApproval(click, target);
+              if (id === "delete") expect(need, at).not.toBeNull();
+              if (expected === "mapped") {
+                expect(target?.label, at).toBe(id === "delete" ? "Delete account" : "Cancel");
+                if (id === "cancel") expect(need, at).toBeNull();
+              }
+            }
+          }
+        }
+      } finally {
+        await remote.close();
+      }
     },
   );
 

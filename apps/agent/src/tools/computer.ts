@@ -1,15 +1,10 @@
 import type { ComputerAction } from "@mastertutor/contracts";
-import {
-  armSecretBlock,
-  focusTarget,
-  hitTest,
-  scrollState,
-  type ScrollState,
-} from "../browser/hit-test.ts";
+import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { abortable, pause } from "../runtime/abortable.ts";
+import { armTypingGuard } from "../browser/typing-guard.ts";
+import { pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
 import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
@@ -19,10 +14,15 @@ export interface ComputerRun {
   notes: string[];
 }
 
-export type ActionGate = (action: ComputerAction) => Promise<boolean>;
+/** false: do not run; true: run; "approved": run, and a person approved this exact action. */
+export type ActionGate = (action: ComputerAction) => Promise<boolean | "approved">;
 
 export const FOCUS_MOVED_REFUSAL =
   "Stopped typing: the page moved focus into another part of the page (another frame) while typing, and the rest was not typed there. Look at the screen and decide again.";
+export const PAGE_CHANGED_REFUSAL =
+  "Stopped typing: the page added or replaced an embedded page (a frame) while typing, and the rest was not typed. Look at the screen and decide again.";
+export const UNRESPONSIVE_REFUSAL =
+  "Nothing was typed: the page's embedded frames could not all be guarded against misdirected typing (one is not responding, or there are too many). Typing on this page now needs the user's approval: ask for it again as its own step.";
 export const SECRET_FIELD_REFUSAL =
   "Refused: typing into password, one-time-code or PIN fields is not allowed. Use fill_credential with the vault alias and the field's element ref.";
 const TYPE_CHUNK = 24;
@@ -79,7 +79,8 @@ export class ComputerExecutor {
     let executed = 0;
     for (const [index, action] of actions.entries()) {
       this.#session.guard.assertAgent(signal);
-      if (!(await gate(action))) {
+      const verdict = await gate(action);
+      if (!verdict) {
         notes.push(
           `Stopped before action ${index + 1} (${action.type}): it needs the user's approval on the page as it is now. Ask for it again as its own step.`,
         );
@@ -87,7 +88,7 @@ export class ComputerExecutor {
       }
       const urlBefore = this.#session.page.url();
       this.#refused = false;
-      const note = await this.execute(action, signal);
+      const note = await this.execute(action, signal, verdict === "approved");
       executed += 1;
       if (note) notes.push(note);
       const remaining = actions.length - index - 1;
@@ -113,12 +114,18 @@ export class ComputerExecutor {
   async toPage(x: number, y: number): Promise<{ x: number; y: number } | null> {
     const scale = this.#session.lastScale;
     const layout = await this.#session.layout();
-    const px = x / scale;
-    const py = y / scale;
+    // Whole CSS pixels: the hit test, the browser's own hit test and the click all use this point.
+    const px = Math.floor(x / scale);
+    const py = Math.floor(y / scale);
     return px >= 0 && py >= 0 && px < layout.width && py < layout.height ? { x: px, y: py } : null;
   }
 
-  async execute(action: ComputerAction, signal: AbortSignal): Promise<string | null> {
+  /** `approved`: a person approved this exact action (typing may then run partly unguarded). */
+  async execute(
+    action: ComputerAction,
+    signal: AbortSignal,
+    approved = false,
+  ): Promise<string | null> {
     switch (action.type) {
       case "click":
         return this.#click(action.x, action.y, action.button, signal, false);
@@ -131,9 +138,9 @@ export class ComputerExecutor {
       case "scroll":
         return this.#scroll(action, signal);
       case "keypress":
-        return this.#keypress(action.keys, signal);
+        return this.#keypress(action.keys, signal, approved);
       case "type":
-        return this.#type(action.text, signal);
+        return this.#type(action.text, signal, approved);
       case "wait":
         await this.#clock.sleep(this.#waitActionMs, signal);
         await settle(this.#session, signal);
@@ -269,7 +276,7 @@ export class ComputerExecutor {
     return null;
   }
 
-  async #type(text: string, signal: AbortSignal): Promise<string | null> {
+  async #type(text: string, signal: AbortSignal, approved: boolean): Promise<string | null> {
     if (this.omnibox.active) {
       this.omnibox.type(text);
       return null;
@@ -281,40 +288,45 @@ export class ComputerExecutor {
     }
     let refusal = this.#typingRefusal(await focusTarget(this.#session));
     if (refusal) return refusal;
-    // Arming every document can take a round trip per frame: a takeover must not wait for it
-    // (target ≤ 300 ms). If aborted meanwhile, the arm finishes and is undone in the background.
-    const arming = armSecretBlock(this.#session);
-    const { focusMoved, disarm } = await abortable(arming, signal).catch((error: unknown) => {
-      void arming.then(
-        (block) => block.disarm(),
-        () => undefined,
-      );
-      throw error;
-    });
+    const guard = await armTypingGuard(this.#session, signal);
     try {
-      for (let offset = 0; offset < text.length; offset += TYPE_CHUNK) {
-        this.#session.guard.assertAgent(signal);
+      // A document that could not be armed fails closed (approval needed), unless a person
+      // approved this action.
+      if (!guard.complete && !approved) return this.#refuse(UNRESPONSIVE_REFUSAL);
+      const chars = [...text];
+      for (let offset = 0; offset < chars.length; offset += TYPE_CHUNK) {
         // Focus can move while typing (auto-advance fields): check before every chunk.
         if (offset > 0) {
           refusal = this.#typingRefusal(await focusTarget(this.#session));
           if (refusal) return refusal;
         }
-        await this.#session.page.keyboard.type(text.slice(offset, offset + TYPE_CHUNK));
+        // One character at a time: a document that appears mid-chunk is not armed, so typing
+        // stops before the next character.
+        for (const char of chars.slice(offset, offset + TYPE_CHUNK)) {
+          this.#session.guard.assertAgent(signal);
+          if (guard.changed) return this.#refuse(PAGE_CHANGED_REFUSAL);
+          await this.#session.page.keyboard.type(char);
+        }
+        if (guard.changed) return this.#refuse(PAGE_CHANGED_REFUSAL);
         // A page script moved focus into another document mid-chunk: the rest was cancelled
-        // there (armSecretBlock); stop and let the model look again.
-        if (await focusMoved()) return this.#refuse(FOCUS_MOVED_REFUSAL);
+        // there by the guard; stop and let the model look again.
+        if (await guard.focusMoved()) return this.#refuse(FOCUS_MOVED_REFUSAL);
       }
       const focus = await focusTarget(this.#session);
       if (focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     } finally {
-      if (signal.aborted) void disarm();
-      else await disarm();
+      if (signal.aborted) void guard.disarm();
+      else await guard.disarm();
     }
     await settle(this.#session, signal);
     return null;
   }
 
-  async #keypress(keys: readonly string[], signal: AbortSignal): Promise<string | null> {
+  async #keypress(
+    keys: readonly string[],
+    signal: AbortSignal,
+    approved: boolean,
+  ): Promise<string | null> {
     if (this.omnibox.active) {
       const combo = normalizeCombo(keys);
       if (combo === "ENTER") {
@@ -351,15 +363,19 @@ export class ComputerExecutor {
     }
     this.#session.guard.assertAgent(signal);
     // Printable keys type characters: refuse them in a secret field like `type` does. Any key
-    // aimed at an editable element runs with the in-page secret-field cancel listeners armed.
+    // aimed at an editable element runs with the typing guard armed.
     const focus = await focusTarget(this.#session);
-    if (typesText(keys) && focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
+    const typing = typesText(keys);
+    if (typing && focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     if (focus?.editable || focus?.isSecretField) {
-      const { disarm } = await armSecretBlock(this.#session);
+      const guard = await armTypingGuard(this.#session, signal);
       try {
+        if (typing && !guard.complete && !approved) return this.#refuse(UNRESPONSIVE_REFUSAL);
+        this.#session.guard.assertAgent(signal);
         await this.#session.page.keyboard.press(combo);
       } finally {
-        await disarm();
+        if (signal.aborted) void guard.disarm();
+        else await guard.disarm();
       }
     } else {
       await this.#session.page.keyboard.press(combo);
