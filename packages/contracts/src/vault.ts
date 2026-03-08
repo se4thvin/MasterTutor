@@ -17,7 +17,15 @@ const BASE32 = /^[A-Z2-7]+$/;
 function normalizeBase32(raw: string): string | null {
   const secret = raw.replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
   // 16 characters = 80 bits, the shortest key real sites issue; 128 characters = 640 bits.
-  return secret.length >= 16 && secret.length <= 128 && BASE32.test(secret) ? secret : null;
+  // RFC 4648: no whole number of bytes encodes to 1, 3 or 6 characters past a multiple of 8.
+  if (secret.length < 16 || secret.length > 128 || [1, 3, 6].includes(secret.length % 8))
+    return null;
+  return BASE32.test(secret) ? secret : null;
+}
+
+/** A plain decimal integer, or NaN: Number() would also accept "0x1e", "3e1" and " 8". */
+function decimal(text: string): number {
+  return /^[0-9]{1,4}$/.test(text) ? Number(text) : Number.NaN;
 }
 
 function isAlgorithm(value: string): value is TotpAlgorithm {
@@ -42,8 +50,8 @@ export function parseTotpSeed(input: string): TotpSpec | null {
   }
   if (url.protocol !== "otpauth:" || url.hostname.toLowerCase() !== "totp") return null;
   const secret = normalizeBase32(url.searchParams.get("secret") ?? "");
-  const digits = Number(url.searchParams.get("digits") ?? "6");
-  const period = Number(url.searchParams.get("period") ?? "30");
+  const digits = decimal(url.searchParams.get("digits") ?? "6");
+  const period = decimal(url.searchParams.get("period") ?? "30");
   const algorithm = (url.searchParams.get("algorithm") ?? "SHA1").toLowerCase();
   if (secret === null || !isAlgorithm(algorithm)) return null;
   if (digits !== 6 && digits !== 7 && digits !== 8) return null;

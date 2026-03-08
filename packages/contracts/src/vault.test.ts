@@ -69,3 +69,21 @@ describe("secret values at the trust boundary (E3, E4)", () => {
     expect(secretValueProblem("password", "anything at all")).toBeNull();
   });
 });
+
+describe("parseTotpSeed strictness (review 1, 12)", () => {
+  it("rejects base32 lengths no encoder produces (len % 8 of 1, 3 or 6)", () => {
+    for (const input of ["JBSWY3DPEHPK3PXPA", "JBSWY3DPEHPK3PXPABC", "JBSWY3DPEHPK3PXPABCDEF"]) {
+      expect(parseTotpSeed(input), input).toBeNull();
+    }
+    for (const input of ["JBSWY3DPEHPK3PXPAB", "JBSWY3DPEHPK3PXPABCD", "JBSWY3DPEHPK3PXPABCDE"]) {
+      expect(parseTotpSeed(input), input).not.toBeNull();
+    }
+  });
+  it("reads digits and period only as plain decimal integers", () => {
+    const link = (query: string) => `otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&${query}`;
+    for (const query of ["digits=0x8", "digits=%208", "period=3e1", "period=0x1e", "period=30.0"]) {
+      expect(parseTotpSeed(link(query)), query).toBeNull();
+    }
+    expect(parseTotpSeed(link("digits=8&period=60"))).toMatchObject({ digits: 8, period: 60 });
+  });
+});

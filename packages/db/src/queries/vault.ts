@@ -31,6 +31,14 @@ export class VaultNotFound extends Error {
   }
 }
 
+/** A listVaultAudit cursor that is not one this module issued (review 6): the caller's 400. */
+export class VaultAuditCursorInvalid extends Error {
+  constructor() {
+    super("Invalid audit cursor");
+    this.name = "VaultAuditCursorInvalid";
+  }
+}
+
 export class VaultAliasTaken extends Error {
   constructor() {
     super("Vault alias already exists");
@@ -109,11 +117,13 @@ export async function listVaultItems(
     .select({
       ...itemColumns,
       hasImap: sql<boolean>`${vaultItems.imap} is not null`,
+      // Spelled out with table names: drizzle renders an interpolated column unqualified, which
+      // inside this subquery would resolve to bs.* and match every session in the workspace.
       sessionSaved: sql<boolean>`exists (
-        select 1 from ${browserSessions} bs
-        where bs.workspace_id = ${vaultItems.workspaceId}
-          and bs.alias = ${vaultItems.alias}
-          and bs.origin = ${vaultItems.origin})`,
+        select 1 from browser_sessions bs
+        where bs.workspace_id = vault_items.workspace_id
+          and bs.alias = vault_items.alias
+          and bs.origin = vault_items.origin)`,
       createdAt: vaultItems.createdAt,
     })
     .from(vaultItems)
@@ -174,12 +184,24 @@ export async function appendVaultAudit(db: DbExecutor, row: VaultAuditInsert): P
   await db.insert(vaultAudit).values(row);
 }
 
-/** Upserts one sealed field and keeps vault_items.fields in sync. Needs no SELECT on sealed. */
+/**
+ * Upserts one sealed field of an item in `workspaceId` and keeps vault_items.fields in sync
+ * (review 9: never writes into another workspace's item). Needs no SELECT on sealed. Throws
+ * VaultNotFound when the item is not in that workspace. Run it in a transaction with the caller's
+ * other writes.
+ */
 export async function putVaultSecret(
   db: DbExecutor,
-  itemId: string,
+  item: { workspaceId: string; itemId: string },
   secret: SealedField,
 ): Promise<void> {
+  const [owned] = await db
+    .select({ id: vaultItems.id })
+    .from(vaultItems)
+    .where(and(eq(vaultItems.id, item.itemId), eq(vaultItems.workspaceId, item.workspaceId)))
+    .limit(1);
+  if (!owned) throw new VaultNotFound();
+  const itemId = owned.id;
   const sealed = Buffer.from(secret.sealed);
   await db
     .insert(vaultSecrets)
@@ -259,7 +281,7 @@ export async function setVaultSecret(
   await db.transaction(async (tx) => {
     const item = await getVaultItem(tx, input.workspaceId, input.itemId);
     if (!item) throw new VaultNotFound();
-    await putVaultSecret(tx, item.id, input.secret);
+    await putVaultSecret(tx, { workspaceId: input.workspaceId, itemId: item.id }, input.secret);
     await appendVaultAudit(tx, {
       workspaceId: input.workspaceId,
       itemId: item.id,
@@ -378,6 +400,14 @@ export async function listVaultAudit(
   page: { limit: number; cursor: string | null },
 ): Promise<{ items: VaultAuditListRow[]; nextCursor: string | null }> {
   const match = page.cursor === null ? null : AUDIT_CURSOR.exec(page.cursor);
+  // A cursor is either absent or exactly what nextCursor produced: a real instant and an id.
+  if (
+    page.cursor !== null &&
+    (!match ||
+      !Number.isFinite(Date.parse(match[1]!)) ||
+      new Date(match[1]!).toISOString() !== match[1])
+  )
+    throw new VaultAuditCursorInvalid();
   const after = match
     ? sql`(${auditAtMs}, ${vaultAudit.id}) < (${match[1]!}::timestamptz, ${match[2]!}::uuid)`
     : undefined;

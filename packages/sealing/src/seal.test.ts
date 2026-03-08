@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import sodium from "libsodium-wrappers";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_SEALED_VALUE_BYTES,
   SealError,
@@ -121,5 +122,97 @@ describe("sealValue / openSealed", () => {
 
   it("the web entry exposes no way to open a box", () => {
     expect(Object.keys(webEntry).filter((name) => /open|private/i.test(name))).toEqual([]);
+  });
+});
+
+describe("pinned formats and vectors (review 3)", () => {
+  it("derives the RFC 7748 §6.1 public key from Alice's private key", async () => {
+    const alice = Buffer.from(
+      "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+      "hex",
+    ).toString("base64");
+    const keys = await vaultKeyPairFromPrivate(alice);
+    expect(Buffer.from(keys.publicKey).toString("hex")).toBe(
+      "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+    );
+  });
+
+  it("still opens a box sealed by format version 1 (a stored row must stay readable)", async () => {
+    const golden =
+      "VgGV5jJknyWdUBcghyjL0I496bxWQwQmSfKEgabZgiFkHsT/peOcAXdDjjQ9kwJhgZd7TMvP6zCues0FidAmOLZb66NWyzihtXN00hi73/wWvMxi5vOvnBw8KkLeR2VjPsIG4prMEHmV4Wrh5nKY25H22d51MARl5uBU0ESoDhvP+h2+0R0HDSNEx4zs8RAEqlhfYfF3Hz6F2SyP8EHv03I9qRM=";
+    const keys = await vaultKeyPairFromPrivate(TEST_PRIVATE);
+    const opened = await openSealed(keys, Buffer.from(golden, "base64"), secret);
+    expect(new TextDecoder().decode(opened)).toBe("known-answer-42");
+  });
+});
+
+describe("malformed envelopes (review 4)", () => {
+  const sealRaw = async (plain: Uint8Array) => {
+    await sodium.ready;
+    return sodium.crypto_box_seal(plain, decodeVaultKey(TEST_PUBLIC));
+  };
+  const header = new TextEncoder().encode(encodeBinding(secret));
+
+  it("refuses an unknown format version", async () => {
+    const keys = await vaultKeyPairFromPrivate(TEST_PRIVATE);
+    const plain = new Uint8Array([2, header.length >> 8, header.length & 0xff, ...header, 1]);
+    await expect(openSealed(keys, await sealRaw(plain), secret)).rejects.toMatchObject({
+      code: "malformed",
+    });
+  });
+
+  it("refuses a header longer than the box", async () => {
+    const keys = await vaultKeyPairFromPrivate(TEST_PRIVATE);
+    const plain = new Uint8Array([1, 0xff, 0xff, ...header]);
+    await expect(openSealed(keys, await sealRaw(plain), secret)).rejects.toMatchObject({
+      code: "malformed",
+    });
+    await expect(
+      openSealed(keys, await sealRaw(new Uint8Array([1, 0])), secret),
+    ).rejects.toMatchObject({
+      code: "malformed",
+    });
+  });
+});
+
+describe("key material is wiped (review 2)", () => {
+  it("zeroes the buffer a key is decoded into", () => {
+    const decoded: Buffer[] = [];
+    const from = Buffer.from.bind(Buffer) as (value: unknown, encoding?: unknown) => Buffer;
+    const spy = vi.spyOn(Buffer, "from").mockImplementation(((
+      value: unknown,
+      encoding?: unknown,
+    ) => {
+      const out = from(value, encoding);
+      if (encoding === "base64") decoded.push(out);
+      return out;
+    }) as typeof Buffer.from);
+    try {
+      const key = decodeVaultKey(TEST_PRIVATE);
+      expect(key.some((byte) => byte !== 0)).toBe(true);
+      expect(decoded.length).toBeGreaterThan(0);
+      for (const buffer of decoded) expect(buffer.every((byte) => byte === 0)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("zeroes a generated private key once it is encoded", async () => {
+    await sodium.ready;
+    const pairs: Array<{ privateKey: Uint8Array }> = [];
+    const original = sodium.crypto_box_keypair.bind(sodium);
+    const spy = vi.spyOn(sodium, "crypto_box_keypair").mockImplementation(((...args: unknown[]) => {
+      const pair = (original as (...a: unknown[]) => { privateKey: Uint8Array })(...args);
+      pairs.push(pair);
+      return pair;
+    }) as typeof sodium.crypto_box_keypair);
+    try {
+      const generated = await generateVaultKeyPair();
+      expect(generated.privateKeyBase64).toHaveLength(44);
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]!.privateKey.every((byte) => byte === 0)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
