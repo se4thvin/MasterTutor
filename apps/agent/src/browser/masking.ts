@@ -209,44 +209,35 @@ function flattenFrames(node: FrameNode, out: FrameNode["frame"][] = []): FrameNo
 }
 
 /**
- * True when any frame is on a different origin from the main frame (its inputs are another CDP
- * target). Out-of-process frames are missing from the page target's frame tree, so they are
- * counted separately: site isolation only moves cross-site, hence cross-origin, frames.
+ * True when an in-process frame is on a different origin from the main frame: the page-side
+ * secret-field scan cannot reach into it. Out-of-process frames are not in this tree; their
+ * filled fields are checked by `hasFilledOutOfProcessFrame`.
  */
 export async function hasCrossOriginFrames(session: BrowserSession): Promise<boolean> {
   const { frameTree } = await (await session.cdp()).send("Page.getFrameTree");
   const frames = flattenFrames(frameTree as FrameNode);
   const main = frames[0]?.securityOrigin;
   // about:srcdoc and about:blank frames inherit the parent's origin (Chromium reports "://" for them).
-  if (
-    frames
-      .slice(1)
-      .some((frame) => !frame.url?.startsWith("about:") && frame.securityOrigin !== main)
-  )
-    return true;
-  return (await session.outOfProcessFrames()).size > 0;
+  return frames
+    .slice(1)
+    .some((frame) => !frame.url?.startsWith("about:") && frame.securityOrigin !== main);
+}
+
+/**
+ * True when the vault filled a field inside an out-of-process frame (R-E6 registers it on that
+ * frame's own session): it cannot be boxed from the page's session, so the frame must be dropped.
+ * An unrelated cross-site frame (an ad, a sign-in button, a video) costs no sight.
+ */
+export async function hasFilledOutOfProcessFrame(
+  session: BrowserSession,
+  sources: MaskSources,
+): Promise<boolean> {
+  for (const worlds of (await session.outOfProcessFrames()).values())
+    if (sources.nodeIds(worlds.cdp).length > 0) return true;
+  return false;
 }
 
 type AxText = { name?: { value?: unknown }; value?: { value?: unknown } };
-
-/** One frame's accessibility tree; out-of-process frames through their own target (R-E5). */
-async function frameAxNodes(
-  session: BrowserSession,
-  cdp: CDPSession,
-  frameId: string,
-): Promise<readonly AxText[] | null> {
-  try {
-    return (await cdp.send("Accessibility.getFullAXTree", { frameId })).nodes;
-  } catch {
-    const own = await session.frameCdp(frameId).catch(() => null);
-    if (!own) return null;
-    try {
-      return (await own.send("Accessibility.getFullAXTree", {})).nodes;
-    } catch {
-      return null;
-    }
-  }
-}
 
 function hasSecretText(nodes: readonly AxText[], sources: MaskSources): boolean {
   return nodes.some((node) =>
@@ -256,34 +247,124 @@ function hasSecretText(nodes: readonly AxText[], sources: MaskSources): boolean 
   );
 }
 
+/** Bound on reading one out-of-process frame: its own (possibly busy, third-party) renderer answers. */
+export const OOPIF_READ_TIMEOUT_MS = 1_500;
+/** Out-of-process frames read at once (principle 2: parallel, but not unbounded). */
+const OOPIF_READ_CONCURRENCY = 4;
+
+type FrameRead = "clean" | "secret" | "failed" | "timeout";
+
+/** `work`'s verdict, "failed" on a CDP error, "timeout" past the bound; rejects only on abort. */
+function bounded(work: Promise<FrameRead>, signal: AbortSignal): Promise<FrameRead> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => finish(() => reject(signal.reason));
+    const timer = setTimeout(() => finish(() => resolve("timeout")), OOPIF_READ_TIMEOUT_MS);
+    const finish = (settle: () => void) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      settle();
+    };
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (verdict) => finish(() => resolve(verdict)),
+      () => finish(() => resolve("failed")),
+    );
+  });
+}
+
+/** Every frame hosted by one target (an out-of-process frame and its in-process children). */
+async function readTarget(cdp: CDPSession, sources: MaskSources): Promise<FrameRead> {
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  for (const frame of flattenFrames(frameTree as FrameNode)) {
+    const { nodes } = await cdp.send("Accessibility.getFullAXTree", { frameId: frame.id });
+    if (hasSecretText(nodes, sources)) return "secret";
+  }
+  return "clean";
+}
+
+/** One frame through the page's session (it moved in process); a frame that is gone is clean. */
+async function readInProcess(
+  cdp: CDPSession,
+  frameId: string,
+  sources: MaskSources,
+): Promise<FrameRead> {
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  if (!flattenFrames(frameTree as FrameNode).some((frame) => frame.id === frameId)) return "clean";
+  const { nodes } = await cdp.send("Accessibility.getFullAXTree", { frameId });
+  return hasSecretText(nodes, sources) ? "secret" : "clean";
+}
+
+/**
+ * Whether one out-of-process frame shows a secret, or cannot be read (fail closed). A session
+ * that errors (the frame swapped process, its renderer restarted) is forgotten and the frame is
+ * read once more through a fresh one; a frame that does not answer in time is not retried.
+ */
+async function outOfProcessFrameLeaks(
+  session: BrowserSession,
+  frameId: string,
+  cdp: CDPSession,
+  sources: MaskSources,
+  signal: AbortSignal,
+): Promise<boolean> {
+  session.guard.assertAgent(signal);
+  let verdict = await bounded(readTarget(cdp, sources), signal);
+  if (verdict === "failed") {
+    await session.forgetFrame(frameId);
+    session.guard.assertAgent(signal);
+    const fresh = (await session.outOfProcessFrames()).get(frameId);
+    verdict = await bounded(
+      fresh ? readTarget(fresh.cdp, sources) : readInProcess(await session.cdp(), frameId, sources),
+      signal,
+    );
+  }
+  return verdict !== "clean";
+}
+
+/** True when `test` holds for any item; at most `limit` run at once, and none start after a hit. */
+async function anyLimited<T>(
+  items: readonly T[],
+  limit: number,
+  test: (item: T) => Promise<boolean>,
+): Promise<boolean> {
+  let next = 0;
+  let found = false;
+  const worker = async () => {
+    while (!found && next < items.length) {
+      const item = items[next++]!;
+      if (await test(item)) found = true;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return found;
+}
+
 /**
  * Final check (spec §9): any accessibility-tree name or value, in every frame, containing a
- * registered secret drops the frame. A frame whose tree cannot be read either way fails closed.
- * The page target's frame tree omits out-of-process frames, so each of those targets (and the
- * frames it hosts) is scanned through its own CDP session.
+ * registered secret drops the frame; a frame whose tree cannot be read fails closed. The page
+ * target's frame tree omits out-of-process frames, so each of those is read through its own
+ * session, in parallel and time-bounded, stopping at a takeover (`signal`, the control guard).
  */
 export async function containsSecretText(
   session: BrowserSession,
   sources: MaskSources,
+  signal: AbortSignal,
 ): Promise<boolean> {
   if (!sources.hasSecrets()) return false;
   const cdp = await session.cdp();
   const { frameTree } = await cdp.send("Page.getFrameTree");
   for (const frame of flattenFrames(frameTree as FrameNode)) {
-    const nodes = await frameAxNodes(session, cdp, frame.id);
+    session.guard.assertAgent(signal);
+    const nodes = await cdp
+      .send("Accessibility.getFullAXTree", { frameId: frame.id })
+      .then((result) => result.nodes)
+      .catch(() => null);
     if (nodes === null || hasSecretText(nodes, sources)) return true;
   }
-  for (const worlds of (await session.outOfProcessFrames()).values()) {
-    const own = worlds.cdp;
-    const tree = await own.send("Page.getFrameTree").catch(() => null);
-    if (!tree) return true;
-    for (const frame of flattenFrames(tree.frameTree as FrameNode)) {
-      const nodes = await own
-        .send("Accessibility.getFullAXTree", { frameId: frame.id })
-        .then((result) => result.nodes)
-        .catch(() => null);
-      if (nodes === null || hasSecretText(nodes, sources)) return true;
-    }
-  }
-  return false;
+  const frames = [...(await session.outOfProcessFrames())];
+  const leaks = await anyLimited(frames, OOPIF_READ_CONCURRENCY, ([frameId, worlds]) =>
+    outOfProcessFrameLeaks(session, frameId, worlds.cdp, sources, signal),
+  );
+  session.guard.assertAgent(signal);
+  return leaks;
 }

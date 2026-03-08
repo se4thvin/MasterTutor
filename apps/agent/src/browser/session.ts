@@ -36,6 +36,9 @@ export interface BrowserSessionOptions {
   resolveHost?: HostResolver;
 }
 
+/** Playwright refuses a separate CDP session for a frame in its parent's process with this. */
+const IN_PROCESS_FRAME = /does not have a separate CDP session/;
+
 /**
  * One leased slot's Chromium over CDP (spec §3.3 `browser`): the default context, no emulated
  * viewport, so the agent and the live view see the same window. Follows tabs the page opens.
@@ -53,6 +56,8 @@ export class BrowserSession {
   #worlds: Promise<IsolatedWorlds> | null = null;
   /** Out-of-process frames (R29-1): their own CDP session's worlds and CDP frame id. */
   readonly #outOfProcess = new Map<Frame, Promise<{ id: string; worlds: IsolatedWorlds } | null>>();
+  /** In-process frames and the URL they were found at: not re-probed until they navigate (M9). */
+  #inProcess = new WeakMap<Frame, string>();
   #blocked: BlockedNavigation[] = [];
   #privateHits: PrivateConnection[] = [];
   #policy: NetworkPolicy | null = null;
@@ -137,14 +142,18 @@ export class BrowserSession {
       void entry.then((found) => found?.worlds.cdp.detach().catch(() => undefined));
     }
     for (const frame of live)
-      if (frame !== this.#page.mainFrame() && !this.#outOfProcess.has(frame))
+      if (
+        frame !== this.#page.mainFrame() &&
+        !this.#outOfProcess.has(frame) &&
+        this.#inProcess.get(frame) !== frame.url()
+      )
         this.#outOfProcess.set(frame, this.#attach(frame));
     const found = new Map<string, IsolatedWorlds>();
     await Promise.all(
       [...this.#outOfProcess].map(async ([frame, entry]) => {
         const attached = await entry;
         if (attached) found.set(attached.id, attached.worlds);
-        // In process: not remembered, since a frame can move to another process when it navigates.
+        // In process: not kept here, since a frame can move to another process when it navigates.
         else if (this.#outOfProcess.get(frame) === entry) this.#outOfProcess.delete(frame);
       }),
     );
@@ -152,7 +161,13 @@ export class BrowserSession {
   }
 
   async #attach(frame: Frame): Promise<{ id: string; worlds: IsolatedWorlds } | null> {
-    const cdp = await this.#context.newCDPSession(frame).catch(() => null);
+    const url = frame.url();
+    const cdp = await this.#context.newCDPSession(frame).catch((error: unknown) => {
+      // Playwright's answer for a frame that shares its parent's process: remember it at this URL.
+      if (error instanceof Error && IN_PROCESS_FRAME.test(error.message))
+        this.#inProcess.set(frame, url);
+      return null;
+    });
     if (!cdp) return null;
     // An out-of-process frame's target id is its frame id; the browser answers, not the frame.
     const info = await cdp.send("Target.getTargetInfo").catch(() => null);
@@ -259,6 +274,7 @@ export class BrowserSession {
     for (const entry of this.#outOfProcess.values())
       void entry.then((found) => found?.worlds.cdp.detach().catch(() => undefined));
     this.#outOfProcess.clear();
+    this.#inProcess = new WeakMap();
     this.navigations.attach(page);
     page.once("close", () => this.#onClose(page));
     void page.bringToFront().catch(() => undefined);

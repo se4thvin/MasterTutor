@@ -165,22 +165,56 @@ describe("model screenshots (spec §9, §12 masking tests)", () => {
     expect((await captureModelScreenshot(s, filled, signal)).dropped).toBe(true);
   });
 
-  it("reads an out-of-process frame's tree: delivered when clean, dropped when it echoes a secret (R-E5)", async () => {
+  async function openOopif(): Promise<BrowserSession> {
     const s = await open("/masking-oopif.html");
     await expect
       .poll(() => s.page.frames().some((frame) => frame.url().endsWith("/echo.html")))
       .toBe(true);
     const frame = s.page.frames().find((candidate) => candidate.url().endsWith("/echo.html"))!;
     await frame.waitForSelector("#echo");
+    return s;
+  }
+
+  it("reads an out-of-process frame's tree: delivered when clean, dropped when it echoes a secret (R-E5)", async () => {
+    const s = await openOopif();
     expect((await captureModelScreenshot(s, secrets(["absent-value-9"]), signal)).dropped).toBe(
       false,
     );
     expect((await captureModelScreenshot(s, secrets(["oopif-secret-42"]), signal)).dropped).toBe(
       true,
-    ); // A filled field on the page: the out-of-process frame cannot be boxed from here (R-E5).
-    const handle = await (await s.worlds()).evaluateHandle("document.querySelector('p')");
-    const { node } = await (await s.cdp()).send("DOM.describeNode", { objectId: handle! });
-    const filled: MaskSources = { ...secrets([]), nodeIds: () => [node.backendNodeId] };
+    );
+  });
+
+  it("an unrelated cross-site frame does not drop a page with filled fields, which stay masked (I1)", async () => {
+    const s = await openOopif();
+    const id = await plainNode(s);
+    const pageCdp = await s.cdp();
+    const filled: MaskSources = { ...secrets([]), nodeIds: (cdp) => (cdp === pageCdp ? [id] : []) };
+    const shot = await captureModelScreenshot(s, filled, signal);
+    expect(shot.dropped).toBe(false);
+    expect(shot.masked).toBe(1);
+    const box = await s.page.evaluate(() => {
+      const r = document.getElementById("plain")!.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    expect(await centerIsBlack(shot.png, box, shot.scale)).toBe(true);
+  });
+
+  it("drops the page when the vault filled a field inside the out-of-process frame (I1)", async () => {
+    const s = await openOopif();
+    const [inFrame] = [...(await s.outOfProcessFrames()).values()];
+    const own = inFrame!.cdp;
+    await own.send("DOM.enable");
+    const { root } = await own.send("DOM.getDocument", { depth: -1 });
+    const { nodeId } = await own.send("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector: "#echo",
+    });
+    const { node } = await own.send("DOM.describeNode", { nodeId });
+    const filled: MaskSources = {
+      ...secrets([]),
+      nodeIds: (cdp) => (cdp === own ? [node.backendNodeId] : []),
+    };
     expect((await captureModelScreenshot(s, filled, signal)).dropped).toBe(true);
   });
 });

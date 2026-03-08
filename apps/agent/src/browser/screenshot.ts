@@ -5,6 +5,7 @@ import {
   containsSecretText,
   drawMasks,
   hasCrossOriginFrames,
+  hasFilledOutOfProcessFrame,
   sameBoxes,
   type Box,
   type MaskSources,
@@ -94,6 +95,8 @@ export async function captureModelScreenshot(
     if (sources.nodeIds(await session.cdp()).length > 0 && (await hasCrossOriginFrames(session))) {
       return drop();
     }
+    // A field the vault filled inside an out-of-process frame cannot be boxed from here either.
+    if (await hasFilledOutOfProcessFrame(session, sources)) return drop();
     const before = await collectMaskBoxes(session, sources);
     if (before.unverifiable > 0) return drop();
     session.guard.assertAgent(signal);
@@ -119,7 +122,7 @@ export async function captureModelScreenshot(
     ) {
       continue;
     }
-    if (await containsSecretText(session, sources)) return drop();
+    if (await containsSecretText(session, sources, signal)) return drop();
     const shot = await finalize(raw, layout, after.boxes);
     session.lastScale = shot.scale;
     return shot;

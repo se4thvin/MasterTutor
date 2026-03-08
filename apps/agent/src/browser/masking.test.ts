@@ -1,18 +1,31 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { ControlGuard } from "./guard.ts";
-import { SECRET_REDACTION, containsSecretText, redactDeep, type MaskSources } from "./masking.ts";
+import {
+  OOPIF_READ_TIMEOUT_MS,
+  SECRET_REDACTION,
+  containsSecretText,
+  redactDeep,
+  type MaskSources,
+} from "./masking.ts";
 import { captureModelScreenshot } from "./screenshot.ts";
 import type { BrowserSession } from "./session.ts";
 
 type Params = Record<string, unknown> | undefined;
 type AxSample = { name?: string; value?: string };
+interface OopifFake {
+  ax?: AxSample[];
+  /** Calls that fail before the frame answers again (a stale session after a process swap). */
+  failures?: number;
+  /** The frame's renderer never answers (a busy third-party frame). */
+  hang?: boolean;
+}
 interface FakeOptions {
   frames?: Array<{ id: string; securityOrigin: string; url?: string }>;
   ax?: Record<string, AxSample[]>;
   axThrowsFor?: string;
-  /** Trees of out-of-process frames, readable only through their own target. */
-  oopif?: Record<string, AxSample[]>;
+  /** Out-of-process frames: missing from the page tree, readable only through their own session. */
+  oopif?: Record<string, OopifFake>;
   boxModel?: (backendNodeId: number) => unknown;
   describeNode?: () => unknown;
   resolveNodeError?: string;
@@ -72,29 +85,46 @@ function fakeSession(options: FakeOptions = {}) {
     }
   };
   const cdp = { send };
+  const forgotten: string[] = [];
+  const oopifSessions = new Map<
+    string,
+    { send: (method: string, params?: Params) => Promise<unknown> }
+  >();
+  const oopifSend = (id: string) => async (method: string, params?: Params) => {
+    calls.push({ method: `oopif:${method}`, params: { ...params, target: id } });
+    const spec = options.oopif![id]!;
+    if (spec.hang) return new Promise(() => undefined);
+    if ((spec.failures ?? 0) > 0) {
+      spec.failures! -= 1;
+      throw new Error("Target closed");
+    }
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id } } };
+    if (method === "Accessibility.getFullAXTree") return { nodes: axNodes(spec.ax ?? []) };
+    throw new Error(`unexpected OOPIF call ${method}`);
+  };
   const session = {
     guard: new ControlGuard(),
     lastScale: 1,
     page: { bringToFront: async () => undefined },
     layout: async () => ({ ...size, scrollX: 0, scrollY: 0 }),
     cdp: async () => cdp,
-    frameCdp: async (frameId: string) => {
-      const tree = options.oopif?.[frameId];
-      if (!tree) return null;
-      return {
-        send: async (method: string) => {
-          if (method !== "Accessibility.getFullAXTree") throw new Error(`unexpected ${method}`);
-          return { nodes: axNodes(tree) };
-        },
-      };
-    },
     worlds: async () => ({ evaluate: async () => [] }),
-    outOfProcessFrames: async () => new Map(),
+    outOfProcessFrames: async () => {
+      for (const id of Object.keys(options.oopif ?? {}))
+        if (!oopifSessions.has(id)) oopifSessions.set(id, { send: oopifSend(id) });
+      return new Map([...oopifSessions].map(([id, own]) => [id, { cdp: own }]));
+    },
+    forgetFrame: async (frameId: string) => {
+      forgotten.push(frameId);
+      oopifSessions.delete(frameId);
+    },
   } as unknown as BrowserSession;
   return {
     session,
     cdp,
     calls,
+    forgotten,
+    oopifCdp: (id: string) => oopifSessions.get(id),
     resize: (next: { width: number; height: number }) => void (size = next),
     count: (method: string) => calls.filter((call) => call.method === method).length,
   };
@@ -181,7 +211,7 @@ describe("secret text scan (containsSecretText)", () => {
       frames,
       ax: { main: [{ name: "clean" }], child: [{ value: "hunter2-secret" }] },
     });
-    expect(await containsSecretText(fake.session, secret)).toBe(true);
+    expect(await containsSecretText(fake.session, secret, signal)).toBe(true);
     expect(
       fake.calls
         .filter((call) => call.method === "Accessibility.getFullAXTree")
@@ -189,22 +219,14 @@ describe("secret text scan (containsSecretText)", () => {
     ).toEqual(["main", "child"]);
   });
 
-  it("reads an out-of-process frame through its own target, and fails closed only when that fails too (R-E5)", async () => {
-    const clean = fakeSession({ frames, axThrowsFor: "child", oopif: { child: [{ name: "Ad" }] } });
-    expect(await containsSecretText(clean.session, secret)).toBe(false);
-    const dirty = fakeSession({
-      frames,
-      axThrowsFor: "child",
-      oopif: { child: [{ value: "echo hunter2-secret" }] },
-    });
-    expect(await containsSecretText(dirty.session, secret)).toBe(true);
+  it("fails closed when an in-process frame's tree cannot be read", async () => {
     const unreadable = fakeSession({ frames, axThrowsFor: "child" });
-    expect(await containsSecretText(unreadable.session, secret)).toBe(true);
+    expect(await containsSecretText(unreadable.session, secret, signal)).toBe(true);
   });
 
   it("does nothing while no secret is registered", async () => {
     const fake = fakeSession({ frames, ax: { main: [{ value: "hunter2-secret" }] } });
-    expect(await containsSecretText(fake.session, sources())).toBe(false);
+    expect(await containsSecretText(fake.session, sources(), signal)).toBe(false);
     expect(fake.count("Accessibility.getFullAXTree")).toBe(0);
   });
 
@@ -239,6 +261,70 @@ describe("secret text scan (containsSecretText)", () => {
     expect((await shoot(sources())).dropped).toBe(false);
     expect((await shoot(secret)).dropped).toBe(false);
     expect((await shoot(sources([9]))).dropped).toBe(true);
+  });
+});
+
+describe("out-of-process frames (R-E5, review I1/I2)", () => {
+  const secret = sources([], ["hunter2-secret"]);
+  const border = [100, 100, 200, 100, 200, 150, 100, 150];
+
+  it("reads each out-of-process frame through its own session (the production path, M1)", async () => {
+    const clean = fakeSession({ oopif: { ad: { ax: [{ name: "Ad" }] } } });
+    expect(await containsSecretText(clean.session, secret, signal)).toBe(false);
+    const dirty = fakeSession({ oopif: { ad: { ax: [{ value: "echo hunter2-secret" }] } } });
+    expect(await containsSecretText(dirty.session, secret, signal)).toBe(true);
+    expect(dirty.count("oopif:Accessibility.getFullAXTree")).toBe(1);
+  });
+
+  it("forgets a stale frame session and retries once; still failing fails closed (I2a)", async () => {
+    const healed = fakeSession({ oopif: { ad: { ax: [{ name: "Ad" }], failures: 1 } } });
+    expect(await containsSecretText(healed.session, secret, signal)).toBe(false);
+    expect(healed.forgotten).toEqual(["ad"]);
+    const dead = fakeSession({ oopif: { ad: { ax: [{ name: "Ad" }], failures: 99 } } });
+    expect(await containsSecretText(dead.session, secret, signal)).toBe(true);
+    expect(dead.forgotten).toEqual(["ad"]);
+  });
+
+  it("bounds hung frames with a timeout that fails closed, reading frames in parallel (I2b, M8)", async () => {
+    const hung = fakeSession({
+      oopif: { a: { hang: true }, b: { hang: true }, c: { hang: true }, d: { ax: [] } },
+    });
+    const started = performance.now();
+    expect(await containsSecretText(hung.session, secret, signal)).toBe(true);
+    // Three hung frames, each bounded at OOPIF_READ_TIMEOUT_MS: in parallel, not in sequence.
+    expect(performance.now() - started).toBeLessThan(2 * OOPIF_READ_TIMEOUT_MS);
+  });
+
+  it("stops at a takeover instead of finishing the scan (I2b)", async () => {
+    const fake = fakeSession({ oopif: { a: { hang: true } } });
+    const controller = new AbortController();
+    const scan = containsSecretText(fake.session, secret, controller.signal);
+    controller.abort(new Error("takeover"));
+    await expect(scan).rejects.toThrow("takeover");
+  });
+
+  it("an unrelated cross-site frame does not drop a page whose filled fields it cannot hold (I1)", async () => {
+    const fake = fakeSession({
+      oopif: { ad: { ax: [{ name: "Ad" }] } },
+      boxModel: () => ({ model: { border } }),
+    });
+    // Registered on the page's session only (R-E6): the frame's session holds none.
+    const filled: MaskSources = { ...sources(), nodeIds: (cdp) => (cdp === fake.cdp ? [7] : []) };
+    const shot = await captureModelScreenshot(fake.session, filled, signal);
+    expect(shot.dropped).toBe(false);
+    expect(shot.masked).toBe(1);
+    expect(await pixel(shot.png, 150, 125)).toEqual([0, 0, 0]);
+  });
+
+  it("drops the page when the vault filled a field inside an out-of-process frame (I1)", async () => {
+    const fake = fakeSession({ oopif: { login: { ax: [] } } });
+    await fake.session.outOfProcessFrames();
+    const inFrame = fake.oopifCdp("login");
+    const mask: MaskSources = {
+      ...sources(),
+      nodeIds: (cdp) => (cdp === inFrame ? [11] : []),
+    };
+    expect((await captureModelScreenshot(fake.session, mask, signal)).dropped).toBe(true);
   });
 });
 
