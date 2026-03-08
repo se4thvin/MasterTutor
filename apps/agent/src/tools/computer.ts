@@ -3,7 +3,7 @@ import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { armTypingGuard } from "../browser/typing-guard.ts";
+import { armClickGuard, armTypingGuard } from "../browser/input-guard.ts";
 import { pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
@@ -14,8 +14,15 @@ export interface ComputerRun {
   notes: string[];
 }
 
-/** false: do not run; true: run; "approved": run, and a person approved this exact action. */
-export type ActionGate = (action: ComputerAction) => Promise<boolean | "approved">;
+/** The gate's classification of an action it lets run. */
+export interface GateVerdict {
+  /** The target the gate classified; a click whose own hit test at dispatch differs is not run. */
+  target: TargetDescription | null;
+  /** A person (not policy) approved this action on this very element: typing may then run with an incomplete guard. */
+  personApproved: boolean;
+}
+/** false: do not run; true: run (no classification to hold it to); or the gate's verdict. */
+export type ActionGate = (action: ComputerAction) => Promise<boolean | GateVerdict>;
 
 export const FOCUS_MOVED_REFUSAL =
   "Stopped typing: the page moved focus into another part of the page (another frame) while typing, and the rest was not typed there. Look at the screen and decide again.";
@@ -23,6 +30,8 @@ export const PAGE_CHANGED_REFUSAL =
   "Stopped typing: the page added or replaced an embedded page (a frame) while typing, and the rest was not typed. Look at the screen and decide again.";
 export const UNRESPONSIVE_REFUSAL =
   "Nothing was typed: the page's embedded frames could not all be guarded against misdirected typing (one is not responding, or there are too many). Typing on this page now needs the user's approval: ask for it again as its own step.";
+export const TARGET_MOVED_REFUSAL =
+  "Nothing was clicked: what is under the pointer changed after the click was checked. Look at the screen and decide again.";
 export const SECRET_FIELD_REFUSAL =
   "Refused: typing into password, one-time-code or PIN fields is not allowed. Use fill_credential with the vault alias and the field's element ref.";
 const TYPE_CHUNK = 24;
@@ -34,6 +43,16 @@ function typesText(keys: readonly string[]): boolean {
   if (names.some((name) => ["CTRL", "ALT", "META"].includes(name))) return false;
   return names.some((name) => name !== "SHIFT" && (name.length === 1 || name === "SPACE"));
 }
+
+/** The same element by path, label and record (R29-3), and equally (un)inspectable. */
+const sameTarget = (a: TargetDescription | null, b: TargetDescription | null) =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.path === b.path &&
+    a.label === b.label &&
+    a.context === b.context &&
+    Boolean(a.opaqueFrame) === Boolean(b.opaqueFrame));
 
 const step = (remaining: number) =>
   Math.sign(remaining) * Math.min(Math.abs(remaining), SCROLL_STEP);
@@ -88,7 +107,7 @@ export class ComputerExecutor {
       }
       const urlBefore = this.#session.page.url();
       this.#refused = false;
-      const note = await this.execute(action, signal, verdict === "approved");
+      const note = await this.execute(action, signal, verdict === true ? undefined : verdict);
       executed += 1;
       if (note) notes.push(note);
       const remaining = actions.length - index - 1;
@@ -120,17 +139,18 @@ export class ComputerExecutor {
     return px >= 0 && py >= 0 && px < layout.width && py < layout.height ? { x: px, y: py } : null;
   }
 
-  /** `approved`: a person approved this exact action (typing may then run partly unguarded). */
+  /** `verdict`: what the gate classified; without it a click is not held to a target. */
   async execute(
     action: ComputerAction,
     signal: AbortSignal,
-    approved = false,
+    verdict?: GateVerdict,
   ): Promise<string | null> {
+    const approved = verdict?.personApproved === true;
     switch (action.type) {
       case "click":
-        return this.#click(action.x, action.y, action.button, signal, false);
+        return this.#click(action.x, action.y, action.button, signal, false, verdict);
       case "double_click":
-        return this.#click(action.x, action.y, "left", signal, true);
+        return this.#click(action.x, action.y, "left", signal, true, verdict);
       case "move":
         return this.#move(action.x, action.y, signal);
       case "drag":
@@ -169,20 +189,43 @@ export class ComputerExecutor {
     button: "left" | "right" | "wheel" | "back" | "forward",
     signal: AbortSignal,
     double: boolean,
+    verdict: GateVerdict | undefined,
   ): Promise<string | null> {
     this.omnibox.cancel();
     if (button === "back" || button === "forward") return this.#accelerator(button, signal);
     const point = await this.toPage(x, y);
     if (!point) return this.#outside(x, y);
-    const hit = await hitTest(this.#session, point);
-    const at = hit.snap ?? point;
-    this.#session.guard.assertAgent(signal);
     const mouse = this.#session.page.mouse;
-    if (double) await mouse.dblclick(at.x, at.y);
-    else
-      await mouse.click(at.x, at.y, {
+    this.#session.guard.assertAgent(signal);
+    await mouse.move(point.x, point.y);
+    const hit = await hitTest(this.#session, point);
+    // The page may have changed since the gate classified this click (TOCTOU): if anything
+    // differs, nothing is pressed and the model's next click is gated again.
+    if (verdict && !sameTarget(verdict.target, hit.target))
+      return this.#refuse(TARGET_MOVED_REFUSAL);
+    if (hit.snap) await mouse.move(hit.snap.x, hit.snap.y);
+    // ...and from here to the press, the page itself cancels a press that reaches anything but
+    // the element just classified. (Inside an uninspectable frame there is none to hold it to:
+    // that click was approved as it is.)
+    const guard =
+      hit.target && !hit.target.opaqueFrame
+        ? await armClickGuard(this.#session, signal, hit.key)
+        : null;
+    let cancelled = false;
+    try {
+      this.#session.guard.assertAgent(signal);
+      const options = {
         button: button === "right" ? "right" : button === "wheel" ? "middle" : "left",
-      });
+      } as const;
+      for (let clickCount = 1; clickCount <= (double ? 2 : 1); clickCount++) {
+        await mouse.down({ ...options, clickCount });
+        await mouse.up({ ...options, clickCount });
+      }
+    } finally {
+      if (signal.aborted) void guard?.disarm();
+      else cancelled = (await guard?.disarm()) ?? false;
+    }
+    if (cancelled) return this.#refuse(TARGET_MOVED_REFUSAL);
     await settle(this.#session, signal);
     return null;
   }

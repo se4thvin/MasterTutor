@@ -752,6 +752,40 @@ describe("RunLoop (spec §5.3)", () => {
       expect(browser.executed).toEqual([]);
     });
 
+    // A field on a page whose typing guard could not cover every document reads as uninspectable.
+    const unguarded = { ...field, path: "form>input:1", opaqueFrame: true };
+
+    it("auto mode: a policy approval never lets typing run with an incomplete guard (fix round 5)", async () => {
+      const { browser, loop } = await setup([batch({ type: "type", text: "abc" }), done()], {
+        approvalMode: "auto_within_allowlist",
+      });
+      browser.focused = unguarded;
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.verdicts).toEqual([{ target: unguarded, personApproved: false }]);
+    });
+
+    it.each([
+      ["the approved element", unguarded, true],
+      ["another element (no approval needed there)", { ...field, path: "form>input:2" }, false],
+    ])(
+      "a person's approval unguards typing only on the element approved: %s (fix round 5)",
+      async (_case, focusedAtAct, personApproved) => {
+        const { run, browser, loop, reload } = await setup([
+          batch({ type: "type", text: "abc" }),
+          done(),
+        ]);
+        browser.focused = unguarded;
+        expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+        await decideApproval(run.id, "approved");
+        // The restore after the wait: focus is now on what the test says.
+        browser.focused = focusedAtAct;
+        const resumed = await reload();
+        await resumed.resume(new AbortController().signal);
+        expect(await drive(resumed)).toEqual({ kind: "completed" });
+        expect(browser.verdicts).toEqual([{ target: focusedAtAct, personApproved }]);
+      },
+    );
+
     it("binds an approval to its record: a delete approved on Alice is refused on Bobby (R29-3)", async () => {
       const { run, browser, loop, reload } = await setup([click(), doneExpecting("page changed")]);
       browser.targets.set("10,20", risky("Delete", "html>body>button", "h(Alice)"));

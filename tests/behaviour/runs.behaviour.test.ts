@@ -364,7 +364,7 @@ describe("agent behaviour on real slots (spec §12)", () => {
     const name = scenario("hung", [
       readInteractive,
       clickNotesThenType("hello"),
-      { ...clickNotesThenType("y".repeat(5_000)), check: expectIn("could not all be guarded") },
+      { ...clickNotesThenType("y".repeat(5_000)), check: expectIn("needs the user's approval") },
       // After hand back the model "thinks" while the advert still hangs: the kill lands here.
       {
         ...done,
@@ -381,7 +381,8 @@ describe("agent behaviour on real slots (spec §12)", () => {
       (await steps(agent, runId)).filter(
         (s) => s.phase === "act" && JSON.stringify(s.action).includes("+1 more"),
       );
-    // The first typing fails closed within its budget; the second needs a person.
+    // The first batch's click finds the advert unresponsive (its guard cannot arm there within the
+    // budget), so its typing is stopped for approval at once; the retry asks a person.
     await waitForRun(
       agent,
       runId,

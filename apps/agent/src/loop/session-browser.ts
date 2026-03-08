@@ -13,7 +13,7 @@ import { perceptualHash } from "../browser/phash.ts";
 import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { typingGuardIncomplete } from "../browser/typing-guard.ts";
+import { typingGuardIncomplete } from "../browser/input-guard.ts";
 import {
   applyStorageState,
   collectStorageState,

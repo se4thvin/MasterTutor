@@ -7,6 +7,8 @@ export interface HitTest {
   target: TargetDescription | null;
   /** A better click point when the point missed every interactive element but one is within the radius. */
   snap: { x: number; y: number } | null;
+  /** The key each scanned document kept its element under (the click guard checks the press). */
+  key: string;
 }
 
 export interface ScrollState {
@@ -199,7 +201,7 @@ async function resolve(
   };
   const opaque = () => {
     if (ownSession) void session.forgetFrame(ownSession);
-    return { target: opaqueTarget(path, topUrl), snap: null, chain };
+    return { target: opaqueTarget(path, topUrl), snap: null, key, chain };
   };
   const confirm = async (at: { x: number; y: number }, key: string) => {
     const { backendNodeId } = await worlds.cdp.send("DOM.getNodeForLocation", {
@@ -209,8 +211,8 @@ async function resolve(
     if (!(await worlds.callOnNode(backendNodeId, IS_KEPT, key, frameId)))
       throw new Error("the browser's own hit test disagrees");
   };
+  const key = randomUUID();
   for (let depth = 0; ; depth++) {
-    const key = randomUUID();
     let scan: Scan;
     try {
       const scanning = worlds.evaluate(
@@ -239,7 +241,7 @@ async function resolve(
           context: digest(path, scan.target.context, topUrl),
         };
         // A snap point is only meaningful in the top frame's coordinates.
-        return { target, snap: depth === 0 ? scan.snap : null, chain };
+        return { target, snap: depth === 0 ? scan.snap : null, key, chain };
       }
       path += scan.target!.path;
       if (depth >= MAX_FRAME_DEPTH) return opaque();
@@ -329,8 +331,8 @@ export async function hitTest(
   session: BrowserSession,
   point: { x: number; y: number },
 ): Promise<HitTest> {
-  const { target, snap } = await resolve(session, point, { scroll: false });
-  return { target, snap };
+  const { target, snap, key } = await resolve(session, point, { scroll: false });
+  return { target, snap, key };
 }
 
 export async function focusTarget(session: BrowserSession): Promise<TargetDescription | null> {
