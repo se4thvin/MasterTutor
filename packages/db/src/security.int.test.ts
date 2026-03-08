@@ -73,6 +73,21 @@ describe("web_role", () => {
   it("cannot create tables", async () => {
     await expect(web`create table sneaky (a int)`).rejects.toThrow(/permission denied/);
   });
+
+  it("can read vault grants but never write them (S1)", async () => {
+    await agent`insert into vault_grants (item_id, origin, approved_by)
+                values (${itemId}, 'https://example.com', 'u-1')`;
+    expect(await web`select approved_by from vault_grants where item_id = ${itemId}`).toHaveLength(
+      1,
+    );
+    await expect(
+      web`insert into vault_grants (item_id, origin, approved_by) values (${itemId}, 'https://b.example', 'x')`,
+    ).rejects.toThrow(/permission denied/);
+    await expect(web`update vault_grants set approved_by = 'x'`).rejects.toThrow(
+      /permission denied/,
+    );
+    await expect(web`delete from vault_grants`).rejects.toThrow(/permission denied/);
+  });
 });
 
 describe("agent_role", () => {
