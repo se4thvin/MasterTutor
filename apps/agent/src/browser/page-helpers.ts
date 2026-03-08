@@ -17,8 +17,9 @@ export interface TargetDescription {
    */
   context: string;
   /**
-   * The record's visible text, clipped (≤ 240), for the approval card only (run view A3a). Never
-   * sent to the model; the loop browser redacts vault secrets from it. Absent for opaque frames.
+   * The record's visible text (≤ 2 000, so a secret near the card's 240-character cut is still
+   * whole when redacted), for the approval card only (run view A3a). Never sent to the model; the
+   * loop browser redacts vault secrets from it, then caps it. Absent for opaque frames.
    */
   excerpt?: string;
   /** An embedded page that could not be inspected: activating it always needs approval (R29-1). */
@@ -184,7 +185,7 @@ export function describeTarget(el: Element): TargetDescription {
     tag,
     path: steps.join(">").slice(0, 1_000),
     context,
-    excerpt: recordText.slice(0, 240),
+    excerpt: recordText.slice(0, 2_000),
     isFormSubmit,
     formKind,
     isSecretField: isSecretField(target),

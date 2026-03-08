@@ -21,7 +21,7 @@ import {
   type BrowserStorageState,
 } from "../browser/storage-state.ts";
 import { isCaptchaFrameUrl, isChallengePage } from "../guardrails/captcha.ts";
-import { HISTORY_TAG } from "../guardrails/policy.ts";
+import { HISTORY_TAG, redactedExcerpt } from "../guardrails/policy.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
@@ -181,7 +181,11 @@ export class SessionLoopBrowser implements LoopBrowser {
     previous: TargetDescription | null,
   ): Promise<TargetDescription | null> {
     const target = await this.#classify(action, previous);
-    return target?.excerpt ? { ...target, excerpt: this.#mask.redact(target.excerpt) } : target;
+    if (target?.excerpt === undefined) return target;
+    // Redacted before it is capped for the approval card (M13), so no part of a secret shows.
+    const { excerpt, ...rest } = target;
+    const redacted = redactedExcerpt(excerpt, (text) => this.#mask.redact(text));
+    return redacted === null ? rest : { ...rest, excerpt: redacted };
   }
 
   async #classify(
@@ -254,8 +258,11 @@ export class SessionLoopBrowser implements LoopBrowser {
       .catch(() => undefined);
   }
 
+  /** Blocked URLs reach the new_origin approval card: a secret in them is redacted (M13). */
   drainBlockedNavigations() {
-    return this.#session.drainBlockedNavigations();
+    return this.#session
+      .drainBlockedNavigations()
+      .map((blocked) => ({ ...blocked, url: this.#mask.redact(blocked.url) }));
   }
 
   collectStorage(): Promise<CollectedStorage> {

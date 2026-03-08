@@ -79,16 +79,45 @@ export function needsApproval(
   }
 }
 
+const EXCERPT_MAX = 240;
+
+/**
+ * Display-safe record text: NFKC, no format or control characters, no lone surrogates (jsonb
+ * rejects them and NUL), whitespace collapsed. Not capped.
+ */
+function cleanExcerpt(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\p{Cf}\p{Cc}\p{Cs}]/gu, (char) => (/\s/.test(char) ? " " : ""))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** At most EXCERPT_MAX UTF-16 units, never splitting a surrogate pair. */
+function capExcerpt(text: string): string | null {
+  let out = "";
+  for (const char of text) {
+    if (out.length + char.length > EXCERPT_MAX) break;
+    out += char;
+  }
+  out = out.trim();
+  return out === "" ? null : out;
+}
+
 /** The record excerpt on an approval card (A3a): display-safe, short; never sent to the model. */
 export function approvalExcerpt(text: string | undefined): string | null {
-  if (!text) return null;
-  const clean = text
-    .normalize("NFKC")
-    .replace(/\p{Cf}/gu, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 240);
-  return clean === "" ? null : clean;
+  return text ? capExcerpt(cleanExcerpt(text)) : null;
+}
+
+/**
+ * The excerpt with vault secrets redacted (M13): cleaned first (so full-width forms match), then
+ * redacted, then capped (so a secret straddling the cap is never shown in part).
+ */
+export function redactedExcerpt(
+  text: string | undefined,
+  redact: (text: string) => string,
+): string | null {
+  return text ? capExcerpt(redact(cleanExcerpt(text))) : null;
 }
 
 export function approvalRequestFor(

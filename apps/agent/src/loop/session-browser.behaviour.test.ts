@@ -1,7 +1,12 @@
 import { createLogger } from "@mastertutor/contracts/server";
 import { chromium } from "playwright-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { SITE, SLOT_CDP, cdpBaseUrlForTests } from "../../../../tests/behaviour/constants.ts";
+import {
+  OTHER,
+  SITE,
+  SLOT_CDP,
+  cdpBaseUrlForTests,
+} from "../../../../tests/behaviour/constants.ts";
 import { ControlGuard } from "../browser/guard.ts";
 import { needsApproval } from "../guardrails/policy.ts";
 import { instantClock } from "../runtime/clock.ts";
@@ -467,8 +472,10 @@ describe("SessionLoopBrowser", () => {
         text.replaceAll("Alice", SECRET_REDACTION).replaceAll("User record", SECRET_REDACTION),
     };
     const browser = await connect(withHooks({ maskSources: () => mask }));
-    await browser.navigate(`${SITE}/record.html`, signal);
-    expect((await browser.observe(signal)).title).toBe(SECRET_REDACTION);
+    await browser.navigate(`${SITE}/record.html?who=Alice`, signal);
+    const observed = await browser.observe(signal);
+    expect(observed.title).toBe(SECRET_REDACTION);
+    expect(observed.url).toBe(`${SITE}/record.html?who=${SECRET_REDACTION}`);
     const { output } = await browser.runFunction(
       "read_page",
       { mode: "text", sinceHash: null },
@@ -481,5 +488,18 @@ describe("SessionLoopBrowser", () => {
     expect(target?.label).toBe("Delete");
     expect(target?.excerpt).toContain(SECRET_REDACTION);
     expect(target?.excerpt).not.toContain("Alice");
+  });
+
+  it("redacts registered secrets from blocked navigation URLs, shown on new_origin approvals (M10)", async () => {
+    const mask: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text) => text.replaceAll("hunter2", SECRET_REDACTION),
+    };
+    const browser = await connect(withHooks({ maskSources: () => mask }));
+    expect(await browser.navigate(`${OTHER}/steal?pw=hunter2`, signal)).toBe(false);
+    expect(browser.drainBlockedNavigations()).toEqual([
+      { url: `${OTHER}/steal?pw=${SECRET_REDACTION}`, origin: OTHER },
+    ]);
   });
 });
