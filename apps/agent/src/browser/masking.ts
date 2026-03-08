@@ -283,14 +283,19 @@ async function readTarget(cdp: CDPSession, sources: MaskSources): Promise<FrameR
   return "clean";
 }
 
-/** One frame through the page's session (it moved in process); a frame that is gone is clean. */
+/**
+ * One frame through the page's session (it moved in process). The page tree omits out-of-process
+ * frames, so a frame missing from it may still be live in its own process (a re-attach that
+ * failed): unreadable, never clean (N1). A frame that is really gone is pruned by the next
+ * `outOfProcessFrames()`, so this costs at most one dropped shot.
+ */
 async function readInProcess(
   cdp: CDPSession,
   frameId: string,
   sources: MaskSources,
 ): Promise<FrameRead> {
   const { frameTree } = await cdp.send("Page.getFrameTree");
-  if (!flattenFrames(frameTree as FrameNode).some((frame) => frame.id === frameId)) return "clean";
+  if (!flattenFrames(frameTree as FrameNode).some((frame) => frame.id === frameId)) return "failed";
   const { nodes } = await cdp.send("Accessibility.getFullAXTree", { frameId });
   return hasSecretText(nodes, sources) ? "secret" : "clean";
 }
@@ -298,7 +303,8 @@ async function readInProcess(
 /**
  * Whether one out-of-process frame shows a secret, or cannot be read (fail closed). A session
  * that errors (the frame swapped process, its renderer restarted) is forgotten and the frame is
- * read once more through a fresh one; a frame that does not answer in time is not retried.
+ * read once more through a fresh one; a frame that does not answer in time is forgotten too, but
+ * not retried.
  */
 async function outOfProcessFrameLeaks(
   session: BrowserSession,
@@ -318,6 +324,9 @@ async function outOfProcessFrameLeaks(
       signal,
     );
   }
+  // A timed-out read is not retried, but its session is detached, which rejects the pending
+  // sends: hung reads on a busy frame cannot pile up from one screenshot to the next (N3).
+  if (verdict === "timeout") void session.forgetFrame(frameId).catch(() => undefined);
   return verdict !== "clean";
 }
 
