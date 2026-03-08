@@ -174,6 +174,10 @@ export class RunLoop {
   #firstTurn: boolean;
   #userCursor: string | null;
   #pending: PendingApproval | null = null;
+  /** The wait this loop last entered, while it lasts (the web may overwrite the row's reason). */
+  #waitingFor: WaitReason | null = null;
+  /** A code or CAPTCHA wait a takeover interrupted, restored on hand-back (M7). */
+  #heldWait: "otp" | "captcha" | null = null;
   #notesChanged = false;
   #lastTick: number | null = null;
   /** run_transcript as stored, loaded once and appended after each commit (M5). */
@@ -328,6 +332,7 @@ export class RunLoop {
       ...commit,
       transition: { from: ["running"], to: "waiting", waitReason: reason, reason: text },
     });
+    this.#waitingFor = reason;
     this.#loops.reset();
     this.markIdle();
     return { kind: "waiting", reason };
@@ -886,10 +891,18 @@ export class RunLoop {
         return { target, personApproved };
       };
       const run = await this.#deps.browser.runComputer(call.actions, signal, gate);
-      // Only clicks that actually ran (B3 logout detection, F10).
+      // Only clicks that actually ran (B3 logout detection, F10). The click already happened, so a
+      // failing hook is logged and the act still commits (M4).
       for (const click of clicked) {
-        if (click.index < run.executed)
-          await this.#deps.hooks.onClick(this.#run, { label: click.label, url: this.#obs().url });
+        if (click.index >= run.executed) continue;
+        await this.#deps.hooks
+          .onClick(this.#run, { label: click.label, url: this.#obs().url })
+          .catch(() =>
+            this.#deps.log.warn(
+              { runId: this.#run.id, errorCode: "on_click_failed" },
+              "onClick hook failed",
+            ),
+          );
       }
       const acknowledged = this.#decided.get(safetyItem(call.callId))?.approved
         ? call.safetyChecks
@@ -968,6 +981,14 @@ export class RunLoop {
       };
       const decision = decideByPolicy(this.#run.approvalMode, "new_origin");
       // Only a denial is decided here; anything else waits for a person (resume adds the origin).
+      // While a one-time code is awaited, that wait wins: the model is told and can navigate there
+      // again once signed in, which asks then (M6).
+      if (decision !== "denied" && wait) {
+        this.#notes.push(
+          `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins. Navigate there again after the one-time code to ask the user.`,
+        );
+        continue;
+      }
       if (decision !== "denied") {
         for (const other of origins.slice(position + 1))
           this.#notes.push(
@@ -1008,6 +1029,7 @@ export class RunLoop {
   /** Called after a wake (or a restore with a pending approval). Never replays blindly (spec §5.4). */
   async resume(signal: AbortSignal): Promise<StepOutcome> {
     this.#loops.reset();
+    this.#waitingFor = null;
     const pending = this.#pending;
     if (!pending) {
       await this.#deps.store.commit({ transition: TO_RUNNING });
@@ -1181,13 +1203,24 @@ export class RunLoop {
     }
     events.push({ type: "control", holder: "user" });
     const control = await readRunControl(this.#deps.db, this.#run.id);
+    // A code or CAPTCHA wait outlives the takeover (M7): kept now, restored on hand-back. The web
+    // may already have written waiting(takeover), so the loop's own last wait counts too.
+    const waitingFor =
+      control?.status !== "waiting"
+        ? null
+        : control.waitReason !== "takeover"
+          ? control.waitReason
+          : this.#waitingFor;
+    this.#heldWait = waitingFor === "otp" || waitingFor === "captcha" ? waitingFor : null;
     await this.#deps.store.commit({
       steps,
       events,
       ...(pending ? { extra: (tx) => markApprovalSuperseded(tx, pending.approvalId) } : {}),
       // A run waiting on an approval becomes waiting(takeover) too: the approval is gone (A5).
       ...(control?.status === "running" ||
-      (control?.status === "waiting" && control.waitReason !== "takeover")
+      (control?.status === "waiting" &&
+        control.waitReason !== "takeover" &&
+        this.#heldWait === null)
         ? {
             transition: {
               from: ["running", "waiting"],
@@ -1201,11 +1234,33 @@ export class RunLoop {
     this.markIdle();
   }
 
-  async markHandBack(): Promise<void> {
+  /**
+   * Hand-back: a kept code wait resumes waiting unless a code arrived meanwhile (M7). A CAPTCHA wait
+   * is restored by re-observing: the takeover is how a person solves it, and the next observation
+   * waits again only while it still shows.
+   */
+  async markHandBack(): Promise<StepOutcome> {
+    const held = this.#heldWait;
+    this.#heldWait = null;
+    this.reobserve();
+    if (held === "otp" && !(await hasUnusedOtpCode(this.#deps.db, this.#run.id))) {
+      await this.#deps.store.commit({
+        events: [{ type: "control", holder: "agent" }],
+        transition: {
+          from: ["running", "waiting"],
+          to: "waiting",
+          waitReason: "otp",
+          reason: "A one-time code is needed to sign in",
+        },
+      });
+      this.#waitingFor = "otp";
+      return { kind: "waiting", reason: "otp" };
+    }
     await this.#deps.store.commit({
       events: [{ type: "control", holder: "agent" }],
       transition: TO_RUNNING,
     });
-    this.reobserve();
+    this.#waitingFor = null;
+    return CONTINUE;
   }
 }

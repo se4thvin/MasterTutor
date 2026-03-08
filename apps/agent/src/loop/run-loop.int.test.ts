@@ -1210,4 +1210,125 @@ describe("RunLoop (spec §5.3)", () => {
     expect((await approvalRows(run.id))[0]).toMatchObject({ status: "superseded" });
     expect(browser.computerRuns).toEqual([]);
   });
+
+  it("a throwing onClick hook does not fail the run once the click has run (M4)", async () => {
+    const { run, browser, loop } = await setup([click(), done()], {
+      hooks: {
+        onClick: async () => {
+          throw new Error("vault unavailable");
+        },
+      },
+    });
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.executed).toHaveLength(1);
+    expect(await phases(run.id)).toContain("act:done");
+  });
+
+  describe("onClick reports only clicks that ran (M5)", () => {
+    const batch: MockTurn = {
+      outputs: [
+        {
+          type: "computer",
+          actions: [
+            { type: "click", x: 10, y: 20, button: "left" },
+            { type: "click", x: 30, y: 40, button: "left" },
+          ],
+        },
+      ],
+    };
+    const plain = (label: string) => ({ ...PLAIN_TARGET, label, interactive: true });
+
+    it("skips a click the executor held at dispatch", async () => {
+      const clicks: string[] = [];
+      const { browser, loop } = await setup([batch, done()], {
+        hooks: { onClick: async (_run, clicked) => void clicks.push(clicked.label) },
+      });
+      browser.targets.set("10,20", plain("Home"));
+      browser.targets.set("30,40", plain("Log out"));
+      browser.dispatchHold = (action) => action.type === "click" && action.x === 30;
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(clicks).toEqual(["Home"]);
+    });
+
+    it("skips a click the user refused", async () => {
+      const clicks: string[] = [];
+      const { run, browser, loop, reload } = await setup([batch, done()], {
+        hooks: { onClick: async (_run, clicked) => void clicks.push(clicked.label) },
+      });
+      browser.targets.set("10,20", plain("Home"));
+      browser.targets.set("30,40", risky("Delete account"));
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      await decideApproval(run.id, "denied");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(clicks).toEqual(["Home"]);
+    });
+  });
+
+  describe("one-time code and CAPTCHA waits (M6, M7)", () => {
+    const fillOtp: MockTurn = {
+      outputs: [
+        {
+          type: "function",
+          name: "fill_credential",
+          args: { alias: "site", field: "otp", target: "e1" },
+        },
+      ],
+    };
+    const waitingForCode = async () => {
+      const ctx = await setup([fillOtp, done()]);
+      ctx.browser.functionWait = (name) => (name === "fill_credential" ? "otp" : null);
+      return ctx;
+    };
+    const control = (runId: string, patch: Partial<typeof runs.$inferInsert>) =>
+      owner.db.update(runs).set(patch).where(eq(runs.id, runId));
+
+    it("a new origin blocked in the same act does not discard the code wait (M6)", async () => {
+      const { run, browser, loop } = await waitingForCode();
+      browser.blocked.push({
+        url: "http://other.fixtures.test/x",
+        origin: "http://other.fixtures.test",
+      });
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
+      expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
+      expect((await approvalRows(run.id)).map((row) => row.kind)).not.toContain("new_origin");
+    });
+
+    it("a takeover keeps waiting(otp), and hand-back restores it even if the web wrote takeover (M7)", async () => {
+      const { run, loop } = await waitingForCode();
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
+      await control(run.id, { controller: "user" });
+      await loop.markTakeover();
+      expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
+      await control(run.id, { waitReason: "takeover", controller: "agent" });
+      expect(await loop.markHandBack()).toEqual({ kind: "waiting", reason: "otp" });
+      expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
+    });
+
+    it("hand-back runs on when a code arrived during the takeover (M7)", async () => {
+      const { run, loop } = await waitingForCode();
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
+      await control(run.id, { controller: "user" });
+      await loop.markTakeover();
+      await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([1])})`;
+      await control(run.id, { controller: "agent" });
+      expect(await loop.markHandBack()).toEqual({ kind: "continue" });
+      expect(await status(run.id)).toMatchObject({ status: "running" });
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+    });
+
+    it("a takeover keeps waiting(captcha); hand-back re-observes and waits again while it shows (M7)", async () => {
+      const { run, browser, loop } = await setup([done()]);
+      browser.captcha = true;
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "captcha" });
+      await control(run.id, { controller: "user" });
+      await loop.markTakeover();
+      expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
+      await control(run.id, { controller: "agent" });
+      expect(await loop.markHandBack()).toEqual({ kind: "continue" });
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "captcha" });
+      expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
+    });
+  });
 });
