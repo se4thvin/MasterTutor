@@ -1295,25 +1295,43 @@ describe("RunLoop (spec §5.3)", () => {
       expect((await approvalRows(run.id)).map((row) => row.kind)).not.toContain("new_origin");
     });
 
-    it("a takeover keeps waiting(otp), and hand-back restores it even if the web wrote takeover (M7)", async () => {
-      const { run, loop } = await waitingForCode();
+    it("a takeover keeps waiting(otp); hand-back re-observes and runs on, so a code typed on the page counts (M7, F1)", async () => {
+      const { run, browser, loop } = await waitingForCode();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
       await control(run.id, { controller: "user" });
       await loop.markTakeover();
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
-      await control(run.id, { waitReason: "takeover", controller: "agent" });
-      expect(await loop.markHandBack()).toEqual({ kind: "waiting", reason: "otp" });
-      expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
+      // The person typed the code into the page themselves: no otp_codes row exists.
+      browser.functionWait = () => null;
+      await control(run.id, { controller: "agent" });
+      await loop.markHandBack();
+      expect(await status(run.id)).toMatchObject({ status: "running" });
+      expect(await drive(loop)).toEqual({ kind: "completed" });
     });
 
-    it("hand-back runs on when a code arrived during the takeover (M7)", async () => {
+    it("after hand-back, a page that still asks for a code waits for one again (M7, F1)", async () => {
+      const { run, browser, loop } = await setup([fillOtp, fillOtp, done()]);
+      browser.functionWait = (name) => (name === "fill_credential" ? "otp" : null);
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
+      await control(run.id, { controller: "user" });
+      await loop.markTakeover();
+      await control(run.id, { controller: "agent" });
+      await loop.markHandBack();
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
+      expect(browser.functionRuns.map((call) => call.name)).toEqual([
+        "fill_credential",
+        "fill_credential",
+      ]);
+    });
+
+    it("hand-back runs on when a code was submitted during the takeover (M7)", async () => {
       const { run, loop } = await waitingForCode();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
       await control(run.id, { controller: "user" });
       await loop.markTakeover();
       await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([1])})`;
       await control(run.id, { controller: "agent" });
-      expect(await loop.markHandBack()).toEqual({ kind: "continue" });
+      await loop.markHandBack();
       expect(await status(run.id)).toMatchObject({ status: "running" });
       expect(await drive(loop)).toEqual({ kind: "completed" });
     });
@@ -1326,7 +1344,7 @@ describe("RunLoop (spec §5.3)", () => {
       await loop.markTakeover();
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
       await control(run.id, { controller: "agent" });
-      expect(await loop.markHandBack()).toEqual({ kind: "continue" });
+      await loop.markHandBack();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "captcha" });
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
     });

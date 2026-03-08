@@ -792,10 +792,23 @@ describe("RunWorker + Supervisor", () => {
     expect(await controlEvents(run.id)).toEqual(["user", "agent"]);
   });
 
-  it("a takeover during waiting(otp) hands back into the code wait, which a code then ends (M7)", async () => {
+  it("a code typed on the page during a takeover lets the run go on after hand-back (M7, F1)", async () => {
     const { clock } = gatedClock();
     await start({}, clock);
-    const { run } = await queue([fillOtp, done], "ask", needsCode);
+    const { run, browser } = await queue([fillOtp, done], "ask", needsCode);
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "otp", "waiting(otp)");
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), { label: "held" });
+    // The person typed the code into the page; no code was submitted to the run.
+    browser.functionWait = () => null;
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after hand back");
+  });
+
+  it("after hand-back, a page that still asks for a code waits again, and a code then ends it (M7, F1)", async () => {
+    const { clock } = gatedClock();
+    await start({}, clock);
+    const { run } = await queue([fillOtp, fillOtp, done], "ask", needsCode);
     await until(run.id, (r) => r.status === "waiting" && r.waitReason === "otp", "waiting(otp)");
     await takeOver(run.id);
     await waitFor(async () => (await controlEvents(run.id)).includes("user"), { label: "held" });
@@ -805,9 +818,12 @@ describe("RunWorker + Supervisor", () => {
     });
     await until(
       run.id,
-      (r) => r.status === "waiting" && r.waitReason === "otp",
+      (r) => r.status === "waiting" && r.waitReason === "otp" && r.controller === "agent",
       "waiting(otp) again",
     );
+    await waitFor(async () => (browsers.get(run.id)?.functionRuns.length ?? 0) === 2, {
+      label: "asked for the code again",
+    });
     await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([4])})`;
     await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
     await until(run.id, (r) => r.status === "completed", "completed after the code");

@@ -132,6 +132,8 @@ const TO_RUNNING: Transition = {
   reason: null,
 };
 const DENIED = "Not run: the user denied this action.";
+/** Waits a takeover leaves on the row (M7): hand-back re-observes whether they still hold. */
+const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = ["takeover", "otp", "captcha"];
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
 
 /** What an approval was for; an approved action only runs while its target still classifies the same. */
@@ -174,10 +176,6 @@ export class RunLoop {
   #firstTurn: boolean;
   #userCursor: string | null;
   #pending: PendingApproval | null = null;
-  /** The wait this loop last entered, while it lasts (the web may overwrite the row's reason). */
-  #waitingFor: WaitReason | null = null;
-  /** A code or CAPTCHA wait a takeover interrupted, restored on hand-back (M7). */
-  #heldWait: "otp" | "captcha" | null = null;
   #notesChanged = false;
   #lastTick: number | null = null;
   /** run_transcript as stored, loaded once and appended after each commit (M5). */
@@ -332,7 +330,6 @@ export class RunLoop {
       ...commit,
       transition: { from: ["running"], to: "waiting", waitReason: reason, reason: text },
     });
-    this.#waitingFor = reason;
     this.#loops.reset();
     this.markIdle();
     return { kind: "waiting", reason };
@@ -1029,7 +1026,6 @@ export class RunLoop {
   /** Called after a wake (or a restore with a pending approval). Never replays blindly (spec §5.4). */
   async resume(signal: AbortSignal): Promise<StepOutcome> {
     this.#loops.reset();
-    this.#waitingFor = null;
     const pending = this.#pending;
     if (!pending) {
       await this.#deps.store.commit({ transition: TO_RUNNING });
@@ -1203,24 +1199,14 @@ export class RunLoop {
     }
     events.push({ type: "control", holder: "user" });
     const control = await readRunControl(this.#deps.db, this.#run.id);
-    // A code or CAPTCHA wait outlives the takeover (M7): kept now, restored on hand-back. The web
-    // may already have written waiting(takeover), so the loop's own last wait counts too.
-    const waitingFor =
-      control?.status !== "waiting"
-        ? null
-        : control.waitReason !== "takeover"
-          ? control.waitReason
-          : this.#waitingFor;
-    this.#heldWait = waitingFor === "otp" || waitingFor === "captcha" ? waitingFor : null;
     await this.#deps.store.commit({
       steps,
       events,
       ...(pending ? { extra: (tx) => markApprovalSuperseded(tx, pending.approvalId) } : {}),
       // A run waiting on an approval becomes waiting(takeover) too: the approval is gone (A5).
+      // A code or CAPTCHA wait stays on the row (M7); hand-back re-observes.
       ...(control?.status === "running" ||
-      (control?.status === "waiting" &&
-        control.waitReason !== "takeover" &&
-        this.#heldWait === null)
+      (control?.status === "waiting" && !KEPT_THROUGH_TAKEOVER.includes(control.waitReason))
         ? {
             transition: {
               from: ["running", "waiting"],
@@ -1235,32 +1221,15 @@ export class RunLoop {
   }
 
   /**
-   * Hand-back: a kept code wait resumes waiting unless a code arrived meanwhile (M7). A CAPTCHA wait
-   * is restored by re-observing: the takeover is how a person solves it, and the next observation
-   * waits again only while it still shows.
+   * Hand-back always re-observes and runs on (M7, F1). A code or CAPTCHA wait kept through the
+   * takeover is re-entered only if the page still needs it: the person may have typed the code
+   * or solved the CAPTCHA themselves, and a code submitted meanwhile is used by the next fill.
    */
-  async markHandBack(): Promise<StepOutcome> {
-    const held = this.#heldWait;
-    this.#heldWait = null;
-    this.reobserve();
-    if (held === "otp" && !(await hasUnusedOtpCode(this.#deps.db, this.#run.id))) {
-      await this.#deps.store.commit({
-        events: [{ type: "control", holder: "agent" }],
-        transition: {
-          from: ["running", "waiting"],
-          to: "waiting",
-          waitReason: "otp",
-          reason: "A one-time code is needed to sign in",
-        },
-      });
-      this.#waitingFor = "otp";
-      return { kind: "waiting", reason: "otp" };
-    }
+  async markHandBack(): Promise<void> {
     await this.#deps.store.commit({
       events: [{ type: "control", holder: "agent" }],
       transition: TO_RUNNING,
     });
-    this.#waitingFor = null;
-    return CONTINUE;
+    this.reobserve();
   }
 }
