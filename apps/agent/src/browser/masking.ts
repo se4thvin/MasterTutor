@@ -20,7 +20,11 @@ export interface MaskSources {
   /** True while the run has secret values registered (the text scan runs only then). */
   hasSecrets(): boolean;
   /** `text` with every registered secret value replaced by SECRET_REDACTION; `text` itself when none occurs. */
-  redact(text: string): string;
+  redact(text: string): string; /**
+   * CDP frame ids holding vault-filled nodes, whatever session registered them (N2): a frame
+   * whose CDP session was replaced still counts as filled. Optional: no fills, no frames.
+   */
+  filledFrames?(): readonly string[];
 }
 
 export const SECRET_REDACTION = "[secret]";
@@ -232,8 +236,9 @@ export async function hasFilledOutOfProcessFrame(
   session: BrowserSession,
   sources: MaskSources,
 ): Promise<boolean> {
-  for (const worlds of (await session.outOfProcessFrames()).values())
-    if (sources.nodeIds(worlds.cdp).length > 0) return true;
+  const filledFrames = new Set(sources.filledFrames?.() ?? []);
+  for (const [frameId, worlds] of await session.outOfProcessFrames())
+    if (filledFrames.has(frameId) || sources.nodeIds(worlds.cdp).length > 0) return true;
   return false;
 }
 

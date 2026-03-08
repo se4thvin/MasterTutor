@@ -62,6 +62,9 @@ importers:
       '@mastertutor/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@mastertutor/sealing':
+        specifier: workspace:*
+        version: link:../../packages/sealing
       '@mastertutor/storage':
         specifier: workspace:*
         version: link:../../packages/storage
