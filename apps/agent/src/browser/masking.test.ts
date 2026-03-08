@@ -28,6 +28,8 @@ interface FakeOptions {
   axThrowsFor?: string;
   /** Out-of-process frames: missing from the page tree, readable only through their own session. */
   oopif?: Record<string, OopifFake>;
+  /** Live child frames whose first attach failed: neither attached nor known to be in process. */
+  unattached?: number;
   boxModel?: (backendNodeId: number) => unknown;
   describeNode?: () => unknown;
   resolveNodeError?: string;
@@ -117,6 +119,10 @@ function fakeSession(options: FakeOptions = {}) {
           oopifSessions.set(id, { send: oopifSend(id) });
       return new Map([...oopifSessions].map(([id, own]) => [id, { cdp: own }]));
     },
+    frameCoverage: async () => ({
+      outOfProcess: await session.outOfProcessFrames(),
+      unattached: options.unattached ?? 0,
+    }),
     forgetFrame: async (frameId: string) => {
       forgotten.push(frameId);
       oopifSessions.delete(frameId);
@@ -277,6 +283,12 @@ describe("out-of-process frames (R-E5, review I1/I2)", () => {
     const dirty = fakeSession({ oopif: { ad: { ax: [{ value: "echo hunter2-secret" }] } } });
     expect(await containsSecretText(dirty.session, secret, signal)).toBe(true);
     expect(dirty.count("oopif:Accessibility.getFullAXTree")).toBe(1);
+  });
+
+  it("fails closed when a live frame's first attach failed, so it cannot be read at all", async () => {
+    const fake = fakeSession({ unattached: 1 });
+    expect(await containsSecretText(fake.session, secret, signal)).toBe(true);
+    expect(await containsSecretText(fakeSession().session, secret, signal)).toBe(false);
   });
 
   it("fails closed when a still-live frame cannot be re-attached after a failure (N1)", async () => {

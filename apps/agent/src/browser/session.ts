@@ -135,6 +135,18 @@ export class BrowserSession {
    * a hung frame cannot stall this; sessions of frames that are gone are closed.
    */
   async outOfProcessFrames(): Promise<Map<string, IsolatedWorlds>> {
+    return (await this.frameCoverage()).outOfProcess;
+  }
+
+  /**
+   * outOfProcessFrames(), plus how many live child frames are in neither set: their attach failed
+   * for another reason than sharing the parent's process (a transient CDP error, a process swap).
+   * Such a frame may be out of process yet unreadable, so a secret scan must fail closed on it.
+   */
+  async frameCoverage(): Promise<{
+    outOfProcess: Map<string, IsolatedWorlds>;
+    unattached: number;
+  }> {
     const live = new Set(this.#page.frames());
     for (const [frame, entry] of this.#outOfProcess) {
       if (live.has(frame)) continue;
@@ -149,15 +161,19 @@ export class BrowserSession {
       )
         this.#outOfProcess.set(frame, this.#attach(frame));
     const found = new Map<string, IsolatedWorlds>();
+    let unattached = 0;
     await Promise.all(
       [...this.#outOfProcess].map(async ([frame, entry]) => {
         const attached = await entry;
         if (attached) found.set(attached.id, attached.worlds);
-        // In process: not kept here, since a frame can move to another process when it navigates.
-        else if (this.#outOfProcess.get(frame) === entry) this.#outOfProcess.delete(frame);
+        else {
+          // Not kept here (retried next call): a frame can move to another process when it navigates.
+          if (this.#outOfProcess.get(frame) === entry) this.#outOfProcess.delete(frame);
+          if (this.#inProcess.get(frame) !== frame.url()) unattached += 1;
+        }
       }),
     );
-    return found;
+    return { outOfProcess: found, unattached };
   }
 
   async #attach(frame: Frame): Promise<{ id: string; worlds: IsolatedWorlds } | null> {
