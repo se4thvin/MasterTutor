@@ -15,6 +15,13 @@ const THREE_BAN = {
   message: "three may be imported only from components/hero/.",
 };
 const LUCIDE_BAN = { group: ["lucide-react"], message: "Use <Icon> from components/ui/icon.tsx." };
+// Spec §3.1: web seals with the public key and never opens a box. Only the integration test that
+// plays the agent may import the opening entry (W9); key-placement.test.ts proves this rule.
+const SEALING_OPEN = "@mastertutor/sealing/open";
+const SEALING_OPEN_BAN = {
+  group: [SEALING_OPEN],
+  message: "web can seal but never open: @mastertutor/sealing/open is agent-only (spec §3.1).",
+};
 const MOTION_COMPONENT_BAN = ["motion/react", "motion/react-client"].map((name) => ({
   name,
   importNames: ["motion"],
@@ -22,9 +29,17 @@ const MOTION_COMPONENT_BAN = ["motion/react", "motion/react-client"].map((name) 
 }));
 // Every apps/web no-restricted-imports block replaces the earlier one, so it must carry the D38
 // OpenAI import ban too.
-const webImports = (patterns) => [
+const webImports = (patterns, { sealingOpen = false } = {}) => [
   "error",
-  { paths: MOTION_COMPONENT_BAN, patterns: [ANIMATION_BANS, OPENAI_IMPORTS, ...patterns] },
+  {
+    paths: MOTION_COMPONENT_BAN,
+    patterns: [
+      ANIMATION_BANS,
+      OPENAI_IMPORTS,
+      ...(sealingOpen ? [] : [SEALING_OPEN_BAN]),
+      ...patterns,
+    ],
+  },
 ];
 
 // D38: stateful OpenAI APIs. Every block that sets no-restricted-syntax for apps/** must include
@@ -47,11 +62,19 @@ const dynamicImportBan = (groups) => [
   "error",
   ...OPENAI_STATEFUL_BANS,
   {
-    selector: `ImportExpression[source.value=/^(${groups.join("|")})(\\/|$)/]`,
+    selector: `ImportExpression[source.value=/^(${groups.map((group) => group.replaceAll("/", "\\/")).join("|")})(\\/|$)/]`,
     message: "This library may not be imported here, dynamically or statically (spec §11.3–11.4).",
   },
 ];
-const ALL_BANNED = ["gsap", "ogl", "framer-motion", "matter-js", "@react-three", "@hugeicons"];
+const ALL_BANNED = [
+  "gsap",
+  "ogl",
+  "framer-motion",
+  "matter-js",
+  "@react-three",
+  "@hugeicons",
+  SEALING_OPEN,
+];
 
 const OPENAI_IMPORTS = {
   group: ["openai", "openai/*"],
@@ -137,6 +160,18 @@ export default defineConfig(
       "motion/no-raw-motion-classes": "error",
       "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN]),
       "no-restricted-syntax": dynamicImportBan([...ALL_BANNED, "three", "lucide-react"]),
+    },
+  },
+  {
+    // W9: an integration test plays the agent to prove what web sealed; nothing else may.
+    files: ["apps/web/**/*.int.test.ts"],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], { sealingOpen: true }),
+      "no-restricted-syntax": dynamicImportBan([
+        ...ALL_BANNED.filter((name) => name !== SEALING_OPEN),
+        "three",
+        "lucide-react",
+      ]),
     },
   },
   {

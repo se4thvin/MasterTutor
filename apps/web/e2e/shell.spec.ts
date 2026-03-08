@@ -29,8 +29,11 @@ test("skip link moves focus to the main content", async ({ page }) => {
   await expect(page.locator("#main")).toBeFocused();
 });
 
-test("shows the kill-switch banner while the switch is on", async ({ page }) => {
-  await page.request.post("/api/rpc/settings/setKillSwitch", { data: { json: { on: true } } });
+test("shows the kill-switch banner while the switch is on", async ({ page, baseURL }) => {
+  await page.request.post("/api/rpc/settings/setKillSwitch", {
+    data: { json: { on: true } },
+    headers: { origin: new URL(baseURL!).origin },
+  });
   await page.goto("/library");
   await expect(page.getByRole("status").filter({ hasText: "Kill switch is on." })).toBeVisible();
 });

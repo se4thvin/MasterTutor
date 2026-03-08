@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  PinValue,
   TYPED_SECRET_FIELDS,
+  parseTotpSeed,
   type TypedSecretField,
   type VaultItemView,
 } from "@mastertutor/contracts";
@@ -13,18 +15,15 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import { TextField } from "@/components/ui/text-field.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
-import {
-  FIELD_META,
-  PLAIN_VAULT_INPUT,
-  SECRET_INPUT,
-  isValidPin,
-  normalizeTotpSeed,
-} from "@/lib/vault/fields.ts";
+import { FIELD_META, PLAIN_VAULT_INPUT, SECRET_INPUT } from "@/lib/vault/fields.ts";
 
 /** The value to send for a field, or null when it is not valid. Never returns a partial echo. */
 function normalize(field: TypedSecretField, value: string): string | null {
-  if (field === "totp") return normalizeTotpSeed(value);
-  if (field === "pin") return isValidPin(value) ? value : null;
+  if (field === "totp") {
+    const seed = value.trim();
+    return parseTotpSeed(seed) ? seed : null;
+  }
+  if (field === "pin") return PinValue.safeParse(value).success ? value : null;
   return value || null;
 }
 

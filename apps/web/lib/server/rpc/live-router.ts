@@ -1,12 +1,12 @@
-import { apiContract } from "@mastertutor/contracts";
-import { ORPCError, implement } from "@orpc/server";
-import { requireViewer, type SessionContext } from "./require-viewer.ts";
+import { ORPCError } from "@orpc/server";
+import { getDb } from "../db.ts";
+import { getSealer } from "../vault/sealer.ts";
+import { liveOs as os } from "./live-os.ts";
+import { createVaultProcedures } from "./vault.ts";
 
-export type LiveContext = SessionContext;
+const vault = createVaultProcedures({ sealer: getSealer, db: getDb });
 
-const os = implement(apiContract).$context<LiveContext>().use(requireViewer);
-
-/** Phase 7 (with B2, B3 and B6) replaces these handlers, one namespace at a time, with DB-backed ones. */
+/** Phase 7 (with B2 and B6) replaces the remaining handlers, one namespace at a time. B3 wired vault.* and runs.submitOtp. */
 const notWired = (): never => {
   throw new ORPCError("NOT_IMPLEMENTED", {
     message: "This endpoint is not wired to the backend yet.",
@@ -23,7 +23,7 @@ export const liveRouter = os.router({
     resume: os.runs.resume.handler(notWired),
     sendMessage: os.runs.sendMessage.handler(notWired),
     decideApproval: os.runs.decideApproval.handler(notWired),
-    submitOtp: os.runs.submitOtp.handler(notWired),
+    submitOtp: vault.submitOtp,
     takeControl: os.runs.takeControl.handler(notWired),
     handBack: os.runs.handBack.handler(notWired),
     openLive: os.runs.openLive.handler(notWired),
@@ -45,15 +45,7 @@ export const liveRouter = os.router({
     move: os.folders.move.handler(notWired),
     delete: os.folders.delete.handler(notWired),
   },
-  vault: {
-    list: os.vault.list.handler(notWired),
-    create: os.vault.create.handler(notWired),
-    setSecret: os.vault.setSecret.handler(notWired),
-    removeSecret: os.vault.removeSecret.handler(notWired),
-    delete: os.vault.delete.handler(notWired),
-    forgetSession: os.vault.forgetSession.handler(notWired),
-    audit: os.vault.audit.handler(notWired),
-  },
+  vault: vault.vault,
   settings: {
     get: os.settings.get.handler(notWired),
     update: os.settings.update.handler(notWired),

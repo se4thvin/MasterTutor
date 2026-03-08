@@ -3,6 +3,8 @@ import {
   CreateVaultItemInput,
   ImapConfig,
   OriginInput,
+  PinValue,
+  parseTotpSeed,
   type VaultSecretField,
 } from "@mastertutor/contracts";
 import type { InputHTMLAttributes } from "react";
@@ -44,27 +46,6 @@ export const FIELD_META: Record<
   imap_password: { label: "Email codes", icon: "emailOtp", secret: true },
   passkey: { label: "Passkey", icon: "passkey", secret: true },
 };
-
-/** Base32 length bounds: 80-bit keys are 16 characters, SHA-512's 64-byte keys are 103. */
-const TOTP_SEED = /^[A-Z2-7]{16,128}$/;
-/** An otpauth:// link carries more than the seed; anything longer than this is not one. */
-const MAX_TOTP_INPUT = 2_048;
-
-export function normalizeTotpSeed(raw: string): string | null {
-  if (raw.length > MAX_TOTP_INPUT) return null;
-  let value = raw.trim();
-  if (value.toLowerCase().startsWith("otpauth://")) {
-    try {
-      value = new URL(value).searchParams.get("secret") ?? "";
-    } catch {
-      return null;
-    }
-  }
-  value = value.replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
-  return TOTP_SEED.test(value) ? value : null;
-}
-
-export const isValidPin = (raw: string) => /^[0-9]{4,12}$/.test(raw);
 
 export function suggestAlias(originInput: string): string {
   const parsed = OriginInput.safeParse(originInput);
@@ -126,14 +107,16 @@ export function toCreateInput(
     else errors.password = "Enter the password.";
   }
   if (form.enabled.totp) {
-    const seed = normalizeTotpSeed(form.values.totp);
-    if (seed) secrets["totp"] = seed;
+    // Sent as typed (trimmed): an otpauth:// link keeps its digits, period and algorithm (E3).
+    const seed = form.values.totp.trim();
+    if (parseTotpSeed(seed)) secrets["totp"] = seed;
     else errors.totp = "Paste the setup key (16–128 characters) or its otpauth:// link.";
   }
   if (form.enabled.pin) {
-    if (isValidPin(form.values.pin)) secrets["pin"] = form.values.pin;
+    if (PinValue.safeParse(form.values.pin).success) secrets["pin"] = form.values.pin;
     else errors.pin = "Use 4–12 digits.";
   }
+
   let imap = null;
   if (form.enabled.imap) {
     const parsed = ImapConfig.safeParse({

@@ -16,7 +16,8 @@ const serverEnv: Record<string, string> = {
   NEKO_MEMBER_SECRET: testEnv["NEKO_MEMBER_SECRET"] ?? "",
   LIVE_COOKIE_SECRET: testEnv["LIVE_COOKIE_SECRET"] ?? "",
   TURN_SECRET: testEnv["TURN_SECRET"] ?? "",
-  OPENAI_EMBEDDINGS_KEY: testEnv["OPENAI_EMBEDDINGS_KEY"] ?? "",
+  // D36: one OPENAI_API_KEY; the fixture server never calls OpenAI.
+  OPENAI_API_KEY: "unused-in-fixture-mode",
   S3_ENDPOINT: "http://127.0.0.1:1",
   S3_ACCESS_KEY_ID: testEnv["S3_WEB_ACCESS_KEY_ID"] ?? "",
   S3_SECRET_ACCESS_KEY: testEnv["S3_WEB_SECRET_ACCESS_KEY"] ?? "",
