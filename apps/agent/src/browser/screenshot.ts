@@ -96,7 +96,7 @@ export async function captureModelScreenshot(
       return drop();
     }
     // A field the vault filled inside an out-of-process frame cannot be boxed from here either.
-    if (await hasFilledOutOfProcessFrame(session, sources)) return drop();
+    if (await hasFilledOutOfProcessFrame(session, sources, signal)) return drop();
     const before = await collectMaskBoxes(session, sources);
     if (before.unverifiable > 0) return drop();
     session.guard.assertAgent(signal);

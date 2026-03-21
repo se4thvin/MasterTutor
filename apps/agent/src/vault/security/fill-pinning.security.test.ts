@@ -38,9 +38,10 @@ async function attempt(field: "password" | "pin", selector: string, frameIndex?:
   });
 }
 
+/** Any exfiltration POST that is not to the login site itself (the evil and the same-site host). */
 const leaked = () =>
   fx.requests.filter(
-    (r) => r.host === FIXTURE_HOSTS.evil && r.path === "/collect" && r.body !== "",
+    (r) => r.host !== FIXTURE_HOSTS.login && r.path === "/collect" && r.body !== "",
   );
 const lastAudit = async () =>
   (
@@ -71,6 +72,21 @@ afterAll(async () => {
 });
 
 describe("origin pinning", () => {
+  it("counts a post to any host but the login site as a leak (M5)", () => {
+    const before = fx.requests.length;
+    fx.requests.push({ host: FIXTURE_HOSTS.other, method: "POST", path: "/collect", body: "x" });
+    expect(leaked()).toHaveLength(1);
+    fx.requests.splice(before);
+  });
+
+  it("refuses a field in another origin's frame even when document.domain lets the page script it (I1)", async () => {
+    await tb.page.goto(`${fx.origin("login")}/iframe-domain`);
+    await tb.page.frames()[1]!.waitForSelector("#domain-password");
+    expect(await attempt("password", "#domain-password", 1)).toEqual({ error: "frame_mismatch" });
+    expect(await tb.page.frames()[1]!.inputValue("#domain-password")).toBe("");
+    expect(leaked()).toEqual([]);
+  });
+
   it("refuses a lookalike domain serving the same login page", async () => {
     await tb.page.goto(`${fx.origin("lookalike")}/password`);
     expect(await attempt("password", "#password")).toEqual({ error: "origin_mismatch" });

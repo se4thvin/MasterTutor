@@ -60,19 +60,18 @@ async function fillInto(
   const first = group[0];
   if (!first) return "failed";
   if (forcePassword) await disableRevealToggles(first.node);
-  const outcome = await fillGroup(group, text, { forcePassword, pinnedOrigin });
-  if (outcome === "ok") {
-    deps.fingerprints.remember(ctx.runId, {
-      filled: {
-        cdp: first.node.cdp,
-        frameId: first.node.frameId,
-        loaderId: first.node.loaderId,
-        backendNodeIds: group.map((box) => box.backendNodeId),
-      },
-      secret: SECRET_FIELDS.has(field) ? text : null,
-    });
-  }
-  return outcome;
+  // Masks and redaction first (I2): once a value is written, a failed fill may still leave some of
+  // it in the page. A stale mask is harmless; a missing one is not.
+  deps.fingerprints.remember(ctx.runId, {
+    filled: {
+      cdp: first.node.cdp,
+      frameId: first.node.frameId,
+      loaderId: first.node.loaderId,
+      backendNodeIds: group.map((box) => box.backendNodeId),
+    },
+    secret: SECRET_FIELDS.has(field) ? text : null,
+  });
+  return fillGroup(group, text, { forcePassword, pinnedOrigin });
 }
 
 /** Opens (or produces) the value for `field` only for the duration of `use`. */
@@ -124,6 +123,8 @@ export async function fillCredential(
     return { error: code };
   };
 
+  // Spec §5.3 and M8: a held or aborted run never reaches a decryption.
+  ctx.session.guard.assertAgent(ctx.signal);
   if (!item) return refuse("unknown_alias");
   if (toOrigin(ctx.session.page.url()) !== item.origin) return refuse("origin_mismatch");
   const ref = await deps.resolveRef(ctx.session, args.target);
@@ -136,6 +137,12 @@ export async function fillCredential(
     if (group.some((box) => box.info.origin !== item.origin)) return refuse("frame_mismatch");
     if (!group.every((box) => fieldAccepts(args.field, box.info)))
       return refuse("field_type_mismatch");
+    // A form that submits anywhere but the item's origin needs this call's own approval (M4).
+    const offsite = group.some((box) =>
+      box.info.formOrigins.some((origin) => origin !== item.origin),
+    );
+    if (offsite && ctx.approval?.kind !== "credential_first_use")
+      return refuse("approval_required", "form_action_offsite");
     const approver = await approvedBy(deps, ctx.approval, item, ctx.session.page.url());
     if (approver === null) return refuse("approval_required");
 

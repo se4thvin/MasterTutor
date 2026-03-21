@@ -203,3 +203,71 @@ export const echo = () =>
        document.title = "Typed " + e.target.value;
      });</script>`,
   );
+
+/** A password field in a same-origin child frame (its fill belongs to the child's frame id). */
+export const childFrame = () =>
+  layout(
+    "Child",
+    `<label for="child-password">Password</label><input id="child-password" type="password" autocomplete="current-password">`,
+  );
+
+/** Parent and child both relax document.domain, so the parent's world can script the child (I1). */
+export const domainParent = (src: string) =>
+  layout(
+    "Relaxed",
+    `<script>document.domain = "fixtures.test";</script><h1>Relaxed</h1>
+     <iframe id="frame" src="${esc(src)}" width="640" height="200"></iframe>`,
+  );
+
+export const domainChild = () =>
+  layout(
+    "Relaxed child",
+    `<script>document.domain = "fixtures.test";</script>
+     <label for="domain-password">Password</label><input id="domain-password" type="password" autocomplete="current-password">
+     <script>document.getElementById("domain-password").addEventListener("input", (e) =>
+       fetch("/collect", { method: "POST", body: e.target.value }));</script>`,
+  );
+
+/** A login page that echoes what is typed and then rewrites the value, so a fill fails (I2). */
+export const rewrite = () =>
+  layout(
+    "Sign in",
+    `<form method="post" action="/password"><label for="password">Password</label>
+     <input id="password" name="password" type="password" autocomplete="current-password">
+     <p id="echo"></p></form>
+     <script>document.getElementById("password").addEventListener("input", (e) => {
+       document.getElementById("echo").textContent += "Strength of " + e.target.value + ": weak. ";
+       document.title = "Checking " + e.target.value;
+       e.target.value = e.target.value + "!";
+     });</script>`,
+  );
+
+/** Password decoys a person cannot see: they must not make a text box look like a login (M3). */
+export const hiddenDecoys = () =>
+  layout(
+    "Profile",
+    `<form><label for="user">Nickname</label><input id="user" type="text">
+     <input type="password" style="opacity:0">
+     <input type="password" style="position:absolute;left:-9999px">
+     <input type="password" style="clip-path:inset(50%)">
+     <label for="ghost">Password</label><input id="ghost" type="password" style="opacity:0"></form>`,
+  );
+
+/** A login form that posts somewhere else: its action, or one submit button's formaction (M4). */
+export const offsiteForm = (action: string, formAction: string | null) =>
+  layout(
+    "Sign in",
+    `<form method="post" action="${esc(action)}">
+     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
+     <button id="submit" type="submit"${formAction ? ` formaction="${esc(formAction)}"` : ""}>Sign in</button></form>`,
+  );
+
+/** A reveal toggle next to the field, and an unrelated "Show details" button nearby (M6). */
+export const showDetails = () =>
+  layout(
+    "Sign in",
+    `<form><div class="row"><span class="pw"><label for="password">Password</label>
+     <input id="password" type="password" autocomplete="current-password">
+     <button type="button" id="reveal" aria-label="Show password">Show</button></span>
+     <button type="button" id="details">Show details</button></div></form>`,
+  );

@@ -19,7 +19,9 @@ export function pageExpression<A, R>(fn: PageFunction<A, R>, arg: A): string {
 
 function isStaleContext(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /Cannot find context|Execution context was destroyed|uniqueContextId|context with specified id/i.test(
+  // A world kept from a document the frame has since replaced answers "does not belong to the
+  // document" for nodes of the new one: recreate it, like any other stale context.
+  return /Cannot find context|Execution context was destroyed|uniqueContextId|context with specified id|does not belong to the document/i.test(
     message,
   );
 }
@@ -30,11 +32,14 @@ function isStaleContext(error: unknown): boolean {
  */
 export class IsolatedWorlds {
   readonly #cdp: CDPSession;
+  readonly #worldName: string;
   readonly #contexts = new Map<string, number>();
   #mainFrameId: string | null = null;
 
-  constructor(cdp: CDPSession) {
+  /** `worldName` separates owners: the vault keeps its own world apart from B1's page helpers. */
+  constructor(cdp: CDPSession, worldName: string = WORLD_NAME) {
     this.#cdp = cdp;
+    this.#worldName = worldName;
   }
 
   /** The CDP session these worlds live on (for DOM.describeNode / DOM.getBoxModel on handles). */
@@ -55,7 +60,7 @@ export class IsolatedWorlds {
     if (cached !== undefined && !fresh) return cached;
     const { executionContextId } = await this.#cdp.send("Page.createIsolatedWorld", {
       frameId,
-      worldName: WORLD_NAME,
+      worldName: this.#worldName,
       grantUniveralAccess: false,
     });
     this.#contexts.set(frameId, executionContextId);
@@ -73,6 +78,14 @@ export class IsolatedWorlds {
       if (!isStaleContext(error)) throw error;
       return work(await this.#contextId(id, true));
     }
+  }
+
+  /**
+   * Runs `work` with this world's execution context in `frameId` (cached per frame; a stale one
+   * is recreated once). For callers that bind their own CDP calls to the context.
+   */
+  inContext<T>(frameId: string, work: (contextId: number) => Promise<T>): Promise<T> {
+    return this.#withContext(frameId, work);
   }
 
   async evaluate<A, R>(fn: PageFunction<A, R>, arg: A, frameId?: string): Promise<R> {
