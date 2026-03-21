@@ -21,7 +21,9 @@ import {
 import { fieldAccepts } from "./field-rules.ts";
 import { approvedBy, credentialApproval } from "./grants.ts";
 import type { ToolContext } from "./runtime.ts";
+import { obtainOtp } from "./otp.ts";
 import { NOT_STORED, withItemSecret } from "./secrets.ts";
+import { msUntilFreshWindow, totpCode } from "./totp.ts";
 
 /** Refusals that are policy decisions (audited as `denied`); the rest are `fill` failures. */
 const DENIALS: ReadonlySet<CredentialErrorCode> = new Set([
@@ -89,9 +91,42 @@ async function withCredentialValue(
       const result = await withItemSecret(deps, ctx.workspaceId, item, field, use);
       return result === NOT_STORED ? "field_not_stored" : result;
     }
-    case "totp":
-    case "otp":
-      return "field_not_stored";
+    case "totp": {
+      const result = await withItemSecret(
+        deps,
+        ctx.workspaceId,
+        item,
+        "totp",
+        async (seed): Promise<FillOutcome | CredentialErrorCode> => {
+          const wait = msUntilFreshWindow(seed, deps.now());
+          if (wait === null) return "fill_failed";
+          if (wait > 0) await deps.sleep(wait, ctx.signal);
+          const code = totpCode(seed, deps.now());
+          return code === null ? "fill_failed" : use(code);
+        },
+      );
+      return result === NOT_STORED ? "field_not_stored" : result;
+    }
+    case "otp": {
+      const otp = await obtainOtp(deps, ctx, item);
+      if (!otp) {
+        // Task 0 seam: the loop enters waiting(otp) once this act commits; CodeSlots appears.
+        ctx.requestWait("otp");
+        return "otp_unavailable";
+      }
+      await appendVaultAudit(deps.db, {
+        workspaceId: ctx.workspaceId,
+        itemId: item.id,
+        alias: item.alias,
+        origin: item.origin,
+        field: "otp",
+        action: "otp_received",
+        runId: ctx.runId,
+        approvedBy: null,
+        outcome: otp.source,
+      });
+      return use(otp.code);
+    }
   }
 }
 

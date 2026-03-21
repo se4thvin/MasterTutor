@@ -47,7 +47,8 @@ export async function startGreenmail(): Promise<Greenmail> {
     .start();
   return {
     id: container.getId(),
-    host: container.getHost(),
+    // Published on 127.0.0.1 only (IPv4), so name it directly: "localhost" may resolve to ::1 first.
+    host: "127.0.0.1",
     smtpPort: container.getMappedPort(3025),
     imapPort: container.getMappedPort(3143),
     stop: async () => {
