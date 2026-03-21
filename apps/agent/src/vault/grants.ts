@@ -20,13 +20,16 @@ export async function credentialApproval(
 /**
  * Act phase: who authorized this use, or null (refuse). `approval` is the decision for exactly
  * this call (R-E7). A person's approval becomes a lasting grant; a policy one authorizes this call
- * only (deviation 5, Review Focus 4).
+ * only (deviation 5, Review Focus 4). A grant is the item's pinned origin's alone: for a page on
+ * any other origin nothing is used and nothing is written, whoever approved.
  */
 export async function approvedBy(
   deps: Pick<VaultDeps, "db">,
   approval: CallApproval | null,
   item: VaultItemRecord,
+  pageUrl: string,
 ): Promise<string | null> {
+  if (toOrigin(pageUrl) !== item.origin) return null;
   if (approval?.kind === "credential_first_use") {
     if (approval.decidedBy !== POLICY_DECIDER) {
       await insertVaultGrant(deps.db, {

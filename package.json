@@ -14,6 +14,7 @@
     "test": "vitest run --project unit",
     "test:ui": "pnpm --filter @mastertutor/web test:ui",
     "test:int": "vitest run --project integration",
+    "test:security": "vitest run --project security",
     "env:init": "node scripts/env-init.ts",
     "compose:test": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml",
     "smoke": "bash scripts/compose-smoke.sh",
