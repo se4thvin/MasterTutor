@@ -204,7 +204,9 @@ describe("fill_credential", () => {
     expect(mask.nodeIds(await tb.session.cdp())).toHaveLength(2);
     // N2 producer: each fill is recorded with the frame it landed in, by CDP frame id.
     const { frameTree } = await (await tb.session.cdp()).send("Page.getFrameTree");
-    expect(mask.filledFrames?.()).toEqual([frameTree.frame.id]);
+    expect(mask.filledFrames?.()).toEqual([
+      { frameId: frameTree.frame.id, loaderId: frameTree.frame.loaderId },
+    ]);
     expect(mask.redact(`pw ${account.password}`)).not.toContain(account.password);
     expect(mask.redact(`hi ${account.email}`)).toContain(account.email);
   });

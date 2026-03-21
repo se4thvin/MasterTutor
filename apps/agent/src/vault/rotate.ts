@@ -1,6 +1,6 @@
 import type { VaultSecretField } from "@mastertutor/contracts";
 import { SealError, sealValue, wipe, type SealBinding } from "@mastertutor/sealing";
-import { openSealed, type VaultKeyPair } from "@mastertutor/sealing/open";
+import { openSealed, vaultKeyPairFromPrivate, type VaultKeyPair } from "@mastertutor/sealing/open";
 import type { Sql } from "postgres";
 
 export interface RotationReport {
@@ -131,4 +131,23 @@ export async function rotateVaultKeys(
     }
     return report;
   });
+}
+
+/** Derives both key pairs for `use`, then zeroes both private keys, whatever happened (spec §9). */
+export async function withVaultKeys<T>(
+  fromPrivateBase64: string,
+  toPrivateBase64: string,
+  use: (from: VaultKeyPair, to: VaultKeyPair) => Promise<T>,
+): Promise<T> {
+  const from = await vaultKeyPairFromPrivate(fromPrivateBase64);
+  try {
+    const to = await vaultKeyPairFromPrivate(toPrivateBase64);
+    try {
+      return await use(from, to);
+    } finally {
+      await wipe(to.privateKey);
+    }
+  } finally {
+    await wipe(from.privateKey);
+  }
 }

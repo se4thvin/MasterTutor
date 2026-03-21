@@ -21,6 +21,8 @@ interface OopifFake {
   hang?: boolean;
   /** After it is forgotten, no new session can be attached (a transient attach failure). */
   noReattach?: boolean;
+  /** The document the frame shows now (CDP loaderId); "doc-1" unless a test navigates it. */
+  loaderId?: string;
 }
 interface FakeOptions {
   frames?: Array<{ id: string; securityOrigin: string; url?: string }>;
@@ -102,7 +104,8 @@ function fakeSession(options: FakeOptions = {}) {
       spec.failures! -= 1;
       throw new Error("Target closed");
     }
-    if (method === "Page.getFrameTree") return { frameTree: { frame: { id } } };
+    if (method === "Page.getFrameTree")
+      return { frameTree: { frame: { id, loaderId: spec.loaderId ?? "doc-1" } } };
     if (method === "Accessibility.getFullAXTree") return { nodes: axNodes(spec.ax ?? []) };
     throw new Error(`unexpected OOPIF call ${method}`);
   };
@@ -349,10 +352,29 @@ describe("out-of-process frames (R-E5, review I1/I2)", () => {
   it("still drops after the frame's session was swapped: fills are found by frame id (N2)", async () => {
     const fake = fakeSession({ oopif: { login: { ax: [] } } });
     // Registered on a session that has since been forgotten and replaced.
-    const mask: MaskSources = { ...sources(), filledFrames: () => ["login"] };
-    expect((await captureModelScreenshot(fake.session, mask, signal)).dropped).toBe(true);
-    const unrelated: MaskSources = { ...sources(), filledFrames: () => ["gone"] };
-    expect((await captureModelScreenshot(fake.session, unrelated, signal)).dropped).toBe(false);
+    const filled = (frameId: string, loaderId = "doc-1"): MaskSources => ({
+      ...sources(),
+      filledFrames: () => [{ frameId, loaderId }],
+    });
+    expect((await captureModelScreenshot(fake.session, filled("login"), signal)).dropped).toBe(
+      true,
+    );
+    expect((await captureModelScreenshot(fake.session, filled("gone"), signal)).dropped).toBe(
+      false,
+    );
+  });
+
+  it("forgets the mark once the filled frame shows another document (review 1)", async () => {
+    // The frame navigated after its session was swapped: the filled document is gone.
+    const fake = fakeSession({ oopif: { login: { ax: [], loaderId: "doc-2" } } });
+    const stale: MaskSources = {
+      ...sources(),
+      filledFrames: () => [{ frameId: "login", loaderId: "doc-1" }],
+    };
+    expect((await captureModelScreenshot(fake.session, stale, signal)).dropped).toBe(false);
+    // A frame whose document cannot be read stays marked: fail closed.
+    const unreadable = fakeSession({ oopif: { login: { failures: 99 } } });
+    expect((await captureModelScreenshot(unreadable.session, stale, signal)).dropped).toBe(true);
   });
 
   it("drops the page when the vault filled a field inside an out-of-process frame (I1)", async () => {
