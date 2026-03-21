@@ -1,5 +1,5 @@
 import type { IsolatedWorlds } from "./isolated-world.ts";
-import { FRAME_OWNERS, type PageHelpers } from "./page-helpers.ts";
+import { FRAME_OWNERS, type PageHelpers, type TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
 
 /** Arming every document must finish within this, or typing fails closed (approval needed). */
@@ -14,7 +14,8 @@ const MAX_DOCUMENTS = 64;
  *   mid-typing into another document (a frame's password field) is never delivered.
  * - A click: pointer events are cancelled unless they reach the element the hit test classified
  *   (kept by the scan), so a page that moves or swaps elements between the check and the press
- *   never gets an unchecked click (TOCTOU), whichever document the press lands in.
+ *   never gets an unchecked click (TOCTOU), whichever document the press lands in. A frame an
+ *   armed document adds meanwhile takes no pointer input until disarm (its document is not armed).
  * Armed only around the executor's own input, so a person's input and credential filling (B3) are
  * unaffected.
  */
@@ -23,6 +24,11 @@ export interface InputGuard {
   readonly complete: boolean;
   /** True once a document was added or replaced since arming: it is not armed, so stop typing. */
   readonly changed: boolean;
+  /**
+   * `changed` as of now: every session that armed answers first, so the frame events it sent
+   * before are seen. One that does not answer within the budget counts as changed (fail closed).
+   */
+  changedNow(): Promise<boolean>;
   /** Whether a page script moved focus out of the home document since arming. */
   focusMoved(): Promise<boolean>;
   /**
@@ -35,9 +41,15 @@ export interface InputGuard {
 /** Sessions whose last arm could not cover every document (until an arm covers them all again). */
 const incomplete = new WeakSet<BrowserSession>();
 
-/** True while some document of the page could not be armed: typing there needs approval. */
-export function typingGuardIncomplete(session: BrowserSession): boolean {
-  return incomplete.has(session);
+/**
+ * While some document of the page could not be armed, acting on the page (typing, clicking)
+ * counts as acting inside an uninspectable page: it needs a person's approval.
+ */
+export function markUnguarded(
+  session: BrowserSession,
+  target: TargetDescription | null,
+): TargetDescription | null {
+  return target && incomplete.has(session) ? { ...target, opaqueFrame: true } : target;
 }
 
 const POINTER_EVENTS = [
@@ -73,6 +85,8 @@ export function armScript(
     slot.__mtCancelled = true;
   };
   const listeners: Array<[string, (event: Event) => void]> = [];
+  let observer: MutationObserver | null = null;
+  const held = new Map<HTMLElement, [string, string]>();
   let home = false;
   if (arg.click !== null) {
     const kept = slot.__mtFound?.key === arg.click ? slot.__mtFound.el : null;
@@ -80,6 +94,41 @@ export function armScript(
       if (!kept || !event.composedPath().includes(kept)) cancel(event);
     };
     for (const type of arg.pointerEvents) listeners.push([type, onPointer]);
+    // A frame this document adds (or points at another document) while armed holds a document
+    // no arm reached: until disarm it takes no pointer input, so a press there lands in this
+    // document and is cancelled. The observer runs as a microtask right after the page's script,
+    // before any input is handled; a page rewriting the frame's style is overridden again.
+    const hold = (el: Element) => {
+      if (!(el instanceof HTMLElement) || !arg.owners.includes(el.tagName)) return;
+      const style = el.style;
+      if (!held.has(el))
+        held.set(el, [
+          style.getPropertyValue("pointer-events"),
+          style.getPropertyPriority("pointer-events"),
+        ]);
+      if (
+        style.getPropertyValue("pointer-events") !== "none" ||
+        style.getPropertyPriority("pointer-events") !== "important"
+      )
+        style.setProperty("pointer-events", "none", "important");
+    };
+    const owners = arg.owners.join(",");
+    observer = new MutationObserver((records) => {
+      for (const record of records) {
+        const target = record.target as HTMLElement;
+        if (record.attributeName === "style") {
+          if (held.has(target)) hold(target);
+        } else if (record.attributeName) hold(target);
+        for (const node of record.addedNodes)
+          if (node instanceof Element)
+            for (const el of [node, ...node.querySelectorAll(owners)]) hold(el);
+      }
+    });
+    observer.observe(document, {
+      childList: true,
+      subtree: true,
+      attributeFilter: ["src", "srcdoc", "data", "style"],
+    });
   } else {
     const active = document.activeElement;
     home =
@@ -102,6 +151,8 @@ export function armScript(
   slot.__mtGuard = {
     remove() {
       for (const [type, listener] of listeners) removeEventListener(type, listener, true);
+      observer?.disconnect();
+      for (const [el, before] of held) el.style.setProperty("pointer-events", ...before);
     },
   };
   return home;
@@ -243,6 +294,20 @@ async function armGuard(
     complete,
     get changed() {
       return changed;
+    },
+    changedNow: async () => {
+      // Sessions that armed (a session that never answered is why the guard is incomplete).
+      const armed = watched.filter((worlds) =>
+        sent.some((doc) => doc.worlds === worlds && answered.has(doc)),
+      );
+      const flushed = await Promise.race([
+        Promise.all(armed.map((worlds) => worlds.evaluate(() => 0, null))).then(
+          () => true,
+          () => false,
+        ),
+        timeout(ARM_BUDGET_MS).then(() => false),
+      ]);
+      return changed || !flushed;
     },
     focusMoved: async () =>
       home

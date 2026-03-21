@@ -3,7 +3,7 @@ import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { armClickGuard, armTypingGuard } from "../browser/input-guard.ts";
+import { armClickGuard, armTypingGuard, markUnguarded } from "../browser/input-guard.ts";
 import { pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
@@ -32,6 +32,8 @@ export const UNRESPONSIVE_REFUSAL =
   "Nothing was typed: the page's embedded frames could not all be guarded against misdirected typing (one is not responding, or there are too many). Typing on this page now needs the user's approval: ask for it again as its own step.";
 export const TARGET_MOVED_REFUSAL =
   "Nothing was clicked: what is under the pointer changed after the click was checked. Look at the screen and decide again.";
+export const UNGUARDED_CLICK_REFUSAL =
+  "Nothing was clicked: the page's embedded frames could not all be guarded against the click landing somewhere else (one is not responding, or there are too many). Clicking on this page needs the user's approval: ask for it again as its own step.";
 export const SECRET_FIELD_REFUSAL =
   "Refused: typing into password, one-time-code or PIN fields is not allowed. Use fill_credential with the vault alias and the field's element ref.";
 const TYPE_CHUNK = 24;
@@ -201,7 +203,7 @@ export class ComputerExecutor {
     const hit = await hitTest(this.#session, point);
     // The page may have changed since the gate classified this click (TOCTOU): if anything
     // differs, nothing is pressed and the model's next click is gated again.
-    if (verdict && !sameTarget(verdict.target, hit.target))
+    if (verdict && !sameTarget(verdict.target, markUnguarded(this.#session, hit.target)))
       return this.#refuse(TARGET_MOVED_REFUSAL);
     if (hit.snap) await mouse.move(hit.snap.x, hit.snap.y);
     // ...and from here to the press, the page itself cancels a press that reaches anything but
@@ -213,11 +215,17 @@ export class ComputerExecutor {
         : null;
     let cancelled = false;
     try {
+      // A document the guard could not arm would take an unchecked press: fail closed, as typing
+      // does (approval needed), unless a person approved this very element.
+      if (guard && !guard.complete && verdict?.personApproved !== true)
+        return this.#refuse(UNGUARDED_CLICK_REFUSAL);
       this.#session.guard.assertAgent(signal);
       const options = {
         button: button === "right" ? "right" : button === "wheel" ? "middle" : "left",
       } as const;
       for (let clickCount = 1; clickCount <= (double ? 2 : 1); clickCount++) {
+        // A document added or replaced since arming is not guarded: press nothing.
+        if (guard && (await guard.changedNow())) return this.#refuse(TARGET_MOVED_REFUSAL);
         await mouse.down({ ...options, clickCount });
         await mouse.up({ ...options, clickCount });
       }

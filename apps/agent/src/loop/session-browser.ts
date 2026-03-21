@@ -13,7 +13,7 @@ import { perceptualHash } from "../browser/phash.ts";
 import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { typingGuardIncomplete } from "../browser/input-guard.ts";
+import { markUnguarded } from "../browser/input-guard.ts";
 import {
   applyStorageState,
   collectStorageState,
@@ -202,16 +202,14 @@ export class SessionLoopBrowser implements LoopBrowser {
       return historyTarget(this.#session, history);
     if (action.type === "click" || action.type === "double_click") {
       const point = await this.#executor.toPage(action.x, action.y);
-      return point ? (await hitTest(this.#session, point)).target : null;
+      // While some document of the page could not be armed (a frame that hangs, or too many),
+      // clicking and typing count as acting inside an uninspectable page: they need approval.
+      return point
+        ? markUnguarded(this.#session, (await hitTest(this.#session, point)).target)
+        : null;
     }
-    if (action.type === "type" || action.type === "keypress") {
-      const target = previous ?? (await focusTarget(this.#session));
-      // While some document of the page could not be armed against misdirected typing (a frame
-      // that hangs), typing counts as acting inside an uninspectable page: it needs approval.
-      return target && typingGuardIncomplete(this.#session)
-        ? { ...target, opaqueFrame: true }
-        : target;
-    }
+    if (action.type === "type" || action.type === "keypress")
+      return markUnguarded(this.#session, previous ?? (await focusTarget(this.#session)));
     return null;
   }
 
