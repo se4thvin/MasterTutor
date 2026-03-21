@@ -7,6 +7,7 @@ import {
   deleteVaultItem,
   forgetBrowserSession,
   getVaultItem,
+  getVaultItemListRow,
   listVaultAudit,
   listVaultItems,
   removeVaultSecret,
@@ -85,8 +86,9 @@ export function createVaultProcedures(deps: VaultProcedureDeps) {
           ),
         })),
       );
+      let created: { id: string };
       try {
-        await createVaultItem(context.db.db, {
+        created = await createVaultItem(context.db.db, {
           workspaceId: context.workspaceId,
           alias: input.alias,
           origin: input.origin,
@@ -98,11 +100,10 @@ export function createVaultProcedures(deps: VaultProcedureDeps) {
       } catch (error) {
         mapVaultError(error);
       }
-      const created = (await listVaultItems(context.db.db, context.workspaceId)).find(
-        (row) => row.alias === input.alias,
-      );
-      if (!created) throw new ORPCError("INTERNAL_SERVER_ERROR");
-      return toView(created);
+      // The new row by id (review 10): no full re-list.
+      const row = await getVaultItemListRow(context.db.db, context.workspaceId, created.id);
+      if (!row) throw new ORPCError("INTERNAL_SERVER_ERROR");
+      return toView(row);
     }),
 
     setSecret: scoped.vault.setSecret.handler(async ({ context, input }) => {

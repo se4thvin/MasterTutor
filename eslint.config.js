@@ -165,8 +165,8 @@ export default defineConfig(
     },
   },
   {
-    // W9: an integration test plays the agent to prove what web sealed; nothing else may.
-    files: ["apps/web/**/*.int.test.ts"],
+    // W9: this one integration test plays the agent to prove what web sealed; nothing else may.
+    files: ["apps/web/lib/server/rpc/vault.int.test.ts"],
     rules: {
       "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], { sealingOpen: true }),
       "no-restricted-syntax": dynamicImportBan([

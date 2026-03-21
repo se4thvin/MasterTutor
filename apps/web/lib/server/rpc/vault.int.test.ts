@@ -124,16 +124,46 @@ describe("vault procedures on the live router", () => {
     expect((await client().vault.list({})).items[0]?.fields).not.toContain("totp");
   });
 
-  it("hides other workspaces' items", async () => {
+  it("hides other workspaces' items from every vault procedure (review 7)", async () => {
     const [other] = await owner.sql<
       { id: string }[]
     >`insert into workspaces (name) values ('Other') returning id`;
     const [foreign] = await owner.sql<{ id: string }[]>`
-      insert into vault_items (workspace_id, alias, origin, label) values (${other!.id}, 'theirs', 'https://a.example', 'A')
+      insert into vault_items (workspace_id, alias, origin, label, fields)
+      values (${other!.id}, 'theirs', 'https://a.example', 'A', '{password}') returning id`;
+    await owner.sql`insert into vault_secrets (item_id, field, sealed) values (${foreign!.id}, 'password', ${Buffer.from([9])})`;
+    await owner.sql`insert into browser_sessions (workspace_id, alias, origin, sealed_state)
+                    values (${other!.id}, 'theirs', 'https://a.example', ${Buffer.from([9])})`;
+    await owner.sql`insert into vault_audit (workspace_id, item_id, alias, action, outcome)
+                    values (${other!.id}, ${foreign!.id}, 'theirs', 'create', 'ok')`;
+    const itemId = foreign!.id;
+    for (const call of [
+      () => client().vault.delete({ itemId }),
+      () => client().vault.setSecret({ itemId, field: "password", value: "x" }),
+      () => client().vault.removeSecret({ itemId, field: "password" }),
+    ])
+      await expect(call()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect((await client().vault.list({})).items.map((item) => item.id)).not.toContain(itemId);
+    await client().vault.forgetSession({ alias: "theirs", origin: "https://a.example" });
+    const [kept] =
+      await owner.sql`select count(*)::int as n from browser_sessions where workspace_id = ${other!.id}`;
+    expect(kept?.n).toBe(1);
+    const [secret] =
+      await owner.sql`select count(*)::int as n from vault_secrets where item_id = ${itemId}`;
+    expect(secret?.n).toBe(1);
+    const audit = await client().vault.audit({ limit: 100, cursor: null });
+    // Our own forgetSession attempt is audited here (outcome "none"); their create row never is.
+    expect(
+      audit.items.filter((row) => row.alias === "theirs").map((row) => [row.action, row.outcome]),
+    ).toEqual([["delete", "none"]]);
+    const [run] = await owner.sql<{ id: string }[]>`
+      insert into runs (workspace_id, goal, allowed_origins, status, wait_reason) values (${other!.id}, 'g', ${["https://a.example"]}, 'waiting', 'otp')
       returning id`;
-    await expect(client().vault.delete({ itemId: foreign!.id })).rejects.toMatchObject({
-      code: "NOT_FOUND",
-    });
+    await expect(client().runs.submitOtp({ runId: run!.id, code: "123456" })).rejects.toMatchObject(
+      {
+        code: "NOT_FOUND",
+      },
+    );
   });
 
   it("forgets a saved session idempotently and lists the audit trail (E6)", async () => {
