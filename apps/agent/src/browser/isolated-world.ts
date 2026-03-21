@@ -19,9 +19,7 @@ export function pageExpression<A, R>(fn: PageFunction<A, R>, arg: A): string {
 
 function isStaleContext(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  // A world kept from a document the frame has since replaced answers "does not belong to the
-  // document" for nodes of the new one: recreate it, like any other stale context.
-  return /Cannot find context|Execution context was destroyed|uniqueContextId|context with specified id|does not belong to the document/i.test(
+  return /Cannot find context|Execution context was destroyed|uniqueContextId|context with specified id/i.test(
     message,
   );
 }
@@ -33,7 +31,7 @@ function isStaleContext(error: unknown): boolean {
 export class IsolatedWorlds {
   readonly #cdp: CDPSession;
   readonly #worldName: string;
-  readonly #contexts = new Map<string, number>();
+  readonly #contexts = new Map<string, { id: number; document: string | undefined }>();
   #mainFrameId: string | null = null;
 
   /** `worldName` separates owners: the vault keeps its own world apart from B1's page helpers. */
@@ -55,28 +53,35 @@ export class IsolatedWorlds {
     return this.#mainFrameId;
   }
 
-  async #contextId(frameId: string, fresh: boolean): Promise<number> {
+  /**
+   * The world's context in `frameId`. With `document` (the frame's CDP loaderId) a cached
+   * context is reused only for that same document, so a navigation is never mistaken for an
+   * unreachable node and vice versa (N1).
+   */
+  async #contextId(frameId: string, fresh: boolean, document?: string): Promise<number> {
     const cached = this.#contexts.get(frameId);
-    if (cached !== undefined && !fresh) return cached;
+    if (cached !== undefined && !fresh && (document === undefined || cached.document === document))
+      return cached.id;
     const { executionContextId } = await this.#cdp.send("Page.createIsolatedWorld", {
       frameId,
       worldName: this.#worldName,
       grantUniveralAccess: false,
     });
-    this.#contexts.set(frameId, executionContextId);
+    this.#contexts.set(frameId, { id: executionContextId, document });
     return executionContextId;
   }
 
   async #withContext<T>(
     frameId: string | undefined,
     work: (contextId: number) => Promise<T>,
+    document?: string,
   ): Promise<T> {
     const id = frameId ?? (await this.mainFrameId());
     try {
-      return await work(await this.#contextId(id, false));
+      return await work(await this.#contextId(id, false, document));
     } catch (error) {
       if (!isStaleContext(error)) throw error;
-      return work(await this.#contextId(id, true));
+      return work(await this.#contextId(id, true, document));
     }
   }
 
@@ -84,8 +89,12 @@ export class IsolatedWorlds {
    * Runs `work` with this world's execution context in `frameId` (cached per frame; a stale one
    * is recreated once). For callers that bind their own CDP calls to the context.
    */
-  inContext<T>(frameId: string, work: (contextId: number) => Promise<T>): Promise<T> {
-    return this.#withContext(frameId, work);
+  inContext<T>(
+    frameId: string,
+    work: (contextId: number) => Promise<T>,
+    document?: string,
+  ): Promise<T> {
+    return this.#withContext(frameId, work, document);
   }
 
   async evaluate<A, R>(fn: PageFunction<A, R>, arg: A, frameId?: string): Promise<R> {

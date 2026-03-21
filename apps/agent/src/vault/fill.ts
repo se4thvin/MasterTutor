@@ -1,4 +1,5 @@
 import {
+  POLICY_DECIDER,
   toOrigin,
   type ApprovalRequest,
   type CredentialErrorCode,
@@ -14,6 +15,7 @@ import {
   disableRevealToggles,
   fillGroup,
   openTarget,
+  partsFor,
   releaseTargets,
   type FillOutcome,
   type GroupBox,
@@ -32,20 +34,31 @@ const DENIALS: ReadonlySet<CredentialErrorCode> = new Set([
   "frame_mismatch",
   "field_type_mismatch",
   "approval_required",
+  "needs_human",
 ]);
 
 /** Stored secrets a page might echo; usernames and one-time codes are masked by box only (deviation 7, S5). */
 const SECRET_FIELDS: ReadonlySet<CredentialField> = new Set(["password", "pin"]);
 
-/** RunHooks.functionApproval for fill_credential (spec §5.5 credential_first_use). */
+const offsiteKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
+
+/**
+ * RunHooks.functionApproval for fill_credential (spec §5.5 credential_first_use). A fill refused
+ * because its form posts off the item's origin asks again, naming the destination, even for a
+ * granted alias, so a person can approve that one use (carry-over 1).
+ */
 export async function fillApproval(
   deps: VaultDeps,
-  run: { workspaceId: string },
+  run: { id: string; workspaceId: string },
   url: string,
   args: FillCredentialArgs,
 ): Promise<ApprovalRequest | null> {
   const item = await findVaultItemByAlias(deps.db, run.workspaceId, args.alias);
-  return item ? credentialApproval(deps, url, item) : null;
+  if (!item) return null;
+  const postsTo = deps.offsiteForms.get(offsiteKey(run.id, item.alias));
+  if (postsTo !== undefined && toOrigin(url) === item.origin)
+    return { kind: "credential_first_use", alias: item.alias, origin: item.origin, postsTo };
+  return credentialApproval(deps, url, item);
 }
 
 async function fillInto(
@@ -61,6 +74,8 @@ async function fillInto(
   const forcePassword = field === "password" || field === "pin";
   const first = group[0];
   if (!first) return "failed";
+  // Nothing is written when the value does not fit the boxes, so nothing is masked either (N2).
+  if (partsFor(group, text) === null) return "length_mismatch";
   if (forcePassword) await disableRevealToggles(first.node);
   // Masks and redaction first (I2): once a value is written, a failed fill may still leave some of
   // it in the page. A stale mask is harmless; a missing one is not.
@@ -172,12 +187,22 @@ export async function fillCredential(
     if (group.some((box) => box.info.origin !== item.origin)) return refuse("frame_mismatch");
     if (!group.every((box) => fieldAccepts(args.field, box.info)))
       return refuse("field_type_mismatch");
-    // A form that submits anywhere but the item's origin needs this call's own approval (M4).
-    const offsite = group.some((box) =>
-      box.info.formOrigins.some((origin) => origin !== item.origin),
-    );
-    if (offsite && ctx.approval?.kind !== "credential_first_use")
-      return refuse("approval_required", "form_action_offsite");
+    // A form that submits anywhere but the item's origin needs a person's approval of this very
+    // call (M4). The policy never clears it: auto mode hands over to a person instead.
+    const postsTo = group
+      .flatMap((box) => box.info.formOrigins)
+      .find((origin) => origin !== item.origin);
+    if (postsTo !== undefined) {
+      if (
+        ctx.approval?.kind === "credential_first_use" &&
+        ctx.approval.decidedBy === POLICY_DECIDER
+      )
+        return refuse("needs_human", "form_action_offsite");
+      if (ctx.approval?.kind !== "credential_first_use") {
+        deps.offsiteForms.set(offsiteKey(ctx.runId, item.alias), postsTo);
+        return refuse("approval_required", "form_action_offsite");
+      }
+    }
     const approver = await approvedBy(deps, ctx.approval, item, ctx.session.page.url());
     if (approver === null) return refuse("approval_required");
 
@@ -203,6 +228,7 @@ export async function fillCredential(
       default:
         return refuse(outcome);
     }
+    deps.offsiteForms.delete(offsiteKey(ctx.runId, item.alias));
     await record("fill", "ok", approver);
     deps.logins.noteLogin(ctx.runId, item.alias, item.origin);
     deps.log.info({ alias: item.alias, field: args.field }, "fill_credential ok");

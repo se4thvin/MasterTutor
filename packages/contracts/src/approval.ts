@@ -44,7 +44,13 @@ export const ApprovalRequest = z.discriminatedUnion("kind", [
     context: RecordExcerpt,
   }),
   z.object({ kind: z.literal("download"), url: PageUrl, filename: z.string().max(255).nullable() }),
-  z.object({ kind: z.literal("credential_first_use"), alias: Alias, origin: Origin }),
+  z.object({
+    kind: z.literal("credential_first_use"),
+    alias: Alias,
+    origin: Origin,
+    /** Set when the target form posts elsewhere: where it would send the credential. */
+    postsTo: z.string().max(4_096).optional(),
+  }),
   z.object({ kind: z.literal("new_origin"), origin: Origin, url: PageUrl }),
   z.object({
     kind: z.literal("budget"),

@@ -35,7 +35,8 @@ function fakeCdp(owner: string, scripts: readonly string[]) {
       }
       case "DOM.resolveNode": {
         const frame = contextOf.get(Number(params?.executionContextId)) ?? "";
-        if (frame !== owner && !scripts.includes(frame)) throw new Error("No node with given id");
+        if (frame !== owner && !scripts.includes(frame))
+          throw new Error("Node with given id does not belong to the document");
         const objectId = `obj-${next++}`;
         objectFrame.set(objectId, frame);
         return { object: { objectId } };
@@ -61,6 +62,12 @@ describe("openTarget", () => {
   it("skips a detaching frame instead of failing the fill (M2)", async () => {
     const fake = fakeCdp("child", []);
     expect(await openTarget(fake.cdp, 7)).toMatchObject({ frameId: "child" });
+  });
+
+  it("keeps reusing the world of a frame that cannot reach the node (N1)", async () => {
+    const fake = fakeCdp("child", []);
+    for (let i = 0; i < 3; i++) await openTarget(fake.cdp, 7);
+    expect(fake.worlds).toEqual(["main", "child"]);
   });
 
   it("reuses each frame's vault world instead of creating one per call (M2)", async () => {
