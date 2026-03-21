@@ -21,6 +21,10 @@ FROM fetch AS runtime-build
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --offline --prod --store-dir /pnpm/store --filter "@mastertutor/agent..."
+# Test code never ships (M7): test files, testing/ helpers (a --no-sandbox Chromium launcher,
+# fakes) and testing.ts entries. scripts/check-agent-image.sh proves it.
+RUN find apps/agent packages -path '*/node_modules' -prune -o \
+      \( -name '*.test.ts' -o -name testing -o -name testing.ts \) -print0 | xargs -0 rm -rf
 
 # Workspace packages stay symlinked outside node_modules, which Node type stripping requires.
 FROM node:24-slim AS node-runtime
