@@ -49,20 +49,37 @@
       }
       // ?cover=N: N ms after the pointer enters Cancel, a same-origin frame holding a Delete
       // button is inserted over it (a document that did not exist when the click was guarded).
+      // A press on that Delete counts like a click. &shadow=open: the frame goes into an open
+      // shadow root that already covers Cancel; &shadow=closed: into a new closed one.
       // window.__gap: ms from the pointer entering Cancel to the press, to aim N just before it.
       if (params.has("cover")) {
         const cancel = document.getElementById("cancel");
+        const shadow = params.get("shadow");
+        const place = "position: absolute; left: 0; top: 50px; width: 200px; height: 40px";
+        const host = () => {
+          const element = document.createElement("div");
+          element.style.cssText = `${place}; pointer-events: none`;
+          document.body.append(element);
+          return element;
+        };
+        const openRoot = shadow === "open" ? host().attachShadow({ mode: "open" }) : null;
         let entered = 0;
         addEventListener("mousedown", () => (window.__gap = performance.now() - entered), true);
         cancel.addEventListener("mouseenter", () =>
           setTimeout(
             () => {
               const frame = document.createElement("iframe");
-              frame.style.cssText =
-                "position: absolute; left: 0; top: 50px; width: 200px; height: 40px; border: 0";
-              document.body.append(frame);
+              if (shadow) {
+                frame.style.cssText =
+                  "display: block; width: 200px; height: 40px; border: 0; pointer-events: auto";
+                (openRoot ?? host().attachShadow({ mode: "closed" })).append(frame);
+              } else {
+                frame.style.cssText = `${place}; border: 0`;
+                document.body.append(frame);
+              }
               frame.contentDocument.write(
                 '<body style="margin: 0"><button style="width: 200px; height: 40px"' +
+                  " onpointerdown=\"window.__clicked = 'delete'\"" +
                   " onclick=\"window.__clicked = 'delete'\">Delete account</button></body>",
               );
               frame.contentDocument.close();

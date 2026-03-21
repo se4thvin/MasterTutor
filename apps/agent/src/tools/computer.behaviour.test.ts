@@ -16,6 +16,8 @@ import {
   FOCUS_MOVED_REFUSAL,
   PAGE_CHANGED_REFUSAL,
   SECRET_FIELD_REFUSAL,
+  PAGE_TOO_COMPLEX,
+  PAGE_TOO_COMPLEX_REFUSAL,
   TARGET_MOVED_REFUSAL,
   UNGUARDED_CLICK_REFUSAL,
   UNRESPONSIVE_REFUSAL,
@@ -510,12 +512,9 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     async (frames, refusal) => {
       // After 4 characters the page creates a frame with a password field and focuses it.
       const { s, executor } = await setup(`/advance-into-frame.html?into=new${frames}`);
-      // A person approved the click: past the document cap it would fail closed (breaker fix).
-      const code = { x: 100, y: 35 };
-      const { target } = await hitTest(s, code);
-      expect(
-        await executor.execute(click(code), signal, { target, personApproved: true }),
-      ).toBeNull();
+      // Past the document cap a click is handed to the user (breaker fix 2): focus it as they would.
+      if (frames === "&frames=70") await s.page.locator("#code").focus();
+      else expect(await executor.execute(click({ x: 100, y: 35 }), signal)).toBeNull();
       expect(await executor.execute({ type: "type", text: "1234abcdef" }, signal)).toBe(refusal);
       const leaked = await s.page.evaluate(() =>
         (window as { __leaked?: () => string }).__leaked?.(),
@@ -589,30 +588,36 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     return found;
   }
 
-  it("a same-origin frame inserted just before the press never takes the click: 0/30 reach Delete", async () => {
-    const { s, executor } = await setup();
-    const attempt = async (delay: number) => {
-      await s.goto(`${SITE}/widget.html?cover=${delay}`, signal);
-      await s.page.mouse.move(600, 500); // off Cancel, so the executor's move enters it
-      const run = await executor.run([click(at)], signal, cancelGate(s));
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      const gap = await s.page.evaluate(() => (window as { __gap?: number }).__gap);
-      return { run, reached: await clicked(s), gap };
-    };
-    // Aim the insertion at the window between the executor's checks and its press: first measure
-    // how long the pointer rests on Cancel before the press, here (the frame never comes).
-    const gaps: number[] = [];
-    for (let i = 0; i < 5; i++) gaps.push((await attempt(60_000)).gap ?? 0);
-    const gap = gaps.sort((a, b) => a - b)[2]!;
-    const hits = { cancel: 0, delete: 0, refused: 0 };
-    for (let i = 0; i < 30; i++) {
-      const { run, reached } = await attempt(Math.round(gap * [0.5, 0.7, 0.85][i % 3]!));
-      if (run.notes.includes(TARGET_MOVED_REFUSAL)) hits.refused += 1;
-      if (reached === "cancel" || reached === "delete") hits[reached] += 1;
-    }
-    console.info(JSON.stringify({ metric: "inserted_frame_clicks", gap, ...hits }));
-    expect(hits.delete).toBe(0);
-  });
+  it.each(["", "open", "closed"])(
+    "a same-origin frame inserted just before the press (shadow root: %s) never takes it: 0/40 reach Delete",
+    async (shadow) => {
+      const { s, executor } = await setup();
+      const attempt = async (delay: number) => {
+        await s.goto(`${SITE}/widget.html?cover=${delay}&shadow=${shadow}`, signal);
+        await s.page.mouse.move(600, 500); // off Cancel, so the executor's move enters it
+        const run = await executor.run([click(at)], signal, cancelGate(s));
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        const gap = await s.page.evaluate(() => (window as { __gap?: number }).__gap);
+        return { run, reached: await clicked(s), gap };
+      };
+      // Aim the insertion at the window between the executor's checks and its press: first
+      // measure how long the pointer rests on Cancel before the press, here (no frame comes).
+      const gaps: number[] = [];
+      for (let i = 0; i < 5; i++) gaps.push((await attempt(60_000)).gap ?? 0);
+      const gap = gaps.sort((a, b) => a - b)[2]!;
+      // The band where a frame lands after the checks but before the press is narrow and sits
+      // late in the gap on a slow link (the slot), earlier on a fast one: cover both.
+      const fractions = [0.5, 0.6, 0.7, 0.8, 0.9, 0.93, 0.95, 0.96, 0.97, 0.98];
+      const hits = { cancel: 0, delete: 0, refused: 0 };
+      for (let i = 0; i < 40; i++) {
+        const { run, reached } = await attempt(Math.round(gap * fractions[i % fractions.length]!));
+        if (run.notes.includes(TARGET_MOVED_REFUSAL)) hits.refused += 1;
+        if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+      }
+      console.info(JSON.stringify({ metric: "inserted_frame_clicks", shadow, gap, ...hits }));
+      expect(hits.delete).toBe(0);
+    },
+  );
 
   it.each([15, 4])(
     "a page with more documents than the guard arms refuses the click: 0/60 reach Delete (swap every %i ms)",
@@ -633,21 +638,26 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     },
   );
 
-  it("on a page with more documents than the guard arms, the next click needs a person, then runs", async () => {
-    const { s, executor } = await setup("/widget.html?frames=70");
-    const { target } = await hitTest(s, at);
-    expect(await executor.execute(click(at), signal, { target, personApproved: false })).toBe(
-      UNGUARDED_CLICK_REFUSAL,
-    );
-    expect(await clicked(s)).toBeUndefined();
-    // The loop's next classification is uninspectable, so the policy asks a person (R29-1)...
-    const next = markUnguarded(s, (await hitTest(s, at)).target);
-    expect(next?.opaqueFrame).toBe(true);
-    // ...and once a person approved it, it runs.
-    expect(
-      await executor.execute(click(at), signal, { target: next, personApproved: true }),
-    ).toBeNull();
-    expect(await clicked(s)).toBe("cancel");
+  it("on a page with more documents than the guard arms, even an approved click is not run: the user is asked to take over (0/60)", async () => {
+    const { s, executor } = await setup("/widget.html?frames=70&swap=15");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const hits = { cancel: 0, delete: 0, handedOver: 0 };
+    for (let i = 0; i < 60; i++) {
+      // A person approved Cancel (the loop's gate binds the approval to that element).
+      const gate = async () => {
+        const target = markUnguarded(s, (await hitTest(s, at)).target);
+        return target?.label === "Cancel" ? { target, personApproved: true } : false;
+      };
+      const run = await executor.run([click(at)], signal, gate);
+      if (run.handOver === PAGE_TOO_COMPLEX && run.notes.includes(PAGE_TOO_COMPLEX_REFUSAL))
+        hits.handedOver += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const reached = await clicked(s);
+      if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+    }
+    console.info(JSON.stringify({ metric: "many_documents_approved_clicks", ...hits }));
+    expect(hits).toEqual({ cancel: 0, delete: 0, handedOver: expect.any(Number) });
+    expect(hits.handedOver).toBeGreaterThan(0);
   });
 
   it("ordinary pages still click normally: a form, a link, an SPA and a page with a few frames", async () => {
@@ -664,7 +674,7 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
         target: (await hitTest(s, at)).target,
         personApproved: false,
       }));
-      expect(run).toEqual({ executed: 1, notes: [] });
+      expect(run).toEqual({ executed: 1, notes: [], handOver: null });
     };
     // interactive.html (one frame): a button, a form's submit button, the frame's button, a link.
     await gatedClick(s.page.locator("#inc"));

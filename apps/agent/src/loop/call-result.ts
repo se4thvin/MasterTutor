@@ -27,4 +27,5 @@ export function notRun(call: PendingCall, text: string): CallResult {
     : { kind: "function", output: JSON.stringify({ error: "not_run", detail: text }) };
 }
 
+export const HANDED_OVER = "Not run: the user was asked to take over this page.";
 export const OTP_PENDING = "Not run: the run is waiting for a one-time code from the user.";

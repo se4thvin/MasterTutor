@@ -1266,6 +1266,21 @@ describe("RunLoop (spec §5.3)", () => {
     });
   });
 
+  it("waits for a takeover when the executor hands the page to the user, and runs nothing after (breaker fix 2)", async () => {
+    const twoCalls: MockTurn = {
+      outputs: [
+        { type: "computer", actions: [{ type: "click", x: 10, y: 20, button: "left" }] },
+        { type: "computer", actions: [{ type: "click", x: 30, y: 40, button: "left" }] },
+      ],
+    };
+    const { run, browser, loop } = await setup([twoCalls, done()]);
+    browser.handOverOn = (action) =>
+      action.type === "click" && action.x === 10 ? "Too many frames: please take over." : null;
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "takeover" });
+    expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "takeover" });
+    expect(browser.executed).toEqual([]);
+  });
+
   describe("one-time code and CAPTCHA waits (M6, M7)", () => {
     const fillOtp: MockTurn = {
       outputs: [

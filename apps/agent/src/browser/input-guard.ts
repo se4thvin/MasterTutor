@@ -14,14 +14,20 @@ const MAX_DOCUMENTS = 64;
  *   mid-typing into another document (a frame's password field) is never delivered.
  * - A click: pointer events are cancelled unless they reach the element the hit test classified
  *   (kept by the scan), so a page that moves or swaps elements between the check and the press
- *   never gets an unchecked click (TOCTOU), whichever document the press lands in. A frame an
- *   armed document adds meanwhile takes no pointer input until disarm (its document is not armed).
+ *   never gets an unchecked click (TOCTOU), whichever document the press lands in. A document
+ *   created meanwhile (a frame added anywhere, shadow roots included, or navigated) cancels every
+ *   pointer event from its first moment until disarm: none was classified, so none may be pressed.
  * Armed only around the executor's own input, so a person's input and credential filling (B3) are
  * unaffected.
  */
 export interface InputGuard {
   /** False when some document did not arm within the budget, or there were too many: fail closed. */
   readonly complete: boolean;
+  /**
+   * True when the page has more documents than a guard covers (MAX_DOCUMENTS): nothing was
+   * armed, and no approval can make a click there safe.
+   */
+  readonly tooMany: boolean;
   /** True once a document was added or replaced since arming: it is not armed, so stop typing. */
   readonly changed: boolean;
   /**
@@ -85,8 +91,6 @@ export function armScript(
     slot.__mtCancelled = true;
   };
   const listeners: Array<[string, (event: Event) => void]> = [];
-  let observer: MutationObserver | null = null;
-  const held = new Map<HTMLElement, [string, string]>();
   let home = false;
   if (arg.click !== null) {
     const kept = slot.__mtFound?.key === arg.click ? slot.__mtFound.el : null;
@@ -94,41 +98,6 @@ export function armScript(
       if (!kept || !event.composedPath().includes(kept)) cancel(event);
     };
     for (const type of arg.pointerEvents) listeners.push([type, onPointer]);
-    // A frame this document adds (or points at another document) while armed holds a document
-    // no arm reached: until disarm it takes no pointer input, so a press there lands in this
-    // document and is cancelled. The observer runs as a microtask right after the page's script,
-    // before any input is handled; a page rewriting the frame's style is overridden again.
-    const hold = (el: Element) => {
-      if (!(el instanceof HTMLElement) || !arg.owners.includes(el.tagName)) return;
-      const style = el.style;
-      if (!held.has(el))
-        held.set(el, [
-          style.getPropertyValue("pointer-events"),
-          style.getPropertyPriority("pointer-events"),
-        ]);
-      if (
-        style.getPropertyValue("pointer-events") !== "none" ||
-        style.getPropertyPriority("pointer-events") !== "important"
-      )
-        style.setProperty("pointer-events", "none", "important");
-    };
-    const owners = arg.owners.join(",");
-    observer = new MutationObserver((records) => {
-      for (const record of records) {
-        const target = record.target as HTMLElement;
-        if (record.attributeName === "style") {
-          if (held.has(target)) hold(target);
-        } else if (record.attributeName) hold(target);
-        for (const node of record.addedNodes)
-          if (node instanceof Element)
-            for (const el of [node, ...node.querySelectorAll(owners)]) hold(el);
-      }
-    });
-    observer.observe(document, {
-      childList: true,
-      subtree: true,
-      attributeFilter: ["src", "srcdoc", "data", "style"],
-    });
   } else {
     const active = document.activeElement;
     home =
@@ -151,8 +120,6 @@ export function armScript(
   slot.__mtGuard = {
     remove() {
       for (const [type, listener] of listeners) removeEventListener(type, listener, true);
-      observer?.disconnect();
-      for (const [el, before] of held) el.style.setProperty("pointer-events", ...before);
     },
   };
   return home;
@@ -167,6 +134,43 @@ export function focusMovedScript(owners: string[]): boolean {
   return idle && slot.__mtStart !== active;
 }
 
+/** The world the new-document click guard runs in (apart from the page helpers' world). */
+const NEW_DOCUMENT_WORLD = "mastertutor-click-guard";
+/** A document the guard never reached (its disarm lost) stops cancelling after this long. */
+const NEW_DOCUMENT_GUARD_MS = 2_000;
+
+/**
+ * Runs first in every document created while a click is armed (CDP new-document script, so a
+ * frame inserted anywhere, closed shadow roots included, is covered before any input reaches
+ * it): cancels every pointer event until disarmed. A document.open() rewrite that erases the
+ * listeners puts them back before the page's task ends.
+ */
+export function newDocumentScript(arg: { pointerEvents: string[]; lifetimeMs: number }): void {
+  const until = Date.now() + arg.lifetimeMs;
+  const state = { active: true, cancelled: false };
+  (globalThis as unknown as { __mtNewDoc?: typeof state }).__mtNewDoc = state;
+  const cancel = (event: Event) => {
+    if (!state.active || Date.now() > until) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    state.cancelled = true;
+  };
+  const listen = () => {
+    for (const type of arg.pointerEvents) addEventListener(type, cancel, true);
+  };
+  listen();
+  new MutationObserver(listen).observe(document, { childList: true });
+}
+
+/** Disarms the new-document guard here; returns whether it cancelled any input. */
+export function newDocumentDisarmScript(): boolean {
+  const state = (globalThis as unknown as { __mtNewDoc?: { active: boolean; cancelled: boolean } })
+    .__mtNewDoc;
+  if (!state) return false;
+  state.active = false;
+  return state.cancelled;
+}
+
 /** Removes the guard; returns whether it cancelled any input. */
 export function disarmScript(): boolean {
   const slot = globalThis as unknown as { __mtGuard?: { remove(): void }; __mtCancelled?: boolean };
@@ -177,6 +181,7 @@ export function disarmScript(): boolean {
 
 type Doc = { worlds: IsolatedWorlds; frameId: string };
 const FRAME_EVENTS = ["Page.frameAttached", "Page.frameNavigated"] as const;
+type FrameEvent = { frameId: string } | { frame: { id: string } };
 
 /**
  * Arms the guard in every document of the page (the top session's frames and each out-of-process
@@ -207,8 +212,12 @@ async function armGuard(
   signal.throwIfAborted();
   let settled = false;
   let changed = false;
-  const onChange = () => (changed = true);
-  const watched: IsolatedWorlds[] = [];
+  let tooMany = false;
+  // Sessions watched for frames added or replaced (Page events, which see every frame, shadow
+  // roots included), the documents created meanwhile, and the new-document scripts registered.
+  const watched: Array<{ worlds: IsolatedWorlds; onFrame: (event: FrameEvent) => void }> = [];
+  const created: Array<{ cdp: IsolatedWorlds["cdp"]; frameId: string }> = [];
+  const scripts: Array<{ cdp: IsolatedWorlds["cdp"]; identifier: string }> = [];
   const sent: Doc[] = [];
   const answered = new Set<Doc>();
   let home: Doc | undefined;
@@ -228,8 +237,21 @@ async function armGuard(
   // Every document of one CDP session (its frame tree), watched for frames added or replaced.
   const armSession = async (worlds: IsolatedWorlds): Promise<void> => {
     if (settled) return;
-    for (const event of FRAME_EVENTS) worlds.cdp.on(event, onChange);
-    watched.push(worlds);
+    const onFrame = (event: FrameEvent) => {
+      changed = true;
+      const frameId = "frameId" in event ? event.frameId : event.frame.id;
+      if (click !== null) created.push({ cdp: worlds.cdp, frameId });
+    };
+    for (const event of FRAME_EVENTS) worlds.cdp.on(event, onFrame);
+    watched.push({ worlds, onFrame });
+    if (click !== null) {
+      const { identifier } = await worlds.cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `(${newDocumentScript.toString()})(${JSON.stringify({ pointerEvents: POINTER_EVENTS, lifetimeMs: NEW_DOCUMENT_GUARD_MS })})`,
+        worldName: NEW_DOCUMENT_WORLD,
+      });
+      scripts.push({ cdp: worlds.cdp, identifier });
+      if (settled) void removeScripts();
+    }
     const { frameTree } = await worlds.cdp.send("Page.getFrameTree");
     const docs: Doc[] = [];
     const walk = (tree: typeof frameTree) => {
@@ -238,7 +260,10 @@ async function armGuard(
     };
     walk(frameTree);
     if (settled) return;
-    if (sent.length + docs.length > MAX_DOCUMENTS) throw new Error("too many documents");
+    if (sent.length + docs.length > MAX_DOCUMENTS) {
+      tooMany = true;
+      throw new Error("too many documents");
+    }
     await Promise.all(docs.map((doc) => send(doc, false)));
   };
   const armAll = async (): Promise<boolean> => {
@@ -252,9 +277,40 @@ async function armGuard(
     return true;
   };
 
+  const removeScripts = () =>
+    Promise.all(
+      scripts
+        .splice(0)
+        .map(({ cdp, identifier }) =>
+          cdp
+            .send("Page.removeScriptToEvaluateOnNewDocument", { identifier })
+            .catch(() => undefined),
+        ),
+    );
+  // Documents created while armed: once no new one can get the script, disarm each of them.
+  const disarmCreated = async (): Promise<boolean[]> => {
+    await removeScripts();
+    for (const { worlds, onFrame } of watched)
+      for (const event of FRAME_EVENTS) worlds.cdp.off(event, onFrame);
+    return Promise.all(
+      created.map(({ cdp, frameId }) =>
+        cdp
+          .send("Page.createIsolatedWorld", { frameId, worldName: NEW_DOCUMENT_WORLD })
+          .then(({ executionContextId }) =>
+            cdp.send("Runtime.evaluate", {
+              expression: `(${newDocumentDisarmScript.toString()})()`,
+              contextId: executionContextId,
+              returnByValue: true,
+            }),
+          )
+          .then(({ result }) => result.value === true)
+          .catch(() => false),
+      ),
+    );
+  };
+
   const disarmAll = async (): Promise<boolean> => {
     settled = true;
-    for (const worlds of watched) for (const event of FRAME_EVENTS) worlds.cdp.off(event, onChange);
     // Sent in order after each arm on the same session. Only documents that answered are awaited,
     // and never past the budget.
     const done = sent.map((doc) =>
@@ -262,7 +318,7 @@ async function armGuard(
     );
     const waited = done.filter((_, index) => answered.has(sent[index]!));
     const cancelled = await Promise.race([
-      Promise.all(waited),
+      Promise.all([...waited, disarmCreated().then((results) => results.includes(true))]),
       timeout(ARM_BUDGET_MS).then(() => [false]),
     ]);
     return cancelled.includes(true);
@@ -292,14 +348,15 @@ async function armGuard(
   let disarming: Promise<boolean> | null = null;
   return {
     complete,
+    tooMany,
     get changed() {
       return changed;
     },
     changedNow: async () => {
       // Sessions that armed (a session that never answered is why the guard is incomplete).
-      const armed = watched.filter((worlds) =>
-        sent.some((doc) => doc.worlds === worlds && answered.has(doc)),
-      );
+      const armed = watched
+        .map(({ worlds }) => worlds)
+        .filter((worlds) => sent.some((doc) => doc.worlds === worlds && answered.has(doc)));
       const flushed = await Promise.race([
         Promise.all(armed.map((worlds) => worlds.evaluate(() => 0, null))).then(
           () => true,

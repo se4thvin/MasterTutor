@@ -12,6 +12,8 @@ import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
 export interface ComputerRun {
   executed: number;
   notes: string[];
+  /** Set when only the user can go on (the run waits for a takeover), with the reason to show. */
+  handOver: string | null;
 }
 
 /** The gate's classification of an action it lets run. */
@@ -34,6 +36,11 @@ export const TARGET_MOVED_REFUSAL =
   "Nothing was clicked: what is under the pointer changed after the click was checked. Look at the screen and decide again.";
 export const UNGUARDED_CLICK_REFUSAL =
   "Nothing was clicked: the page's embedded frames could not all be guarded against the click landing somewhere else (one is not responding, or there are too many). Clicking on this page needs the user's approval: ask for it again as its own step.";
+/** Why the run waits for the user when a page has more documents than a click can be guarded in. */
+export const PAGE_TOO_COMPLEX =
+  "This page has too many embedded frames for the agent to click on it safely. Please take over.";
+export const PAGE_TOO_COMPLEX_REFUSAL =
+  "Nothing was clicked: this page has too many embedded frames for a click to be guarded, even with approval. The user has been asked to take over.";
 export const SECRET_FIELD_REFUSAL =
   "Refused: typing into password, one-time-code or PIN fields is not allowed. Use fill_credential with the vault alias and the field's element ref.";
 const TYPE_CHUNK = 24;
@@ -84,6 +91,8 @@ export class ComputerExecutor {
   readonly #waitActionMs: number;
   /** Set when the current action ended in a refusal or no-op note (the batch must stop). */
   #refused = false;
+  /** Set when an action found the page beyond what the agent can act on safely. */
+  #handOver: string | null = null;
 
   constructor(session: BrowserSession, options: { clock: Clock; waitActionMs: number }) {
     this.#session = session;
@@ -98,6 +107,7 @@ export class ComputerExecutor {
   ): Promise<ComputerRun> {
     const notes: string[] = [];
     let executed = 0;
+    this.#handOver = null;
     for (const [index, action] of actions.entries()) {
       this.#session.guard.assertAgent(signal);
       const verdict = await gate(action);
@@ -129,7 +139,7 @@ export class ComputerExecutor {
         break;
       }
     }
-    return { executed, notes };
+    return { executed, notes, handOver: this.#handOver };
   }
 
   async toPage(x: number, y: number): Promise<{ x: number; y: number } | null> {
@@ -215,8 +225,14 @@ export class ComputerExecutor {
         : null;
     let cancelled = false;
     try {
-      // A document the guard could not arm would take an unchecked press: fail closed, as typing
-      // does (approval needed), unless a person approved this very element.
+      // Past the document cap nothing is armed, so not even an approved click is safe: the user
+      // takes over.
+      if (guard?.tooMany) {
+        this.#handOver = PAGE_TOO_COMPLEX;
+        return this.#refuse(PAGE_TOO_COMPLEX_REFUSAL);
+      }
+      // A document the guard could not arm (a hung frame) would take an unchecked press: fail
+      // closed, as typing does (approval needed), unless a person approved this very element.
       if (guard && !guard.complete && verdict?.personApproved !== true)
         return this.#refuse(UNGUARDED_CLICK_REFUSAL);
       this.#session.guard.assertAgent(signal);
