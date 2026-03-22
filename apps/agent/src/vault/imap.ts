@@ -25,7 +25,8 @@ const MAX_TEXT_CHARS = 64 * 1024;
  * unclosed tag drops the rest.
  */
 function stripHtml(body: string): string {
-  const lower = body.toLowerCase();
+  // ASCII only, so every index into `lower` is the same index into `body` (N4).
+  const lower = body.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
   let out = "";
   let at = 0;
   while (at < body.length && out.length < MAX_TEXT_CHARS) {
@@ -79,8 +80,6 @@ export function extractOtpCode(body: string, isHtml: boolean): string | null {
 export interface ImapCodeRequest {
   config: ImapConfig;
   password: string;
-  /** The run reading: a message is used at most once per run, whichever alias watches the inbox. */
-  runId: string;
   /**
    * Only mail that arrived after this sign-in attempt started counts (no stale codes from earlier
    * attempts). Senders are matched on the From header, which mail can forge: the code still has
@@ -89,8 +88,11 @@ export interface ImapCodeRequest {
   notBefore: Date;
   timeoutMs: number;
   signal: AbortSignal;
-  /** Messages already used (Review Focus 5), keyed by run, mailbox and uid; mutated on success. */
-  used: Set<string>;
+  /**
+   * Messages already used (Review Focus 5) → when: keyed by mailbox and uid only, so no run or
+   * alias can take a code another one used. Mutated on success.
+   */
+  used: Map<string, number>;
   testMode: boolean;
   /** Checked before every inbox look (S7): a code the user typed into CodeSlots wins at once. */
   codeBox(): Promise<string | null>;
@@ -171,7 +173,7 @@ async function newestCode(
   const validity = client.mailbox ? String(client.mailbox.uidValidity) : "0";
   const mailbox = `${request.config.host}:${request.config.port}:${request.config.user}`;
   for (const uid of [...uids].sort((a, b) => b - a)) {
-    const key = `${request.runId}|${mailbox}|${validity}|${uid}`;
+    const key = `${mailbox}|${validity}|${uid}`;
     // A message read once without a code is not read again on the next recheck (I2).
     if (request.used.has(key) || parsed.has(key)) continue;
     parsed.add(key);
@@ -189,7 +191,7 @@ async function newestCode(
     if (!part) continue;
     const code = extractOtpCode(await readText(client, uid, part), plain === null);
     if (code) {
-      request.used.add(key);
+      request.used.set(key, Date.now());
       return code;
     }
   }

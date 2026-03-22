@@ -52,13 +52,10 @@ const { extractOtpCode, waitForImapCode } = await import("./imap.ts");
 const request = (overrides: Record<string, unknown> = {}) => ({
   config: { host: "localhost", port: 3143, user: "otp", senderFilter: "no-reply@fixtures.test" },
   password: "pw",
-  itemId: "item-1",
-  mailbox: "localhost:3143:otp",
-  runId: "run-1",
   notBefore: new Date(0),
   timeoutMs: 300,
   signal: new AbortController().signal,
-  used: new Set<string>(),
+  used: new Map<string, number>(),
   testMode: true,
   codeBox: async () => null,
   ...overrides,
@@ -84,6 +81,12 @@ describe("extractOtpCode on hostile mail (review I2)", () => {
     expect(extractOtpCode("<p>Your code is 123&#8203;456</p>", true)).toBe("123456");
     expect(extractOtpCode("<p>Your code is 482&#x200B;913</p>", true)).toBe("482913");
   });
+
+  it("finds <style> and <script> where they are, even after text that grows when lowercased (N4)", () => {
+    // "İ".toLowerCase() is two characters: indexes into a lowercased copy drift past it.
+    const body = `${"İ".repeat(16)}<style>a</style><p>Your code is 482913</p>`;
+    expect(extractOtpCode(body, true)).toBe("482913");
+  });
 });
 
 describe("waitForImapCode connection hygiene", () => {
@@ -104,13 +107,14 @@ describe("waitForImapCode connection hygiene", () => {
     expect(server.calls.filter((call) => call === "download:5")).toHaveLength(1);
   });
 
-  it("lets one run use a message once, whichever alias watches that inbox (review: per run)", async () => {
+  it("uses a message once, whichever run or alias watches that inbox (N3)", async () => {
     server.messages = [{ uid: 9, body: "Your code is 482913" }];
-    const used = new Set<string>();
-    expect(await waitForImapCode(request({ used, itemId: "a" }) as never)).toEqual({
+    const used = new Map<string, number>();
+    expect(await waitForImapCode(request({ used }) as never)).toEqual({
       code: "482913",
       source: "imap",
     });
-    expect(await waitForImapCode(request({ used, itemId: "b" }) as never)).toBeNull();
+    expect(await waitForImapCode(request({ used }) as never)).toBeNull();
+    expect([...used.keys()]).toEqual(["localhost:3143:otp|7|9"]);
   });
 });

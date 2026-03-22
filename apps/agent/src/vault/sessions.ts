@@ -33,10 +33,11 @@ interface Use {
   loggedOut: boolean;
   /**
    * The last sealed state: its sha-256 and the row's updated_at. An unchanged state is not sealed
-   * again, but only while the row still carries that updated_at: a save whose act rolled back
-   * left no such row, so it is sealed again (review).
+   * again once the row is seen carrying that updated_at: a save whose act rolled back left no such
+   * row, so it is sealed again (review). After that one check (`committed`) an unchanged state
+   * costs nothing (N6).
    */
-  saved: { digest: string; at: number } | null;
+  saved: { digest: string; at: number; committed: boolean } | null;
 }
 
 function cookieMatchesHost(domain: string, host: string): boolean {
@@ -139,8 +140,12 @@ export function createVaultSessionStore(
       for (const use of candidates) {
         const where = { workspaceId: run.workspaceId, alias: use.alias, origin: here };
         if (use.saved?.digest === digest) {
+          if (use.saved.committed) continue;
           const at = await browserSessionUpdatedAt(tx, where);
-          if (at?.getTime() === use.saved.at) continue;
+          if (at?.getTime() === use.saved.at) {
+            use.saved.committed = true;
+            continue;
+          }
         }
         // Checked on every change, never cached: a grant revoked mid-run stops sealing (review).
         if (!(await hasHumanVaultGrant(tx, where))) continue;
@@ -150,7 +155,7 @@ export function createVaultSessionStore(
           text,
         );
         const { updatedAt } = await upsertBrowserSession(tx, { ...where, sealed });
-        use.saved = { digest, at: updatedAt.getTime() };
+        use.saved = { digest, at: updatedAt.getTime(), committed: false };
       }
     },
 

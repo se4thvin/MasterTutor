@@ -225,6 +225,24 @@ describe("sealed per-alias sessions (spec §5.6)", () => {
     expect((await sessionRows()).map((row) => row.alias)).toEqual(["site"]);
   });
 
+  it("costs no query on an unchanged state once its save is known committed (N6)", async () => {
+    await env.owner.sql`delete from browser_sessions`;
+    const b = await browser();
+    const own = await newRun();
+    const store = await signIn(b, "site", own.id);
+    await b.page.click("#submit");
+    await b.page.waitForURL(`${login}/account`);
+    const state = await collectStorageState(b.session);
+    await saveState(store, own, state); // seals
+    await saveState(store, own, state); // sees the sealed row committed
+    const untouchable = new Proxy({} as Parameters<typeof store.save>[0], {
+      get: () => {
+        throw new Error("the act's hot path touched the database");
+      },
+    });
+    await expect(store.save(untouchable, own, state)).resolves.toBeUndefined();
+  });
+
   it("restores one identity per origin, the most recently saved (review)", async () => {
     await env.owner.sql`delete from browser_sessions`;
     for (const alias of ["older", "newer"]) {
