@@ -523,9 +523,9 @@ export async function insertVaultGrant(
 export async function upsertBrowserSession(
   db: DbExecutor,
   input: { workspaceId: string; alias: string; origin: string; sealed: Uint8Array },
-): Promise<void> {
+): Promise<{ updatedAt: Date }> {
   const sealedState = Buffer.from(input.sealed);
-  await db
+  const [row] = await db
     .insert(browserSessions)
     .values({
       workspaceId: input.workspaceId,
@@ -536,7 +536,29 @@ export async function upsertBrowserSession(
     .onConflictDoUpdate({
       target: [browserSessions.workspaceId, browserSessions.alias, browserSessions.origin],
       set: { sealedState, updatedAt: sql`now()` },
-    });
+    })
+    .returning({ updatedAt: browserSessions.updatedAt });
+  if (!row) throw new Error("browser session upsert returned nothing");
+  return row;
+}
+
+/** When this alias's session on this origin was last sealed, or null when none is stored. */
+export async function browserSessionUpdatedAt(
+  db: DbExecutor,
+  input: { workspaceId: string; alias: string; origin: string },
+): Promise<Date | null> {
+  const [row] = await db
+    .select({ updatedAt: browserSessions.updatedAt })
+    .from(browserSessions)
+    .where(
+      and(
+        eq(browserSessions.workspaceId, input.workspaceId),
+        eq(browserSessions.alias, input.alias),
+        eq(browserSessions.origin, input.origin),
+      ),
+    )
+    .limit(1);
+  return row?.updatedAt ?? null;
 }
 
 /**
@@ -547,37 +569,42 @@ export async function loadBrowserSessions(
   db: DbExecutor,
   workspaceId: string,
   origins: readonly string[],
-): Promise<{ alias: string; origin: string; sealed: Uint8Array }[]> {
+): Promise<{ alias: string; origin: string; sealed: Uint8Array; updatedAt: Date }[]> {
   if (origins.length === 0) return [];
-  return db
-    .select({
-      alias: browserSessions.alias,
-      origin: browserSessions.origin,
-      sealed: browserSessions.sealedState,
-    })
-    .from(browserSessions)
-    .innerJoin(
-      vaultItems,
-      and(
-        eq(vaultItems.workspaceId, browserSessions.workspaceId),
-        eq(vaultItems.alias, browserSessions.alias),
-        eq(vaultItems.origin, browserSessions.origin),
-      ),
-    )
-    .innerJoin(
-      vaultGrants,
-      and(
-        eq(vaultGrants.itemId, vaultItems.id),
-        eq(vaultGrants.origin, browserSessions.origin),
-        ne(vaultGrants.approvedBy, POLICY_DECIDER),
-      ),
-    )
-    .where(
-      and(
-        eq(browserSessions.workspaceId, workspaceId),
-        inArray(browserSessions.origin, [...origins]),
-      ),
-    );
+  return (
+    db
+      .select({
+        alias: browserSessions.alias,
+        origin: browserSessions.origin,
+        sealed: browserSessions.sealedState,
+        updatedAt: browserSessions.updatedAt,
+      })
+      .from(browserSessions)
+      .innerJoin(
+        vaultItems,
+        and(
+          eq(vaultItems.workspaceId, browserSessions.workspaceId),
+          eq(vaultItems.alias, browserSessions.alias),
+          eq(vaultItems.origin, browserSessions.origin),
+        ),
+      )
+      .innerJoin(
+        vaultGrants,
+        and(
+          eq(vaultGrants.itemId, vaultItems.id),
+          eq(vaultGrants.origin, browserSessions.origin),
+          ne(vaultGrants.approvedBy, POLICY_DECIDER),
+        ),
+      )
+      .where(
+        and(
+          eq(browserSessions.workspaceId, workspaceId),
+          inArray(browserSessions.origin, [...origins]),
+        ),
+      )
+      // Newest first, so a caller restoring one identity per origin is deterministic.
+      .orderBy(browserSessions.origin, desc(browserSessions.updatedAt), browserSessions.alias)
+  );
 }
 
 /** True when a person (not the auto-mode policy) granted this alias on this origin. */

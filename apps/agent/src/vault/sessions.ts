@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { toOrigin } from "@mastertutor/contracts";
 import {
   appendVaultAudit,
+  browserSessionUpdatedAt,
   deleteBrowserSessions,
   hasHumanVaultGrant,
   listRunCredentialUses,
@@ -30,10 +31,12 @@ interface Use {
   alias: string;
   origin: string;
   loggedOut: boolean;
-  /** Cached only once true: a grant appears only through a human approval, which re-notes the login. */
-  granted: boolean;
-  /** sha-256 of the last sealed state, so unchanged state is not sealed again after every act. */
-  savedDigest: string | null;
+  /**
+   * The last sealed state: its sha-256 and the row's updated_at. An unchanged state is not sealed
+   * again, but only while the row still carries that updated_at: a save whose act rolled back
+   * left no such row, so it is sealed again (review).
+   */
+  saved: { digest: string; at: number } | null;
 }
 
 function cookieMatchesHost(domain: string, host: string): boolean {
@@ -63,8 +66,7 @@ export function createVaultSessionStore(
     alias,
     origin,
     loggedOut: false,
-    granted: false,
-    savedDigest: null,
+    saved: null,
   });
   /** The aliases this run signed in with; recovered from the audit log after a restart. */
   async function usesOf(db: DbExecutor, runId: string): Promise<Map<string, Use>> {
@@ -87,7 +89,10 @@ export function createVaultSessionStore(
     async load(run) {
       const rows = await loadBrowserSessions(deps.db, run.workspaceId, run.allowedOrigins);
       const merged: BrowserStorageState = { cookies: [], origins: [] };
+      const restored = new Set<string>();
       for (const row of rows) {
+        // One identity per origin: the most recently saved (rows come newest first).
+        if (restored.has(row.origin)) continue;
         try {
           const state = await withOpenedText(
             deps.keys,
@@ -97,6 +102,11 @@ export function createVaultSessionStore(
           );
           merged.cookies.push(...state.cookies);
           merged.origins.push(...state.origins);
+          restored.add(row.origin);
+          // The run now holds this alias's session: a logout click must delete it too (review).
+          const uses = runState(run.id).uses;
+          const key = keyOf(row.alias, row.origin);
+          if (!uses.has(key)) uses.set(key, fresh(row.alias, row.origin));
         } catch (error) {
           deps.log.warn(
             { alias: row.alias, origin: row.origin, reason: (error as Error).name },
@@ -127,25 +137,20 @@ export function createVaultSessionStore(
       }
       const digest = createHash("sha256").update(text).digest("hex");
       for (const use of candidates) {
-        if (use.savedDigest === digest) continue;
-        use.granted ||= await hasHumanVaultGrant(tx, {
-          workspaceId: run.workspaceId,
-          alias: use.alias,
-          origin: here,
-        });
-        if (!use.granted) continue;
+        const where = { workspaceId: run.workspaceId, alias: use.alias, origin: here };
+        if (use.saved?.digest === digest) {
+          const at = await browserSessionUpdatedAt(tx, where);
+          if (at?.getTime() === use.saved.at) continue;
+        }
+        // Checked on every change, never cached: a grant revoked mid-run stops sealing (review).
+        if (!(await hasHumanVaultGrant(tx, where))) continue;
         const sealed = await sealValue(
           deps.keys.publicKey,
           { kind: "session", workspaceId: run.workspaceId, alias: use.alias, origin: here },
           text,
         );
-        await upsertBrowserSession(tx, {
-          workspaceId: run.workspaceId,
-          alias: use.alias,
-          origin: here,
-          sealed,
-        });
-        use.savedDigest = digest;
+        const { updatedAt } = await upsertBrowserSession(tx, { ...where, sealed });
+        use.saved = { digest, at: updatedAt.getTime() };
       }
     },
 
