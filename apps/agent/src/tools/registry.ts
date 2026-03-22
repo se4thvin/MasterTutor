@@ -11,6 +11,8 @@ export interface ToolRun {
   notesChanged: boolean;
   /** The tool asked the loop to wait for the user (spec §9: a one-time code), else null. */
   wait: "otp" | null;
+  /** The tool asked to hand the page to a person (the reason to show), else null. */
+  handOver: string | null;
 }
 
 function wroteBlocks(result: unknown): boolean {
@@ -36,7 +38,7 @@ export class ToolRegistry {
   async run(
     name: FunctionToolName,
     args: unknown,
-    ctx: Omit<ToolContext, "requestWait">,
+    ctx: Omit<ToolContext, "requestWait" | "requestHandOver">,
   ): Promise<ToolRun> {
     const tool = this.#tools.get(name);
     if (!tool)
@@ -44,23 +46,41 @@ export class ToolRegistry {
         output: JSON.stringify({ error: "tool_unavailable" }),
         notesChanged: false,
         wait: null,
+        handOver: null,
       };
     let wait: "otp" | null = null;
+    let handOver: string | null = null;
+    const requestHandOver = (reason: string) => {
+      handOver ??= reason.slice(0, 300);
+    };
     const requestWait = (reason: "otp") => {
       wait = reason;
     };
     try {
       // M13: a page can reflect a vault secret into its text; no tool result carries it out.
-      const result = redactDeep(await tool.invoke({ ...ctx, requestWait }, args), this.#mask);
+      const result = redactDeep(
+        await tool.invoke({ ...ctx, requestWait, requestHandOver }, args),
+        this.#mask,
+      );
       const text = JSON.stringify(result);
       const output = tool.untrusted ? wrapUntrusted(toOrigin(ctx.session.page.url()), text) : text;
-      return { output, notesChanged: wroteBlocks(result), wait };
+      return { output, notesChanged: wroteBlocks(result), wait, handOver };
     } catch (error) {
       if (interruptionOf(error) !== null || ctx.signal.aborted) throw error;
       if (error instanceof StaleRef)
-        return { output: JSON.stringify({ error: "stale_ref" }), notesChanged: false, wait: null };
+        return {
+          output: JSON.stringify({ error: "stale_ref" }),
+          notesChanged: false,
+          wait: null,
+          handOver: null,
+        };
       this.#log.warn({ runId: ctx.runId, tool: name, errorCode: "tool_failed" }, "tool failed");
-      return { output: JSON.stringify({ error: "tool_failed" }), notesChanged: false, wait: null };
+      return {
+        output: JSON.stringify({ error: "tool_failed" }),
+        notesChanged: false,
+        wait: null,
+        handOver: null,
+      };
     }
   }
 }

@@ -121,8 +121,9 @@ export function toolContext(input: {
   session: BrowserSession;
   approval?: CallApproval | null;
   signal?: AbortSignal;
-}): ToolContext & { waits: string[] } {
+}): ToolContext & { waits: string[]; handOvers: string[] } {
   const waits: string[] = [];
+  const handOvers: string[] = [];
   return {
     runId: input.runId,
     workspaceId: input.workspaceId,
@@ -133,6 +134,10 @@ export function toolContext(input: {
     requestWait: (reason) => {
       waits.push(reason);
     },
+    requestHandOver: (reason) => {
+      handOvers.push(reason);
+    },
     waits,
+    handOvers,
   };
 }

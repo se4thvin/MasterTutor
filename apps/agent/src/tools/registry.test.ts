@@ -13,7 +13,9 @@ import { ToolRegistry } from "./registry.ts";
 import { register, type CallApproval, type ToolContext } from "./types.ts";
 
 const log = createLogger({ service: "test", level: "silent" });
-const ctx = (signal = new AbortController().signal): Omit<ToolContext, "requestWait"> => ({
+const ctx = (
+  signal = new AbortController().signal,
+): Omit<ToolContext, "requestWait" | "requestHandOver"> => ({
   runId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
   workspaceId: "6f9619ff-8b86-4d01-b42d-00c04fc964ff",
   session: { page: { url: () => "https://a.com/x" } } as unknown as BrowserSession,
@@ -90,6 +92,7 @@ describe("ToolRegistry", () => {
       output: '{"error":"otp_unavailable"}',
       notesChanged: false,
       wait: "otp",
+      handOver: null,
     });
     expect(seen).toEqual(approval);
   });

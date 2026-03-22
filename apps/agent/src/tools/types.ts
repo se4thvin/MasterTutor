@@ -21,6 +21,11 @@ export interface ToolContext {
   approval: CallApproval | null;
   /** Asks the loop to enter waiting(reason) once this act step commits (spec §9 OTP). */
   requestWait(reason: "otp"): void;
+  /**
+   * Only a person can decide what this call needed (shown as the reason): once this act commits
+   * the run waits for a takeover and the rest of the turn does not run.
+   */
+  requestHandOver(reason: string): void;
 }
 
 /** Spec §3.3 `tools`: one function tool. `untrusted` results carry page-derived text. */

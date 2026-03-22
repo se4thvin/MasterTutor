@@ -1364,4 +1364,23 @@ describe("RunLoop (spec §5.3)", () => {
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
     });
   });
+
+  it("hands the page to a person when a tool says only a person can decide (needs_human)", async () => {
+    const twoCalls: MockTurn = {
+      outputs: [
+        {
+          type: "function",
+          name: "fill_credential",
+          args: { alias: "site", field: "password", target: "e1" },
+        },
+        { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+      ],
+    };
+    const { run, browser, loop } = await setup([twoCalls]);
+    browser.functionHandOver = (name) =>
+      name === "fill_credential" ? "This form sends the password to another site" : null;
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "takeover" });
+    expect(browser.functionRuns.map((call) => call.name)).toEqual(["fill_credential"]);
+    expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "takeover" });
+  });
 });
