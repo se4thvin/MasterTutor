@@ -41,7 +41,7 @@ describe("first-use approval and grants", () => {
     expect(
       await approvedBy(
         env.deps(),
-        { kind: "risky_click", decidedBy: env.userId },
+        { kind: "risky_click", decidedBy: env.userId, label: null, decidedAt: null },
         await item(),
         `${origin}/signin`,
       ),

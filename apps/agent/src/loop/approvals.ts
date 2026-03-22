@@ -23,6 +23,8 @@ export const ItemDecision = z.object({
   context: z.string().nullable().default(null),
   /** Who decided: the user's id, or POLICY_DECIDER. Null on rows written before this field. */
   decidedBy: z.string().nullable().default(null),
+  /** When it was decided (ms since the epoch); null on rows written before this field. */
+  decidedAt: z.number().nullable().default(null),
 });
 export type ItemDecision = z.infer<typeof ItemDecision>;
 
@@ -78,14 +80,29 @@ export async function insertApprovals(
 export async function loadApprovalDecision(
   db: Database,
   id: string,
-): Promise<{ status: ApprovalStatus; edit: ApprovalEdit | null; decidedBy: string | null } | null> {
+): Promise<{
+  status: ApprovalStatus;
+  edit: ApprovalEdit | null;
+  decidedBy: string | null;
+  decidedAt: Date | null;
+} | null> {
   const [row] = await db
-    .select({ status: approvals.status, edit: approvals.edit, decidedBy: approvals.decidedBy })
+    .select({
+      status: approvals.status,
+      edit: approvals.edit,
+      decidedBy: approvals.decidedBy,
+      decidedAt: approvals.decidedAt,
+    })
     .from(approvals)
     .where(eq(approvals.id, id));
   if (!row) return null;
   const edit = row.edit ? ApprovalEdit.safeParse(row.edit) : null;
-  return { status: row.status, edit: edit?.success ? edit.data : null, decidedBy: row.decidedBy };
+  return {
+    status: row.status,
+    edit: edit?.success ? edit.data : null,
+    decidedBy: row.decidedBy,
+    decidedAt: row.decidedAt,
+  };
 }
 
 export async function markApprovalSuperseded(tx: Tx, id: string): Promise<void> {

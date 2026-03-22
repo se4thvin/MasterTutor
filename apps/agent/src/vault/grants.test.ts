@@ -26,7 +26,12 @@ beforeEach(() => {
 describe("approvedBy never writes a grant the policy decided (review 8, R-E7)", () => {
   it("consults no grant at all for a page on another origin", async () => {
     db.getVaultGrantApprover.mockResolvedValueOnce("user-2");
-    const approval = { kind: "credential_first_use", decidedBy: "user-1" };
+    const approval = {
+      kind: "credential_first_use",
+      decidedBy: "user-1",
+      label: null,
+      decidedAt: null,
+    };
     expect(await approvedBy(deps, approval, item, "https://a.example.evil.test/")).toBeNull();
     expect(await approvedBy(deps, null, item, "https://b.example/")).toBeNull();
     expect(db.insertVaultGrant).not.toHaveBeenCalled();
@@ -34,13 +39,23 @@ describe("approvedBy never writes a grant the policy decided (review 8, R-E7)", 
   });
 
   it("lets a policy approval authorize this call only", async () => {
-    const approval = { kind: "credential_first_use", decidedBy: "policy" };
+    const approval = {
+      kind: "credential_first_use",
+      decidedBy: "policy",
+      label: null,
+      decidedAt: null,
+    };
     expect(await approvedBy(deps, approval, item, item.origin)).toBe("policy");
     expect(db.insertVaultGrant).not.toHaveBeenCalled();
   });
 
   it("turns a person's approval into a lasting grant", async () => {
-    const approval = { kind: "credential_first_use", decidedBy: "user-1" };
+    const approval = {
+      kind: "credential_first_use",
+      decidedBy: "user-1",
+      label: null,
+      decidedAt: null,
+    };
     expect(await approvedBy(deps, approval, item, item.origin)).toBe("user-1");
     expect(db.insertVaultGrant).toHaveBeenCalledWith(deps.db, {
       itemId: item.id,

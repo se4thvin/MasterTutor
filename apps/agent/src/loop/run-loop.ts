@@ -150,6 +150,9 @@ const POLICY_BLOCKED = "Blocked by this run's approval policy.";
 function riskOf(request: ApprovalRequest): { kind: string | null; label: string | null } {
   if (request.kind === "risky_click") return { kind: request.kind, label: request.label };
   if (request.kind === "form_submit") return { kind: request.kind, label: request.formSummary };
+  // The destination the card showed: the fill runs only while the form still posts there.
+  if (request.kind === "credential_first_use")
+    return { kind: request.kind, label: request.postsTo ?? null };
   return { kind: request.kind, label: null };
 }
 
@@ -264,7 +267,7 @@ export class RunLoop {
       case "decide":
         return this.#decide(signal);
       case "approve":
-        return this.#approve();
+        return this.#approve(signal);
       case "act":
         return this.#act(signal);
     }
@@ -636,16 +639,15 @@ export class RunLoop {
   /* --------------------------------- approve --------------------------------- */
 
   /** Every risky item of the unanswered calls, classified in code (spec §5.5). */
-  async #riskyItems(url: string): Promise<RiskyItem[]> {
+  async #riskyItems(url: string, signal: AbortSignal): Promise<RiskyItem[]> {
     const items: RiskyItem[] = [];
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
       if (call.kind === "function") {
-        const request = await this.#deps.hooks.functionApproval(
-          { name: call.name, args: call.args },
-          this.#run,
-          url,
-        );
+        // The tool asks against the page as it is now (e.g. where a sign-in form posts).
+        const request = isFunctionTool(call.name)
+          ? await this.#deps.browser.functionApproval(call.name, call.args, signal)
+          : null;
         if (request)
           items.push({
             item: functionItem(call.callId),
@@ -712,12 +714,12 @@ export class RunLoop {
    * Asks for (or decides by policy) one approval per risky item. In ask mode the run waits for the
    * first undecided item; after its decision the loop comes back here for the next one.
    */
-  async #approve(): Promise<StepOutcome> {
+  async #approve(signal: AbortSignal): Promise<StepOutcome> {
     for (const call of this.#calls) {
       if (call.invalid !== null && !this.#results.has(call.callId))
         this.#results.set(call.callId, notRun(call, `Invalid call: ${call.invalid}.`));
     }
-    const items = (await this.#riskyItems(this.#obs().url)).filter(
+    const items = (await this.#riskyItems(this.#obs().url, signal)).filter(
       (item) => !this.#decided.has(item.item) && !this.#unreachable(item),
     );
     if (items.length === 0) {
@@ -751,6 +753,7 @@ export class RunLoop {
         target: item.target,
         context: item.context,
         decidedBy: POLICY_DECIDER,
+        decidedAt: Date.now(),
       });
     }
     if (rows.length > 0) {
@@ -925,7 +928,12 @@ export class RunLoop {
     const decision = this.#decided.get(functionItem(call.callId));
     const approval: CallApproval | null =
       decision?.approved && decision.kind !== null && decision.decidedBy !== null
-        ? { kind: decision.kind, decidedBy: decision.decidedBy }
+        ? {
+            kind: decision.kind,
+            decidedBy: decision.decidedBy,
+            label: decision.label,
+            decidedAt: decision.decidedAt,
+          }
         : null;
     const run = await this.#deps.browser.runFunction(call.name, call.args, signal, approval);
     if (run.notesChanged) this.#notesChanged = true;
@@ -1177,6 +1185,7 @@ export class RunLoop {
         target: pending.target,
         context: pending.context,
         decidedBy: decision.decidedBy,
+        decidedAt: decision.decidedAt?.getTime() ?? Date.now(),
         approved: decision.status === "approved",
         note:
           decision.status === "approved"

@@ -23,6 +23,7 @@ export { ControlHeld, StaleRef } from "../runtime/errors.ts";
 export type { Log, Tx } from "../runtime/types.ts";
 export {
   register,
+  type ApprovalContext,
   type CallApproval,
   type RegisteredTool,
   type Tool,

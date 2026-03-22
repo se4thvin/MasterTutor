@@ -1,4 +1,9 @@
-import type { ComputerAction, FunctionToolName, ScrollPosition } from "@mastertutor/contracts";
+import type {
+  ApprovalRequest,
+  ComputerAction,
+  FunctionToolName,
+  ScrollPosition,
+} from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
@@ -33,6 +38,12 @@ export interface LoopBrowser {
     signal: AbortSignal,
     gate: ActionGate,
   ): Promise<ComputerRun>;
+  /** The approval a function call needs, asked of the tool against the page as it is now. */
+  functionApproval(
+    name: FunctionToolName,
+    args: unknown,
+    signal: AbortSignal,
+  ): Promise<ApprovalRequest | null>;
   runFunction(
     name: FunctionToolName,
     args: unknown,
