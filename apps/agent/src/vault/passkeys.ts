@@ -16,7 +16,7 @@ import type { CDPSession } from "playwright-core";
 import { z } from "zod";
 import type { VaultDeps } from "./context.ts";
 import { approvedBy, credentialApproval } from "./grants.ts";
-import type { BrowserSession, ToolContext } from "./runtime.ts";
+import type { ApprovalContext, BrowserSession, ToolContext } from "./runtime.ts";
 import { NOT_STORED, withItemSecret } from "./secrets.ts";
 
 /** The authenticator stays armed this long waiting for the site's ceremony. */
@@ -67,11 +67,8 @@ export interface PasskeyEnrolment {
 }
 
 export interface Passkeys {
-  approval(
-    run: { workspaceId: string },
-    url: string,
-    args: UsePasskeyArgs,
-  ): Promise<ApprovalRequest | null>;
+  /** use_passkey's approve phase: a first-use card for the page as it is now (N8). */
+  approval(ctx: ApprovalContext, args: UsePasskeyArgs): Promise<ApprovalRequest | null>;
   use(ctx: ToolContext, args: UsePasskeyArgs): Promise<UsePasskeyResult>;
   disarm(runId: string): Promise<void>;
   enrolment: PasskeyEnrolment;
@@ -215,9 +212,9 @@ export function createPasskeys(deps: VaultDeps, options: { armMs?: number } = {}
   return {
     enrolment,
     disarm,
-    async approval(run, url, args) {
-      const item = await findVaultItemByAlias(deps.db, run.workspaceId, args.alias);
-      return item ? credentialApproval(deps, url, item) : null;
+    async approval(ctx, args) {
+      const item = await findVaultItemByAlias(deps.db, ctx.workspaceId, args.alias);
+      return item ? credentialApproval(deps, ctx.session.page.url(), item) : null;
     },
     async use(ctx, args) {
       const item = await findVaultItemByAlias(deps.db, ctx.workspaceId, args.alias);

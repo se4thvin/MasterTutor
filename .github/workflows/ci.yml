@@ -43,9 +43,23 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Vault integration and security tests drive a real local Chromium.
+      # Vault integration tests drive a real local Chromium.
       - run: pnpm --filter @mastertutor/agent exec playwright-core install --with-deps chromium
       - run: pnpm test:int
+
+  security:
+    name: Security tests (spec §12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @mastertutor/agent exec playwright-core install --with-deps chromium
       - run: pnpm test:security
 
   agent-image:
