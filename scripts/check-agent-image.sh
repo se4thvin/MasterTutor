@@ -18,6 +18,12 @@ if ! offenders="$(docker run --rm --entrypoint node \
   echo "$offenders" >&2
   exit 1
 fi
+# The scanner ends every run with a sentinel line; without it the scan did not run (fail loudly).
+if ! grep -Eq '^scan-test-code: scanned [1-9][0-9]* files, 0 offenders$' <<<"$offenders"; then
+  echo "agent image check: the scanner did not report a scan" >&2
+  echo "$offenders" >&2
+  exit 1
+fi
 docker run --rm --entrypoint sh "$IMAGE" -c "test -f /app/apps/agent/src/main.ts" \
   || { echo "agent image lost its entry point" >&2; exit 1; }
 echo "ok - agent image carries no test code"
