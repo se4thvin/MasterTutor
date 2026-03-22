@@ -544,6 +544,38 @@ describe("fill_credential", () => {
     expect(await ask(d, "swap", "password", "#password")).toMatchObject({ postsTo: other });
   });
 
+  it("names every off-origin destination of the form, a submit button's formaction included (N7)", async () => {
+    await tb.page.goto(`${login}/offsite-split`);
+    const d = deps();
+    const both = [fx.origin("evil"), fx.origin("other")].sort().join(", ");
+    const card = await ask(d, "site", "password", "#password");
+    expect(card).toMatchObject({ postsTo: both });
+    const fill = async (postsTo: string) =>
+      fillCredential(d, ctx(humanApproval(env.userId, postsTo)), {
+        alias: "site",
+        field: "password",
+        target: await refs.ref("#password"),
+      });
+    // A card that named only the form's action never covers the button that posts elsewhere.
+    expect(await fill(fx.origin("other"))).toEqual({ error: "approval_required" });
+    expect(await tb.page.inputValue("#password")).toBe("");
+    expect(await fill(both)).toEqual({ ok: true });
+
+    // A submit button added after the approve phase, posting elsewhere, is refused too.
+    await tb.page.goto(`${login}/offsite-form`);
+    const shown = await ask(d, "site", "password", "#password");
+    expect(shown).toMatchObject({ postsTo: fx.origin("evil") });
+    await tb.page.evaluate((to) => {
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.setAttribute("formaction", `${to}/collect`);
+      button.textContent = "Continue";
+      document.querySelector("form")!.append(button);
+    }, fx.origin("other"));
+    expect(await fill(fx.origin("evil"))).toEqual({ error: "approval_required" });
+    expect(await tb.page.inputValue("#password")).toBe("");
+  });
+
   it("in auto mode hands the page to a person, naming where the form posts (needs_human)", async () => {
     await tb.page.goto(`${login}/offsite-form`);
     const auto = ctx(policyApproval(fx.origin("evil")));
