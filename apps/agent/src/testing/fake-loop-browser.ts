@@ -61,6 +61,9 @@ export class FakeLoopBrowser implements LoopBrowser {
   actionHook: ((action: ComputerAction) => void | Promise<void>) | null = null;
   /** True for an action the gate allowed but the executor still refuses when it presses. */
   dispatchHold: ((action: ComputerAction) => boolean) | null = null;
+  /** Download attempts the page made (drained by the loop), and the downloads a person allowed. */
+  blockedDownloads: Array<{ url: string; filename: string | null }> = [];
+  allowedDownloads: string[] = [];
   /** The executor hands the page to the user at this action (returns the reason), or null. */
   handOverOn: ((action: ComputerAction) => string | null) | null = null;
   /** The worker's control guard, checked before every input and screenshot like the real session. */
@@ -169,6 +172,14 @@ export class FakeLoopBrowser implements LoopBrowser {
 
   drainBlockedNavigations(): BlockedNavigation[] {
     return this.blocked.splice(0);
+  }
+
+  drainBlockedDownloads() {
+    return this.blockedDownloads.splice(0);
+  }
+
+  async allowDownload(url: string): Promise<void> {
+    this.allowedDownloads.push(url);
   }
 
   async collectStorage(): Promise<CollectedStorage> {

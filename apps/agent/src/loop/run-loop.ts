@@ -19,6 +19,8 @@ import { LoopDetector } from "../guardrails/loop-detector.ts";
 import {
   approvalExcerpt,
   approvalRequestFor,
+  downloadRequest,
+  downloadUrlForCard,
   needsApproval,
   type ApprovalNeed,
 } from "../guardrails/policy.ts";
@@ -142,6 +144,8 @@ const TO_RUNNING: Transition = {
   reason: null,
 };
 const DENIED = "Not run: the user denied this action.";
+const downloadBlockedNote = (url: string) =>
+  `Executor: a download of ${downloadUrlForCard(url)} was blocked: nothing was saved. Downloads need the user's approval.`;
 /** Waits a takeover leaves on the row (M7): hand-back re-observes whether they still hold. */
 const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = ["takeover", "otp", "captcha"];
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
@@ -153,10 +157,12 @@ function riskOf(request: ApprovalRequest): { kind: string | null; label: string 
   // The destination the card showed: the fill runs only while the form still posts there.
   if (request.kind === "credential_first_use")
     return { kind: request.kind, label: request.postsTo ?? null };
+  if (request.kind === "download") return { kind: request.kind, label: request.url };
   return { kind: request.kind, label: null };
 }
 
 function needLabel(need: ApprovalNeed): string {
+  if (need.kind === "download") return downloadUrlForCard(need.url);
   return need.kind === "risky_click" ? need.label.slice(0, 500) : need.formSummary.slice(0, 1_000);
 }
 
@@ -894,6 +900,9 @@ export class RunLoop {
           decision.target !== null &&
           decision.target === (target?.path ?? null) &&
           (decision.context === null || decision.context === (target?.context ?? null));
+        // A person approved this very download: its start is let through, once (spec §9).
+        if (need?.kind === "download" && personApproved)
+          await this.#deps.browser.allowDownload(need.url);
         // The executor holds a click to this classification at the moment it presses (TOCTOU).
         return { target, personApproved };
       };
@@ -1027,6 +1036,21 @@ export class RunLoop {
         `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
       );
     }
+    // Downloads the page started (a script, an attachment, a frame) were cancelled: each needs
+    // its own approval; auto mode's policy denies them (spec §9).
+    const downloads = browser.drainBlockedDownloads();
+    for (const [position, entry] of downloads.entries()) {
+      const request = downloadRequest(entry.url, entry.filename);
+      const decision = decideByPolicy(this.#run.approvalMode, "download");
+      if (decision !== "denied" && !wait && !handOver) {
+        // One card at a time; the page can start the others again to ask.
+        for (const later of downloads.slice(position + 1))
+          this.#notes.push(downloadBlockedNote(later.url));
+        return this.#ask(request, { callIds: [], item: null });
+      }
+      if (decision === "denied") await this.#recordPolicy(request, decision);
+      this.#notes.push(downloadBlockedNote(entry.url));
+    }
     if (handOver) return this.#wait("takeover", handOver);
     if (wait) return this.#wait("otp", "A one-time code is needed to sign in");
     // The page (URL, DOM, position) is part of the signature: scrolling or paging is not a loop.
@@ -1133,6 +1157,22 @@ export class RunLoop {
         run: { ...base.run, budget: this.#run.budget },
         events: [{ type: "budget", usage: this.#run.usage, budget: this.#run.budget }],
       });
+      this.#next = "decide";
+      return CONTINUE;
+    }
+
+    if (request.kind === "download" && pending.item === null) {
+      await this.#deps.store.commit({
+        steps: [step, approveStep(approved ? "done" : "skipped")],
+        transition: TO_RUNNING,
+        run: base.run,
+      });
+      if (approved) {
+        await this.#deps.browser.allowDownload(request.url);
+        this.#notes.push(
+          `Executor: the user approved downloading ${request.filename ?? request.url}. Do the action that started it again to save it.`,
+        );
+      } else this.#notes.push(`Executor: the user did not allow downloading ${request.url}.`);
       this.#next = "decide";
       return CONTINUE;
     }

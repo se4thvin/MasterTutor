@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createLogger } from "@mastertutor/contracts/server";
 import { chromium } from "playwright-core";
 import { afterEach, describe, expect, it } from "vitest";
@@ -48,7 +49,7 @@ async function connect(hooks: RunHooks = withHooks()) {
     testMode: true,
     log,
   });
-  const run = { allowedOrigins: [SITE] } as RunSnapshot;
+  const run = { id: randomUUID(), allowedOrigins: [SITE] } as RunSnapshot;
   attached = await connector({ slotName: "browser-1", run: () => run, guard: new ControlGuard() });
   return attached.browser;
 }

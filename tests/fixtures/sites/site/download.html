@@ -2,9 +2,50 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Stub: download page</title>
+    <title>Reports</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      .abs {
+        position: absolute;
+        left: 40px;
+        width: 200px;
+        height: 40px;
+      }
+      iframe {
+        position: absolute;
+        left: 40px;
+        top: 220px;
+        width: 260px;
+        height: 80px;
+        border: 0;
+      }
+    </style>
   </head>
   <body>
-    <p data-stub="B6">Downloads are added in phase B6.</p>
+    <!-- The server answers /files/ with Content-Disposition: attachment. -->
+    <a id="link" class="abs" style="top: 20px" href="/files/report.csv">Quarterly report</a>
+    <a id="attr" class="abs" style="top: 70px" href="/files/notes.txt" download="../../Notes 1.txt"
+      >Meeting notes</a
+    >
+    <button id="script" class="abs" style="top: 120px">Export table</button>
+    <!-- Another site, out of process: its link downloads too. -->
+    <iframe
+      id="frame"
+      title="Partner reports"
+      src="http://other.fixtures-isolated.test/download-frame.html"
+    ></iframe>
+    <script>
+      // A download made by script: a blob link the page creates and clicks itself.
+      document.getElementById("script").addEventListener("click", () => {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(new Blob(["a,b\n1,2\n"], { type: "text/csv" }));
+        link.download = "export.csv";
+        document.body.append(link);
+        link.click();
+        link.remove();
+      });
+    </script>
   </body>
 </html>

@@ -5,6 +5,7 @@ import type {
   ScrollPosition,
 } from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
+import type { BlockedDownload } from "../browser/download-gate.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { ModelScreenshot } from "../browser/screenshot.ts";
@@ -53,6 +54,10 @@ export interface LoopBrowser {
   navigate(url: string, signal: AbortSignal): Promise<boolean>;
   restoreView(view: { scroll: ScrollPosition | null; videoTime: number | null }): Promise<void>;
   drainBlockedNavigations(): BlockedNavigation[];
+  /** Downloads the page tried to start since the last call: each was cancelled (spec §9). */
+  drainBlockedDownloads(): BlockedDownload[];
+  /** A person approved this download: its next start is saved to the run's folder, once. */
+  allowDownload(url: string): Promise<void>;
   collectStorage(): Promise<CollectedStorage>;
   applyStorage(state: BrowserStorageState): Promise<() => Promise<void>>;
 }

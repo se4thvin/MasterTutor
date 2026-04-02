@@ -8,6 +8,7 @@ import {
 } from "playwright-core";
 import { abortable } from "../runtime/abortable.ts";
 import type { Log } from "../runtime/types.ts";
+import { DownloadGate } from "./download-gate.ts";
 import { ControlGuard } from "./guard.ts";
 import { IsolatedWorlds } from "./isolated-world.ts";
 import { NavigationTracker } from "./navigation.ts";
@@ -34,6 +35,11 @@ export interface BrowserSessionOptions {
   log: Log;
   guard?: ControlGuard;
   resolveHost?: HostResolver;
+  /**
+   * The run's downloads folder as the slot's Chromium sees it (`/downloads/<runId>`). Without it
+   * downloads stay denied even when approved.
+   */
+  downloadPath?: string;
 }
 
 /** Playwright refuses a separate CDP session for a frame in its parent's process with this. */
@@ -62,6 +68,7 @@ export class BrowserSession {
   #privateHits: PrivateConnection[] = [];
   #policy: NetworkPolicy | null = null;
   #adopting: Promise<void> | null = null;
+  #downloads: DownloadGate | null = null;
 
   private constructor(
     browser: Browser,
@@ -83,6 +90,12 @@ export class BrowserSession {
     const page = context.pages().at(-1) ?? (await context.newPage());
     const session = new BrowserSession(browser, context, page, options);
     try {
+      // Before anything else runs on this connection: downloads are denied (spec §9).
+      session.#downloads = await DownloadGate.install(
+        browser,
+        options.downloadPath ?? null,
+        options.log,
+      );
       session.#policy = await installNetworkPolicy(context, {
         allowedOrigins: options.allowedOrigins,
         testMode: options.testMode,
@@ -109,6 +122,12 @@ export class BrowserSession {
 
   get context(): BrowserContext {
     return this.#context;
+  }
+
+  /** Every download is denied until a person approves it (spec §9). */
+  get downloads(): DownloadGate {
+    if (!this.#downloads) throw new Error("not connected");
+    return this.#downloads;
   }
 
   cdp(): Promise<CDPSession> {
