@@ -637,7 +637,19 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
       };
       const attempt = async (after: number) => {
         await s.goto(`${SITE}/frame-swap.html?after=${after}`, signal);
-        await waitFor(() => s.page.frames()[1]?.url().includes("gap"), { label: "panel" });
+        // The panel's Cancel is on screen (not just its frame attached).
+        await waitFor(
+          () =>
+            s.page
+              .frames()[1]
+              ?.evaluate(
+                () => document.readyState === "complete" && !!document.getElementById("cancel"),
+              )
+              .catch(() => false),
+          { label: "panel" },
+        );
+        // Input reaches a new frame only once it has been painted: give it a moment.
+        await new Promise((resolve) => setTimeout(resolve, 300));
         await s.page.mouse.move(600, 500); // off the frame, so the executor's move enters it
         const run = await executor.run([click(at)], signal, gate);
         await new Promise((resolve) => setTimeout(resolve, 60));
@@ -658,13 +670,58 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
       const fractions = [0.22, 0.26, 0.28, 0.3, 0.32, 0.34, 0.36, 0.38, 0.4, 0.44];
       const hits = { cancel: 0, delete: 0, refused: 0 };
       for (let i = 0; i < tries; i++) {
-        const after = Math.round(gap * fractions[i % fractions.length]!);
-        const { run, reached } = await attempt(after);
+        const { run, reached } = await attempt(Math.round(gap * fractions[i % fractions.length]!));
         if (run.notes.length > 0) hits.refused += 1;
         if (reached === "cancel" || reached === "delete") hits[reached] += 1;
       }
       console.info(JSON.stringify({ metric: "swapped_frame_clicks", approval, gap, ...hits }));
       expect(hits.delete).toBe(0);
+    },
+  );
+
+  it.each(["unapproved", "person-approved"] as const)(
+    "refuses a click while a frame's navigation to another site is under way (%s): 30/30",
+    async (approval) => {
+      const { s, executor } = await setup();
+      // The new site's page is held back 1.5 s, so its navigation is pending when the click runs.
+      await s.page.route("http://other.fixtures-isolated.test/**", async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        await route.fallback();
+      });
+      const hits = { cancel: 0, delete: 0, refused: 0 };
+      for (let i = 0; i < 30; i++) {
+        await s.goto(`${SITE}/frame-swap.html`, signal);
+        await waitFor(
+          () =>
+            s.page
+              .frames()[1]
+              ?.evaluate(
+                () => document.readyState === "complete" && !!document.getElementById("cancel"),
+              )
+              .catch(() => false),
+          { label: "panel" },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+        await s.page.evaluate(() => {
+          const panel = document.getElementById("panel") as HTMLIFrameElement;
+          panel.src = "http://other.fixtures-isolated.test/widget.html?only=delete";
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50)); // the request is out
+        const { target } = await hitTest(s, at);
+        expect(target?.label).toBe("Cancel"); // still the old page
+        const verdict =
+          approval === "person-approved"
+            ? { target: markUnguarded(s, target), personApproved: true }
+            : { target, personApproved: false };
+        const run = await executor.run([click(at)], signal, async () => verdict);
+        if (run.notes.includes(TARGET_MOVED_REFUSAL)) hits.refused += 1;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        const reached = await clicked(s);
+        if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+      }
+      await s.page.unrouteAll({ behavior: "ignoreErrors" });
+      console.info(JSON.stringify({ metric: "pending_navigation_clicks", approval, ...hits }));
+      expect(hits).toEqual({ cancel: 0, delete: 0, refused: 30 });
     },
   );
 
