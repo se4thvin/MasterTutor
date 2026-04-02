@@ -39,6 +39,19 @@
           swap,
         );
       }
+      // ?only=delete: just Delete, where Cancel would be (the page a frame is swapped to).
+      if (new URLSearchParams(location.search).get("only") === "delete") {
+        document.getElementById("cancel").remove();
+        document.getElementById("delete").style.top = "50px";
+      }
+      // ?gap: window.__gap is the ms from the pointer entering Cancel to the press.
+      if (new URLSearchParams(location.search).has("gap")) {
+        let entered = 0;
+        document.getElementById("cancel").addEventListener("mouseenter", () => {
+          entered = performance.now();
+        });
+        addEventListener("mousedown", () => (window.__gap = performance.now() - entered), true);
+      }
       // ?frames=N: N tiny same-process frames first (more documents than the guard arms).
       const params = new URLSearchParams(location.search);
       for (let i = 0; i < Number(params.get("frames") ?? 0); i++) {
