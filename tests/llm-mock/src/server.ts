@@ -13,7 +13,7 @@ export interface LlmMock {
 
 interface ScenarioState {
   cursor: number;
-  elements: Array<{ name: string; point: { x: number; y: number } | null }>;
+  elements: Array<{ ref: string; name: string; point: { x: number; y: number } | null }>;
 }
 
 const FORBIDDEN_FIELDS = [
@@ -105,6 +105,24 @@ export async function startLlmMock(
               ...(output.then ?? []),
             ],
             pending_safety_checks: [],
+          };
+        }
+        case "fill_named": {
+          const element = state.elements.find((candidate) =>
+            candidate.name.startsWith(output.name),
+          );
+          if (!element) throw new Error(`fill_named: no element named "${output.name}"`);
+          return {
+            type: "function_call",
+            id: nextId("fc"),
+            call_id: nextId("call"),
+            name: "fill_credential",
+            arguments: JSON.stringify({
+              alias: output.alias,
+              field: output.field,
+              target: element.ref,
+            }),
+            status: "completed",
           };
         }
         case "computer_single":

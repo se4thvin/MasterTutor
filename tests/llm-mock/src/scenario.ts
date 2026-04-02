@@ -11,6 +11,8 @@ export type MockOutput =
   /** A reasoning item, as returned when reasoning effort is above none. */
   | { type: "reasoning"; text?: string }
   | { type: "function"; name: string; args: Record<string, unknown> }
+  /** A fill_credential call whose target is the ref of the first read_page element named `name…`. */
+  | { type: "fill_named"; alias: string; field: string; name: string }
   | {
       type: "turn";
       status: "continue" | "done" | "need_human";

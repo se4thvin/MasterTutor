@@ -20,6 +20,62 @@ async function post(body: unknown) {
 const userInput = (text: string) => [{ role: "user", content: [{ type: "input_text", text }] }];
 
 describe("llm-mock", () => {
+  it("answers fill_named with a fill_credential call on the named element's ref", async () => {
+    mock = await startLlmMock({
+      scenarios: [
+        {
+          name: "fill",
+          turns: [
+            {
+              outputs: [
+                {
+                  type: "function",
+                  name: "read_page",
+                  args: { mode: "interactive", sinceHash: null },
+                },
+              ],
+            },
+            {
+              outputs: [{ type: "fill_named", alias: "site", field: "password", name: "Password" }],
+            },
+          ],
+        },
+      ],
+    });
+    const first = await post({ model: "gpt-6-astra", input: userInput("[scenario:fill] go") });
+    const read = (first.body.output as Array<Record<string, unknown>>)[0]!;
+    const readPageOutput = JSON.stringify({
+      hash: "a".repeat(64),
+      url: "http://x/",
+      title: "T",
+      elements: [
+        {
+          ref: "e4",
+          tag: "input",
+          role: "textbox",
+          name: "Password",
+          attrs: {},
+          point: { x: 1, y: 2 },
+        },
+      ],
+    });
+    const second = await post({
+      model: "gpt-6-astra",
+      input: [
+        ...userInput("[scenario:fill] go"),
+        read,
+        { type: "function_call_output", call_id: read.call_id, output: readPageOutput },
+      ],
+    });
+    const call = (second.body.output as Array<Record<string, unknown>>)[0]!;
+    expect(call).toMatchObject({ type: "function_call", name: "fill_credential" });
+    expect(JSON.parse(call.arguments as string)).toEqual({
+      alias: "site",
+      field: "password",
+      target: "e4",
+    });
+  });
+
   it("plays a scenario turn by turn from full stateless inputs", async () => {
     mock = await startLlmMock({
       scenarios: [
