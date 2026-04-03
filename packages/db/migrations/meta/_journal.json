@@ -29,6 +29,13 @@
       "when": 1791286144283,
       "tag": "0003_vault_grants_human_approver",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791307562053,
+      "tag": "0004_approval_mode_bypass",
+      "breakpoints": true
     }
   ]
 }

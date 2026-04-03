@@ -5,6 +5,8 @@ import {
   AUTO_MODE_DECISIONS,
   decideByPolicy,
   decideSafetyChecks,
+  isPersonDecider,
+  policyDecider,
   isRiskyLabel,
 } from "./approval.ts";
 import { APPROVAL_KINDS, type ApprovalKind } from "./enums.ts";
@@ -73,6 +75,35 @@ describe("decideByPolicy", () => {
     expect(decideByPolicy("auto_within_allowlist", "download")).toBe("denied");
     expect(decideByPolicy("auto_within_allowlist", "budget")).toBe("ask");
     expect(Object.keys(AUTO_MODE_DECISIONS).sort()).toEqual([...APPROVAL_KINDS].sort());
+  });
+});
+
+describe("bypass mode (D44)", () => {
+  it("approves every action approval, records it as bypass, and still asks at a budget hit", () => {
+    for (const kind of APPROVAL_KINDS)
+      expect(decideByPolicy("bypass", kind)).toBe(kind === "budget" ? "ask" : "approved");
+    expect(policyDecider("bypass")).toBe("bypass");
+    expect(policyDecider("auto_within_allowlist")).toBe("policy");
+  });
+  it("is never a person's decision", () => {
+    expect(isPersonDecider("bypass")).toBe(false);
+    expect(isPersonDecider("policy")).toBe(false);
+    expect(isPersonDecider(null)).toBe(false);
+    expect(isPersonDecider("6f2c8a3e-0000-4000-8000-000000000000")).toBe(true);
+  });
+  it("clears domain checks on any origin, never a prompt-injection, unknown or empty check", () => {
+    const checks = (...codes: Array<string | null>) => codes.map((code) => ({ code }));
+    expect(
+      decideSafetyChecks("bypass", checks("irrelevant_domain", "sensitive_domain"), false),
+    ).toBe("approved");
+    for (const list of [
+      checks("malicious_instructions"),
+      checks("irrelevant_domain", "malicious_instructions"),
+      checks("something_new"),
+      checks(null),
+      [],
+    ])
+      expect(decideSafetyChecks("bypass", list, true)).toBe("ask");
   });
 });
 
