@@ -1,0 +1,2 @@
+ALTER TABLE "runs" ADD COLUMN "control_user_id" text;--> statement-breakpoint
+ALTER TABLE "runs" ADD CONSTRAINT "runs_control_user_matches_controller" CHECK (("runs"."controller" = 'user') = ("runs"."control_user_id" is not null));

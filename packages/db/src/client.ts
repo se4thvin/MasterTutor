@@ -19,3 +19,6 @@ export function createDb(databaseUrl: string, options: CreateDbOptions = {}): Db
   const db = drizzle({ client: sql, schema });
   return { db, sql, close: () => sql.end({ timeout: 5 }) };
 }
+
+/** A drizzle transaction handle. Writes that must commit with a NOTIFY take one of these. */
+export type DbTx = Parameters<Parameters<Database["transaction"]>[0]>[0];

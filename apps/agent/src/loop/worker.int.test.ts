@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeNotify } from "@mastertutor/contracts";
-import { emitRunEvent } from "../events/emit.ts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
   approvals,
   browserSlots,
   createDb,
+  emitRunEvent,
   runEvents,
   runSteps,
   runs,
@@ -168,12 +168,20 @@ const controlEvents = async (id: string) =>
 async function takeOver(id: string) {
   await owner.db
     .update(runs)
-    .set({ controller: "user", status: "waiting", waitReason: "takeover" })
+    .set({
+      controller: "user",
+      controlUserId: "test-user",
+      status: "waiting",
+      waitReason: "takeover",
+    })
     .where(and(eq(runs.id, id), sql`${runs.status} <> 'sleeping'`));
   await owner.sql.notify("run_control", encodeNotify("run_control", { runId: id }));
 }
 async function handBackTo(id: string) {
-  await owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, id));
+  await owner.db
+    .update(runs)
+    .set({ controller: "agent", controlUserId: null })
+    .where(eq(runs.id, id));
   await owner.sql.notify("run_control", encodeNotify("run_control", { runId: id }));
 }
 /** A clock whose sleeps (the idle → sleep timer) end only when the test says so. */
@@ -295,7 +303,12 @@ describe("RunWorker + Supervisor", () => {
     const takenAt = await dbNow();
     await owner.db
       .update(runs)
-      .set({ controller: "user", status: "waiting", waitReason: "takeover" })
+      .set({
+        controller: "user",
+        controlUserId: "test-user",
+        status: "waiting",
+        waitReason: "takeover",
+      })
       .where(eq(runs.id, run.id));
     await owner.sql.notify("run_control", encodeNotify("run_control", { runId: run.id }));
     const aborted = await waitFor(
@@ -314,7 +327,10 @@ describe("RunWorker + Supervisor", () => {
     expect(mock.requests.length).toBe(requestsBefore);
     expect(await row(run.id)).toMatchObject({ status: "waiting", controller: "user" });
     browser.computerHook = null;
-    await owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, run.id));
+    await owner.db
+      .update(runs)
+      .set({ controller: "agent", controlUserId: null })
+      .where(eq(runs.id, run.id));
     await owner.sql.notify("run_control", encodeNotify("run_control", { runId: run.id }));
     await until(run.id, (r) => r.status === "completed", "completed after hand back");
     const steps = await stepsOf(run.id);
@@ -688,7 +704,12 @@ describe("RunWorker + Supervisor", () => {
     // takeControl's row change, but its run_control NOTIFY never arrives.
     await owner.db
       .update(runs)
-      .set({ controller: "user", status: "waiting", waitReason: "takeover" })
+      .set({
+        controller: "user",
+        controlUserId: "test-user",
+        status: "waiting",
+        waitReason: "takeover",
+      })
       .where(eq(runs.id, run.id));
     await waitFor(async () => (await controlEvents(run.id)).includes("user"), {
       label: "control event from the sweep",

@@ -1,6 +1,14 @@
 import { MODELS, type ApprovalMode, type Budget } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
-import { approvals, createDb, runEvents, runSteps, runs, type DbHandle } from "@mastertutor/db";
+import {
+  approvals,
+  createDb,
+  emitRunEvent,
+  runEvents,
+  runSteps,
+  runs,
+  type DbHandle,
+} from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -13,7 +21,6 @@ import { createOpenAIModelClient } from "../llm/client.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
-import { emitRunEvent } from "../events/emit.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser, PLAIN_TARGET } from "../testing/fake-loop-browser.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
@@ -1028,10 +1035,16 @@ describe("RunLoop (spec §5.3)", () => {
   it("never calls the model while the user holds control (spec §10.3)", async () => {
     const { name, run, loop } = await setup([done()]);
     expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" }); // observe
-    await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: "test-user" })
+      .where(eq(runs.id, run.id));
     await expect(loop.step(new AbortController().signal)).rejects.toBeInstanceOf(ControlHeld);
     expect(mock.requestsFor(name)).toHaveLength(0);
-    await owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, run.id));
+    await owner.db
+      .update(runs)
+      .set({ controller: "agent", controlUserId: null })
+      .where(eq(runs.id, run.id));
     expect(await drive(loop)).toEqual({ kind: "completed" });
     expect(mock.requestsFor(name)).toHaveLength(1);
   });
@@ -1053,7 +1066,10 @@ describe("RunLoop (spec §5.3)", () => {
     for (let i = 0; i < 4; i++)
       expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
     expect(mock.requestsFor(name)).toHaveLength(1);
-    await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: "test-user" })
+      .where(eq(runs.id, run.id));
     await loop.step(new AbortController().signal); // observe
     await expect(loop.step(new AbortController().signal)).rejects.toBeInstanceOf(ControlHeld);
     expect(mock.requestsFor(name)).toHaveLength(1);
@@ -1312,7 +1328,10 @@ describe("RunLoop (spec §5.3)", () => {
     browser.targets.set("10,20", risky("Delete account"));
     expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
     // The web flipped only the controller (status still waiting(approval)).
-    await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: "test-user" })
+      .where(eq(runs.id, run.id));
     await loop.markTakeover();
     expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "takeover" });
     expect((await approvalRows(run.id))[0]).toMatchObject({ status: "superseded" });
@@ -1421,12 +1440,12 @@ describe("RunLoop (spec §5.3)", () => {
     it("a takeover keeps waiting(otp); hand-back re-observes and runs on, so a code typed on the page counts (M7, F1)", async () => {
       const { run, browser, loop } = await waitingForCode();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
-      await control(run.id, { controller: "user" });
+      await control(run.id, { controller: "user", controlUserId: "test-user" });
       await loop.markTakeover();
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
       // The person typed the code into the page themselves: no otp_codes row exists.
       browser.functionWait = () => null;
-      await control(run.id, { controller: "agent" });
+      await control(run.id, { controller: "agent", controlUserId: null });
       await loop.markHandBack();
       expect(await status(run.id)).toMatchObject({ status: "running" });
       expect(await drive(loop)).toEqual({ kind: "completed" });
@@ -1436,9 +1455,9 @@ describe("RunLoop (spec §5.3)", () => {
       const { run, browser, loop } = await setup([fillOtp, fillOtp, done()]);
       browser.functionWait = (name) => (name === "fill_credential" ? "otp" : null);
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
-      await control(run.id, { controller: "user" });
+      await control(run.id, { controller: "user", controlUserId: "test-user" });
       await loop.markTakeover();
-      await control(run.id, { controller: "agent" });
+      await control(run.id, { controller: "agent", controlUserId: null });
       await loop.markHandBack();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
       expect(browser.functionRuns.map((call) => call.name)).toEqual([
@@ -1450,10 +1469,10 @@ describe("RunLoop (spec §5.3)", () => {
     it("hand-back runs on when a code was submitted during the takeover (M7)", async () => {
       const { run, loop } = await waitingForCode();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
-      await control(run.id, { controller: "user" });
+      await control(run.id, { controller: "user", controlUserId: "test-user" });
       await loop.markTakeover();
       await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([1])})`;
-      await control(run.id, { controller: "agent" });
+      await control(run.id, { controller: "agent", controlUserId: null });
       await loop.markHandBack();
       expect(await status(run.id)).toMatchObject({ status: "running" });
       expect(await drive(loop)).toEqual({ kind: "completed" });
@@ -1463,10 +1482,10 @@ describe("RunLoop (spec §5.3)", () => {
       const { run, browser, loop } = await setup([done()]);
       browser.captcha = true;
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "captcha" });
-      await control(run.id, { controller: "user" });
+      await control(run.id, { controller: "user", controlUserId: "test-user" });
       await loop.markTakeover();
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
-      await control(run.id, { controller: "agent" });
+      await control(run.id, { controller: "agent", controlUserId: null });
       await loop.markHandBack();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "captcha" });
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
@@ -1569,7 +1588,10 @@ describe("RunLoop (spec §5.3)", () => {
     it("still stops for the user: never calls the model while the user holds control", async () => {
       const { name, run, loop } = await setup([done()], bypass);
       expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
-      await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+      await owner.db
+        .update(runs)
+        .set({ controller: "user", controlUserId: "test-user" })
+        .where(eq(runs.id, run.id));
       await expect(loop.step(new AbortController().signal)).rejects.toBeInstanceOf(ControlHeld);
       expect(mock.requestsFor(name)).toHaveLength(0);
     });
