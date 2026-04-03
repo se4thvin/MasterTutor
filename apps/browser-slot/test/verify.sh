@@ -69,6 +69,32 @@ pass "n.eko blocked for other IPs"
 [[ "$(login user "$(hmac "$MEMBER_SECRET")")" == "200" ]] || fail "user member login"
 [[ "$(login user wrong-password)" == "401" ]] || fail "wrong password accepted"
 pass "n.eko member passwords derived from the secrets"
+# A1 (S2): the user member cannot host until the agent grants it, so a live iframe can never send
+# X input while the agent drives over CDP. The whoami and admin checks keep the 403s meaningful:
+# the user session is authenticated, and hosting itself works for a member that has the right.
+neko_as() { # member password method path -> HTTP status, using that member's own session
+  docker run --rm -i --network "$NET" --ip "$PREFIX.11" --entrypoint sh "$CURL" -s -- \
+    "$1" "$2" "$3" "$4" "http://$PREFIX.20:8080" <<'SH'
+body=$(curl -s -m 4 -c /tmp/jar -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$1\",\"password\":\"$2\"}" "$5/api/login") || exit 1
+tok=$(printf '%s' "$body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+if [ -n "$tok" ]; then
+  curl -s -m 4 -b /tmp/jar -H "Authorization: Bearer $tok" -o /dev/null -w '%{http_code}' -X "$3" "$5$4"
+else
+  curl -s -m 4 -b /tmp/jar -o /dev/null -w '%{http_code}' -X "$3" "$5$4"
+fi
+SH
+}
+user_pw="$(hmac "$MEMBER_SECRET")"
+admin_pw="$(hmac "$ADMIN_SECRET")"
+[[ "$(neko_as user "$user_pw" GET /api/whoami)" == "200" ]] || fail "user member session is not authenticated"
+[[ "$(neko_as user "$user_pw" POST /api/room/control/request)" == "403" ]] \
+  || fail "user member can request host control at boot (can_host must be false)"
+[[ "$(neko_as user "$user_pw" GET /api/room/control)" == "403" ]] \
+  || fail "user member can read host control at boot (can_host must be false)"
+[[ "$(neko_as agent "$admin_pw" GET /api/room/control)" == "200" ]] \
+  || fail "control: the agent member cannot use host control"
+pass "user member cannot host until the agent grants it"
 
 # The environ read must itself succeed and be non-empty (as root), so an unreadable
 # or missing process can never make this check pass vacuously.
