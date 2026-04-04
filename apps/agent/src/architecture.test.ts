@@ -33,7 +33,9 @@ describe("approval modes reach only the approval decisions (D44 hard invariants)
           if (entry.isDirectory()) await walk(child);
           else if (entry.name.endsWith(".ts") && !entry.name.includes(".test."))
             if (
-              /approvalMode|ApprovalMode|BYPASS_DECI/.test(await readFile(join(SRC, child), "utf8"))
+              /approvalMode|ApprovalMode|BYPASS_DECI|decideByPolicy|policyDecider|decideSafetyChecks|AUTO_MODE_DECISIONS/.test(
+                await readFile(join(SRC, child), "utf8"),
+              )
             )
               readers.push(child);
         }

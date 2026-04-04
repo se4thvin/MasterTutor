@@ -8,7 +8,7 @@ import {
 } from "playwright-core";
 import { abortable } from "../runtime/abortable.ts";
 import type { Log } from "../runtime/types.ts";
-import { DownloadGate } from "./download-gate.ts";
+import { DownloadGate, type DownloadFolder } from "./download-gate.ts";
 import { PendingNavigations } from "./pending-navigations.ts";
 import { ControlGuard } from "./guard.ts";
 import { IsolatedWorlds } from "./isolated-world.ts";
@@ -36,11 +36,8 @@ export interface BrowserSessionOptions {
   log: Log;
   guard?: ControlGuard;
   resolveHost?: HostResolver;
-  /**
-   * The run's downloads folder as the slot's Chromium sees it (`/downloads/<runId>`). Without it
-   * downloads stay denied even when approved.
-   */
-  downloadPath?: string;
+  /** The run's downloads folder (`/downloads/<runId>`). Without it downloads stay denied even when approved. */
+  downloads?: DownloadFolder;
 }
 
 /** Playwright refuses a separate CDP session for a frame in its parent's process with this. */
@@ -71,6 +68,8 @@ export class BrowserSession {
   #policy: NetworkPolicy | null = null;
   #adopting: Promise<void> | null = null;
   #downloads: DownloadGate | null = null;
+  /** Resolves once the slot's browser is gone (closed or the connection dropped). */
+  readonly disconnected: Promise<void>;
   readonly #pendingNavigations = new PendingNavigations();
 
   private constructor(
@@ -84,6 +83,7 @@ export class BrowserSession {
     this.#page = page;
     this.#log = options.log;
     this.guard = options.guard ?? new ControlGuard();
+    this.disconnected = new Promise((resolve) => browser.once("disconnected", () => resolve()));
   }
 
   static async connect(options: BrowserSessionOptions): Promise<BrowserSession> {
@@ -96,7 +96,7 @@ export class BrowserSession {
       // Before anything else runs on this connection: downloads are denied (spec §9).
       session.#downloads = await DownloadGate.install(
         browser,
-        options.downloadPath ?? null,
+        options.downloads ?? null,
         options.log,
       );
       session.#policy = await installNetworkPolicy(context, {
@@ -111,8 +111,6 @@ export class BrowserSession {
       throw error;
     }
     session.#adopt(page);
-    // Navigations are tracked from the start: one already under way when a click arms is not held.
-    await session.cdp();
     context.on("page", (opened) => {
       session.#adopting = session.#onNewPage(opened).finally(() => {
         session.#adopting = null;
@@ -137,13 +135,12 @@ export class BrowserSession {
 
   /** True while any frame of the page has a document-replacing navigation in flight. */
   navigationPending(): boolean {
-    return this.#pendingNavigations.any();
+    return this.#pendingNavigations.pending(this.#page);
   }
 
   cdp(): Promise<CDPSession> {
     if (this.#cdp === null) {
       const attempt = this.#context.newCDPSession(this.#page).then(async (cdp) => {
-        this.#pendingNavigations.watch(cdp);
         await cdp.send("DOM.enable");
         // Frame events (Page.frameAttached/frameNavigated) for the typing guard.
         await cdp.send("Page.enable");
@@ -233,7 +230,6 @@ export class BrowserSession {
       await cdp.detach().catch(() => undefined);
       return null;
     }
-    this.#pendingNavigations.watch(cdp);
     void cdp.send("Page.enable").catch(() => undefined);
     return { id: info.targetInfo.targetId, worlds: new IsolatedWorlds(cdp) };
   }
@@ -340,7 +336,8 @@ export class BrowserSession {
     page.on("framenavigated", (frame) => this.#inProcess.delete(frame));
     page.once("close", () => this.#onClose(page));
     void page.bringToFront().catch(() => undefined);
-    void this.cdp().catch(() => undefined); // navigation tracking on the new tab
+    // From adoption on, every frame's navigations (Playwright attaches each frame before it runs).
+    this.#pendingNavigations.watch(page);
   }
 
   async #onNewPage(page: Page): Promise<void> {

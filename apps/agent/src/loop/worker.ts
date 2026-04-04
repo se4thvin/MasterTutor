@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { RunStatus, WaitReason } from "@mastertutor/contracts";
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
@@ -25,6 +26,9 @@ import { RunLoop, type StepOutcome } from "./run-loop.ts";
 import { isTerminal, readRunControl, snapshotOf } from "./run-state.ts";
 import { startUrl } from "./start-url.ts";
 import { StepStore, type Transition } from "./step-store.ts";
+
+/** How long a release waits for the slot's browser to go before it disconnects anyway. */
+const CLOSE_WAIT_MS = 2_000;
 
 export interface WorkerDeps {
   db: Database;
@@ -426,8 +430,13 @@ export class RunWorker {
       .catch(() =>
         log.warn({ runId: this.runId, errorCode: "release_hook_failed" }, "release hook failed"),
       );
+    // The browser goes before this connection does (I3): the download deny lives on this
+    // connection, so it must outlast the page. pool.reset closes the browser; then disconnect.
+    const resetting = pool.reset(slotName);
+    const gone = this.#attached?.session?.disconnected;
+    if (gone) await Promise.race([gone, delay(CLOSE_WAIT_MS)]);
     await this.#attached?.close().catch(() => undefined);
-    void pool.reset(slotName);
+    void resetting;
     await clearRunDownloads(config.downloadsDir, this.runId).catch(() =>
       log.warn(
         { runId: this.runId, errorCode: "downloads_cleanup_failed" },

@@ -109,3 +109,19 @@ describe("vault secret validation in the DTOs (E3, E4)", () => {
     expect(SetSecretInput.safeParse({ itemId, field: "totp", value: "bad" }).success).toBe(false);
   });
 });
+
+describe("bypass mode needs an explicit acknowledgement (D44, m8)", () => {
+  const run = { goal: "Take notes", allowedOrigins: ["https://a.example"] };
+  const bench = { ...run, name: "B", task: "T", successCriteria: "S" };
+  it("refuses bypass without bypassAcknowledged: true, accepts it with", () => {
+    expect(CreateRunInput.safeParse({ ...run, approvalMode: "bypass" }).success).toBe(false);
+    expect(
+      CreateRunInput.safeParse({ ...run, approvalMode: "bypass", bypassAcknowledged: true })
+        .success,
+    ).toBe(true);
+    expect(CreateBenchmarkInput.safeParse({ ...bench, approvalMode: "bypass" }).success).toBe(
+      false,
+    );
+    expect(CreateRunInput.safeParse({ ...run, approvalMode: "ask" }).success).toBe(true);
+  });
+});

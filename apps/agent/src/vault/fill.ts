@@ -1,5 +1,5 @@
 import {
-  POLICY_DECIDER,
+  isPersonDecider,
   toOrigin,
   type ApprovalRequest,
   type CredentialErrorCode,
@@ -279,7 +279,7 @@ export async function fillCredential(
     if (postsTo !== undefined) {
       const approval = ctx.approval?.kind === "credential_first_use" ? ctx.approval : null;
       if (approval?.label !== postsTo) return refuse("approval_required", "form_action_offsite");
-      if (approval.decidedBy === POLICY_DECIDER) {
+      if (!isPersonDecider(approval.decidedBy)) {
         ctx.requestHandOver(
           `This sign-in form sends the credential to ${postsTo}, not ${item.origin}: a person must decide.`,
         );

@@ -1,15 +1,18 @@
 import { randomUUID } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { createLogger } from "@mastertutor/contracts/server";
 import { chromium } from "playwright-core";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  BEHAVIOUR_DOWNLOADS,
   OTHER,
   SITE,
   SLOT_CDP,
   cdpBaseUrlForTests,
 } from "../../../../tests/behaviour/constants.ts";
 import { ControlGuard } from "../browser/guard.ts";
-import { needsApproval } from "../guardrails/policy.ts";
+import { downloadRequest, needsApproval } from "../guardrails/policy.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { SlotPool } from "../slots/pool.ts";
@@ -28,6 +31,7 @@ afterEach(async () => {
   attached = undefined;
 });
 
+let runId = "";
 async function connect(hooks: RunHooks = withHooks()) {
   const pool = new SlotPool({
     store: {
@@ -45,11 +49,12 @@ async function connect(hooks: RunHooks = withHooks()) {
     pool,
     hooks,
     clock: instantClock(),
-    config: runtimeConfig(),
+    config: { ...runtimeConfig(), downloadsDir: BEHAVIOUR_DOWNLOADS },
     testMode: true,
     log,
   });
-  const run = { id: randomUUID(), allowedOrigins: [SITE] } as RunSnapshot;
+  runId = randomUUID();
+  const run = { id: runId, allowedOrigins: [SITE] } as RunSnapshot;
   attached = await connector({ slotName: "browser-1", run: () => run, guard: new ControlGuard() });
   return attached.browser;
 }
@@ -502,5 +507,40 @@ describe("SessionLoopBrowser", () => {
     expect(browser.drainBlockedNavigations()).toEqual([
       { url: `${OTHER}/steal?pw=${SECRET_REDACTION}`, origin: OTHER },
     ]);
+  });
+
+  it("saves an approved script download (a new blob URL each time) as the card showed it, once (I4)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/download.html`, signal);
+    await browser.observe(signal);
+    const exportTable = { type: "click", x: 80, y: 140, button: "left" } as const;
+    const gate = async () => ({
+      target: await browser.targetFor(exportTable, null),
+      personApproved: false,
+    });
+    await browser.runComputer([exportTable], signal, gate);
+    const [attempt] = await waitFor(
+      () => {
+        const drained = browser.drainBlockedDownloads();
+        return drained.length > 0 ? drained : null;
+      },
+      { label: "blocked export" },
+    );
+    expect(attempt!.url.startsWith("blob:")).toBe(true);
+    const card = downloadRequest(attempt!.url, attempt!.filename);
+    if (card.kind !== "download") throw new Error("not a download card");
+    await browser.allowDownload(card);
+    // The model repeats it: the page makes a new blob URL, the same card.
+    await browser.runComputer([exportTable], signal, gate);
+    const folder = join(BEHAVIOUR_DOWNLOADS, runId);
+    const saved = await waitFor(
+      async () => {
+        const files = await readdir(folder).catch(() => [] as string[]);
+        return files.length > 0 ? files : null;
+      },
+      { label: "saved", timeoutMs: 10_000 },
+    );
+    expect(saved).toHaveLength(1);
+    expect(browser.drainBlockedDownloads()).toEqual([]);
   });
 });

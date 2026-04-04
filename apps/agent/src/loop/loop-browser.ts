@@ -58,8 +58,11 @@ export interface LoopBrowser {
   drainBlockedNavigations(): BlockedNavigation[];
   /** Downloads the page tried to start since the last call: each was cancelled (spec §9). */
   drainBlockedDownloads(): BlockedDownload[];
-  /** A person approved this download: its next start is saved to the run's folder, once. */
-  allowDownload(url: string): Promise<void>;
+  /**
+   * The download a `download` card showed was approved: the next download that would make the
+   * same card (a script's blob or data URL may differ in its id) is saved to the run's folder, once.
+   */
+  allowDownload(card: { url: string; filename: string | null }): Promise<void>;
   collectStorage(): Promise<CollectedStorage>;
   applyStorage(state: BrowserStorageState): Promise<() => Promise<void>>;
 }
