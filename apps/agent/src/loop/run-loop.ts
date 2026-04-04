@@ -13,7 +13,7 @@ import {
   type Usage,
   type WaitReason,
 } from "@mastertutor/contracts";
-import type { Database } from "@mastertutor/db";
+import { returnControlToAgent, type Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
@@ -147,6 +147,8 @@ const TO_RUNNING: Transition = {
   reason: null,
 };
 const DENIED = "Not run: the user denied this action.";
+const TAKEOVER_FAILED =
+  "Taking control needs the live view to be open and connected. Open it, then try again.";
 const downloadBlockedNote = (url: string) =>
   `Executor: a download of ${downloadUrlForCard(url)} was blocked: nothing was saved. Downloads need the user's approval.`;
 /** Waits a takeover leaves on the row (M7): hand-back re-observes whether they still hold. */
@@ -1331,5 +1333,34 @@ export class RunLoop {
       transition: TO_RUNNING,
     });
     this.reobserve();
+  }
+
+  /**
+   * The takeover could not be delivered to the user's live view (B6, F3): one commit returns
+   * control to the agent, tells the UI why, and the agent re-observes before acting again. A run
+   * that was waiting on an approval goes straight back to waiting(approval), never via running.
+   */
+  async revertTakeover(): Promise<void> {
+    const pending = this.#pending;
+    await this.#deps.store.commit({
+      events: [
+        { type: "error", code: "takeover_failed", message: TAKEOVER_FAILED },
+        { type: "control", holder: "agent" },
+      ],
+      // A takeover that interrupted waiting(approval) returns there: the approval was never
+      // superseded (markTakeover did not run), so the sheet stays and the decision still counts.
+      transition: pending
+        ? ({
+            from: ["waiting", "running"],
+            to: "waiting",
+            waitReason: "approval",
+            reason: pending.request.kind,
+          } as Transition)
+        : TO_RUNNING,
+      extra: async (tx) => {
+        await returnControlToAgent(tx, this.#run.id);
+      },
+    });
+    if (!pending) this.reobserve();
   }
 }

@@ -335,7 +335,12 @@ export function slotBrowserConnector(options: {
         run,
         log: options.log,
       });
-      return { browser, close: () => session.close() };
+      return {
+        browser,
+        session,
+        browserCdp: () => session.browserCdp(),
+        close: () => session.close(),
+      };
     } catch (error) {
       // Do not leak the CDP connection when setup after connect fails.
       await session.close();

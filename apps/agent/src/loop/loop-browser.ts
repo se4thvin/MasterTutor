@@ -4,11 +4,13 @@ import type {
   FunctionToolName,
   ScrollPosition,
 } from "@mastertutor/contracts";
+import type { CDPSession } from "playwright-core";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedDownload } from "../browser/download-gate.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { ModelScreenshot } from "../browser/screenshot.ts";
+import type { BrowserSession } from "../browser/session.ts";
 import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
@@ -64,6 +66,10 @@ export interface LoopBrowser {
 
 export interface AttachedBrowser {
   browser: LoopBrowser;
+  /** The page session for lease hooks (B3 passkey enrolment); null for fakes. */
+  session: BrowserSession | null;
+  /** Browser-level CDP for lease hooks (RunHooks.onLeased). */
+  browserCdp(): Promise<CDPSession>;
   close(): Promise<void>;
 }
 
