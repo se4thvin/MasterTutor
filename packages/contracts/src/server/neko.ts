@@ -52,6 +52,10 @@ export async function loginNeko(options: NekoLoginOptions): Promise<string> {
     // Never re-send the password to wherever a redirect points.
     redirect: "error",
     signal: AbortSignal.timeout(options.timeoutMs ?? 3_000),
+  }).catch((error: unknown) => {
+    // fetch rejects a redirect (and an unreachable slot) with a TypeError: a failed login (502).
+    if (error instanceof TypeError) throw new NekoLoginError(502);
+    throw error;
   });
   if (!response.ok) {
     await response.body?.cancel();
