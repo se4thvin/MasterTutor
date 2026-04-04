@@ -4,7 +4,7 @@ FROM ghcr.io/m1k1o/neko/chromium:3.1.6
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends socat iptables; \
+    apt-get install -y --no-install-recommends socat iptables xprintidle; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
@@ -16,11 +16,24 @@ RUN set -eux; \
 
 COPY supervisord/chromium.conf /etc/neko/supervisord/chromium.conf
 COPY policies.json /etc/chromium/policies/managed/policies.json
-COPY --chmod=0755 bin/slot-entrypoint bin/exit-on-chromium bin/slot-health /usr/local/bin/
+COPY --chmod=0755 bin/slot-entrypoint bin/exit-on-chromium bin/slot-health bin/slot-idle-http /usr/local/bin/
 
+# NEKO_LEGACY: the bundled client speaks the legacy /ws protocol.
+# Cookie auth: web relays NEKO_SESSION scoped to /live/<runId>/; the legacy /ws handler
+# authenticates with that cookie (whoami) before any password. n.eko's own Set-Cookie never
+# reaches browsers (web re-issues the token), so it need not be Secure.
+# Implicit hosting off and the user member unhosted (entrypoint): only the agent grants control.
+# Chat off: the n.eko page is served same-origin, so it must render no attacker-controlled text (S4).
 ENV NEKO_DESKTOP_SCREEN=1280x800@30 \
     NEKO_LOG_LEVEL=warn \
-    NEKO_FILETRANSFER_ENABLED=false
+    NEKO_FILETRANSFER_ENABLED=false \
+    NEKO_LEGACY=true \
+    NEKO_SESSION_COOKIE_ENABLED=true \
+    NEKO_SESSION_COOKIE_SECURE=false \
+    NEKO_SESSION_IMPLICIT_HOSTING=false \
+    NEKO_DESKTOP_FILE_CHOOSER_DIALOG=true \
+    NEKO_DESKTOP_UPLOAD_DROP=true \
+    NEKO_CHAT_ENABLED=false
 
 HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=6 CMD ["/usr/local/bin/slot-health"]
 ENTRYPOINT ["/usr/local/bin/slot-entrypoint"]

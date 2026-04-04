@@ -107,6 +107,49 @@ if grep -q -E '^NEKO_(ADMIN|MEMBER)_SECRET=' <<<"$neko_environ"; then
 fi
 pass "raw secrets scrubbed before supervisord"
 
+# A5: legacy client, cookie auth, chat off, implicit hosting off (read from the n.eko process itself).
+for setting in NEKO_LEGACY=true NEKO_SESSION_COOKIE_ENABLED=true NEKO_SESSION_COOKIE_SECURE=false \
+  NEKO_SESSION_IMPLICIT_HOSTING=false NEKO_DESKTOP_FILE_CHOOSER_DIALOG=true \
+  NEKO_DESKTOP_UPLOAD_DROP=true NEKO_CHAT_ENABLED=false; do
+  grep -qx "$setting" <<<"$neko_environ" || fail "n.eko runs without $setting"
+done
+pass "n.eko legacy, cookie, hosting, upload and chat settings"
+[[ "$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080/ws")" != "404" ]] \
+  || fail "legacy client endpoint /ws missing (NEKO_LEGACY)"
+from_ip "$PREFIX.11" -o /dev/null -D - -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"user\",\"password\":\"$(hmac "$MEMBER_SECRET")\"}" \
+  "http://$PREFIX.20:8080/api/login" | grep -qi '^set-cookie: NEKO_SESSION=' \
+  || fail "n.eko login does not set the NEKO_SESSION cookie (cookie auth off)"
+pass "legacy /ws endpoint and cookie auth enabled"
+# S5: the legacy side endpoints never answer without credentials.
+for path in /stats /screenshot.jpg /file; do
+  code="$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080$path")"
+  [[ "$code" != "200" ]] || fail "n.eko $path answers 200 without credentials"
+done
+pass "legacy side endpoints need credentials"
+
+# A5: X idle probe on 9224, agent IP only; it grows without input and XTest (n.eko's path) resets it.
+idle_ms() { from_ip "$PREFIX.10" "http://$PREFIX.20:9224/" | tr -d '\r\n'; }
+first="$(idle_ms)"
+[[ "$first" =~ ^[0-9]+$ ]] || fail "idle probe did not return milliseconds ($first)"
+if from_ip "$PREFIX.11" "http://$PREFIX.20:9224/" >/dev/null; then fail "idle probe reachable from a non-agent IP"; fi
+grown=""
+for _ in $(seq 1 20); do
+  now_ms="$(idle_ms)"
+  if [[ "$now_ms" =~ ^[0-9]+$ ]] && (( now_ms >= first + 1500 )); then grown=1; break; fi
+  sleep 0.5
+done
+[[ -n "$grown" ]] || fail "X idle time does not grow without input"
+docker exec -u neko "$SLOT" sh -c 'DISPLAY=:99.0 xdotool mousemove 37 41 && DISPLAY=:99.0 xdotool mousemove 51 63'
+reset=""
+for _ in $(seq 1 10); do
+  now_ms="$(idle_ms)"
+  if [[ "$now_ms" =~ ^[0-9]+$ ]] && (( now_ms < 1000 )); then reset=1; break; fi
+  sleep 0.3
+done
+[[ -n "$reset" ]] || fail "XTest input did not reset the X idle time"
+pass "idle probe measures XTest input and is agent-only"
+
 [[ "$(docker exec -u neko "$SLOT" sh -c 'DISPLAY=:99.0 xdotool getdisplaygeometry')" == "1280 800" ]] || fail "display is not 1280x800"
 pass "display 1280x800"
 

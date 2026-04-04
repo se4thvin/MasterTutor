@@ -2,6 +2,8 @@
 # The slots publish CDP on 127.0.0.1 so a host-side Vitest process can drive them, and accept
 # CDP from any source (CDP_ALLOWED_IP=0.0.0.0/0). Production never does either (Phase 0 compose.yml).
 # The slot entrypoint passes CDP_ALLOWED_IP to iptables unvalidated, so a CIDR must stay accepted.
+# n.eko (8080) and the idle probe (9224) are published on 127.0.0.1 too, for the B6 live-view tests (F9);
+# the same allow-all rule as CDP applies (F12).
 name: mastertutor-behaviour
 
 x-slot: &slot
@@ -22,7 +24,7 @@ x-slot-env: &slot-env
   NEKO_ADMIN_SECRET: behaviour-admin-secret-0123456789abcdef
   NEKO_MEMBER_SECRET: behaviour-member-secret-0123456789abcde
   CDP_ALLOWED_IP: 0.0.0.0/0
-  NEKO_ALLOWED_IPS: 127.0.0.1
+  NEKO_ALLOWED_IPS: 0.0.0.0/0
   SLOT_EGRESS_ALLOW_CIDRS: 172.30.240.0/24
 
 services:
@@ -46,14 +48,14 @@ services:
     environment:
       <<: *slot-env
       SLOT_NAME: browser-1
-    ports: ["127.0.0.1:19223:9223"]
+    ports: ["127.0.0.1:19223:9223", "127.0.0.1:18091:8080", "127.0.0.1:18191:9224"]
 
   browser-2:
     <<: *slot
     environment:
       <<: *slot-env
       SLOT_NAME: browser-2
-    ports: ["127.0.0.1:19224:9223"]
+    ports: ["127.0.0.1:19224:9223", "127.0.0.1:18092:8080", "127.0.0.1:18192:9224"]
 
 networks:
   behaviour:
