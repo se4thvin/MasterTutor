@@ -46,6 +46,17 @@
         link.click();
         link.remove();
       });
+      // ?spam: the page keeps starting small downloads of its own (it never asked anyone).
+      if (new URLSearchParams(location.search).has("spam")) {
+        let count = 0;
+        const timer = setInterval(() => {
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(new Blob([`spam ${count}`]));
+          link.download = `spam-${count++}.txt`;
+          link.click();
+          if (count >= 60) clearInterval(timer);
+        }, 25);
+      }
     </script>
   </body>
 </html>

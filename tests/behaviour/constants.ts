@@ -18,3 +18,7 @@ export async function cdpBaseUrlForTests(name: string): Promise<string> {
   if (!url) throw new Error(`unknown behaviour slot ${name}`);
   return url;
 }
+
+/** The host folder the behaviour stack mounts as the slots' `/downloads` volume (the agent's view of it). */
+export const BEHAVIOUR_DOWNLOADS =
+  process.env.BEHAVIOUR_DOWNLOADS ?? "/tmp/mastertutor-behaviour-downloads";

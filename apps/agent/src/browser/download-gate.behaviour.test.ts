@@ -1,10 +1,17 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ComputerAction } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { COMPOSE_FILE, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts";
+import {
+  BEHAVIOUR_DOWNLOADS,
+  COMPOSE_FILE,
+  SITE,
+  SLOT_CDP,
+} from "../../../../tests/behaviour/constants.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { waitFor } from "../testing/wait.ts";
 import { ComputerExecutor } from "../tools/computer.ts";
@@ -24,7 +31,7 @@ afterEach(async () => {
   session = undefined;
 });
 
-/** Every file a download could have written in the slot: the downloads volume and Playwright's own folder. */
+/** Every file a download could have written anywhere in the slot (a default download, Playwright's folder, the volume). */
 async function savedFiles(): Promise<string[]> {
   const { stdout } = await run("docker", [
     "compose",
@@ -35,21 +42,25 @@ async function savedFiles(): Promise<string[]> {
     "browser-1",
     "sh",
     "-c",
-    "find /downloads /tmp -type f 2>/dev/null | grep -E '^/downloads/|playwright-artifacts' || true",
+    "find / /downloads -xdev -type f \\( -path '/downloads/*' -o -path '*playwright-artifacts*' -o -path '/home/neko/Downloads/*' -o -name '*.csv' -o -name '*.txt' -newer /proc/1 \\) 2>/dev/null | grep -v -E '^/(proc|sys|usr|etc|var|opt|lib)' || true",
   ]);
   return stdout.split("\n").filter(Boolean);
 }
 
-async function setup() {
+/** The run's folder as the agent sees it (the behaviour stack mounts the volume on the host). */
+const localFolder = (runId: string) => join(BEHAVIOUR_DOWNLOADS, runId);
+const localFiles = (runId: string) => readdir(localFolder(runId)).catch(() => [] as string[]);
+
+async function setup(page = "/download.html") {
   const runId = randomUUID();
   session = await BrowserSession.connect({
     cdpBaseUrl: SLOT_CDP["browser-1"] ?? "",
     allowedOrigins: () => [SITE],
     testMode: true,
     log,
-    downloadPath: slotDownloadPath(runId),
+    downloads: { slotPath: slotDownloadPath(runId), localPath: localFolder(runId) },
   });
-  await session.goto(`${SITE}/download.html`, signal);
+  await session.goto(`${SITE}${page}`, signal);
   await waitFor(
     () => session!.page.frames().some((frame) => frame.url().includes("download-frame")),
     {
@@ -118,7 +129,7 @@ describe("download gate (spec §9): denied unless a person approved it", () => {
 
   it("saves an approved download once, into the run's folder under its download id, then denies again", async () => {
     const { s, executor, runId, before } = await setup();
-    await s.downloads.allowOnce(`${SITE}/files/report.csv`);
+    await s.downloads.allowOnce((url) => url === `${SITE}/files/report.csv`);
     expect(await executor.execute(AT.link, signal)).toBeNull();
     const folder = slotDownloadPath(runId);
     const saved = await waitFor(
@@ -147,5 +158,44 @@ describe("download gate (spec §9): denied unless a person approved it", () => {
       "-rf",
       folder,
     ]);
+  });
+
+  it("while one download is approved, a page spamming its own downloads saves none of them: exactly one file", async () => {
+    const { s, executor, runId } = await setup("/download.html?spam");
+    await new Promise((resolve) => setTimeout(resolve, 200)); // the spam is under way
+    await s.downloads.allowOnce((url) => url === `${SITE}/files/report.csv`);
+    expect(await executor.execute(AT.link, signal)).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 2_500)); // spam ends; the allowance closes
+    const approved = s.downloads.approvedDownloads();
+    expect(approved).toHaveLength(1);
+    expect(await localFiles(runId)).toEqual(approved);
+    expect(s.downloads.drainBlocked().length).toBeGreaterThan(10); // each spam attempt reported
+  });
+
+  it("a page left behind when the gate's connection goes saves nothing: the slot's own policy denies", async () => {
+    const { s, before } = await setup();
+    await s.close();
+    session = undefined;
+    // A bare CDP client (not Playwright, which sets its own download behaviour) on the page.
+    const targets = (await (await fetch(`${SLOT_CDP["browser-1"]}/json/list`)).json()) as Array<{
+      type: string;
+      webSocketDebuggerUrl: string;
+    }>;
+    const target = targets.find((entry) => entry.type === "page")!;
+    const socket = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((resolve) => socket.addEventListener("open", resolve, { once: true }));
+    try {
+      socket.send(
+        JSON.stringify({
+          id: 1,
+          method: "Page.navigate",
+          params: { url: `${SITE}/files/report.csv` },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(await savedFiles()).toEqual(before);
+    } finally {
+      socket.close();
+    }
   });
 });
