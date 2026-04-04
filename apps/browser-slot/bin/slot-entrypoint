@@ -70,14 +70,14 @@ if ! ipv6_disabled; then
   } || { echo "slot-entrypoint: cannot disable or filter IPv6" >&2; exit 70; }
 fi
 
-# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223)
-# and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
+# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223),
+# the X idle probe (9224) and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
 iptables -F INPUT
 iptables -F OUTPUT
 iptables -P INPUT DROP
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-for port in 9223 4713; do
+for port in 9223 9224 4713; do
   iptables -A INPUT -p tcp --dport "$port" -s "$CDP_ALLOWED_IP" -j ACCEPT
 done
 IFS=',' read -r -a neko_ips <<< "$NEKO_ALLOWED_IPS"
