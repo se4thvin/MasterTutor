@@ -48,7 +48,13 @@ describe("RunEvent", () => {
       },
       budget: { type: "budget", usage: EMPTY_USAGE, budget: DEFAULT_BUDGET },
       user_message: { type: "user_message", text: "Do reading 2 next" },
-      download_ready: { type: "download_ready", downloadId: id, filename: "a.pdf", bytes: 10 },
+      download_ready: {
+        type: "download_ready",
+        downloadId: id,
+        assetId: id,
+        filename: "a.pdf",
+        bytes: 10,
+      },
       error: { type: "error", code: "openai_5xx", message: "Model unavailable" },
       filed: {
         type: "filed",
@@ -61,6 +67,12 @@ describe("RunEvent", () => {
     };
     expect(Object.keys(samples).sort()).toEqual([...RUN_EVENT_TYPES].sort());
     for (const type of RUN_EVENT_TYPES) expect(RunEvent.parse(samples[type]).type).toBe(type);
+    // B6 A3: a download is always linked to its stored asset.
+    const { assetId: _assetId, ...withoutAsset } = samples.download_ready as Record<
+      string,
+      unknown
+    >;
+    expect(RunEvent.safeParse(withoutAsset).success).toBe(false);
   });
 
   it("rejects unknown event types", () => {
