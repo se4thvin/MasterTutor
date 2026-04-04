@@ -49,10 +49,15 @@ export async function loginNeko(options: NekoLoginOptions): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ username: options.username, password: options.password }),
+    // Never re-send the password to wherever a redirect points.
+    redirect: "error",
     signal: AbortSignal.timeout(options.timeoutMs ?? 3_000),
   });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new NekoLoginError(response.status);
+  }
   const text = await response.text();
-  if (!response.ok) throw new NekoLoginError(response.status);
   const fromCookie = nekoTokenFromSetCookie(response.headers.getSetCookie());
   if (fromCookie) return fromCookie;
   try {

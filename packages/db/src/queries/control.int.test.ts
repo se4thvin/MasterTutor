@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { decodeNotify } from "@mastertutor/contracts";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -105,5 +106,25 @@ describe("emitRunEvent in @mastertutor/db (F7)", () => {
     } finally {
       await web.close();
     }
+  });
+});
+
+describe("migration 0005_live_control_user", () => {
+  it("backfills runs the user already held, so the CHECK can be added", async () => {
+    const runId = await newRun();
+    const migration = await readFile(
+      new URL("../../migrations/0005_live_control_user.sql", import.meta.url),
+      "utf8",
+    );
+    await owner.sql.begin(async (tx) => {
+      // Back to the pre-0005 shape, with a run a user holds (a database migrated before B6).
+      await tx`alter table runs drop constraint runs_control_user_matches_controller`;
+      await tx`alter table runs drop column control_user_id`;
+      await tx`update runs set controller = 'user' where id = ${runId}`;
+      for (const statement of migration.split("--> statement-breakpoint"))
+        await tx.unsafe(statement);
+    });
+    const [row] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+    expect(row).toMatchObject({ controller: "user", controlUserId: "legacy" });
   });
 });

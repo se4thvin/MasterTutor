@@ -88,7 +88,12 @@ export function withHooks(overrides: Partial<RunHooks> = {}): RunHooks {
 }
 
 /** Hooks several phases provide together; the rest of RunHooks has exactly one owner. */
-const MERGED_HOOKS = new Set(["functionTools", "promptContext", "onLeased", "onLeaseEnding"]);
+const MERGED_HOOKS: ReadonlySet<keyof RunHooks> = new Set<keyof RunHooks>([
+  "functionTools",
+  "promptContext",
+  "onLeased",
+  "onLeaseEnding",
+]);
 
 /**
  * Combines phase hook sets (B3 vault, B6 live view, B5, …) for one Supervisor (principle 5:
@@ -101,7 +106,7 @@ export function composeRunHooks(...parts: Partial<RunHooks>[]): Partial<RunHooks
   const single: Record<string, unknown> = {};
   for (const part of parts) {
     for (const [key, value] of Object.entries(part)) {
-      if (value === undefined || MERGED_HOOKS.has(key)) continue;
+      if (value === undefined || MERGED_HOOKS.has(key as keyof RunHooks)) continue;
       if (key in single) throw new Error(`RunHooks.${key} has more than one owner`);
       single[key] = value;
     }
