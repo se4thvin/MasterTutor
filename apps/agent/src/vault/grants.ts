@@ -4,8 +4,9 @@ import type { VaultDeps } from "./context.ts";
 import type { CallApproval } from "./runtime.ts";
 
 /**
- * Approve phase (RunHooks.functionApproval): a credential_first_use request when the page is on
- * the item's pinned origin and no grant exists yet. Elsewhere the fill is refused anyway.
+ * Approve phase (each credential tool's own approval): a credential_first_use request when the
+ * page is on the item's pinned origin and no grant exists yet. Elsewhere the fill is refused
+ * anyway.
  */
 export async function credentialApproval(
   deps: Pick<VaultDeps, "db">,

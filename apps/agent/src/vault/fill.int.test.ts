@@ -615,7 +615,7 @@ describe("fill_credential", () => {
       target: await refs.ref("#password"),
     });
     expect(d.signInStarted.size).toBe(1);
-    forgetFillState(d, runId);
+    forgetFillState(d, runId, Date.now());
     expect([d.signInStarted.size, d.totpSteps.size]).toEqual([0, 0]);
   });
 });

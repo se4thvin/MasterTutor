@@ -11,7 +11,7 @@ import {
   startVaultFixtures,
   type VaultFixtures,
 } from "../../../../tests/fixtures/vault-sites/server.ts";
-import { fillCredential } from "./fill.ts";
+import { fillCredential, forgetFillState } from "./fill.ts";
 import { CODE_FIRST_LOOKBACK_MS, codeFirstSignInStart } from "./otp.ts";
 import { totpCode } from "./totp.ts";
 import {
@@ -155,6 +155,44 @@ describe("TOTP step reuse", () => {
     expect(await fill()).toEqual({ ok: true });
     expect(skew).toBeGreaterThan(0);
     expect(await tb.page.inputValue("#totp")).toBe(totpCode(rotated, Date.now() + skew));
+  });
+});
+
+describe("TOTP across a sleep and wake", () => {
+  it("still never retypes the step typed before the run was released (review minor)", async () => {
+    let skew = 0;
+    const waits: number[] = [];
+    const deps = env.deps({
+      resolveRef: refs.resolve,
+      now: () => Date.now() + skew,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+        skew += ms;
+      },
+    });
+    const fill = async () => {
+      await tb.page.goto(`${login}/totp`);
+      return fillCredential(deps, ctx(), {
+        alias: "site",
+        field: "totp",
+        target: await refs.ref("#totp"),
+      });
+    };
+    expect(await fill()).toEqual({ ok: true });
+    const typed = await tb.page.inputValue("#totp");
+    waits.length = 0;
+    // The run sleeps (its worker releases it) and wakes within the same 30 s window.
+    forgetFillState(deps, runId, deps.now());
+    expect(await fill()).toEqual({ ok: true });
+    expect(waits).toHaveLength(1);
+    expect(await tb.page.inputValue("#totp")).not.toBe(typed);
+  });
+
+  it("drops a step once its window has passed", () => {
+    const deps = env.deps();
+    deps.totpSteps.set(`${runId}\u0000site`, { step: 1, until: 1_000 });
+    forgetFillState(deps, runId, 2_000);
+    expect(deps.totpSteps.size).toBe(0);
   });
 });
 

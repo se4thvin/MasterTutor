@@ -25,7 +25,7 @@ import { approvedBy, credentialApproval } from "./grants.ts";
 import type { ApprovalContext, ToolContext } from "./runtime.ts";
 import { codeFirstSignInStart, obtainOtp } from "./otp.ts";
 import { NOT_STORED, withItemSecret } from "./secrets.ts";
-import { msUntilFreshWindow, totpCode, totpStep } from "./totp.ts";
+import { msUntilFreshWindow, totpCode, totpWindow } from "./totp.ts";
 
 /** Refusals that are policy decisions (audited as `denied`); the rest are `fill` failures. */
 const DENIALS: ReadonlySet<CredentialErrorCode> = new Set([
@@ -46,14 +46,20 @@ const MAX_POSTS_TO = 4_096;
 /** Per-run, per-alias fill state lives in VaultDeps maps under this key. */
 const runAliasKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
 
-/** Drops a finished run's fill state (RunHooks.onReleased, Task 13). */
+/**
+ * Drops a released run's fill state (RunHooks.onReleased, Task 13). A TOTP step typed stays until
+ * its window has passed, for every run: a run that sleeps and wakes within that window must not
+ * type the same code again (review).
+ */
 export function forgetFillState(
   deps: Pick<VaultDeps, "signInStarted" | "totpSteps">,
   runId: string,
+  nowMs: number,
 ): void {
   const prefix = `${runId}\u0000`;
-  for (const map of [deps.signInStarted, deps.totpSteps])
-    for (const key of map.keys()) if (key.startsWith(prefix)) map.delete(key);
+  for (const key of deps.signInStarted.keys())
+    if (key.startsWith(prefix)) deps.signInStarted.delete(key);
+  for (const [key, typed] of deps.totpSteps) if (typed.until <= nowMs) deps.totpSteps.delete(key);
 }
 
 /**
@@ -169,7 +175,7 @@ async function withCredentialValue(
       // The wait (up to a period) happens with the seed closed (N5).
       const key = runAliasKey(ctx.runId, item.alias);
       const wait = await withItemSecret(deps, ctx.workspaceId, item, "totp", async (seed) =>
-        msUntilFreshWindow(seed, deps.now(), deps.totpSteps.get(key)),
+        msUntilFreshWindow(seed, deps.now(), deps.totpSteps.get(key)?.step),
       );
       if (wait === NOT_STORED) return "field_not_stored";
       if (wait === null) return "fill_failed";
@@ -183,10 +189,10 @@ async function withCredentialValue(
         async (seed): Promise<FillOutcome | CredentialErrorCode> => {
           const now = deps.now();
           const code = totpCode(seed, now);
-          const step = totpStep(seed, now);
-          if (code === null || step === null) return "fill_failed";
+          const window = totpWindow(seed, now);
+          if (code === null || window === null) return "fill_failed";
           const outcome = await use(code);
-          if (outcome === "ok") deps.totpSteps.set(key, step);
+          if (outcome === "ok") deps.totpSteps.set(key, window);
           return outcome;
         },
       );

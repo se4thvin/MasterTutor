@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TOTP_MIN_REMAINING_MS, msUntilFreshWindow, totpCode, totpStep } from "./totp.ts";
+import { TOTP_MIN_REMAINING_MS, msUntilFreshWindow, totpCode, totpWindow } from "./totp.ts";
 
 describe("TOTP generation", () => {
   it("matches RFC 6238 and accepts 80-bit keys (planning verification 7)", () => {
@@ -40,7 +40,7 @@ describe("TOTP algorithms and reuse (review minors)", () => {
   });
 
   it("waits for the next time step rather than typing the code it already typed", () => {
-    expect(totpStep("JBSWY3DPEHPK3PXP", 10_000)).toBe(0);
+    expect(totpWindow("JBSWY3DPEHPK3PXP", 10_000)).toEqual({ step: 0, until: 30_000 });
     expect(msUntilFreshWindow("JBSWY3DPEHPK3PXP", 10_000, 0)).toBe(20_050);
     expect(msUntilFreshWindow("JBSWY3DPEHPK3PXP", 40_000, 0)).toBe(0);
   });
