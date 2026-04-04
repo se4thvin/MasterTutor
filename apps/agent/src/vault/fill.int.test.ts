@@ -576,6 +576,22 @@ describe("fill_credential", () => {
     expect(await tb.page.inputValue("#password")).toBe("");
   });
 
+  it("names the destination of a submit button outside the form, linked by form= (review I1)", async () => {
+    await tb.page.goto(`${login}/offsite-outside-button`);
+    const d = deps();
+    const card = await ask(d, "site", "password", "#password");
+    expect(card).toMatchObject({ postsTo: fx.origin("evil") });
+    // A plain first-use card (or a grant alone) never clears it.
+    expect(
+      await fillCredential(d, ctx(humanApproval(env.userId)), {
+        alias: "site",
+        field: "password",
+        target: await refs.ref("#password"),
+      }),
+    ).toEqual({ error: "approval_required" });
+    expect(await tb.page.inputValue("#password")).toBe("");
+  });
+
   it("in auto mode hands the page to a person, naming where the form posts (needs_human)", async () => {
     await tb.page.goto(`${login}/offsite-form`);
     const auto = ctx(policyApproval(fx.origin("evil")));

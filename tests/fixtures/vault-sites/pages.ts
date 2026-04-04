@@ -264,6 +264,19 @@ export const offsiteForm = (action: string, formAction: string | null) =>
      <button id="submit" type="submit"${formAction ? ` formaction="${esc(formAction)}"` : ""}>Sign in</button></form>`,
   );
 
+/**
+ * A form whose password and submit button sit outside it, linked by form= (N7 review I1): the
+ * button posts the form elsewhere through its formaction.
+ */
+export const offsiteOutsideButton = (formAction: string) =>
+  layout(
+    "Sign in",
+    `<form id="f" method="post" action="/password">
+     <label for="username">Email</label><input id="username" name="username" type="email" autocomplete="username"></form>
+     <label for="password">Password</label><input id="password" name="password" form="f" type="password" autocomplete="current-password">
+     <button id="submit" type="submit" form="f" formaction="${esc(formAction)}">Sign in</button>`,
+  );
+
 /** A reveal toggle next to the field, and an unrelated "Show details" button nearby (M6). */
 export const showDetails = () =>
   layout(
