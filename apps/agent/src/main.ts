@@ -1,7 +1,6 @@
 import { AgentEnv, parseEnv } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { createDb, listBrowserSlots } from "@mastertutor/db";
-import { vaultKeyPairFromPrivate } from "@mastertutor/sealing/open";
 import { createStorage } from "@mastertutor/storage";
 import { assertConcurrencyFitsSlots } from "./boot-checks.ts";
 import { startHealthServer } from "./health.ts";
@@ -9,12 +8,10 @@ import { createOpenAIModelClient } from "./llm/client.ts";
 import { Supervisor } from "./loop/supervisor.ts";
 import { slotCdpBaseUrl } from "./slots/probe.ts";
 import { createVault, vaultHooks } from "./vault/index.ts";
+import { takeVaultKeys } from "./vault/key-env.ts";
 
-const env = parseEnv(AgentEnv, process.env);
 // S2: the private key lives in the vault's key pair only; nothing else can read it from the env.
-const vaultKeys = await vaultKeyPairFromPrivate(env.VAULT_PRIVATE_KEY);
-delete process.env["VAULT_PRIVATE_KEY"];
-delete process.env["VAULT_NEXT_PRIVATE_KEY"];
+const { keys: vaultKeys, env } = await takeVaultKeys(parseEnv(AgentEnv, process.env), process.env);
 const log = createLogger({ service: "agent", level: env.LOG_LEVEL });
 const database = createDb(env.DATABASE_URL, { max: 10 });
 const storage = createStorage({
