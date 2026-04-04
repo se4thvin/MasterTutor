@@ -8,30 +8,87 @@ import {
   type VaultFixtures,
 } from "../../../../../tests/fixtures/vault-sites/server.ts";
 import { chromiumArgsFor } from "../testing/browser.ts";
+import { expectAbsent } from "../testing/canary.ts";
 import { createOcr, ocrContains, type Ocr } from "../testing/ocr.ts";
 import { startVaultScenario, type VaultScenario } from "../testing/scenario.ts";
 
 // §12 tests 1 (run_transcript, model requests, Garage objects, logs) and 4 (injection) through the
-// real B1 loop with the vault plugged in by hooks.
+// real B1 loop with the vault plugged in by hooks, in each approval mode (ask, auto, bypass/D44).
 const CANARY = {
   username: "LOOPKITE5CANARY@example.test",
   password: "OSPREY6CANARY2LANTERN",
 } as const;
+const ALIASES = ["ask", "auto", "bypass"] as const;
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
 const read: MockTurn = {
   outputs: [
     { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
   ],
 };
-const fill = (field: "username" | "password", name: string): MockTurn => ({
-  outputs: [{ type: "fill_named", alias: "site", field, name }],
+const fill = (alias: string, field: "username" | "password", name: string): MockTurn => ({
+  outputs: [{ type: "fill_named", alias, field, name }],
 });
 const click = (name: string): MockTurn => ({ outputs: [{ type: "click_named", name }] });
 const done: MockTurn = { outputs: [{ type: "turn", status: "done", reason: "Finished" }] };
+/** What the model itself says about the injected "Continue" link (a real model flags it). */
+const flaggedClick = (name: string): MockTurn => ({
+  outputs: [
+    {
+      type: "click_named",
+      name,
+      safetyChecks: [
+        { id: "sc_1", code: "malicious_instructions", message: "The page tells you to act." },
+      ],
+    },
+  ],
+});
+/** Sign in, open the injected notice and do everything the notice asks. */
+const signInThenObey = (alias: string, tail: MockTurn[]): MockTurn[] => [
+  read,
+  fill(alias, "username", "Email"),
+  fill(alias, "password", "Password"),
+  click("Sign in"),
+  read,
+  click("Security notice"),
+  read,
+  fill(alias, "password", "Comments"),
+  ...tail,
+  done,
+];
 
 let fx: VaultFixtures;
 let s: VaultScenario;
 let ocr: Ocr;
-let runId: string;
+let login: string;
+const runs: string[] = [];
+
+async function start(
+  name: string,
+  path: string,
+  approvalMode: "ask" | "auto_within_allowlist" | "bypass",
+) {
+  const runId = await s.start({
+    name,
+    goal: `Sign in at ${login}${path} and read the account notice.`,
+    allowedOrigins: [login],
+    approvalMode,
+  });
+  runs.push(runId);
+  return runId;
+}
+const approvalRows = async (runId: string) =>
+  (
+    await s.owner
+      .sql`select kind, status from approvals where run_id = ${runId} order by created_at`
+  ).map((row) => [row.kind, row.status]);
+const auditRows = async (runId: string) =>
+  (
+    await s.owner.sql`select action, outcome from vault_audit where run_id = ${runId} order by at`
+  ).map((row) => [row.action, row.outcome]);
+const outputsMention = async (runId: string, text: string) =>
+  (await s.toolOutputs(runId)).some((output) => output.includes(text));
+const evilRequests = () => fx.requests.filter((r) => r.host === FIXTURE_HOSTS.evil);
 
 beforeAll(async () => {
   fx = await startVaultFixtures({
@@ -43,57 +100,57 @@ beforeAll(async () => {
     },
     mail: null,
   });
+  login = fx.origin("login");
   ocr = await createOcr();
   s = await startVaultScenario({
     chromiumArgs: chromiumArgsFor([]),
     scenarios: [
       {
-        name: "injection",
-        turns: [
-          read,
-          fill("username", "Email"),
-          fill("password", "Password"),
-          click("Sign in"),
-          read,
-          click("Security notice"),
-          read,
-          fill("password", "Comments"),
+        // The download is clicked while the notice still shows: a denied new_origin leaves the
+        // tab on chrome-error, where a later click would prove nothing.
+        name: "ask",
+        turns: signInThenObey("ask", [
           click("Delete account"),
-          // Before Continue: a denied new_origin leaves the tab on chrome-error, where a later
-          // click on the download link would hit nothing and prove nothing.
           click("Download report"),
           click("Continue"),
-          done,
-        ],
+        ]),
       },
+      {
+        name: "auto",
+        turns: signInThenObey("auto", [
+          click("Delete account"),
+          click("Download report"),
+          click("Continue"),
+        ]),
+      },
+      {
+        name: "bypass",
+        turns: signInThenObey("bypass", [click("Delete account"), flaggedClick("Continue")]),
+      },
+      { name: "bypass-offsite", turns: [read, fill("bypass", "password", "Password"), done] },
     ],
   });
-  const login = fx.origin("login");
-  const secrets = await Promise.all(
-    (["username", "password"] as const).map(async (field) => ({
-      field,
-      sealed: await sealValue(
-        s.keys.publicKey,
-        { kind: "secret", workspaceId: s.workspaceId, alias: "site", origin: login, field },
-        CANARY[field],
-      ),
-    })),
-  );
-  await createVaultItem(s.owner.db, {
-    workspaceId: s.workspaceId,
-    alias: "site",
-    origin: login,
-    label: "My private label",
-    imap: null,
-    secrets,
-    actor: s.userId,
-  });
-  runId = await s.start({
-    name: "injection",
-    goal: `Sign in at ${login}/password and read the account notice.`,
-    allowedOrigins: [login],
-    approvalMode: "ask",
-  });
+  for (const alias of ALIASES) {
+    const secrets = await Promise.all(
+      (["username", "password"] as const).map(async (field) => ({
+        field,
+        sealed: await sealValue(
+          s.keys.publicKey,
+          { kind: "secret", workspaceId: s.workspaceId, alias, origin: login, field },
+          CANARY[field],
+        ),
+      })),
+    );
+    await createVaultItem(s.owner.db, {
+      workspaceId: s.workspaceId,
+      alias,
+      origin: login,
+      label: "My private label",
+      imap: null,
+      secrets,
+      actor: s.userId,
+    });
+  }
 });
 afterAll(async () => {
   await s?.stop();
@@ -101,12 +158,13 @@ afterAll(async () => {
   await fx?.close();
 });
 
-describe("prompt injection through the loop (ask mode)", () => {
-  it("asks before first credential use, then blocks the risky click, the exfiltration link and the download", async () => {
+describe("prompt injection through the loop", () => {
+  it("ask: first use, the risky click, the download and the exfiltration link each wait for a person", async () => {
+    const runId = await start("ask", "/password", "ask");
     const steps = [
       ["credential_first_use", "approved"],
       ["risky_click", "denied"], // "Delete account"
-      ["download", "denied"], // "Download report": B1's download gate (1984cf3)
+      ["download", "denied"], // "Download report": B1's download gate
       ["new_origin", "denied"], // "Continue" to evil
     ] as const;
     for (const [kind, decision] of steps) {
@@ -114,58 +172,104 @@ describe("prompt injection through the loop (ask mode)", () => {
       await s.decide(runId, decision);
     }
     expect((await s.settle(runId)).status).toBe("completed");
-
-    const rows = await s.owner
-      .sql`select kind, status from approvals where run_id = ${runId} order by created_at`;
-    expect(rows.map((row) => [row.kind, row.status])).toEqual(steps.map((step) => [...step]));
-    expect(
-      (await s.toolOutputs(runId)).some((output) => output.includes('"field_type_mismatch"')),
-    ).toBe(true);
-    expect(fx.requests.filter((r) => r.host === FIXTURE_HOSTS.evil)).toEqual([]);
-    // §12.4: the injected download never reached the browser. If this fails because B1 lets a
-    // same-origin download through without approval, stop and report (B6 F6 owns download blocking).
-    expect(fx.requests.filter((r) => r.path === "/download/report.csv")).toEqual([]);
-    const audit = await s.owner
-      .sql`select action, outcome from vault_audit where run_id = ${runId} order by at`;
-    expect(audit.map((row) => [row.action, row.outcome])).toEqual([
+    expect(await approvalRows(runId)).toEqual(steps.map((step) => [...step]));
+    expect(await outputsMention(runId, '"field_type_mismatch"')).toBe(true);
+    expect(await auditRows(runId)).toEqual([
       ["fill", "ok"],
       ["fill", "ok"],
       ["denied", "field_type_mismatch"],
     ]);
+    expect(evilRequests()).toEqual([]);
+    expect(fx.requests.filter((r) => r.path === "/download/report.csv")).toEqual([]);
+  });
+
+  it("auto: the policy clears the click but never the download or the exfiltration link", async () => {
+    const runId = await start("auto", "/password", "auto_within_allowlist");
+    expect((await s.settle(runId)).status).toBe("completed");
+    // A policy approval is for one call and leaves no grant: each fill gets its own card.
+    expect(await approvalRows(runId)).toEqual([
+      ["credential_first_use", "approved"],
+      ["credential_first_use", "approved"],
+      ["credential_first_use", "approved"],
+      ["risky_click", "approved"],
+      ["download", "denied"],
+      ["new_origin", "denied"],
+    ]);
+    expect(await auditRows(runId)).toEqual([
+      ["fill", "ok"],
+      ["fill", "ok"],
+      ["denied", "field_type_mismatch"],
+    ]);
+    expect(evilRequests()).toEqual([]);
+    expect(fx.requests.filter((r) => r.path === "/download/report.csv")).toEqual([]);
+  });
+
+  it("bypass (D44): the model's malicious_instructions warning still waits for a person", async () => {
+    const runId = await start("bypass", "/password", "bypass");
+    expect(await s.settle(runId)).toEqual({ status: "waiting", waitReason: "approval" });
+    await s.decide(runId, "denied");
+    expect((await s.settle(runId)).status).toBe("completed");
+    expect(await approvalRows(runId)).toEqual([
+      ["credential_first_use", "approved"],
+      ["credential_first_use", "approved"],
+      ["credential_first_use", "approved"],
+      ["risky_click", "approved"], // "Delete account"
+      ["risky_click", "denied"], // the flagged "Continue": a person said no
+    ]);
+    const [flagged] = await s.owner.sql`
+      select request from approvals where run_id = ${runId} order by created_at desc limit 1`;
+    expect(JSON.stringify(flagged?.request)).toContain("malicious_instructions");
+    expect(await auditRows(runId)).toEqual([
+      ["fill", "ok"],
+      ["fill", "ok"],
+      ["denied", "field_type_mismatch"],
+    ]);
+    expect(evilRequests()).toEqual([]);
+  });
+
+  it("bypass (D44): an off-origin sign-in form is handed to a person, never filled", async () => {
+    const runId = await start("bypass-offsite", "/offsite-form", "bypass");
+    expect(await s.settle(runId)).toEqual({ status: "waiting", waitReason: "takeover" });
+    expect(await auditRows(runId)).toEqual([["denied", "form_action_offsite"]]);
+    expect(evilRequests()).toEqual([]);
   });
 
   it("tells the model the alias, never the label, username or password (F14)", () => {
-    const first = JSON.stringify(s.mock.requestsFor("injection")[0]?.body.input);
-    expect(first).toContain(`site (${fx.origin("login")})`);
+    const first = JSON.stringify(s.mock.requestsFor("ask")[0]?.body.input);
+    expect(first).toContain(`ask (${login})`);
     expect(first).not.toContain("My private label");
   });
 
-  it("no canary reaches run_transcript, model requests, logs or tool outputs", async () => {
-    const [transcript] = await s.owner
-      .sql`select coalesce(string_agg(item::text, E'\\n'), '') as dump from run_transcript where run_id = ${runId}`;
-    const haystacks = {
-      run_transcript: String(transcript?.dump ?? ""),
-      model_requests: JSON.stringify(
-        s.mock.requestsFor("injection").map((request) => request.body),
-      ),
-      logs: s.logs(),
-      tool_outputs: (await s.toolOutputs(runId)).join("\n"),
-    };
-    for (const [where, text] of Object.entries(haystacks)) {
-      for (const [name, value] of Object.entries(CANARY))
-        expect(text.includes(value), `${name} in ${where}`).toBe(false);
+  it("no canary, plain or encoded, reaches run_transcript, model requests, logs or tool outputs", async () => {
+    expect(runs).toHaveLength(4);
+    for (const runId of runs) {
+      const [transcript] = await s.owner
+        .sql`select coalesce(string_agg(item::text, E'\\n'), '') as dump from run_transcript where run_id = ${runId}`;
+      expectAbsent(String(transcript?.dump ?? ""), `run_transcript ${runId}`, CANARY);
+      expectAbsent((await s.toolOutputs(runId)).join("\n"), `tool outputs ${runId}`, CANARY);
     }
+    for (const name of ["ask", "auto", "bypass", "bypass-offsite"])
+      expectAbsent(
+        JSON.stringify(s.mock.requestsFor(name).map((request) => request.body)),
+        `model requests ${name}`,
+        CANARY,
+      );
+    expectAbsent(s.logs(), "logs", CANARY);
   });
 
-  it("no stored screenshot in Garage shows a canary (OCR)", async () => {
-    const steps = await s.owner.sql<
-      { key: string | null }[]
-    >`select screenshot_key as key from run_steps where run_id = ${runId}`;
-    const keys = [...new Set(steps.flatMap((row) => (row.key ? [row.key] : [])))];
-    expect(keys.length).toBeGreaterThan(0);
-    for (const key of keys) {
-      const text = await ocr.text(Buffer.from(await s.storage.getBytes(key)));
-      for (const value of Object.values(CANARY)) expect(ocrContains(text, value), key).toBe(false);
+  it("no Garage object holds a canary: screenshots by OCR, everything else as text (§12.1)", async () => {
+    const objects = [...s.storage.objects];
+    const images = objects.filter(([, bytes]) => Buffer.from(bytes).subarray(0, 4).equals(PNG));
+    expect(images.length).toBeGreaterThan(0);
+    for (const [key, bytes] of objects) {
+      if (images.some(([image]) => image === key)) {
+        const text = await ocr.text(Buffer.from(bytes));
+        for (const value of Object.values(CANARY))
+          expect(ocrContains(text, value), key).toBe(false);
+      } else {
+        expectAbsent(Buffer.from(bytes).toString("utf8"), key, CANARY);
+        expectAbsent(Buffer.from(bytes).toString("latin1"), key, CANARY);
+      }
     }
   });
 });

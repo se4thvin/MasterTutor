@@ -28,6 +28,7 @@ import {
   type TestBrowser,
 } from "../testing/browser.ts";
 import { startVaultTestEnv, type VaultTestEnv } from "../testing/env.ts";
+import { expectAbsent as expectCanariesAbsent } from "../testing/canary.ts";
 import { createOcr, ocrContains, type Ocr } from "../testing/ocr.ts";
 
 // §12 test 1: seeded canaries never reach non-sealed DB columns, logs, tool results or (by OCR)
@@ -67,15 +68,8 @@ async function dumpDatabase(owner: DbHandle): Promise<string> {
   return parts.join("\n");
 }
 
-function expectAbsent(haystack: string, where: string): void {
-  const lower = haystack.toLowerCase();
-  for (const [name, value] of Object.entries(CANARY)) {
-    expect(haystack.includes(value), `${name} in ${where}`).toBe(false);
-    expect(lower.includes(Buffer.from(value).toString("hex")), `${name} (hex) in ${where}`).toBe(
-      false,
-    );
-  }
-}
+const expectAbsent = (haystack: string, where: string) =>
+  expectCanariesAbsent(haystack, where, CANARY);
 
 beforeAll(async () => {
   env = await startVaultTestEnv();

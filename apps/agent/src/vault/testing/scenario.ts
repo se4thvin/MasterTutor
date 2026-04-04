@@ -47,7 +47,11 @@ export interface VaultScenario {
   ): Promise<string>;
   /** Waits until the run waits for a person or ends, then reports where it stopped. */
   settle(runId: string): Promise<{ status: RunStatus; waitReason: WaitReason | null }>;
-  /** The web's decideApproval for the pending approval, as the scenario user. */
+  /**
+   * Decides the pending approval as the scenario user, the way the web's decideApproval leaves
+   * the row (status, decided_by, decided_at), then wakes the run. A direct owner write, not the
+   * web query.
+   */
   decide(runId: string, decision: "approved" | "denied"): Promise<void>;
   /** Every function_call_output the model was sent (run_transcript). */
   toolOutputs(runId: string): Promise<string[]>;

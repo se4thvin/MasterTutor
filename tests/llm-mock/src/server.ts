@@ -104,7 +104,7 @@ export async function startLlmMock(
               { type: "click", x: element.point.x, y: element.point.y, button: "left" },
               ...(output.then ?? []),
             ],
-            pending_safety_checks: [],
+            pending_safety_checks: output.safetyChecks ?? [],
           };
         }
         case "fill_named": {
