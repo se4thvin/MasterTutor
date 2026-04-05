@@ -366,6 +366,28 @@ describe("agent side (as agent_role)", () => {
     expect(await aliases()).toContain(alias);
   });
 
+  it("reads a policy or bypass approver as no human grant, without leaning on the CHECK (B3 final review)", async () => {
+    // The CHECK keeps such rows out; the queries must state the rule themselves too.
+    await owner.sql`alter table vault_grants drop constraint vault_grants_human_approver`;
+    try {
+      for (const decider of ["policy", "bypass"]) {
+        const { id, alias } = await newItem();
+        await upsertBrowserSession(agent.db, { workspaceId, alias, origin, sealed: bytes(14) });
+        await owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, ${decider})`;
+        expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin }), decider).toBe(
+          false,
+        );
+        expect(
+          (await loadBrowserSessions(agent.db, workspaceId, [origin])).map((row) => row.alias),
+          decider,
+        ).not.toContain(alias);
+      }
+    } finally {
+      await owner.sql`delete from vault_grants where approved_by in ('policy', 'bypass')`;
+      await owner.sql`alter table vault_grants add constraint vault_grants_human_approver check (approved_by not in ('policy', 'bypass'))`;
+    }
+  });
+
   it("refuses a grant decided by policy, even from the owner role (review 8)", async () => {
     const { id, alias } = await newItem();
     await expect(
