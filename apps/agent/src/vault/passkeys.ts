@@ -8,6 +8,7 @@ import {
   appendVaultAudit,
   findVaultItemByAlias,
   listVaultItemRecords,
+  lockVaultItemSecrets,
   putVaultSecret,
   type VaultItemRecord,
 } from "@mastertutor/db";
@@ -84,6 +85,36 @@ interface Armed {
 const removeAuthenticator = (cdp: CDPSession, authenticatorId: string) =>
   cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }).catch(() => undefined);
 
+/** Adds or replaces one credential in the item's sealed passkey list. */
+export async function mergeStoredPasskey(
+  deps: Pick<VaultDeps, "db" | "keys">,
+  workspaceId: string,
+  item: VaultItemRecord,
+  credential: StoredPasskey,
+): Promise<void> {
+  // One transaction under a per-item lock: concurrent runs never lose each other's update
+  // (a sign counter going backwards makes some relying parties refuse the passkey).
+  await deps.db.transaction(async (tx) => {
+    await lockVaultItemSecrets(tx, item.id);
+    const stored = await withItemSecret(
+      { db: tx, keys: deps.keys },
+      workspaceId,
+      item,
+      "passkey",
+      async (text) => StoredPasskeys.parse(JSON.parse(text)),
+    );
+    const others = (stored === NOT_STORED ? [] : stored).filter(
+      (passkey) => passkey.credentialId !== credential.credentialId,
+    );
+    const sealed = await sealValue(
+      deps.keys.publicKey,
+      { kind: "secret", workspaceId, alias: item.alias, origin: item.origin, field: "passkey" },
+      JSON.stringify([...others, credential]),
+    );
+    await putVaultSecret(tx, { workspaceId, itemId: item.id }, { field: "passkey", sealed });
+  });
+}
+
 export function createPasskeys(deps: VaultDeps, options: { armMs?: number } = {}): Passkeys {
   const armMs = options.armMs ?? PASSKEY_ARM_MS;
   const armed = new Map<string, Armed>();
@@ -95,21 +126,8 @@ export function createPasskeys(deps: VaultDeps, options: { armMs?: number } = {}
     return stored === NOT_STORED ? [] : stored;
   }
 
-  async function save(workspaceId: string, item: VaultItemRecord, passkeys: StoredPasskey[]) {
-    const sealed = await sealValue(
-      deps.keys.publicKey,
-      { kind: "secret", workspaceId, alias: item.alias, origin: item.origin, field: "passkey" },
-      JSON.stringify(passkeys),
-    );
-    await putVaultSecret(deps.db, { workspaceId, itemId: item.id }, { field: "passkey", sealed });
-  }
-
-  async function merge(workspaceId: string, item: VaultItemRecord, credential: StoredPasskey) {
-    const others = (await load(workspaceId, item)).filter(
-      (passkey) => passkey.credentialId !== credential.credentialId,
-    );
-    await save(workspaceId, item, [...others, credential]);
-  }
+  const merge = (workspaceId: string, item: VaultItemRecord, credential: StoredPasskey) =>
+    mergeStoredPasskey(deps, workspaceId, item, credential);
 
   async function disarm(runId: string): Promise<void> {
     const entry = armed.get(runId);

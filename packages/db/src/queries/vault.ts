@@ -657,3 +657,11 @@ export async function runCreatedAt(db: DbExecutor, runId: string): Promise<Date 
   const [row] = await db.select({ createdAt: runs.createdAt }).from(runs).where(eq(runs.id, runId));
   return row?.createdAt ?? null;
 }
+
+/**
+ * Serialises read-modify-write of one item's sealed values for the rest of the transaction (a
+ * transaction-scoped advisory lock: no row privileges needed, released at commit or rollback).
+ */
+export async function lockVaultItemSecrets(tx: DbExecutor, itemId: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${itemId}, 0))`);
+}
