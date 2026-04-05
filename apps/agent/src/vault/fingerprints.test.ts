@@ -55,6 +55,26 @@ describe("secret fingerprints (the mask source B1 consumes)", () => {
     );
   });
 
+  it("redacts a URL token whose decoded form holds the secret: strict, double, lowercase or partial encoding (final re-review I2)", () => {
+    const prints = createSecretFingerprints();
+    prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "Kestrel#9!pass word" });
+    prints.remember("run-a", { filled: filled(fakeCdp(), [2]), secret: "Tiger/Lily:2024@x" });
+    prints.remember("run-a", { filled: filled(fakeCdp(), [3]), secret: "Tiger*Lily_2024.x" });
+    const mask = prints.forRun("run-a");
+    for (const text of [
+      "https://a.example/welcome?p=Kestrel%239%21pass%20word",
+      "https://a.example/login?next=%2Fwelcome%3Fp%3DKestrel%25239%2521pass%2Bword",
+      "https://a.example/cb?u=Tiger%2fLily%3a2024%40x&x=1",
+      "https://a.example/cb?u=Tiger%2ALily_2024.x",
+    ]) {
+      const out = mask.redact(`Current page: ${text} (loaded)`);
+      expect(out, text).toBe(`Current page: ${SECRET_REDACTION} (loaded)`);
+    }
+    // Unrelated encoded text and stray % signs stay as they are.
+    for (const text of ["https://a.example/?q=Kestrel%2399pass%20word", "100% sure", "%E0%A4%A"])
+      expect(mask.redact(text), text).toBe(text);
+  });
+
   it("matches a secret with punctuation or spaces across any separators", () => {
     const prints = createSecretFingerprints();
     prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "p@ss-W0rd!" });
