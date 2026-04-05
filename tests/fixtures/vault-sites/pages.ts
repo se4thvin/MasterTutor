@@ -277,6 +277,43 @@ export const offsiteOutsideButton = (formAction: string) =>
      <button id="submit" type="submit" form="f" formaction="${esc(formAction)}">Sign in</button>`,
   );
 
+/**
+ * An image submit button posting elsewhere through formaction, inside the form or linked to it by
+ * form= from outside. HTMLFormElement.elements leaves image buttons out (final review I1).
+ */
+export const offsiteImageSubmit = (formAction: string, outside: boolean) => {
+  const image = `<input id="go" type="image" alt="Sign in" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20"${outside ? ' form="f"' : ""} formaction="${esc(formAction)}">`;
+  return layout(
+    "Sign in",
+    `<form id="f" method="post" action="/password">
+     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
+     ${outside ? "" : image}</form>${outside ? image : ""}`,
+  );
+};
+
+/** A sign-in form sent with GET: the browser puts the password in the next page's URL (final review I2). */
+export const getForm = () =>
+  layout(
+    "Sign in",
+    `<form method="get" action="/welcome">
+     <label for="password">Password</label><input id="password" name="p" type="password" autocomplete="current-password">
+     <button id="submit" type="submit">Sign in</button></form>`,
+  );
+
+/**
+ * The same, built inside an open shadow root: document.querySelectorAll never sees it (final
+ * re-review I1).
+ */
+export const offsiteImageSubmitInShadow = (formAction: string, outside: boolean) => {
+  const image = `<input id="go" type="image" alt="Sign in" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20"${outside ? ' form="f"' : ""} formaction="${esc(formAction)}">`;
+  const inner = `<form id="f" method="post" action="/password"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">${outside ? "" : image}</form>${outside ? image : ""}`;
+  return layout(
+    "Sign in",
+    `<div id="host"></div>
+     <script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(inner)};</script>`,
+  );
+};
+
 /** A reveal toggle next to the field, and an unrelated "Show details" button nearby (M6). */
 export const showDetails = () =>
   layout(

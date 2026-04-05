@@ -10,13 +10,11 @@ import {
   upsertBrowserSession,
   type DbExecutor,
 } from "@mastertutor/db";
-import { sealValue } from "@mastertutor/sealing";
+import { MAX_SEALED_VALUE_BYTES, sealValue } from "@mastertutor/sealing";
 import { withOpenedText } from "@mastertutor/sealing/open";
 import type { LoginNotifier, VaultDeps } from "./context.ts";
 import { isLogoutLabel } from "./logout.ts";
 import { BrowserStorageState, type SessionStore } from "./runtime.ts";
-
-export const MAX_SESSION_STATE_BYTES = 2 * 1024 * 1024;
 
 export interface VaultSessionStore extends SessionStore, LoginNotifier {
   /** RunHooks.onClick: a logout click deletes this run's sessions on that origin (deviation 6). */
@@ -132,7 +130,7 @@ export function createVaultSessionStore(
         origins: state.origins.filter((entry) => entry.origin === here),
       };
       const text = JSON.stringify(scoped);
-      if (Buffer.byteLength(text) > MAX_SESSION_STATE_BYTES) {
+      if (Buffer.byteLength(text) > MAX_SEALED_VALUE_BYTES) {
         deps.log.warn({ origin: here }, "session too large to save");
         return;
       }

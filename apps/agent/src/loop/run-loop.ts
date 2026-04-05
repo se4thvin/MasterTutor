@@ -527,7 +527,9 @@ export class RunLoop {
       const items = seedFromSummary(compacted.summary, keys, {
         pageText: this.#pageHeader(obs),
         screenshotKey: this.#screenshotKey!,
-        carried,
+        // The first turn's context (the vault's alias list) is not in the summary: send it again,
+        // so a re-login after compaction still knows which aliases exist.
+        carried: [...(await hooks.promptContext(this.#run)), ...carried],
       });
       record("in", items, null, "seed");
       return items;

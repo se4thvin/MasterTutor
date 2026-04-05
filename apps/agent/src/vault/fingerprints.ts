@@ -26,6 +26,32 @@ export interface SecretFingerprints {
 }
 
 /** 1–3 digit secrets match almost every number on a page: they are masked by box only. */
+/** How many rounds of URL decoding a token gets: enough for a URL wrapped in a redirect twice. */
+const MAX_DECODE_ROUNDS = 3;
+const PERCENT_RUN = /(?:%[0-9a-f]{2})+/gi;
+
+/**
+ * Up to MAX_DECODE_ROUNDS successively decoded views of a URL token: "+" read as a space, every
+ * run of %XX (either hex case) decoded as UTF-8. A run that is not valid UTF-8 stays as it is.
+ */
+export function decodedViews(token: string): string[] {
+  const views: string[] = [];
+  let view = token;
+  for (let round = 0; round < MAX_DECODE_ROUNDS; round++) {
+    const next = view.replaceAll("+", " ").replace(PERCENT_RUN, (run) => {
+      try {
+        return decodeURIComponent(run);
+      } catch {
+        return run;
+      }
+    });
+    if (next === view) break;
+    views.push(next);
+    view = next;
+  }
+  return views;
+}
+
 export function isScannableSecret(secret: string): boolean {
   return secret.length > 0 && !(secret.length < 4 && /^\d+$/.test(secret));
 }
@@ -141,10 +167,27 @@ export function createSecretFingerprints(): SecretFingerprints {
     }
   };
 
+  /** True when `text` holds a registered secret (as is). */
+  const holds = (run: RunEntry, text: string): boolean => {
+    const spans: Array<[number, number]> = [];
+    find(run, run.windows, [...text.matchAll(WORD)], spans);
+    if (spans.length === 0 && run.bareWindows.size > 0)
+      find(run, run.bareWindows, [...text.matchAll(TOKEN)], spans);
+    return spans.length > 0;
+  };
+
   const redact = (run: RunEntry, text: string): string => {
     const spans: Array<[number, number]> = [];
     find(run, run.windows, [...text.matchAll(WORD)], spans);
     if (run.bareWindows.size > 0) find(run, run.bareWindows, [...text.matchAll(TOKEN)], spans);
+    // A URL can carry the secret encoded in any of many ways (strict or form encoding, any hex
+    // case, partly, or twice when a redirect wraps it in next=): a token with a % is also read
+    // decoded, and if any decoded view holds a secret the whole token goes (final re-review I2).
+    for (const token of text.matchAll(TOKEN)) {
+      if (!token[0].includes("%")) continue;
+      if (decodedViews(token[0]).some((view) => holds(run, view)))
+        spans.push([token.index, token.index + token[0].length]);
+    }
     if (spans.length === 0) return text;
     let out = "";
     let cursor = 0;
