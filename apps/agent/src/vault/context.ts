@@ -22,8 +22,8 @@ export interface VaultDeps {
   /** run + alias → when this sign-in started (its first fill_credential): older mail never counts. */
   signInStarted: Map<string, number>;
   /**
-   * run + alias → the TOTP time step last filled and when its window ends, so a code is never
-   * typed twice; kept past the run's release until that window ends.
+   * workspace + alias + origin → the TOTP time step last filled and when its window ends, so no
+   * run types a code twice; kept until that window ends.
    */
   totpSteps: Map<string, { step: number; until: number }>;
   /** How long fill_credential(otp) watches the inbox, polling the code box, before asking the user. */

@@ -47,9 +47,9 @@ const MAX_POSTS_TO = 4_096;
 const runAliasKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
 
 /**
- * Drops a released run's fill state (RunHooks.onReleased, Task 13). A TOTP step typed stays until
- * its window has passed, for every run: a run that sleeps and wakes within that window must not
- * type the same code again (review).
+ * Drops a released run's fill state (RunHooks.onReleased, Task 13). A TOTP step typed is kept per
+ * alias, not per run, until its window has passed: neither a run that sleeps and wakes nor another
+ * run may type the same code again (review).
  */
 export function forgetFillState(
   deps: Pick<VaultDeps, "signInStarted" | "totpSteps">,
@@ -171,9 +171,9 @@ async function withCredentialValue(
       return result === NOT_STORED ? "field_not_stored" : result;
     }
     case "totp": {
-      // Never the code this sign-in already typed: the next time step instead (RFC 6238 §5.2).
-      // The wait (up to a period) happens with the seed closed (N5).
-      const key = runAliasKey(ctx.runId, item.alias);
+      // Never a code already typed for this sign-in, by this run or any other: the next time step
+      // instead (RFC 6238 §5.2). The wait (up to a period) happens with the seed closed (N5).
+      const key = [ctx.workspaceId, item.alias, item.origin].join("\u0000");
       const wait = await withItemSecret(deps, ctx.workspaceId, item, "totp", async (seed) =>
         msUntilFreshWindow(seed, deps.now(), deps.totpSteps.get(key)?.step),
       );
