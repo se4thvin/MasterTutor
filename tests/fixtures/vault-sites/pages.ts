@@ -277,6 +277,20 @@ export const offsiteOutsideButton = (formAction: string) =>
      <button id="submit" type="submit" form="f" formaction="${esc(formAction)}">Sign in</button>`,
   );
 
+/**
+ * An image submit button posting elsewhere through formaction, inside the form or linked to it by
+ * form= from outside. HTMLFormElement.elements leaves image buttons out (final review I1).
+ */
+export const offsiteImageSubmit = (formAction: string, outside: boolean) => {
+  const image = `<input id="go" type="image" alt="Sign in" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20"${outside ? ' form="f"' : ""} formaction="${esc(formAction)}">`;
+  return layout(
+    "Sign in",
+    `<form id="f" method="post" action="/password">
+     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
+     ${outside ? "" : image}</form>${outside ? image : ""}`,
+  );
+};
+
 /** A reveal toggle next to the field, and an unrelated "Show details" button nearby (M6). */
 export const showDetails = () =>
   layout(
