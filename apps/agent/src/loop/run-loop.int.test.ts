@@ -1327,6 +1327,17 @@ describe("RunLoop (spec §5.3)", () => {
     expect(calls).toBe(1);
   });
 
+  it("keeps the hooks.promptContext lines in the context after a compaction (B3 final review)", async () => {
+    const promptContext = async () => ["Saved sign-ins: site (http://site.fixtures.test): password"];
+    const big = await setup([{ ...click(), usage: { input: 210_000 } }, done()], {
+      hooks: { promptContext },
+    });
+    expect(await drive(big.loop)).toEqual({ kind: "completed" });
+    const last = JSON.stringify(mock.requestsFor(big.name).at(-1)?.body.input);
+    expect(last).toContain("continues from a summary");
+    expect(last).toContain("Saved sign-ins: site");
+  });
+
   it("reports executed clicks to hooks.onClick with the target's name and the page URL (F10)", async () => {
     const clicks: Array<{ label: string; url: string }> = [];
     const { browser, loop } = await setup([click(), done()], {
