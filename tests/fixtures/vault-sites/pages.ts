@@ -291,6 +291,15 @@ export const offsiteImageSubmit = (formAction: string, outside: boolean) => {
   );
 };
 
+/** A sign-in form sent with GET: the browser puts the password in the next page's URL (final review I2). */
+export const getForm = () =>
+  layout(
+    "Sign in",
+    `<form method="get" action="/welcome">
+     <label for="password">Password</label><input id="password" name="p" type="password" autocomplete="current-password">
+     <button id="submit" type="submit">Sign in</button></form>`,
+  );
+
 /** A reveal toggle next to the field, and an unrelated "Show details" button nearby (M6). */
 export const showDetails = () =>
   layout(
