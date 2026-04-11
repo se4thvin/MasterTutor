@@ -13,6 +13,7 @@ import {
   SLOT_CDP,
 } from "../../../../tests/behaviour/constants.ts";
 import { instantClock } from "../runtime/clock.ts";
+import { ControlHeld } from "../runtime/errors.ts";
 import { waitFor } from "../testing/wait.ts";
 import { ComputerExecutor } from "../tools/computer.ts";
 import { slotDownloadPath } from "./download-gate.ts";
@@ -45,6 +46,22 @@ async function savedFiles(): Promise<string[]> {
     "find / /downloads -xdev -type f \\( -path '/downloads/*' -o -path '*playwright-artifacts*' -o -path '/home/neko/Downloads/*' -o -name '*.csv' -o -name '*.txt' -newer /proc/1 \\) 2>/dev/null | grep -v -E '^/(proc|sys|usr|etc|var|opt|lib)' || true",
   ]);
   return stdout.split("\n").filter(Boolean);
+}
+
+/** Native "Save File" windows open on the slot's display. */
+async function saveDialogs(): Promise<number> {
+  const { stdout } = await run("docker", [
+    "compose",
+    "-f",
+    COMPOSE_FILE,
+    "exec",
+    "-T",
+    "browser-1",
+    "sh",
+    "-c",
+    "DISPLAY=:99.0 xwininfo -root -tree 2>/dev/null | grep -i -c 'save file' || true",
+  ]);
+  return Number(stdout.trim());
 }
 
 /** The run's folder as the agent sees it (the behaviour stack mounts the volume on the host). */
@@ -194,8 +211,83 @@ describe("download gate (spec §9): denied unless a person approved it", () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 2_500));
       expect(await savedFiles()).toEqual(before);
+      // ...and no native "Save File" dialog a person in the live view could use instead (I3).
+      expect(await saveDialogs()).toBe(0);
     } finally {
       socket.close();
     }
+  });
+
+  describe("while a person holds control (live view, B6)", () => {
+    it("lets the person's download complete and keeps it; after hand-back the agent gate is back", async () => {
+      const { s, runId } = await setup();
+      await s.downloads.userControl(true);
+      await s.page.mouse.click(AT.link.x, AT.link.y); // the person's click (n.eko input)
+      const saved = await waitFor(
+        async () => {
+          const files = await localFiles(runId);
+          return files.length > 0 && !files.some((file) => file.endsWith(".crdownload"))
+            ? files
+            : null;
+        },
+        { label: "user download", timeoutMs: 10_000 },
+      );
+      expect(saved).toHaveLength(1);
+      expect(s.downloads.userDownloads()).toEqual(saved);
+      expect(s.downloads.drainBlocked()).toEqual([]);
+      await s.downloads.userControl(false);
+      await new Promise((resolve) => setTimeout(resolve, 1_500)); // past the late sweep
+      expect(await localFiles(runId)).toEqual(saved); // never swept
+      // Hand-back: the agent gate is back, so the same download is denied and reported.
+      await s.page.mouse.click(AT.link.x, AT.link.y);
+      await blocked(s);
+      expect(await localFiles(runId)).toEqual(saved);
+    });
+
+    it("cancels a person's download past the byte cap or past the per-run count cap", async () => {
+      const { s, runId } = await setup();
+      await s.context.route(`${SITE}/files/big.bin`, (route) =>
+        route.fulfill({
+          headers: {
+            "content-disposition": "attachment",
+            "content-type": "application/octet-stream",
+          },
+          body: Buffer.alloc(3 * 1024 * 1024, 7),
+        }),
+      );
+      const capped: string[] = [];
+      await s.downloads.userControl(true, {
+        maxBytes: 1024 * 1024,
+        maxCount: 1,
+        onCapped: ({ reason }) => capped.push(reason),
+      });
+      await s.page.evaluate(() => {
+        const link = document.createElement("a");
+        link.href = "/files/big.bin";
+        document.body.append(link);
+        link.click();
+      });
+      await waitFor(() => capped.includes("too_large"), { label: "too large", timeoutMs: 10_000 });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(await localFiles(runId)).toEqual([]);
+      // The count: that one counted; a second download is over the cap of 1.
+      await s.page.mouse.click(AT.link.x, AT.link.y);
+      await waitFor(() => capped.includes("too_many"), { label: "too many", timeoutMs: 10_000 });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(await localFiles(runId)).toEqual([]);
+      await s.downloads.userControl(false);
+      await s.context.unrouteAll({ behavior: "ignoreErrors" });
+    });
+
+    it("the agent cannot start a download while the person holds control: it cannot act at all", async () => {
+      const { s, executor, runId } = await setup();
+      s.guard.hold();
+      await s.downloads.userControl(true);
+      await expect(executor.execute(AT.link, signal)).rejects.toBeInstanceOf(ControlHeld);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(await localFiles(runId)).toEqual([]);
+      await s.downloads.userControl(false);
+      s.guard.release();
+    });
   });
 });

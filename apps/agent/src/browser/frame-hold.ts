@@ -78,9 +78,14 @@ export async function holdNewProcessFrames(
     const { sessionId, targetInfo, waitingForDebugger } = event;
     const frameId = targetInfo.targetId;
     let ready: Promise<void> | null = null;
+    let installed: Promise<boolean> = Promise.resolve(true);
     if (targetInfo.type === "iframe" && waitingForDebugger) {
       onNew();
-      ready = install(sessionId).catch(() => undefined);
+      installed = install(sessionId).then(
+        () => true,
+        () => false,
+      );
+      ready = installed.then(() => undefined);
     } else if (targetInfo.type === "iframe") {
       // Already running when the hold began, yet not a frame the guard armed: a navigation to
       // another site that was under way (its document may not have committed yet).
@@ -93,10 +98,11 @@ export async function holdNewProcessFrames(
         .catch(() => undefined);
     }
     attached.push({ sessionId, frameId, ready });
-    // Always let a held frame go, whatever happened above.
+    // A held frame goes on once it has the guard. If installing failed it stays held until
+    // release() detaches (which lets it run): never unguarded while the click is armed.
     if (waitingForDebugger)
-      void (ready ?? Promise.resolve()).then(() =>
-        call(sessionId, "Runtime.runIfWaitingForDebugger").catch(() => undefined),
+      void installed.then((ok) =>
+        ok ? call(sessionId, "Runtime.runIfWaitingForDebugger").catch(() => undefined) : undefined,
       );
   };
   cdp.on("Target.receivedMessageFromTarget", onMessage);

@@ -112,6 +112,8 @@ export class BrowserSession {
     }
     session.#adopt(page);
     context.on("page", (opened) => {
+      // From the moment it exists: a navigation it starts before adoption is still tracked.
+      session.#pendingNavigations.watch(opened);
       session.#adopting = session.#onNewPage(opened).finally(() => {
         session.#adopting = null;
       });
