@@ -6,6 +6,14 @@ export const SLOT_CDP: Record<string, string> = {
   "browser-2": "http://127.0.0.1:19224",
 };
 export const COMPOSE_FILE = "tests/behaviour/compose.yml";
+/**
+ * The files `up` and `down` use. On the shared CI host (scripts/remote-test.sh sets
+ * BEHAVIOUR_REMOTE_HOST=1) the slots also take compose.remote.yml's AppArmor profile.
+ */
+export const COMPOSE_UP_FILES =
+  process.env.BEHAVIOUR_REMOTE_HOST === "1"
+    ? [COMPOSE_FILE, "tests/behaviour/compose.remote.yml"]
+    : [COMPOSE_FILE];
 
 export interface BehaviourEnv {
   ownerUrl: string;

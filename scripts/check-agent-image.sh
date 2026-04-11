@@ -7,12 +7,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE="mastertutor-agent-image-check:local"
+# scripts/remote-test.sh sets a per-run tag, so concurrent runs on the shared CI host never collide.
+IMAGE="${AGENT_IMAGE_TAG:-mastertutor-agent-image-check:local}"
 cleanup() { docker image rm -f "$IMAGE" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-docker build --quiet --target node-runtime -t "$IMAGE" . >/dev/null
-if ! offenders="$(docker run --rm --entrypoint node \
+docker build --quiet --label mastertutor.ci=1 --target node-runtime -t "$IMAGE" . >/dev/null
+if ! offenders="$(docker run --rm --label mastertutor.ci=1 --entrypoint node \
   -v "$PWD/scripts/scan-test-code.ts:/scan-test-code.ts:ro" "$IMAGE" /scan-test-code.ts /app)"; then
   echo "agent image ships test code:" >&2
   echo "$offenders" >&2
@@ -24,6 +25,6 @@ if ! grep -Eq '^scan-test-code: scanned [1-9][0-9]* files, 0 offenders$' <<<"$of
   echo "$offenders" >&2
   exit 1
 fi
-docker run --rm --entrypoint sh "$IMAGE" -c "test -f /app/apps/agent/src/main.ts" \
+docker run --rm --label mastertutor.ci=1 --entrypoint sh "$IMAGE" -c "test -f /app/apps/agent/src/main.ts" \
   || { echo "agent image lost its entry point" >&2; exit 1; }
 echo "ok - agent image carries no test code"
