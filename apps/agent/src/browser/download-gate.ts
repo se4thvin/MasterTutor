@@ -29,9 +29,23 @@ export interface DownloadFolder {
   localPath: string | null;
 }
 
+/** After a deny, the folder is swept again this much later, for writes that finished late. */
+const LATE_SWEEP_MS = 1_000;
 /** How long an allowance waits for its download to start. */
 const ALLOW_WINDOW_MS = 60_000;
 type Allowance = { match: DownloadMatch; timer: NodeJS.Timeout };
+
+/** Caps on the downloads a person starts while holding control through the live view (B6). */
+export interface UserDownloadLimits {
+  /** A download is cancelled (and its partial file deleted) once it passes this many bytes. */
+  maxBytes: number;
+  /** Downloads per run: any after this many is cancelled as it begins. */
+  maxCount: number;
+  /** Told when a download was cancelled for a cap (B6 emits download_too_large and the like). */
+  onCapped?: (download: { id: string; reason: "too_large" | "too_many" }) => void;
+}
+
+const DEFAULT_USER_LIMITS: UserDownloadLimits = { maxBytes: 100 * 1024 * 1024, maxCount: 20 };
 
 /**
  * Downloads are denied by default (spec §9): Chromium cancels every download before saving
@@ -51,6 +65,13 @@ export class DownloadGate {
   readonly #saving = new Set<string>();
   /** True from the first allowance until the deny is acknowledged again. */
   #open = false;
+  /** While a person holds control (live view): their downloads complete, within the caps. */
+  #user = false;
+  #userLimits: UserDownloadLimits = DEFAULT_USER_LIMITS;
+  /** The person's downloads (by id): never cancelled for the gate, never swept. */
+  readonly #userDownloads = new Set<string>();
+  readonly #capped = new Set<string>();
+  #userCount = 0;
   #closing: Promise<void> | null = null;
 
   private constructor(cdp: CDPSession, folder: DownloadFolder | null, log: Log) {
@@ -70,7 +91,9 @@ export class DownloadGate {
     cdp.on("Browser.downloadWillBegin", (event) =>
       gate.#onWillBegin(event.guid, event.url, event.suggestedFilename),
     );
-    cdp.on("Browser.downloadProgress", (event) => gate.#onProgress(event.guid, event.state));
+    cdp.on("Browser.downloadProgress", (event) =>
+      gate.#onProgress(event.guid, event.state, event.receivedBytes, event.totalBytes),
+    );
     await gate.#deny();
     return gate;
   }
@@ -80,14 +103,44 @@ export class DownloadGate {
     return this.#blocked.splice(0);
   }
 
-  /** The ids of the downloads that were let through (the only files B6 may file). */
+  /**
+   * The ids of the downloads that were let through. The run's folder may briefly hold other
+   * (unapproved) files until the sweep removes them: B6 files only these ids, never the folder.
+   */
   approvedDownloads(): string[] {
     return [...this.#approved];
   }
 
+  /**
+   * A person takes (`true`) or hands back (`false`) control through the live view. This gate is
+   * the only code that sets the browser's download behaviour. While on, every download the person
+   * starts completes into the run's folder (B6 stores it), within `limits`; the agent cannot act
+   * meanwhile. Off: downloads are denied again and the agent gate resumes (its open allowances end).
+   * The person's files are never swept; `userDownloads()` names them.
+   */
+  async userControl(on: boolean, limits?: Partial<UserDownloadLimits>): Promise<void> {
+    if (limits) this.#userLimits = { ...this.#userLimits, ...limits };
+    for (const allowance of this.#allowances.splice(0)) clearTimeout(allowance.timer);
+    this.#user = on;
+    await this.#closing;
+    if (on && this.#folder) {
+      this.#open = true;
+      await this.#cdp.send("Browser.setDownloadBehavior", {
+        behavior: "allowAndName",
+        downloadPath: this.#folder.slotPath,
+        eventsEnabled: true,
+      });
+    } else if (!on) await this.#close();
+  }
+
+  /** The ids of the downloads a person started while holding control (B6 files these). */
+  userDownloads(): string[] {
+    return [...this.#userDownloads];
+  }
+
   /** Lets exactly one approved download through: the next one `match` accepts, within ALLOW_WINDOW_MS. */
   async allowOnce(match: DownloadMatch): Promise<void> {
-    if (this.#folder === null) return;
+    if (this.#folder === null || this.#user) return;
     const allowance: Allowance = {
       match,
       timer: setTimeout(() => void this.#end(allowance), ALLOW_WINDOW_MS).unref(),
@@ -103,6 +156,12 @@ export class DownloadGate {
   }
 
   #onWillBegin(guid: string, url: string, filename: string): void {
+    if (this.#user) {
+      this.#userDownloads.add(guid);
+      // Every download the person started counts, including one later cancelled for its size.
+      if (++this.#userCount > this.#userLimits.maxCount) this.#cap(guid, "too_many");
+      return;
+    }
     const index = this.#allowances.findIndex(({ match }) => match(url, filename));
     if (index !== -1) {
       const [allowance] = this.#allowances.splice(index, 1);
@@ -116,15 +175,39 @@ export class DownloadGate {
     this.#blocked.push({ url, filename: filename || null });
   }
 
-  #onProgress(guid: string, state: string): void {
-    if (state === "inProgress") return;
-    this.#saving.delete(guid);
-    if (this.#allowances.length === 0 && this.#saving.size === 0) void this.#close();
+  #onProgress(guid: string, state: string, receivedBytes: number, totalBytes: number): void {
+    if (this.#userDownloads.has(guid)) {
+      const { maxBytes } = this.#userLimits;
+      if (state === "inProgress" && (receivedBytes > maxBytes || totalBytes > maxBytes))
+        this.#cap(guid, "too_large");
+      return;
+    }
+    // A download it did not let through that still finished writing (its cancel lost the race):
+    // delete it now, whenever that is.
+    if (state === "completed" && !this.#approved.has(guid)) void this.#removeFile(guid);
+    // Only the downloads this gate let through end an allowance; anything else is not its own.
+    if (state === "inProgress" || !this.#saving.delete(guid)) return;
+    if (this.#allowances.length === 0 && this.#saving.size === 0 && !this.#user) void this.#close();
+  }
+
+  /** Cancels a person's download for a cap; Chromium removes its partial file. */
+  #cap(guid: string, reason: "too_large" | "too_many"): void {
+    if (this.#capped.has(guid)) return;
+    this.#capped.add(guid);
+    this.#userDownloads.delete(guid);
+    void this.#cdp.send("Browser.cancelDownload", { guid }).catch(() => undefined);
+    void this.#removeFile(guid);
+    this.#userLimits.onCapped?.({ id: guid, reason });
+  }
+
+  async #removeFile(name: string): Promise<void> {
+    const local = this.#folder?.localPath;
+    if (local) await rm(join(local, name), { force: true });
   }
 
   #end(allowance: Allowance): void {
     this.#allowances = this.#allowances.filter((open) => open !== allowance);
-    if (this.#allowances.length === 0 && this.#saving.size === 0) void this.#close();
+    if (this.#allowances.length === 0 && this.#saving.size === 0 && !this.#user) void this.#close();
   }
 
   /** Denies again; until Chromium acknowledges it, every download is still cancelled as it begins. */
@@ -134,6 +217,10 @@ export class DownloadGate {
         if (this.#allowances.length === 0) this.#open = false;
       })
       .then(() => this.#sweep())
+      // A download cancelled at the last moment can still finish writing after that sweep.
+      .then(() => {
+        setTimeout(() => void this.#sweep(), LATE_SWEEP_MS).unref();
+      })
       .catch(() =>
         this.#log.warn({ errorCode: "download_deny_failed" }, "could not deny downloads again"),
       )
@@ -150,7 +237,11 @@ export class DownloadGate {
     const names = await readdir(local).catch(() => [] as string[]);
     await Promise.all(
       names
-        .filter((name) => !this.#approved.has(name))
+        .filter((name) => {
+          // A download still saving is `<id>.crdownload` until it completes.
+          const id = name.replace(/\.crdownload$/, "");
+          return !this.#approved.has(id) && !this.#userDownloads.has(id);
+        })
         .map((name) => rm(join(local, name), { force: true, recursive: true })),
     );
   }

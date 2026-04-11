@@ -20,15 +20,18 @@ export class PendingNavigations {
     if (this.#pages.has(page)) return;
     const inFlight = new Map<Request, Frame>();
     this.#pages.set(page, inFlight);
+    // Requests whose response has arrived: only those can have committed. A same-document move
+    // (replaceState, a fragment) to the request's own URL while it is held must not clear it.
+    const answered = new WeakSet<Request>();
     const detached = (frame: Frame) => {
       for (const [request, owner] of inFlight) if (owner === frame) inFlight.delete(request);
     };
-    // Playwright also reports same-document moves as navigations: only the request whose URL the
-    // frame now shows has committed (a page cannot pushState to another site's URL).
+    // Playwright also reports same-document moves as navigations: only an answered request whose
+    // URL the frame now shows has committed.
     const committed = (frame: Frame) => {
       const url = withoutFragment(frame.url());
       for (const [request, owner] of inFlight)
-        if (owner === frame && withoutFragment(request.url()) === url)
+        if (owner === frame && answered.has(request) && withoutFragment(request.url()) === url)
           for (let hop: Request | null = request; hop; hop = hop.redirectedFrom())
             inFlight.delete(hop);
     };
@@ -39,6 +42,7 @@ export class PendingNavigations {
         // A service worker's request has no frame: not a document navigation.
       }
     });
+    page.on("response", (response) => answered.add(response.request()));
     page.on("requestfailed", (request) => inFlight.delete(request));
     page.on("requestfinished", (request) => {
       if (!inFlight.has(request)) return;
