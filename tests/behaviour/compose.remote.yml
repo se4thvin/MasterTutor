@@ -1,0 +1,22 @@
+# Override for the shared CI host only (scripts/remote-test.sh behaviour; global-setup adds it when
+# BEHAVIOUR_REMOTE_HOST=1). The host keeps kernel.apparmor_restrict_unprivileged_userns=1, so the
+# slots' Chromium sandbox may create user namespaces only under the mastertutor-slot profile
+# (infra/host/apparmor/), which is docker-default plus `userns,`. Only the slots opt in.
+# Every resource carries the CI labels so the runner's cleanup can find it.
+x-ci-labels: &ci-labels
+  mastertutor.ci: "1"
+  mastertutor.ci.run: ${MT_CI_RUN_ID:?set by scripts/remote-test.sh}
+
+services:
+  fixtures:
+    labels: *ci-labels
+  browser-1:
+    security_opt: [apparmor=mastertutor-slot]
+    labels: *ci-labels
+  browser-2:
+    security_opt: [apparmor=mastertutor-slot]
+    labels: *ci-labels
+
+networks:
+  behaviour:
+    labels: *ci-labels
