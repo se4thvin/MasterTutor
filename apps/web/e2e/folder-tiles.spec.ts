@@ -11,6 +11,8 @@ test("a folder's subfolders show as tiles that open the folder", async ({ page }
   await page.goto(ML);
   await expect(tiles(page)).toHaveText([/Optimization/, /Papers/]);
   await expect(tiles(page).first()).toContainText("1 folder");
+  // The name reads as a phrase, not "Optimization1 folder".
+  await expect(tiles(page).first()).toHaveAccessibleName("Optimization, 1 folder");
   await expectCleanScreen(page);
   await tiles(page).filter({ hasText: "Papers" }).click();
   await expect(page).toHaveURL(new RegExp(`folder=${ids.folder(4)}`));
@@ -47,6 +49,8 @@ test("dropping a note on a tile moves it and the folder takes it in", async ({ p
   await page.goto("/library");
   const tile = await dragCardOver(page, "Unfiled clipping", "Databases");
   await expect(tile.locator(".ff")).toHaveAttribute("data-open", "");
+  // A static drop cue (inset ring), so drag-over differs from hover even without motion.
+  await expect(tile.locator(".ff-front")).toHaveCSS("box-shadow", /inset/);
   await page.mouse.up();
   await expect(tile.locator(".ff")).toHaveAttribute("data-receive", "");
   await expect(page.getByRole("group").filter({ hasText: "Moved to Databases" })).toBeVisible();
@@ -76,8 +80,12 @@ test("under reduced motion the flap never tilts; the paper only fades", async ({
   const tile = tiles(page).filter({ hasText: "Optimization" });
   const front = tile.locator(".ff-front");
   const rest = await front.evaluate((el) => getComputedStyle(el).transform);
+  const paper = tile.locator(".ff-paper").first();
+  // The paper never sits offset, so hovering out cannot make it jump while it fades.
+  await expect(paper).toHaveCSS("translate", "none");
   await tile.hover();
-  await expect(tile.locator(".ff-paper").first()).toHaveCSS("opacity", "1");
+  await expect(paper).toHaveCSS("opacity", "1");
+  await expect(paper).toHaveCSS("translate", "none");
   expect(await front.evaluate((el) => getComputedStyle(el).transform)).toBe(rest);
   expect(await movingAnimations(page, ".ftiles")).toEqual([]);
 });

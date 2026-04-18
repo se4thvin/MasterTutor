@@ -2,12 +2,11 @@
 
 import type { FolderView } from "@mastertutor/contracts";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { FolderFloat } from "@/components/bits/folder-float.tsx";
 import { acceptsDrop, getDragged, setDragged } from "@/lib/folders/drag.ts";
 import { childFolders } from "@/lib/folders/tree.ts";
-import { libraryHref, parseLibraryParams } from "@/lib/library/params.ts";
+import { libraryHref, type LibraryParams } from "@/lib/library/params.ts";
 import { durations } from "@/lib/motion-tokens.ts";
 import { useMoveFolder } from "./use-move-folder.ts";
 
@@ -21,13 +20,16 @@ const subfolderLabel = (n: number) => (n === 0 ? undefined : `${n} folder${n ===
 export function FolderTiles({
   folders,
   parentId,
+  params,
   onDropNote,
 }: {
   folders: FolderView[];
   parentId: string | null;
+  /** The library's current params; a tile keeps the view and kind and opens its folder. */
+  params: LibraryParams;
   onDropNote: (noteId: string, folderId: string) => void;
 }) {
-  const params = parseLibraryParams(useSearchParams());
+  const titleId = useId();
   const moveFolder = useMoveFolder();
   const [dropId, setDropId] = useState<string | null>(null);
   const [receivedId, setReceivedId] = useState<string | null>(null);
@@ -53,40 +55,45 @@ export function FolderTiles({
   };
 
   return (
-    <section aria-labelledby="ftiles-title">
-      <h2 id="ftiles-title" className="eyebrow ftiles-title">
+    <section aria-labelledby={titleId}>
+      <h2 id={titleId} className="eyebrow ftiles-title">
         Folders
       </h2>
       <ul className="ftiles">
-        {tiles.map((folder) => (
-          <li key={folder.id}>
-            <Link
-              href={libraryHref({ ...params, folder: folder.id, q: "" })}
-              className="ftile"
-              data-qa="folder-tile"
-              draggable={false}
-              onDragOver={(e) => {
-                if (!acceptsDrop(folder.id, folders, e.dataTransfer.types)) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                setDropId(folder.id);
-              }}
-              onDragLeave={(e) => {
-                // Crossing the tile's own label fires leave/enter pairs; only a real exit counts.
-                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-                setDropId((id) => (id === folder.id ? null : id));
-              }}
-              onDrop={(e) => onDrop(folder.id, e)}
-            >
-              <FolderFloat
-                label={folder.name}
-                sublabel={subfolderLabel(childFolders(folders, folder.id).length)}
-                open={dropId === folder.id}
-                receiving={receivedId === folder.id}
-              />
-            </Link>
-          </li>
-        ))}
+        {tiles.map((folder) => {
+          const sublabel = subfolderLabel(childFolders(folders, folder.id).length);
+          return (
+            <li key={folder.id}>
+              <Link
+                // Flex children would otherwise join as "Papers 2 folders" (or "Papers2 folders").
+                aria-label={sublabel ? `${folder.name}, ${sublabel}` : undefined}
+                href={libraryHref({ ...params, folder: folder.id, q: "" })}
+                className="ftile"
+                data-qa="folder-tile"
+                draggable={false}
+                onDragOver={(e) => {
+                  if (!acceptsDrop(folder.id, folders, e.dataTransfer.types)) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDropId(folder.id);
+                }}
+                onDragLeave={(e) => {
+                  // Crossing the tile's own label fires leave/enter pairs; only a real exit counts.
+                  if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                  setDropId((id) => (id === folder.id ? null : id));
+                }}
+                onDrop={(e) => onDrop(folder.id, e)}
+              >
+                <FolderFloat
+                  label={folder.name}
+                  sublabel={sublabel}
+                  open={dropId === folder.id}
+                  receiving={receivedId === folder.id}
+                />
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

@@ -85,6 +85,24 @@ function LibraryHeader({
   );
 }
 
+/**
+ * Empty-state copy for the current view (I5). All notes is library-wide, not a folder; a folder
+ * with subfolder tiles above must not claim "nothing here"; a kind filter names the kind, since
+ * the scope may still hold notes of other kinds.
+ */
+function emptyCopy(params: LibraryParams, showTiles: boolean): { title: string; body?: string } {
+  const body =
+    params.folder === "all" && showTiles
+      ? "Notes appear here when the agent files them."
+      : showTiles
+        ? undefined
+        : "Notes appear here when the agent files them, or when you move them in.";
+  if (params.kind) return { title: `No ${KIND_LABEL[params.kind]} notes here yet`, body };
+  if (params.folder === "all" && showTiles) return { title: "No notes yet", body };
+  if (showTiles) return { title: "No notes in this folder yet", body };
+  return { title: "Nothing here yet", body };
+}
+
 const URL_WRITE_DEBOUNCE_MS = 250;
 const KIND_ITEMS: SegmentItem<"all" | SourceKind>[] = [
   { value: "all", label: "All" },
@@ -169,6 +187,7 @@ export function LibraryView() {
   const tilesParent = params.folder === "all" ? null : params.folder;
   const showTiles =
     !searching && params.folder !== "unfiled" && childFolders(folders, tilesParent).length > 0;
+  const empty = emptyCopy(params, showTiles);
 
   return (
     <>
@@ -201,7 +220,12 @@ export function LibraryView() {
           />
         </div>
         {showTiles ? (
-          <FolderTiles folders={folders} parentId={tilesParent} onDropNote={dropNote} />
+          <FolderTiles
+            folders={folders}
+            parentId={tilesParent}
+            params={params}
+            onDropNote={dropNote}
+          />
         ) : null}
         {searching ? (
           search.hits.length ? (
@@ -254,13 +278,8 @@ export function LibraryView() {
           <EmptyState
             icon="allNotes"
             eyebrow={params.kind ? KIND_LABEL[params.kind] : undefined}
-            // With subfolder tiles above, "nothing here" would contradict them (I5).
-            title={showTiles ? "No notes in this folder yet" : "Nothing here yet"}
-            body={
-              showTiles
-                ? undefined
-                : "Notes appear here when the agent files them, or when you move them in."
-            }
+            title={empty.title}
+            body={empty.body}
             actions={
               <ButtonLink href="/new" variant="primary" size="lg">
                 New task

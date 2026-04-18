@@ -7,6 +7,8 @@ test.describe("Daylight motion", () => {
 
   test("a deleted note card fades and shrinks out instead of vanishing", async ({ page }) => {
     await page.goto("/library?folder=unfiled");
+    // The grid's m.* animate only once the layout features have loaded (LayoutMotion, P1).
+    await page.locator("html[data-layout-motion=ready]").waitFor({ state: "attached" });
     const card = page.locator('[data-qa="note-card"]').filter({ hasText: "Unfiled clipping" });
     await card.getByRole("button", { name: /Actions for Unfiled clipping/ }).click();
     await page.getByRole("menuitem", { name: "Delete note…" }).click();
