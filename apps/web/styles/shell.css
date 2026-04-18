@@ -214,6 +214,9 @@
       margin-left: auto;
     }
   }
+  .nav-meta .smark {
+    --smark-size: 1rem;
+  }
   /* Visually hidden below lg so the live-run count is still read aloud beside the dot. */
   .nav-meta-text {
     position: absolute;
@@ -229,16 +232,6 @@
       overflow: visible;
       clip: auto;
     }
-  }
-  .live-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: var(--signal);
-    animation-name: pulse;
-    animation-duration: var(--motion-dur-pulse);
-    animation-timing-function: var(--motion-ease-out);
-    animation-iteration-count: infinite;
   }
   .sidebar-section {
     display: none;

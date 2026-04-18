@@ -1,15 +1,21 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
-import { orpc } from "@/lib/api/client.ts";
 import type { Viewer } from "@/lib/server/viewer.ts";
 import { NAV_ITEMS, isNavActive } from "./nav-items.ts";
 import { RecentNotes } from "./recent-notes.tsx";
+import { useRunPulse } from "./use-run-pulse.ts";
 import { UserMenu } from "./user-menu.tsx";
+
+const PULSE_TEXT = {
+  done: "Run finished",
+  failed: "Run failed",
+  cancelled: "Run stopped",
+} as const;
 
 export function Sidebar({
   viewer,
@@ -21,8 +27,7 @@ export function Sidebar({
   libraryTree?: ReactNode;
 }) {
   const pathname = usePathname();
-  const live = useQuery(orpc.runs.list.queryOptions({ input: { status: "running", limit: 20 } }));
-  const liveCount = live.data?.items.length ?? 0;
+  const pulse = useRunPulse();
   return (
     <aside className="sidebar glass" aria-label="Sidebar">
       <div className="brand">
@@ -47,10 +52,14 @@ export function Sidebar({
                 >
                   <Icon name={item.icon} />
                   <span className="nav-label">{item.label}</span>
-                  {item.href === "/runs" && liveCount > 0 ? (
+                  {item.href === "/runs" && pulse ? (
                     <span className="nav-meta">
-                      <span className="live-dot" aria-hidden="true" />
-                      <span className="nav-meta-text">{liveCount} live</span>
+                      <StatusMark status={pulse.status} decorative />
+                      <span className="nav-meta-text">
+                        {pulse.status === "running"
+                          ? `${pulse.count} live`
+                          : PULSE_TEXT[pulse.status]}
+                      </span>
                     </span>
                   ) : null}
                 </Link>

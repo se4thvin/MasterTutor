@@ -22,6 +22,8 @@ export const durations = {
   toast: 5000,
   /** A folder takes in a dropped or moved item: the lid gulps, the sheet then closes. */
   receive: 450,
+  /** How long a finished run's outcome shows on the Runs nav item. */
+  flash: 2400,
 } as const;
 
 export const easings = {
