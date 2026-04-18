@@ -29,9 +29,11 @@ const LAYOUT_FEATURES_STATIC = {
   regex: "(^|/)layout-features(\\.ts)?$",
   message: "Load layout-features only with import(), inside <LayoutMotion> (D43 lazy boundary).",
 };
+// Every apps/web no-restricted-imports block replaces the earlier one, so it must carry the D38
+// OpenAI import ban too.
 const webImports = (patterns, paths = MOTION_COMPONENT_BAN) => [
   "error",
-  { paths, patterns: [ANIMATION_BANS, LAYOUT_FEATURES_STATIC, ...patterns] },
+  { paths, patterns: [ANIMATION_BANS, LAYOUT_FEATURES_STATIC, OPENAI_IMPORTS, ...patterns] },
 ];
 
 // D38: stateful OpenAI APIs. Every block that sets no-restricted-syntax for apps/** must include
