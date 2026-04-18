@@ -20,6 +20,8 @@ export const durations = {
   shimmer: 1300,
   pulse: 1600,
   toast: 5000,
+  /** A folder takes in a dropped or moved item: the lid gulps, the sheet then closes. */
+  receive: 450,
 } as const;
 
 export const easings = {

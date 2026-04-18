@@ -16,6 +16,7 @@ const PRESS_TARGETS = {
     ".recent-item",
     ".callout",
     ".src-pick",
+    ".ftile",
   ],
 } as const;
 

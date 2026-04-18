@@ -38,7 +38,8 @@ test.describe("empty states are clean", () => {
       route.fulfill({ json: { json: { items: [], nextCursor: null } } }),
     );
     await page.goto("/library");
-    await expect(page.getByRole("heading", { name: "Nothing here yet" })).toBeVisible();
+    // The folder tiles stay above it, so the empty state speaks of notes only (I5).
+    await expect(page.getByRole("heading", { name: "No notes in this folder yet" })).toBeVisible();
     await expectCleanScreen(page);
   });
 

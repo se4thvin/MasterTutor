@@ -73,6 +73,9 @@ const PAIRS: Array<[string, string]> = [
   ["code-title", "bg-2"],
   ["code-string", "bg-2"],
   ["code-comment", "bg-2"],
+  ["folder-ink", "folder-front"],
+  ["folder-ink-2", "folder-front"],
+  ["folder-ink", "folder-front-hi"],
 ];
 
 describe.each([

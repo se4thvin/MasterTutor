@@ -5,6 +5,7 @@ import {
   buildFolderTree,
   canCreateFolder,
   canMoveFolder,
+  childFolders,
   descendantIds,
   flattenVisible,
   folderDepth,
@@ -61,5 +62,20 @@ describe("folder tree", () => {
     const tree = buildFolderTree(folders);
     expect(flattenVisible(tree, new Set()).map((n) => n.folder.id)).toEqual(["d", "a"]);
     expect(flattenVisible(tree, new Set(["a"])).map((n) => n.folder.id)).toEqual(["d", "a", "b"]);
+  });
+});
+
+describe("childFolders", () => {
+  const v = (id: string, parentId: string | null, sort: number, name = id): FolderView => ({
+    id,
+    parentId,
+    name,
+    sort,
+  });
+  const all = [v("x", null, 1), v("y", null, 0), v("z", "y", 0), v("w", null, 0, "a-first")];
+  it("lists one level, in the tree's order (sort, then name)", () => {
+    expect(childFolders(all, null).map((f) => f.id)).toEqual(["w", "y", "x"]);
+    expect(childFolders(all, "y").map((f) => f.id)).toEqual(["z"]);
+    expect(childFolders(all, "z")).toEqual([]);
   });
 });

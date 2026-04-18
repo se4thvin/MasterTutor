@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
 import { transitions } from "@/lib/motion-tokens.ts";
-import { folderPath } from "@/lib/folders/tree.ts";
+import { childFolders, folderPath } from "@/lib/folders/tree.ts";
 import {
   libraryHref,
   parseLibraryParams,
@@ -27,6 +27,7 @@ import {
 } from "@/lib/library/params.ts";
 import { KIND_LABEL } from "@/lib/notes/format.ts";
 import { FolderActions } from "./folder-actions.tsx";
+import { FolderTiles } from "./folder-tiles.tsx";
 import { FolderTree } from "./folder-tree.tsx";
 import { SearchResults } from "./search-results.tsx";
 import { MoveSheet } from "./move-sheet.tsx";
@@ -98,7 +99,7 @@ const VIEW_ITEMS: SegmentItem<LibraryViewMode>[] = [
 
 export function LibraryView() {
   const router = useRouter();
-  const { params } = useLibraryScope();
+  const { params, folders } = useLibraryScope();
   const notes = useInfiniteQuery(
     orpc.notes.list.infiniteOptions({
       input: (cursor: string | null) => ({
@@ -164,6 +165,10 @@ export function LibraryView() {
     const note = items.find((n) => n.id === noteId);
     if (note) void moveNote(noteId, folderId, note.folderId);
   };
+  // The current folder's subfolders show as tiles (FolderFloat), except while searching or in Unfiled.
+  const tilesParent = params.folder === "all" ? null : params.folder;
+  const showTiles =
+    !searching && params.folder !== "unfiled" && childFolders(folders, tilesParent).length > 0;
 
   return (
     <>
@@ -195,6 +200,9 @@ export function LibraryView() {
             onChange={(v) => set({ view: v })}
           />
         </div>
+        {showTiles ? (
+          <FolderTiles folders={folders} parentId={tilesParent} onDropNote={dropNote} />
+        ) : null}
         {searching ? (
           search.hits.length ? (
             <SearchResults hits={search.hits} query={search.settledQuery} />
@@ -246,8 +254,13 @@ export function LibraryView() {
           <EmptyState
             icon="allNotes"
             eyebrow={params.kind ? KIND_LABEL[params.kind] : undefined}
-            title="Nothing here yet"
-            body="Notes appear here when the agent files them, or when you move them in."
+            // With subfolder tiles above, "nothing here" would contradict them (I5).
+            title={showTiles ? "No notes in this folder yet" : "Nothing here yet"}
+            body={
+              showTiles
+                ? undefined
+                : "Notes appear here when the agent files them, or when you move them in."
+            }
             actions={
               <ButtonLink href="/new" variant="primary" size="lg">
                 New task
