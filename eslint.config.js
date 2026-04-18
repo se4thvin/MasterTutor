@@ -8,21 +8,30 @@ import motionPlugin from "./apps/web/lint/motion-eslint-plugin.ts";
 const ANIMATION_BANS = {
   group: ["gsap", "gsap/*", "ogl", "framer-motion", "matter-js", "@react-three/*", "@hugeicons/*"],
   message:
-    "motion is the only animation library and icons come from components/ui/icons.ts (spec §11.3–11.4).",
+    "motion is the animation library and icons come from components/ui/icons.ts (spec §11.3–11.4). D43 allows gsap/ogl/WebGL only when worth it, behind a reviewed import() boundary like layout-features.",
 };
 const THREE_BAN = {
   group: ["three", "three/*"],
   message: "three may be imported only from components/hero/.",
 };
 const LUCIDE_BAN = { group: ["lucide-react"], message: "Use <Icon> from components/ui/icon.tsx." };
-const MOTION_COMPONENT_BAN = ["motion/react", "motion/react-client"].map((name) => ({
-  name,
-  importNames: ["motion"],
-  message: "Use m.* inside LazyMotion (spec §11.4).",
-}));
-const webImports = (patterns) => [
+/** `motion` defeats LazyMotion; `domMax` (layout animation, ~14 kB gz) must stay out of first-load JS (D43). */
+const motionImportBan = (importNames) =>
+  ["motion/react", "motion/react-client"].map((name) => ({
+    name,
+    importNames,
+    message:
+      "Use m.* inside LazyMotion; layout animation (domMax) loads only through <LayoutMotion> (spec §11.4, D43).",
+  }));
+const MOTION_COMPONENT_BAN = motionImportBan(["motion", "domMax"]);
+/** The lazy boundary: layout-features is reached only by import() in components/motion/layout-motion.tsx. */
+const LAYOUT_FEATURES_STATIC = {
+  regex: "(^|/)layout-features(\\.ts)?$",
+  message: "Load layout-features only with import(), inside <LayoutMotion> (D43 lazy boundary).",
+};
+const webImports = (patterns, paths = MOTION_COMPONENT_BAN) => [
   "error",
-  { paths: MOTION_COMPONENT_BAN, patterns: [ANIMATION_BANS, ...patterns] },
+  { paths, patterns: [ANIMATION_BANS, LAYOUT_FEATURES_STATIC, ...patterns] },
 ];
 
 // D38: stateful OpenAI APIs. Every block that sets no-restricted-syntax for apps/** must include
@@ -49,6 +58,8 @@ const dynamicImportBan = (groups) => [
     message: "This library may not be imported here, dynamically or statically (spec §11.3–11.4).",
   },
 ];
+// D43: a library leaves this list only together with a lazy import() boundary like
+// LAYOUT_FEATURES_STATIC. Nothing in the delight pass needs one.
 const ALL_BANNED = ["gsap", "ogl", "framer-motion", "matter-js", "@react-three", "@hugeicons"];
 
 const OPENAI_IMPORTS = {
@@ -135,6 +146,13 @@ export default defineConfig(
       "motion/no-raw-motion-classes": "error",
       "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN]),
       "no-restricted-syntax": dynamicImportBan([...ALL_BANNED, "three", "lucide-react"]),
+    },
+  },
+  {
+    // The one static home of domMax; layout-motion.tsx reaches it only through import().
+    files: ["apps/web/components/motion/layout-features.ts"],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], motionImportBan(["motion"])),
     },
   },
   {

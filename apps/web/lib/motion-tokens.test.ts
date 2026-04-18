@@ -41,6 +41,7 @@ describe("motion tokens", () => {
     for (const name of [
       "LazyMotion",
       "domAnimation",
+      "domMax",
       "m",
       "animate",
       "useMotionValue",

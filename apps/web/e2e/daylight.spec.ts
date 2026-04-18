@@ -1,4 +1,6 @@
-import { expect, test } from "./helpers/test.ts";
+import type { Page } from "@playwright/test";
+import { moved, readSamples, startSampling } from "./helpers/motion.ts";
+import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 test.describe("Daylight motion", () => {
   test.skip(({ viewport }) => viewport?.width !== 1440, "motion check runs once");
@@ -44,5 +46,46 @@ test.describe("Daylight motion", () => {
     await expect(chevron).toHaveCSS("rotate", "none");
     await closed.locator(".tree-disclosure").click();
     await expect(chevron).toHaveCSS("rotate", "90deg");
+  });
+});
+
+test.describe("card reflow (parked: layout animation)", () => {
+  async function deleteFirstCardWhileSampling(page: Page) {
+    await page.goto("/library");
+    await page.locator("html[data-layout-motion=ready]").waitFor({ state: "attached" });
+    const cards = page.locator('[data-qa="note-card"]');
+    const title = (await cards.first().locator(".card-title").innerText()).trim();
+    await cards
+      .first()
+      .getByRole("button", { name: `Actions for ${title}` })
+      .click();
+    await page.getByRole("menuitem", { name: "Delete note…" }).click();
+    const confirm = page.getByRole("alertdialog").getByRole("button", { name: "Delete Note" });
+    // Wait until the dialog has settled (actionable) so the 40 sampled frames cover the reflow.
+    await confirm.click({ trial: true });
+    // The second slot is the card that has to move into the freed place.
+    await startSampling(page, "reflow", ".card-slot:nth-child(2)", "transform", 40);
+    await confirm.click();
+    await expect(cards.filter({ hasText: title })).toBeHidden();
+    return readSamples(page, "reflow", 40);
+  }
+
+  test("the cards after a deleted one slide into place instead of jumping", async ({ page }) => {
+    test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+    const samples = await deleteFirstCardWhileSampling(page);
+    expect(samples.some(moved), samples.join(" | ")).toBe(true);
+  });
+
+  test("under reduced motion the cards jump into place", async ({ page }) => {
+    test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const samples = await deleteFirstCardWhileSampling(page);
+    expect(samples.filter(moved), samples.join(" | ")).toEqual([]);
+  });
+
+  test("the library stays clean once layout motion has loaded", async ({ page }) => {
+    await page.goto("/library");
+    await page.locator("html[data-layout-motion=ready]").waitFor({ state: "attached" });
+    await expectCleanScreen(page);
   });
 });
