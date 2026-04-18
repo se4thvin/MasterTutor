@@ -26,11 +26,6 @@ export function FolderMoveSheet({
       )
     : [];
   const topLevel = folder !== null && folder.parentId !== null;
-  const pick = (parentId: string | null) => {
-    if (!folder) return;
-    onClose();
-    void move(folder.id, parentId);
-  };
   return (
     <Sheet
       open={folder !== null}
@@ -41,7 +36,11 @@ export function FolderMoveSheet({
       <FolderPickList
         root={topLevel ? { label: "Top level", icon: "library" } : null}
         folders={rows}
-        onPick={pick}
+        receiveLabel={folder?.name ?? ""}
+        onPick={(parentId) => {
+          if (folder) void move(folder.id, parentId);
+        }}
+        onDone={onClose}
         empty="No other folder can hold this one."
       />
     </Sheet>

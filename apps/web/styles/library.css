@@ -293,7 +293,8 @@
       background: var(--fill);
       font-weight: 600;
     }
-    & span {
+    /* Only the label ellipsizes; the glyph and the flying pill must not be clipped (I2). */
+    & .move-label {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -569,6 +570,52 @@
   @keyframes ff-gulp {
     40% {
       scale: 1.04;
+    }
+  }
+  /* Move sheet receive: the item flies from the label into the opened folder (Task 5). */
+  .move-target {
+    position: relative;
+    display: grid;
+    flex: none;
+  }
+  .move-target,
+  .move-target .fmark {
+    overflow: visible;
+  }
+  .move-pill {
+    position: absolute;
+    top: 50%;
+    inset-inline-start: 0;
+    max-width: 10rem;
+    overflow: hidden;
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--r-pill);
+    background: var(--elevated);
+    box-shadow: var(--e2);
+    color: var(--label);
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+    transform-origin: 0 50%;
+    animation-name: pill-in;
+    animation-duration: var(--motion-dur-receive);
+    animation-timing-function: var(--motion-ease-in);
+    animation-fill-mode: both;
+  }
+  @keyframes pill-in {
+    from {
+      opacity: 0;
+      translate: 2.5rem -50%;
+    }
+    25% {
+      opacity: 1;
+      translate: 2rem -50%;
+    }
+    to {
+      opacity: 0;
+      translate: 0 -50%;
+      scale: 0.2;
     }
   }
 }
