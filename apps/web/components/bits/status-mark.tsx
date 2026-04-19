@@ -12,7 +12,7 @@
  * progress, label, strike, size and timing props are removed; a `decorative` mode for marks that
  * sit beside text; reduced motion keeps only the fades (motion.css).
  */
-export type StatusMarkStatus = "pending" | "running" | "done" | "failed" | "cancelled";
+type StatusMarkStatus = "pending" | "running" | "done" | "failed" | "cancelled";
 
 const SPOKEN: Record<StatusMarkStatus, string> = {
   pending: "Pending",
