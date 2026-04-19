@@ -21,7 +21,7 @@ describe("enum tuples", () => {
       "cancelled",
     ]);
     expect(enums.TERMINAL_RUN_STATUSES).toEqual(["completed", "failed", "cancelled"]);
-    expect(enums.APPROVAL_MODES).toEqual(["ask", "auto_within_allowlist"]);
+    expect(enums.APPROVAL_MODES).toEqual(["ask", "auto_within_allowlist", "bypass"]);
     expect(enums.RunStatus.safeParse("paused").success).toBe(false);
     expect(enums.STEP_STATES).toContain("aborted");
     expect(enums.CONTROLLERS).toEqual(["agent", "user"]);

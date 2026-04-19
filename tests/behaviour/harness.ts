@@ -171,7 +171,12 @@ export async function decideApproval(
 export async function takeControl(agent: BehaviourAgent, runId: string): Promise<Date> {
   const [row] = await agent.web.db
     .update(runs)
-    .set({ controller: "user", status: "waiting", waitReason: "takeover" })
+    .set({
+      controller: "user",
+      controlUserId: "behaviour-user",
+      status: "waiting",
+      waitReason: "takeover",
+    })
     .where(eq(runs.id, runId))
     .returning({ at: sql<string>`now()::text` });
   await agent.web.sql.notify("run_control", encodeNotify("run_control", { runId }));
@@ -179,7 +184,10 @@ export async function takeControl(agent: BehaviourAgent, runId: string): Promise
 }
 
 export async function handBack(agent: BehaviourAgent, runId: string) {
-  await agent.web.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, runId));
+  await agent.web.db
+    .update(runs)
+    .set({ controller: "agent", controlUserId: null })
+    .where(eq(runs.id, runId));
   await agent.web.sql.notify("run_control", encodeNotify("run_control", { runId }));
 }
 

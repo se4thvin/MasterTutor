@@ -2,21 +2,34 @@ import { randomUUID } from "node:crypto";
 import {
   decideByPolicy,
   decideSafetyChecks,
+  BYPASS_DECIDER,
   POLICY_DECIDER,
+  isPersonDecider,
+  policyDecider,
   type ApprovalRequest,
   type ComputerAction,
   type RunError,
   type RunEvent,
   type Usage,
   type WaitReason,
+  WAITS_KEPT_THROUGH_TAKEOVER,
 } from "@mastertutor/contracts";
-import type { Database } from "@mastertutor/db";
+import { emitRunEvent, returnControlToAgent, type Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
-import { approvalRequestFor, needsApproval, type ApprovalNeed } from "../guardrails/policy.ts";
+import {
+  approvalExcerpt,
+  approvalRequestFor,
+  downloadRequest,
+  downloadUrlForCard,
+  needsApproval,
+  type ApprovalNeed,
+} from "../guardrails/policy.ts";
+import { UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL } from "../tools/computer.ts";
+import type { CallApproval } from "../tools/types.ts";
 import { wrapUntrusted } from "../tools/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
 import { AGENT_INSTRUCTIONS, NUDGE, goalText } from "../llm/instructions.ts";
@@ -41,6 +54,7 @@ import {
   functionItem,
   insertApprovals,
   loadActResult,
+  hasUnusedOtpCode,
   loadApprovalDecision,
   loadPendingApproval,
   loadUserMessages,
@@ -51,8 +65,10 @@ import {
   type PendingApproval,
 } from "./approvals.ts";
 import {
+  HANDED_OVER,
   INTERRUPTED,
   NOT_STARTED,
+  OTP_PENDING,
   PAGE_CHANGED,
   RESTARTED,
   notRun,
@@ -101,6 +117,15 @@ export interface RunLoopDeps {
   leaseExpired?: () => boolean;
 }
 
+/** What running one call did: its result, and whether the run must wait for the user. */
+interface Executed {
+  result: CallResult;
+  ran: boolean;
+  wait: "otp" | null;
+  /** The executor handed the page to the user (the reason to show): the run waits for a takeover. */
+  handOver: string | null;
+}
+
 /** One thing in a model turn that needs its own approval (security ruling: one approval per risky item). */
 interface RiskyItem {
   item: string;
@@ -124,16 +149,32 @@ const TO_RUNNING: Transition = {
   reason: null,
 };
 const DENIED = "Not run: the user denied this action.";
+const TAKEOVER_FAILED =
+  "Taking control needs the live view to be open and connected. Open it, then try again.";
+/** Refusals that only a person's approval can lift (the page could not be guarded). */
+const UNGUARDED_REFUSALS: readonly string[] = [UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL];
+const downloadBlockedNote = (url: string) =>
+  `Executor: a download of ${downloadUrlForCard(url)} was blocked: nothing was saved. Downloads need the user's approval.`;
+/** Waits a takeover leaves on the row (M7): hand-back re-observes whether they still hold. */
+const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = [
+  "takeover",
+  ...WAITS_KEPT_THROUGH_TAKEOVER,
+];
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
 
 /** What an approval was for; an approved action only runs while its target still classifies the same. */
 function riskOf(request: ApprovalRequest): { kind: string | null; label: string | null } {
   if (request.kind === "risky_click") return { kind: request.kind, label: request.label };
   if (request.kind === "form_submit") return { kind: request.kind, label: request.formSummary };
+  // The destination the card showed: the fill runs only while the form still posts there.
+  if (request.kind === "credential_first_use")
+    return { kind: request.kind, label: request.postsTo ?? null };
+  if (request.kind === "download") return { kind: request.kind, label: request.url };
   return { kind: request.kind, label: null };
 }
 
 function needLabel(need: ApprovalNeed): string {
+  if (need.kind === "download") return downloadUrlForCard(need.url);
   return need.kind === "risky_click" ? need.label.slice(0, 500) : need.formSummary.slice(0, 1_000);
 }
 
@@ -167,6 +208,10 @@ export class RunLoop {
   #userCursor: string | null;
   #pending: PendingApproval | null = null;
   #notesChanged = false;
+  /** Approved download cards, let through at the start of the next act (the model repeats it). */
+  #downloadAllowances: Array<{ url: string; filename: string | null }> = [];
+  /** A click was refused for an unguarded page: the next approvals go to a person (m10). */
+  #personNext = false;
   #lastTick: number | null = null;
   /** run_transcript as stored, loaded once and appended after each commit (M5). */
   #history: TranscriptEntry[] = [];
@@ -213,15 +258,17 @@ export class RunLoop {
   }
 
   /**
-   * Whether a wake brought something only a person can supply: a decided approval or a new user
-   * message. A stale wake (a message already read, a repeated NOTIFY) does not end a wait (I1).
+   * Whether a wake brought something only a person can supply: a decided approval, a new user
+   * message, or (while waiting for a code) a submitted one-time code. A stale wake does not end a
+   * wait (I1).
    */
-  async hasNews(): Promise<boolean> {
+  async hasNews(waitReason: WaitReason | null = null): Promise<boolean> {
     const pending = this.#pending;
     if (pending) {
       const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
       if (decision && decision.status !== "pending") return true;
     }
+    if (waitReason === "otp" && (await hasUnusedOtpCode(this.#deps.db, this.#run.id))) return true;
     return (await loadUserMessages(this.#deps.db, this.#run.id, this.#userCursor)).length > 0;
   }
 
@@ -242,7 +289,7 @@ export class RunLoop {
       case "decide":
         return this.#decide(signal);
       case "approve":
-        return this.#approve();
+        return this.#approve(signal);
       case "act":
         return this.#act(signal);
     }
@@ -480,7 +527,9 @@ export class RunLoop {
       const items = seedFromSummary(compacted.summary, keys, {
         pageText: this.#pageHeader(obs),
         screenshotKey: this.#screenshotKey!,
-        carried,
+        // The first turn's context (the vault's alias list) is not in the summary: send it again,
+        // so a re-login after compaction still knows which aliases exist.
+        carried: [...(await hooks.promptContext(this.#run)), ...carried],
       });
       record("in", items, null, "seed");
       return items;
@@ -614,16 +663,15 @@ export class RunLoop {
   /* --------------------------------- approve --------------------------------- */
 
   /** Every risky item of the unanswered calls, classified in code (spec §5.5). */
-  async #riskyItems(url: string): Promise<RiskyItem[]> {
+  async #riskyItems(url: string, signal: AbortSignal): Promise<RiskyItem[]> {
     const items: RiskyItem[] = [];
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
       if (call.kind === "function") {
-        const request = await this.#deps.hooks.functionApproval(
-          { name: call.name, args: call.args },
-          this.#run,
-          url,
-        );
+        // The tool asks against the page as it is now (e.g. where a sign-in form posts).
+        const request = isFunctionTool(call.name)
+          ? await this.#deps.browser.functionApproval(call.name, call.args, signal)
+          : null;
         if (request)
           items.push({
             item: functionItem(call.callId),
@@ -654,6 +702,7 @@ export class RunLoop {
             url: url.slice(0, 4_096),
             screenshotKey: this.#screenshotKey,
             safetyChecks: checks.slice(0, 20),
+            context: null,
           },
           safetyChecks: checks,
           target: null,
@@ -670,7 +719,12 @@ export class RunLoop {
             item: actionItem(call.callId, index),
             callId: call.callId,
             index,
-            request: approvalRequestFor(need, url, this.#screenshotKey),
+            request: approvalRequestFor(
+              need,
+              url,
+              this.#screenshotKey,
+              approvalExcerpt(target?.excerpt),
+            ),
             safetyChecks: null,
             target: target?.path ?? null,
             context: target?.context ?? null,
@@ -684,14 +738,16 @@ export class RunLoop {
    * Asks for (or decides by policy) one approval per risky item. In ask mode the run waits for the
    * first undecided item; after its decision the loop comes back here for the next one.
    */
-  async #approve(): Promise<StepOutcome> {
+  async #approve(signal: AbortSignal): Promise<StepOutcome> {
     for (const call of this.#calls) {
       if (call.invalid !== null && !this.#results.has(call.callId))
         this.#results.set(call.callId, notRun(call, `Invalid call: ${call.invalid}.`));
     }
-    const items = (await this.#riskyItems(this.#obs().url)).filter(
+    const items = (await this.#riskyItems(this.#obs().url, signal)).filter(
       (item) => !this.#decided.has(item.item) && !this.#unreachable(item),
     );
+    const toPerson = this.#personNext;
+    this.#personNext = false;
     if (items.length === 0) {
       if (this.#decided.size === 0)
         await this.#deps.store.commit({
@@ -706,9 +762,11 @@ export class RunLoop {
     const originAllowed = origin !== null && this.#run.allowedOrigins.includes(origin);
     for (const item of items) {
       if (this.#results.has(item.callId) || this.#unreachable(item)) continue;
-      const decision = item.safetyChecks
-        ? decideSafetyChecks(this.#run.approvalMode, item.safetyChecks, originAllowed)
-        : decideByPolicy(this.#run.approvalMode, item.request.kind);
+      const decision = toPerson
+        ? "ask"
+        : item.safetyChecks
+          ? decideSafetyChecks(this.#run.approvalMode, item.safetyChecks, originAllowed)
+          : decideByPolicy(this.#run.approvalMode, item.request.kind);
       if (decision === "ask") {
         // Items are in order (safety checks first); nothing after this is decided until a person answers.
         ask = item;
@@ -722,6 +780,8 @@ export class RunLoop {
         ...riskOf(item.request),
         target: item.target,
         context: item.context,
+        decidedBy: policyDecider(this.#run.approvalMode),
+        decidedAt: Date.now(),
       });
     }
     if (rows.length > 0) {
@@ -741,10 +801,11 @@ export class RunLoop {
             type: "approval_resolved",
             approvalId: row.id,
             status: row.status,
-            decidedBy: POLICY_DECIDER,
+            decidedBy: policyDecider(this.#run.approvalMode),
           },
         ]),
-        extra: (tx) => insertApprovals(tx, this.#run.id, seq, rows, POLICY_DECIDER),
+        extra: (tx) =>
+          insertApprovals(tx, this.#run.id, seq, rows, policyDecider(this.#run.approvalMode)),
       });
     }
     if (ask)
@@ -804,16 +865,16 @@ export class RunLoop {
   }
 
   async #recordPolicy(request: ApprovalRequest, status: "approved" | "denied"): Promise<void> {
+    const decider = policyDecider(this.#run.approvalMode);
     const seq = this.#deps.store.nextSeq();
     const id = randomUUID();
     await this.#deps.store.commit({
       steps: [{ seq, phase: "approve", state: "done", result: { policy: [status] } }],
       events: [
         { type: "approval_requested", approvalId: id, request },
-        { type: "approval_resolved", approvalId: id, status, decidedBy: POLICY_DECIDER },
+        { type: "approval_resolved", approvalId: id, status, decidedBy: decider },
       ],
-      extra: (tx) =>
-        insertApprovals(tx, this.#run.id, seq, [{ id, request, status }], POLICY_DECIDER),
+      extra: (tx) => insertApprovals(tx, this.#run.id, seq, [{ id, request, status }], decider),
     });
   }
 
@@ -823,12 +884,10 @@ export class RunLoop {
    * Runs one call. Every action of a batch is re-gated at execution time except the ones the user
    * (or policy) explicitly approved; a refused one stops the batch (Review Focus 3).
    */
-  async #execute(
-    call: PendingCall,
-    signal: AbortSignal,
-  ): Promise<{ result: CallResult; ran: boolean }> {
+  async #execute(call: PendingCall, signal: AbortSignal): Promise<Executed> {
     if (call.kind === "computer") {
       const refusals: string[] = [];
+      const clicked: Array<{ index: number; label: string }> = [];
       let index = -1;
       const gate = async (action: ComputerAction) => {
         index += 1;
@@ -839,42 +898,115 @@ export class RunLoop {
         }
         const target = await this.#deps.browser.targetFor(action, null);
         const need = needsApproval(action, target);
-        if (need === null) return true;
         // An approval covers what was approved, not the batch index: the same kind and label on
-        // the same element (M10).
-        if (
-          decision &&
+        // the same element (M10), and on the same record: an approval for Alice's row never
+        // deletes Bobby (R29-3).
+        const matchesApproval =
+          decision !== undefined &&
+          need !== null &&
           need.kind === decision.kind &&
           needLabel(need) === decision.label &&
           (decision.target === null || decision.target === (target?.path ?? null)) &&
-          // ...and on the same record: an approval for Alice's row never deletes Bobby (R29-3).
-          (decision.context === null || decision.context === (target?.context ?? null))
-        )
-          return true;
-        if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
-        return false;
+          (decision.context === null || decision.context === (target?.context ?? null));
+        if (need !== null && !matchesApproval) {
+          if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
+          return false;
+        }
+        if (target && (action.type === "click" || action.type === "double_click"))
+          clicked.push({ index, label: target.label });
+        // Only a person's approval of this very element (path and record) lets typing run with an
+        // incomplete guard; a policy approval (auto or bypass mode) never does. After a restore the
+        // page may no longer show why approval was needed (a hung frame), so need may be null here.
+        const personApproved =
+          decision?.approved === true &&
+          isPersonDecider(decision.decidedBy) &&
+          decision.target !== null &&
+          decision.target === (target?.path ?? null) &&
+          (decision.context === null || decision.context === (target?.context ?? null));
+        // The executor holds a click to this classification at the moment it presses (TOCTOU);
+        // this very download, if approved, is let through only then (once).
+        return {
+          target,
+          personApproved,
+          ...(need?.kind === "download" && decision?.approved === true
+            ? { allowDownload: need.url }
+            : {}),
+        };
       };
       const run = await this.#deps.browser.runComputer(call.actions, signal, gate);
+      // Refused because the page could not be guarded: only a person's approval lets it run, so
+      // the policy (auto or bypass) must not approve the retry again (m10).
+      if (run.notes.some((note) => UNGUARDED_REFUSALS.includes(note))) this.#personNext = true;
+      // Only clicks that actually ran (B3 logout detection, F10). The click already happened, so a
+      // failing hook is logged and the act still commits (M4).
+      for (const click of clicked) {
+        if (click.index >= run.executed) continue;
+        await this.#deps.hooks
+          .onClick(this.#run, { label: click.label, url: this.#obs().url })
+          .catch(() =>
+            this.#deps.log.warn(
+              { runId: this.#run.id, errorCode: "on_click_failed" },
+              "onClick hook failed",
+            ),
+          );
+      }
       const acknowledged = this.#decided.get(safetyItem(call.callId))?.approved
         ? call.safetyChecks
         : [];
       return {
         result: { kind: "computer", notes: [...run.notes, ...refusals], acknowledged },
         ran: run.executed > 0,
+        wait: null,
+        handOver: run.handOver,
       };
     }
-    if (!isFunctionTool(call.name)) return { result: notRun(call, "Unknown tool."), ran: false };
-    const run = await this.#deps.browser.runFunction(call.name, call.args, signal);
+    if (!isFunctionTool(call.name))
+      return { result: notRun(call, "Unknown tool."), ran: false, wait: null, handOver: null };
+    // The decision for exactly this call (same call id and arguments), so a tool can tell a human
+    // approval (a lasting vault grant) from a policy one (this call only).
+    const decision = this.#decided.get(functionItem(call.callId));
+    // A bypass decision reaches tools as a policy one: never a person's (no lasting vault grant,
+    // an off-origin sign-in form still needs a person), D44.
+    const approval: CallApproval | null =
+      decision?.approved && decision.kind !== null && decision.decidedBy !== null
+        ? {
+            kind: decision.kind,
+            decidedBy: decision.decidedBy === BYPASS_DECIDER ? POLICY_DECIDER : decision.decidedBy,
+            label: decision.label,
+            decidedAt: decision.decidedAt,
+          }
+        : null;
+    const run = await this.#deps.browser.runFunction(call.name, call.args, signal, approval);
     if (run.notesChanged) this.#notesChanged = true;
-    return { result: { kind: "function", output: run.output }, ran: true };
+    return {
+      result: { kind: "function", output: run.output },
+      ran: true,
+      wait: run.wait,
+      // fill_credential's needs_human: a form only a person may approve (T10-12 review).
+      handOver: run.handOver,
+    };
   }
 
   async #act(signal: AbortSignal): Promise<StepOutcome> {
     const { store, browser } = this.#deps;
     const obs = this.#obs();
     let ran = false;
+    let wait: "otp" | null = null;
+    let handOver: string | null = null;
+    // Downloads approved since the last act: the model repeats what started them now.
+    for (const card of this.#downloadAllowances.splice(0)) await browser.allowDownload(card);
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
+      // The page is beyond what the agent can act on safely: nothing after runs; the user takes over.
+      if (handOver) {
+        this.#results.set(call.callId, notRun(call, HANDED_OVER));
+        continue;
+      }
+      // A call asked for a one-time code: nothing after it runs before the user supplies one.
+      if (wait) {
+        this.#results.set(call.callId, notRun(call, OTP_PENDING));
+        continue;
+      }
       const seq = store.nextSeq();
       const action = {
         ...(describeCall(call, obs.screenshot.scale) ?? {
@@ -885,7 +1017,7 @@ export class RunLoop {
         callId: call.callId,
       };
       await store.commit({ steps: [{ seq, phase: "act", state: "started", action }] });
-      let executed: { result: CallResult; ran: boolean };
+      let executed: Executed;
       try {
         executed = await this.#execute(call, signal);
       } catch (error) {
@@ -898,6 +1030,8 @@ export class RunLoop {
         throw error;
       }
       ran ||= executed.ran;
+      wait ??= executed.wait;
+      handOver ??= executed.handOver;
       this.#results.set(call.callId, executed.result);
       const storage = await browser.collectStorage().catch(() => null);
       await store.commit({
@@ -916,6 +1050,30 @@ export class RunLoop {
       };
       const decision = decideByPolicy(this.#run.approvalMode, "new_origin");
       // Only a denial is decided here; anything else waits for a person (resume adds the origin).
+      // While a one-time code is awaited, that wait wins: the model is told and can navigate there
+      // again once signed in, which asks then (M6).
+      if (decision !== "denied" && wait) {
+        this.#notes.push(
+          `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins. Navigate there again after the one-time code to ask the user.`,
+        );
+        continue;
+      }
+      if (decision === "approved" && !wait && !handOver) {
+        // Bypass mode (D44): the origin is allowed for the rest of the run and opened. The network
+        // policy still applies to it (no private ranges). Never while the page is being handed
+        // over or a code is awaited (m4).
+        await this.#recordPolicy(request, decision);
+        this.#run = {
+          ...this.#run,
+          allowedOrigins: [...new Set([...this.#run.allowedOrigins, entry.origin])],
+        };
+        await this.#deps.store.commit({ run: { allowedOrigins: this.#run.allowedOrigins } });
+        await browser.navigate(entry.url, signal);
+        this.#notes.push(
+          `Executor: ${entry.origin} was allowed by this run's bypass mode; it is now open.`,
+        );
+        continue;
+      }
       if (decision !== "denied") {
         for (const other of origins.slice(position + 1))
           this.#notes.push(
@@ -928,6 +1086,31 @@ export class RunLoop {
         `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
       );
     }
+    // Downloads the page started (a script, an attachment, a frame) were cancelled: each needs
+    // its own approval; auto mode's policy denies them (spec §9).
+    const downloads = browser.drainBlockedDownloads();
+    for (const [position, entry] of downloads.entries()) {
+      const request = downloadRequest(entry.url, entry.filename);
+      const decision = decideByPolicy(this.#run.approvalMode, "download");
+      if (decision === "approved") {
+        await this.#recordPolicy(request, decision);
+        if (request.kind === "download") this.#downloadAllowances.push(request);
+        this.#notes.push(
+          `Executor: downloading ${downloadUrlForCard(entry.url)} was allowed by this run's bypass mode. Do the action that started it again to save it.`,
+        );
+        continue;
+      }
+      if (decision !== "denied" && !wait && !handOver) {
+        // One card at a time; the page can start the others again to ask.
+        for (const later of downloads.slice(position + 1))
+          this.#notes.push(downloadBlockedNote(later.url));
+        return this.#ask(request, { callIds: [], item: null });
+      }
+      if (decision === "denied") await this.#recordPolicy(request, decision);
+      this.#notes.push(downloadBlockedNote(entry.url));
+    }
+    if (handOver) return this.#wait("takeover", handOver);
+    if (wait) return this.#wait("otp", "A one-time code is needed to sign in");
     // The page (URL, DOM, position) is part of the signature: scrolling or paging is not a loop.
     const signature = `${this.#calls.map(callSignature).join("|")}@${obs.url}#${obs.domHash}#${obs.scroll.x},${obs.scroll.y}`;
     if (ran && this.#loops.recordAction(signature, obs.phash))
@@ -1036,6 +1219,23 @@ export class RunLoop {
       return CONTINUE;
     }
 
+    if (request.kind === "download" && pending.item === null) {
+      await this.#deps.store.commit({
+        steps: [step, approveStep(approved ? "done" : "skipped")],
+        transition: TO_RUNNING,
+        run: base.run,
+      });
+      if (approved) {
+        // Exactly the download the card showed (it may start again under a new blob URL).
+        this.#downloadAllowances.push(request);
+        this.#notes.push(
+          `Executor: the user approved downloading ${request.filename ?? request.url}. Do the action that started it again to save it.`,
+        );
+      } else this.#notes.push(`Executor: the user did not allow downloading ${request.url}.`);
+      this.#next = "decide";
+      return CONTINUE;
+    }
+
     if (request.kind === "new_origin") {
       if (approved)
         this.#run = {
@@ -1083,6 +1283,8 @@ export class RunLoop {
         ...riskOf(pending.request),
         target: pending.target,
         context: pending.context,
+        decidedBy: decision.decidedBy,
+        decidedAt: decision.decidedAt?.getTime() ?? Date.now(),
         approved: decision.status === "approved",
         note:
           decision.status === "approved"
@@ -1131,10 +1333,13 @@ export class RunLoop {
       steps,
       events,
       ...(pending ? { extra: (tx) => markApprovalSuperseded(tx, pending.approvalId) } : {}),
-      ...(control?.status === "running"
+      // A run waiting on an approval becomes waiting(takeover) too: the approval is gone (A5).
+      // A code or CAPTCHA wait stays on the row (M7); hand-back re-observes.
+      ...(control?.status === "running" ||
+      (control?.status === "waiting" && !KEPT_THROUGH_TAKEOVER.includes(control.waitReason))
         ? {
             transition: {
-              from: ["running"],
+              from: ["running", "waiting"],
               to: "waiting",
               waitReason: "takeover",
               reason: "user",
@@ -1145,11 +1350,44 @@ export class RunLoop {
     this.markIdle();
   }
 
+  /**
+   * Hand-back always re-observes and runs on (M7, F1). A code or CAPTCHA wait kept through the
+   * takeover is re-entered only if the page still needs it: the person may have typed the code
+   * or solved the CAPTCHA themselves, and a code submitted meanwhile is used by the next fill.
+   */
   async markHandBack(): Promise<void> {
     await this.#deps.store.commit({
       events: [{ type: "control", holder: "agent" }],
       transition: TO_RUNNING,
     });
     this.reobserve();
+  }
+
+  /**
+   * The takeover could not be delivered to the user's live view (B6, F3): one commit returns
+   * control to the agent, tells the UI why, and the agent re-observes before acting again. A run
+   * that was waiting on an approval goes straight back to waiting(approval), never via running.
+   */
+  async revertTakeover(): Promise<void> {
+    const pending = this.#pending;
+    await this.#deps.store.commit({
+      events: [{ type: "error", code: "takeover_failed", message: TAKEOVER_FAILED }],
+      // A takeover that interrupted waiting(approval) returns there: the approval was never
+      // superseded (markTakeover did not run), so the sheet stays and the decision still counts.
+      transition: pending
+        ? ({
+            from: ["waiting", "running"],
+            to: "waiting",
+            waitReason: "approval",
+            reason: pending.request.kind,
+          } as Transition)
+        : TO_RUNNING,
+      // control{agent} only if this write took control back: a concurrent hand-back already did.
+      extra: async (tx) => {
+        if (await returnControlToAgent(tx, this.#run.id))
+          await emitRunEvent(tx, this.#run.id, { type: "control", holder: "agent" });
+      },
+    });
+    if (!pending) this.reobserve();
   }
 }

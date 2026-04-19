@@ -1,11 +1,18 @@
-import type { ComputerAction, FunctionToolName, ScrollPosition } from "@mastertutor/contracts";
+import {
+  toOrigin,
+  type ApprovalRequest,
+  type ComputerAction,
+  type FunctionToolName,
+  type ScrollPosition,
+} from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import type { BrowserStorageState } from "../browser/storage-state.ts";
+import type { CollectedStorage } from "../browser/storage-state.ts";
 import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
+import type { CallApproval } from "../tools/types.ts";
 
 export const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
@@ -37,13 +44,31 @@ export class FakeLoopBrowser implements LoopBrowser {
   focused: TargetDescription | null = null;
   /** Batches that ran to the end (every action passed the gate). */
   readonly computerRuns: ComputerAction[][] = [];
+  /** What the gate answered for each action it was asked about. */
+  readonly verdicts: Array<Awaited<ReturnType<ActionGate>>> = [];
   /** Every single action that passed the gate, including those of a batch stopped later. */
   readonly executed: ComputerAction[] = [];
   readonly functionRuns: Array<{ name: string; args: unknown }> = [];
+  /** The approval each function call was run with (F4). */
+  readonly functionApprovals: Array<CallApproval | null> = [];
+  /** A wait a function call asks for, e.g. "otp" for fill_credential without a code. */
+  functionWait: (name: FunctionToolName) => "otp" | null = () => null;
+  /** A hand-over a function call asks for (the reason shown), e.g. fill_credential's needs_human. */
+  functionHandOver: (name: FunctionToolName) => string | null = () => null;
   readonly navigations: string[] = [];
   blocked: BlockedNavigation[] = [];
   /** Runs after each single action, e.g. to change what lies under a later action of the batch. */
   actionHook: ((action: ComputerAction) => void | Promise<void>) | null = null;
+  /** True for an action the gate allowed but the executor still refuses when it presses. */
+  dispatchHold: ((action: ComputerAction) => boolean) | null = null;
+  /** Download attempts the page made (drained by the loop), and the downloads a person allowed. */
+  blockedDownloads: Array<{ url: string; filename: string | null }> = [];
+  /** Downloads let through: an approved card, or (`link`) a download link at its press. */
+  allowedDownloads: Array<{ url: string; filename?: string | null }> = [];
+  /** The executor refuses this action at the press with this note, or null. */
+  refuseWith: ((action: ComputerAction) => string | null) | null = null;
+  /** The executor hands the page to the user at this action (returns the reason), or null. */
+  handOverOn: ((action: ComputerAction) => string | null) | null = null;
   /** The worker's control guard, checked before every input and screenshot like the real session. */
   guard: ControlGuard | null = null;
   /** How often the storage-state restore script was removed again. */
@@ -86,22 +111,59 @@ export class FakeLoopBrowser implements LoopBrowser {
   ): Promise<ComputerRun> {
     let executed = 0;
     for (const action of actions) {
-      if (!(await gate(action)))
-        return { executed, notes: ["Stopped before an action: it needs approval."] };
+      const verdict = await gate(action);
+      this.verdicts.push(verdict);
+      if (!verdict)
+        return {
+          executed,
+          notes: ["Stopped before an action: it needs approval."],
+          handOver: null,
+        };
+      // The executor's own hold at the moment it presses (B1 round 5): allowed, yet not run.
+      if (this.dispatchHold?.(action))
+        return {
+          executed,
+          notes: ["Stopped before an action: its target changed."],
+          handOver: null,
+        };
+      // The executor's own refusal at the press (its note), as a real executor would return it.
+      const refusal = this.refuseWith?.(action) ?? null;
+      if (refusal) return { executed: executed + 1, notes: [refusal], handOver: null };
+      // A page the executor cannot act on safely even with approval (B1 breaker fix 2).
+      const handOver = this.handOverOn?.(action) ?? null;
+      if (handOver)
+        return { executed: executed + 1, notes: ["Nothing was clicked: handed over."], handOver };
       this.guard?.assertAgent(signal);
+      if (verdict !== true && verdict.allowDownload)
+        this.allowedDownloads.push({ url: verdict.allowDownload });
       this.executed.push(action);
       executed += 1;
       await this.actionHook?.(action);
     }
     this.computerRuns.push([...actions]);
     await this.computerHook?.(actions, signal);
-    return { executed, notes: [] };
+    return { executed, notes: [], handOver: null };
   }
 
-  async runFunction(name: FunctionToolName, args: unknown, signal: AbortSignal): Promise<ToolRun> {
+  /** The approval request a function call raises in the approve phase (none by default). */
+  functionApproval: (name: FunctionToolName, args: unknown) => Promise<ApprovalRequest | null> =
+    async () => null;
+
+  async runFunction(
+    name: FunctionToolName,
+    args: unknown,
+    signal: AbortSignal,
+    approval: CallApproval | null,
+  ): Promise<ToolRun> {
     signal.throwIfAborted();
     this.functionRuns.push({ name, args });
-    return { output: this.functionOutput(name), notesChanged: false };
+    this.functionApprovals.push(approval);
+    return {
+      output: this.functionOutput(name),
+      notesChanged: false,
+      wait: this.functionWait(name),
+      handOver: this.functionHandOver(name),
+    };
   }
 
   /** Runs inside navigate, e.g. to block a restore navigation until it is aborted. */
@@ -120,8 +182,19 @@ export class FakeLoopBrowser implements LoopBrowser {
     return this.blocked.splice(0);
   }
 
-  async collectStorage(): Promise<BrowserStorageState> {
-    return { cookies: [], origins: [] };
+  drainBlockedDownloads() {
+    return this.blockedDownloads.splice(0);
+  }
+
+  async allowDownload(card: { url: string; filename: string | null }): Promise<void> {
+    this.allowedDownloads.push(card);
+  }
+
+  async collectStorage(): Promise<CollectedStorage> {
+    return {
+      state: { cookies: [], origins: [] },
+      page: { origin: toOrigin(this.url), passwordFieldVisible: false },
+    };
   }
 
   async applyStorage(): Promise<() => Promise<void>> {
@@ -130,3 +203,7 @@ export class FakeLoopBrowser implements LoopBrowser {
     };
   }
 }
+
+/** Fakes have no real browser: lease hooks that need Browser.* CDP must not run against them. */
+export const unavailableBrowserCdp = (): Promise<never> =>
+  Promise.reject(new Error("fake browsers have no browser-level CDP session"));

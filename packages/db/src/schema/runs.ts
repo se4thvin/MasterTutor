@@ -71,6 +71,8 @@ export const runs = pgTable(
     status: runStatusEnum("status").notNull().default("queued"),
     waitReason: waitReasonEnum("wait_reason"),
     controller: controllerEnum("controller").notNull().default("agent"),
+    /** Better Auth user id of the member holding control; set iff controller = 'user' (B6, F8). */
+    controlUserId: text("control_user_id"),
     approvalMode: approvalModeEnum("approval_mode").notNull().default("ask"),
     model: text("model").notNull().default(MODELS.agentPrimary),
     previousResponseId: text("previous_response_id"),
@@ -101,6 +103,10 @@ export const runs = pgTable(
     check(
       "runs_wait_reason_matches_status",
       sql`(${t.status} = 'waiting') = (${t.waitReason} is not null)`,
+    ),
+    check(
+      "runs_control_user_matches_controller",
+      sql`(${t.controller} = 'user') = (${t.controlUserId} is not null)`,
     ),
   ],
 );

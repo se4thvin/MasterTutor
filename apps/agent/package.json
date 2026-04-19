@@ -5,17 +5,25 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "start": "node src/main.ts"
+    "start": "node src/main.ts",
+    "vault:rotate": "node src/bin/vault-rotate.ts"
   },
   "dependencies": {
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
+    "@mastertutor/sealing": "workspace:*",
     "@mastertutor/storage": "workspace:*",
     "drizzle-orm": "0.45.3",
+    "imapflow": "2.2.5",
     "openai": "7.28.0",
+    "otplib": "13.5.0",
     "playwright-core": "1.63.0",
     "postgres": "3.4.9",
     "sharp": "0.35.5",
     "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "tesseract.js": "7.0.0"
   }
 }

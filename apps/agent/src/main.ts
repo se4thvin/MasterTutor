@@ -7,8 +7,11 @@ import { startHealthServer } from "./health.ts";
 import { createOpenAIModelClient } from "./llm/client.ts";
 import { Supervisor } from "./loop/supervisor.ts";
 import { slotCdpBaseUrl } from "./slots/probe.ts";
+import { createVault, vaultHooks } from "./vault/index.ts";
+import { takeVaultKeys } from "./vault/key-env.ts";
 
-const env = parseEnv(AgentEnv, process.env);
+// S2: the private key lives in the vault's key pair only; nothing else can read it from the env.
+const { keys: vaultKeys, env } = await takeVaultKeys(parseEnv(AgentEnv, process.env), process.env);
 const log = createLogger({ service: "agent", level: env.LOG_LEVEL });
 const database = createDb(env.DATABASE_URL, { max: 10 });
 const storage = createStorage({
@@ -17,6 +20,12 @@ const storage = createStorage({
   bucket: env.S3_BUCKET,
   accessKeyId: env.S3_ACCESS_KEY_ID,
   secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+});
+const vault = createVault({
+  db: database.db,
+  keys: vaultKeys,
+  log: log.child({ module: "vault" }),
+  testMode: env.AGENT_TEST_MODE,
 });
 
 try {
@@ -35,6 +44,7 @@ const supervisor = new Supervisor({
   cdpBaseUrl: (name) => slotCdpBaseUrl(name),
   log,
   testMode: env.AGENT_TEST_MODE,
+  hooks: vaultHooks(vault),
   config: { shutdownDrainMs: env.AGENT_SHUTDOWN_DRAIN_MS },
 });
 

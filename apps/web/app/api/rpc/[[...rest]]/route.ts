@@ -1,7 +1,8 @@
 import { RPCHandler } from "@orpc/server/fetch";
 import type { FixtureContext } from "@/lib/fixtures/types.ts";
 import { getWebEnv } from "@/lib/server/env.ts";
-import type { LiveContext } from "@/lib/server/rpc/live-router.ts";
+import type { LiveContext } from "@/lib/server/rpc/live-os.ts";
+import { isCrossSiteWrite } from "@/lib/server/rpc/same-origin.ts";
 import { getViewer } from "@/lib/server/viewer.ts";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,10 @@ let fixtureHandler: RPCHandler<FixtureContext> | undefined;
 let liveHandler: RPCHandler<LiveContext> | undefined;
 
 async function handle(request: Request): Promise<Response> {
+  // Session cookies are ambient: refuse cross-site state changes before anything else (E2).
+  if (isCrossSiteWrite(request, new URL(getWebEnv().BETTER_AUTH_URL).origin)) {
+    return new Response("Forbidden", { status: 403 });
+  }
   // Both routers enforce the session themselves (requireViewer), so a missing one is a typed
   // oRPC UNAUTHORIZED error the client understands, not a bare 401.
   const viewer = await getViewer();

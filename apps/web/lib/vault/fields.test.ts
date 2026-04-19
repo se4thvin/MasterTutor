@@ -1,30 +1,30 @@
 import { describe, expect, it } from "vitest";
-import {
-  emptyVaultForm,
-  isValidPin,
-  normalizeTotpSeed,
-  suggestAlias,
-  toCreateInput,
-} from "./fields.ts";
+import { emptyVaultForm, suggestAlias, toCreateInput } from "./fields.ts";
 
 describe("vault field helpers", () => {
-  it("normalises TOTP seeds from base32 or otpauth URIs", () => {
-    expect(normalizeTotpSeed("jbsw y3dp ehpk 3pxp")).toBe("JBSWY3DPEHPK3PXP");
-    expect(normalizeTotpSeed("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&issuer=x")).toBe(
-      "JBSWY3DPEHPK3PXP",
-    );
-    expect(normalizeTotpSeed("not base32!")).toBeNull();
-    expect(normalizeTotpSeed("ABC")).toBeNull();
+  it("sends a TOTP key as typed (trimmed), so otpauth parameters survive (E3)", () => {
+    const link =
+      "otpauth://totp/ACME:me?secret=JBSWY3DPEHPK3PXP&digits=8&period=60&algorithm=SHA256";
+    const form = { ...emptyVaultForm(), label: "A", alias: "acme", origin: "acme.example" };
+    form.enabled = { username: false, password: false, totp: true, pin: false, imap: false };
+    form.values.totp = `  ${link}  `;
+    const result = toCreateInput(form);
+    expect(result.ok && result.input.secrets.totp).toBe(link);
+    form.values.totp = "jbsw y3dp ehpk 3pxp";
+    const grouped = toCreateInput(form);
+    expect(grouped.ok && grouped.input.secrets.totp).toBe("jbsw y3dp ehpk 3pxp");
   });
-  it("bounds TOTP seed length (a SHA-512 key is 103 base32 characters)", () => {
-    expect(normalizeTotpSeed("A".repeat(128))).toBe("A".repeat(128));
-    expect(normalizeTotpSeed("A".repeat(129))).toBeNull();
-    expect(normalizeTotpSeed("A".repeat(100_000))).toBeNull();
-  });
-  it("accepts 4–12 digit PINs only", () => {
-    expect(isValidPin("1234")).toBe(true);
-    expect(isValidPin("12a4")).toBe(false);
-    expect(isValidPin("123")).toBe(false);
+  it("refuses bad TOTP keys and PINs with copy that never echoes them (E4)", () => {
+    const form = { ...emptyVaultForm(), label: "A", alias: "acme", origin: "acme.example" };
+    form.enabled = { username: false, password: false, totp: true, pin: true, imap: false };
+    form.values.totp = "A".repeat(129);
+    form.values.pin = "123";
+    const result = toCreateInput(form);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(Object.keys(result.errors).sort()).toEqual(["pin", "totp"]);
+      expect(JSON.stringify(result.errors)).not.toContain("AAAA");
+    }
   });
   it("suggests an alias from the website", () => {
     expect(suggestAlias("https://learn.zybooks.com/signin")).toBe("zybooks");

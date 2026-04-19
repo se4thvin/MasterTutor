@@ -16,8 +16,19 @@ export interface TargetDescription {
    * a sha256 digest before it leaves (R29-3). Approvals bind to it.
    */
   context: string;
+  /**
+   * The record's visible text (≤ 2 000, so a secret near the card's 240-character cut is still
+   * whole when redacted), for the approval card only (run view A3a). Never sent to the model; the
+   * loop browser redacts vault secrets from it, then caps it. Absent for opaque frames.
+   */
+  excerpt?: string;
   /** An embedded page that could not be inspected: activating it always needs approval (R29-1). */
   opaqueFrame?: boolean;
+  /**
+   * Activating it downloads (a link with a `download` attribute): what and under which suggested
+   * name, so the download is approved before any request is sent (spec §9).
+   */
+  download?: { url: string; filename: string | null };
   isFormSubmit: boolean;
   formKind: "login" | "search" | "other" | null;
   isSecretField: boolean;
@@ -173,56 +184,34 @@ export function describeTarget(el: Element): TargetDescription {
     recordText = textIn(scope);
   }
   const parts = [recordText];
+  const downloadLink = target.closest("a[download][href], area[download][href]") as
+    HTMLAnchorElement | HTMLAreaElement | null;
   const context = [parts.join(" ").slice(0, 16_000), doc.location?.href ?? ""].join("\n");
   return {
     label: label.slice(0, 200),
     tag,
     path: steps.join(">").slice(0, 1_000),
     context,
+    excerpt: recordText.slice(0, 2_000),
     isFormSubmit,
     formKind,
     isSecretField: isSecretField(target),
     editable,
     interactive: target !== el || el.matches(INTERACTIVE),
+    ...(downloadLink
+      ? {
+          download: {
+            url: downloadLink.href.slice(0, 4_096),
+            filename: downloadLink.getAttribute("download") || null,
+          },
+        }
+      : {}),
   };
 }
 
-/**
- * True when a frame owner maps points by a plain offset (N5): no scale, rotation or other
- * non-translation transform on it or its ancestors, no CSS zoom, no padding. Otherwise the page
- * script stops at the frame and the agent maps through its real geometry over CDP.
- */
-export function frameIsPlain(owner: Element): boolean {
-  const el = owner as HTMLElement;
-  const view = el.ownerDocument.defaultView;
-  if (!view) return false;
-  const rect = el.getBoundingClientRect();
-  if (Math.abs(rect.width - el.offsetWidth) > 0.5 || Math.abs(rect.height - el.offsetHeight) > 0.5)
-    return false;
-  const zoom = (el as unknown as { currentCSSZoom?: number }).currentCSSZoom ?? 1;
-  if (Math.abs(zoom - 1) > 1e-6) return false;
-  const style = view.getComputedStyle(el);
-  if (
-    [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].some(
-      (value) => parseFloat(value) !== 0,
-    )
-  )
-    return false;
-  for (let node: Element | null = el; node; node = node.parentElement) {
-    const computed = view.getComputedStyle(node);
-    const transform = computed.transform;
-    if (transform && transform !== "none" && !/^matrix\(1, 0, 0, 1, /.test(transform)) return false;
-    // CSS zoom on the owner or any ancestor (not always visible in rect vs offset sizes).
-    const nodeZoom = (computed as unknown as { zoom?: string }).zoom;
-    if (nodeZoom && nodeZoom !== "1" && nodeZoom !== "normal" && nodeZoom !== "100%") return false;
-  }
-  return true;
-}
+/** Elements that hold another document. Page scripts receive it as an argument. */
+export const FRAME_OWNERS = ["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"];
 
-export const PAGE_HELPERS = { isSecretField, describeTarget, frameIsPlain };
+export const PAGE_HELPERS = { isSecretField, describeTarget };
 export type PageHelpers = typeof PAGE_HELPERS;
-export const PAGE_HELPERS_SOURCE = [
-  isSecretField.toString(),
-  describeTarget.toString(),
-  frameIsPlain.toString(),
-].join("\n");
+export const PAGE_HELPERS_SOURCE = [isSecretField.toString(), describeTarget.toString()].join("\n");

@@ -5,9 +5,8 @@ import {
   type RunEvent,
   type RunStatus,
 } from "@mastertutor/contracts";
-import { runs, settings, type Database } from "@mastertutor/db";
+import { emitRunEvent, emitRunEvents, runs, settings, type Database } from "@mastertutor/db";
 import { and, asc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
-import { emitRunEvent, emitRunEvents } from "../events/emit.ts";
 import { LeaseLost } from "../runtime/errors.ts";
 import type { Tx } from "../runtime/types.ts";
 import {

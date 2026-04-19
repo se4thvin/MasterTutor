@@ -95,6 +95,8 @@ export class Supervisor {
       {
         run_queued: () => this.#kick(),
         run_wake: (payload) => this.#onWake(payload),
+        // A code typed into CodeSlots (spec §9): the same wake path as run_wake{reason:"otp"}.
+        otp_ready: (payload) => this.#onWake({ runId: payload.runId, reason: "otp" }),
         run_control: (payload) => this.#workers.get(payload.runId)?.control(),
       },
       this.#options.log,

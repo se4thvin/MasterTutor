@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { RunStatus, WaitReason } from "@mastertutor/contracts";
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
@@ -19,12 +20,15 @@ import { clearRunDownloads } from "../slots/downloads.ts";
 import { releaseSlot } from "../slots/leases.ts";
 import type { SlotPool } from "../slots/pool.ts";
 import { renewLeases, type ClaimedRun } from "./claim.ts";
-import type { RunHooks } from "./hooks.ts";
+import type { RunHooks, UserControlResult } from "./hooks.ts";
 import type { AttachedBrowser, ConnectBrowser } from "./loop-browser.ts";
 import { RunLoop, type StepOutcome } from "./run-loop.ts";
 import { isTerminal, readRunControl, snapshotOf } from "./run-state.ts";
 import { startUrl } from "./start-url.ts";
 import { StepStore, type Transition } from "./step-store.ts";
+
+/** How long a release waits for the slot's browser to go before it disconnects anyway. */
+const CLOSE_WAIT_MS = 2_000;
 
 export interface WorkerDeps {
   db: Database;
@@ -41,6 +45,10 @@ export interface WorkerDeps {
 const CONTINUE: StepOutcome = { kind: "continue" };
 const NON_TERMINAL: readonly RunStatus[] = ["queued", "running", "waiting", "sleeping"];
 type Next = StepOutcome | "slept";
+const CONTROL_RESTORE_FAILED = {
+  code: "control_restore_failed",
+  message: "The live view could not hand the browser back to the agent, so the run stopped.",
+};
 
 /** Holds one run's leases and drives its loop until it ends, sleeps or loses its lease. */
 export class RunWorker {
@@ -56,6 +64,7 @@ export class RunWorker {
   #store: StepStore | null = null;
   #loop: RunLoop | null = null;
   #started = false;
+  #released = false;
   #deadlineTimer: NodeJS.Timeout | undefined;
   /** Settles when the main loop has ended, whether stop() came before or after start() (M1). */
   readonly #finished = Promise.withResolvers<void>();
@@ -150,6 +159,13 @@ export class RunWorker {
         run: () => this.#loop?.run ?? snapshotOf(this.#claim.run),
         guard: this.#guard,
       });
+      await this.#deps.hooks.onLeased({
+        runId: this.runId,
+        workspaceId: this.workspaceId,
+        slotName: this.#claim.slotName,
+        session: this.#attached!.session,
+        browserCdp: () => this.#attached!.browserCdp(),
+      });
       let next: Next = await this.#guarded(() => this.#restore());
       for (;;) {
         if (this.#stop) return await this.#onStop();
@@ -178,7 +194,13 @@ export class RunWorker {
     } finally {
       clearInterval(beat);
       clearTimeout(this.#deadlineTimer);
+      if (this.#attached && !this.#released)
+        await this.#deps.hooks
+          .onLeaseEnding({ runId: this.runId, slotName: this.#claim.slotName, slotReleased: false })
+          .catch(() => undefined);
       await this.#attached?.close().catch(() => undefined);
+      // Every way a worker ends passes here, exactly once (F11).
+      await this.#deps.hooks.onReleased(this.runId).catch(() => undefined);
     }
   }
 
@@ -231,7 +253,7 @@ export class RunWorker {
       await removeRestore?.().catch(() => undefined);
     }
     await browser.restoreView({ scroll: run.scroll ?? null, videoTime: run.videoTime ?? null });
-    if (run.controller === "user") return this.#holdForUser();
+    if (run.controller === "user") return this.#holdForUser(true);
     if (this.#loop.hasPendingApproval) return this.#loop.resume(this.#abort.signal);
     if (run.status === "waiting")
       return { kind: "waiting", reason: (run.waitReason ?? "takeover") as WaitReason };
@@ -266,7 +288,8 @@ export class RunWorker {
         if (run.controller === "user") return this.#holdForUser();
         if (!woke) break;
         const changed = run.status !== entry?.status || run.waitReason !== entry?.waitReason;
-        if (changed || (await this.#loop!.hasNews())) return this.#loop!.resume(this.#abort.signal);
+        if (changed || (await this.#loop!.hasNews(run.waitReason)))
+          return this.#loop!.resume(this.#abort.signal);
       }
       await this.#release({
         transition: {
@@ -283,11 +306,14 @@ export class RunWorker {
   }
 
   /** While the user holds control: no input, no screenshots, no model calls, no sleep (spec §5.1, §10.3). */
-  async #holdForUser(): Promise<StepOutcome> {
+  async #holdForUser(afterRestore = false): Promise<StepOutcome> {
     const slot = this.#claim.slotName;
     this.#guard.hold();
     if (!this.#abort.signal.aborted) this.#abort.abort(new Interrupted("takeover"));
-    await this.#deps.hooks.control.onUserControl(slot, this.runId);
+    const given = await this.#deps.hooks.control
+      .onUserControl(slot, this.runId, { afterRestore })
+      .catch((): UserControlResult => ({ ok: false, code: "takeover_failed" }));
+    if (!given.ok) return this.#revertTakeover();
     await this.#loop!.markTakeover();
     for (;;) {
       await this.#latch.wait();
@@ -302,6 +328,29 @@ export class RunWorker {
         return CONTINUE;
       }
     }
+  }
+
+  /**
+   * The user's live view could not take the browser (F3): the agent keeps control and goes on.
+   * The give may have moved n.eko's host before it failed, so the host is taken back first, as on
+   * hand-back, while the guard still holds. If that fails nothing may act again: the guard stays
+   * held and the run ends, so the user and the agent never both hold input.
+   */
+  async #revertTakeover(): Promise<StepOutcome> {
+    this.#deps.log.warn({ runId: this.runId, errorCode: "takeover_failed" }, "takeover reverted");
+    try {
+      await this.#deps.hooks.control.onAgentControl(this.#claim.slotName, this.runId);
+    } catch {
+      this.#deps.log.error(
+        { runId: this.runId, errorCode: "control_restore_failed" },
+        "could not take the live view back",
+      );
+      return { kind: "failed", error: CONTROL_RESTORE_FAILED };
+    }
+    await this.#loop!.revertTakeover();
+    this.#guard.release();
+    this.#abort = new AbortController();
+    return this.#loop!.hasPendingApproval ? this.#loop!.resume(this.#abort.signal) : CONTINUE;
   }
 
   async #onStop(): Promise<void> {
@@ -374,8 +423,20 @@ export class RunWorker {
       log.warn({ runId: this.runId, errorCode: "release_transition_skipped" }, "run changed");
       await release(undefined);
     }
+    this.#released = true;
+    // Before Browser.close (pool.reset): B6 takes n.eko back from the user and detaches downloads.
+    await this.#deps.hooks
+      .onLeaseEnding({ runId: this.runId, slotName, slotReleased: true })
+      .catch(() =>
+        log.warn({ runId: this.runId, errorCode: "release_hook_failed" }, "release hook failed"),
+      );
+    // The browser goes before this connection does (I3): the download deny lives on this
+    // connection, so it must outlast the page. pool.reset closes the browser; then disconnect.
+    const resetting = pool.reset(slotName);
+    const gone = this.#attached?.session?.disconnected;
+    if (gone) await Promise.race([gone, delay(CLOSE_WAIT_MS)]);
     await this.#attached?.close().catch(() => undefined);
-    void pool.reset(slotName);
+    void resetting;
     await clearRunDownloads(config.downloadsDir, this.runId).catch(() =>
       log.warn(
         { runId: this.runId, errorCode: "downloads_cleanup_failed" },

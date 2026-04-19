@@ -22,7 +22,7 @@ DECLARE
 BEGIN
   FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
     -- web: everything except the transcript, sealed material and the audit log (handled below).
-    IF t NOT IN ('run_transcript', 'vault_secrets', 'otp_codes', 'browser_sessions', 'vault_audit') THEN
+    IF t NOT IN ('run_transcript', 'vault_secrets', 'vault_grants', 'otp_codes', 'browser_sessions', 'vault_audit') THEN
       EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO web_role', t);
     END IF;
     -- agent: everything except Better Auth's tables and the audit log (handled below).
@@ -31,6 +31,9 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- Grants are written only by the agent, and only from a human approval (S1).
+GRANT SELECT ON vault_grants TO web_role;
 
 -- web seals but cannot read sealed columns back.
 GRANT INSERT, UPDATE, DELETE ON vault_secrets TO web_role;

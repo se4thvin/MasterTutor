@@ -13,11 +13,10 @@ import {
   type Usage,
   type WaitReason,
 } from "@mastertutor/contracts";
-import { runSteps, runTranscript, runs, type Database } from "@mastertutor/db";
+import { emitRunEvents, runSteps, runTranscript, runs, type Database } from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
 import { and, eq, gt, inArray, max, sql } from "drizzle-orm";
-import type { BrowserStorageState } from "../browser/storage-state.ts";
-import { emitRunEvents } from "../events/emit.ts";
+import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
 import { LeaseLost, RunChanged } from "../runtime/errors.ts";
 import type { Tx } from "../runtime/types.ts";
 import { externalizeImages, inJsonbOrder, type TranscriptEntry } from "./transcript.ts";
@@ -72,14 +71,22 @@ export interface StepCommit {
   run?: RunPatch;
   transition?: Transition;
   events?: readonly RunEvent[];
-  storage?: BrowserStorageState | null;
+  storage?: CollectedStorage | null;
   extra?: (tx: Tx) => Promise<void>;
 }
 
 /** Sealed storageState per alias + origin (spec §5.6). B3 implements it; B1 only calls it. */
 export interface SessionStore {
-  load(run: { id: string; workspaceId: string }): Promise<BrowserStorageState | null>;
-  save(tx: Tx, run: { id: string; workspaceId: string }, state: BrowserStorageState): Promise<void>;
+  load(run: {
+    id: string;
+    workspaceId: string;
+    allowedOrigins: readonly string[];
+  }): Promise<BrowserStorageState | null>;
+  save(
+    tx: Tx,
+    run: { id: string; workspaceId: string },
+    collected: CollectedStorage,
+  ): Promise<void>;
 }
 
 export const NO_SESSION_STORE: SessionStore = {
@@ -243,7 +250,12 @@ export class StepStore {
             },
           });
         const action = step.action
-          ? { tool: step.action.tool, summary: step.action.summary, point: step.action.point }
+          ? {
+              tool: step.action.tool,
+              summary: step.action.summary,
+              point: step.action.point,
+              ...(step.action.pointer ? { pointer: step.action.pointer } : {}),
+            }
           : null;
         events.push({
           type: "step",

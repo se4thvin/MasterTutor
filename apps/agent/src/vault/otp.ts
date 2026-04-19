@@ -1,0 +1,96 @@
+import { consumeOtpCode, runCreatedAt, type VaultItemRecord } from "@mastertutor/db";
+import { SealError } from "@mastertutor/sealing";
+import { withOpenedText } from "@mastertutor/sealing/open";
+import type { VaultDeps } from "./context.ts";
+import { ImapBlocked, waitForImapCode } from "./imap.ts";
+import type { ToolContext } from "./runtime.ts";
+import { NOT_STORED, withItemSecret } from "./secrets.ts";
+
+export const OTP_LOOKBACK_MS = 5 * 60_000;
+/** How far back a sign-in whose first fill is the code itself starts (N2). */
+export const CODE_FIRST_LOOKBACK_MS = 2 * 60_000;
+/** IMAP receipt times have one-second resolution: a message from the same second still counts. */
+const RECEIPT_SLACK_MS = 1_000;
+const OTP_PATTERN = /^[0-9]{4,8}$/;
+/** Allows for the mail server's clock running ahead of ours. */
+const CLOCK_SKEW_MS = 60_000;
+
+/**
+ * A used message is remembered only while an inbox search could still return it: its receipt
+ * time is before its use, and nothing older than OTP_LOOKBACK_MS is ever searched (N3).
+ */
+export function forgetSpentMessages(used: Map<string, number>, nowMs: number): void {
+  for (const [key, usedAt] of used)
+    if (usedAt < nowMs - OTP_LOOKBACK_MS - CLOCK_SKEW_MS) used.delete(key);
+}
+
+/**
+ * When a sign-in whose first fill_credential is the code began (N2): the code was asked for by
+ * something earlier (the agent typing the email and clicking "Send code"), so the sign-in started
+ * a little before this call or its approval, whichever is earlier, but never before the run.
+ */
+export async function codeFirstSignInStart(
+  deps: Pick<VaultDeps, "db" | "now">,
+  ctx: Pick<ToolContext, "runId" | "approval">,
+): Promise<number> {
+  const decidedAt = ctx.approval?.decidedAt ?? Number.POSITIVE_INFINITY;
+  const runStart = (await runCreatedAt(deps.db, ctx.runId))?.getTime() ?? 0;
+  return Math.max(runStart, Math.min(decidedAt, deps.now() - CODE_FIRST_LOOKBACK_MS));
+}
+
+/**
+ * Spec §9 OTP sources. A code the user typed into CodeSlots always wins, including while the
+ * alias's IMAP inbox is being watched (S7). null means the run must wait for the user.
+ */
+export async function obtainOtp(
+  deps: VaultDeps,
+  ctx: ToolContext,
+  item: VaultItemRecord,
+  signInStartedAt: number,
+): Promise<{ code: string; source: "code_box" | "imap" } | null> {
+  const codeBox = async (): Promise<string | null> => {
+    const sealed = await consumeOtpCode(deps.db, ctx.runId);
+    if (!sealed) return null;
+    const code = await withOpenedText(
+      deps.keys,
+      sealed,
+      { kind: "otp", workspaceId: ctx.workspaceId, runId: ctx.runId },
+      async (text) => text,
+    );
+    return OTP_PATTERN.test(code) ? code : null;
+  };
+  const typed = await codeBox();
+  if (typed) return { code: typed, source: "code_box" };
+  const imap = item.imap;
+  if (!imap || !item.fields.includes("imap_password")) return null;
+  forgetSpentMessages(deps.imapUsed, deps.now());
+  try {
+    const found = await withItemSecret(deps, ctx.workspaceId, item, "imap_password", (password) =>
+      waitForImapCode({
+        config: imap,
+        password,
+        // Mail from before this sign-in started is never a code for it (and never older than 5 min).
+        notBefore: new Date(
+          Math.max(signInStartedAt - RECEIPT_SLACK_MS, deps.now() - OTP_LOOKBACK_MS),
+        ),
+        timeoutMs: deps.otpImapWaitMs,
+        signal: ctx.signal,
+        used: deps.imapUsed,
+        testMode: deps.testMode,
+        codeBox,
+      }),
+    );
+    return found === NOT_STORED ? null : found;
+  } catch (error) {
+    ctx.signal.throwIfAborted();
+    // A typed code that cannot be opened is reported like any other sealed value (F16), whether
+    // it was read before or during the inbox wait.
+    if (error instanceof SealError) throw error;
+    // Never log server text: it can echo credentials. The reason code is enough.
+    deps.log.warn(
+      { alias: item.alias, reason: error instanceof ImapBlocked ? "imap_blocked" : "imap_failed" },
+      "otp via IMAP unavailable",
+    );
+    return null;
+  }
+}

@@ -9,14 +9,23 @@ const LINE_BREAK = /[\r\n]/;
 
 export type ApprovalNeed =
   | { kind: "risky_click"; label: string; action: ComputerAction }
-  | { kind: "form_submit"; formSummary: string; action: ComputerAction };
+  | { kind: "form_submit"; formSummary: string; action: ComputerAction }
+  | { kind: "download"; url: string; filename: string | null; action: ComputerAction };
 
 /**
  * Spec §5.5 approval list, for computer actions. Classification is code; the prompt never decides.
- * Downloads (B6), first credential use (B3), new origins and budgets are classified elsewhere.
+ * A download link is known before the click; any other download is caught as it begins (the
+ * download gate). First credential use (B3), new origins and budgets are classified elsewhere.
  */
 /** What activating `target` (a click, or Enter/Space on it) needs: one rule for mouse and keyboard. */
 function activationNeed(action: ComputerAction, target: TargetDescription): ApprovalNeed | null {
+  if (target.download)
+    return {
+      kind: "download",
+      url: target.download.url,
+      filename: target.download.filename,
+      action,
+    };
   if (isRiskyLabel(target.label)) return { kind: "risky_click", label: target.label, action };
   if (target.isFormSubmit && target.formKind === "other")
     return { kind: "form_submit", formSummary: `Submit "${target.label || "form"}"`, action };
@@ -79,11 +88,100 @@ export function needsApproval(
   }
 }
 
+const EXCERPT_MAX = 240;
+
+/**
+ * Display-safe record text: NFKC, no format or control characters, no lone surrogates (jsonb
+ * rejects them and NUL), whitespace collapsed. Not capped.
+ */
+function cleanExcerpt(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\p{Cf}\p{Cc}\p{Cs}]/gu, (char) => (/\s/.test(char) ? " " : ""))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** At most EXCERPT_MAX UTF-16 units, never splitting a surrogate pair. */
+function capExcerpt(text: string): string | null {
+  let out = "";
+  for (const char of text) {
+    if (out.length + char.length > EXCERPT_MAX) break;
+    out += char;
+  }
+  out = out.trim();
+  return out === "" ? null : out;
+}
+
+/** The record excerpt on an approval card (A3a): display-safe, short; never sent to the model. */
+export function approvalExcerpt(text: string | undefined): string | null {
+  return text ? capExcerpt(cleanExcerpt(text)) : null;
+}
+
+/**
+ * The excerpt with vault secrets redacted (M13): cleaned first (so full-width forms match), then
+ * redacted, then capped (so a secret straddling the cap is never shown in part).
+ */
+export function redactedExcerpt(
+  text: string | undefined,
+  redact: (text: string) => string,
+): string | null {
+  return text ? capExcerpt(redact(cleanExcerpt(text))) : null;
+}
+
+/**
+ * A download's URL as an approval card may show it: no credentials, and no inline payload (a
+ * `data:` URL keeps only its type). Display-safe and capped.
+ */
+export function downloadUrlForCard(url: string): string {
+  let shown = url;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "data:") shown = `data:${url.slice(5).split(/[,;]/)[0] ?? ""},...`;
+    else if (parsed.username || parsed.password) {
+      parsed.username = "";
+      parsed.password = "";
+      shown = parsed.href;
+    }
+  } catch {
+    shown = "(not a valid URL)";
+  }
+  return cleanExcerpt(shown).slice(0, 4_096) || "(no URL)";
+}
+
+/**
+ * A suggested download name made safe to show and to store: display-safe, no path separators or
+ * characters a file system rejects, no leading dots, at most 255 characters; null when nothing is left.
+ */
+export function sanitizeDownloadName(name: string | null): string | null {
+  if (!name) return null;
+  const safe = cleanExcerpt(name)
+    .replace(/[/\\:*?"<>|]/g, "_")
+    .replace(/^[.\s]+|[.\s]+$/g, "");
+  let out = "";
+  for (const char of safe) {
+    if (out.length + char.length > 255) break;
+    out += char;
+  }
+  return out === "" ? null : out;
+}
+
+/** The `download` approval for a download about to start, or caught as it began (spec §9). */
+export function downloadRequest(url: string, filename: string | null): ApprovalRequest {
+  return {
+    kind: "download",
+    url: downloadUrlForCard(url),
+    filename: sanitizeDownloadName(filename),
+  };
+}
+
 export function approvalRequestFor(
   need: ApprovalNeed,
   url: string,
   screenshotKey: string | null,
+  excerpt: string | null,
 ): ApprovalRequest {
+  if (need.kind === "download") return downloadRequest(need.url, need.filename);
   const pageUrl = url.slice(0, 4_096);
   return need.kind === "risky_click"
     ? {
@@ -92,11 +190,14 @@ export function approvalRequestFor(
         label: need.label.slice(0, 500),
         url: pageUrl,
         screenshotKey,
+        context: excerpt,
       }
     : {
         kind: "form_submit",
+        action: need.action,
         url: pageUrl,
         formSummary: need.formSummary.slice(0, 1_000),
         screenshotKey,
+        context: excerpt,
       };
 }

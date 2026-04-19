@@ -351,11 +351,17 @@ export const fixtureRouter = os.router({
       return { ok: true as const };
     }),
     forgetSession: os.vault.forgetSession.handler(({ input, context }) => {
-      const item = stateFor(context.ns).vault.find(
-        (i) => i.alias === input.alias && i.origin === input.origin,
-      );
-      if (!item) throw notFound("Session");
-      item.sessionSaved = false;
+      const state = stateFor(context.ns);
+      const item = state.vault.find((i) => i.alias === input.alias && i.origin === input.origin);
+      // Idempotent like the live endpoint (E6): forgetting nothing is ok.
+      appendAudit(state, {
+        alias: input.alias,
+        origin: input.origin,
+        field: "session",
+        action: "delete",
+        outcome: item?.sessionSaved ? "forgotten" : "none",
+      });
+      if (item) item.sessionSaved = false;
       return { ok: true as const };
     }),
     audit: os.vault.audit.handler(({ input, context }) =>

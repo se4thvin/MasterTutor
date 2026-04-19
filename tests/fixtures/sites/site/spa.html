@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Course app</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      nav button,
+      #view button {
+        position: absolute;
+        width: 160px;
+        height: 40px;
+      }
+      #player {
+        position: absolute;
+        left: 40px;
+        top: 200px;
+        width: 320px;
+        height: 120px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <button id="home" style="left: 40px; top: 20px">Home</button>
+      <button id="lessons" style="left: 220px; top: 20px">Lessons</button>
+    </nav>
+    <main id="view"></main>
+    <script>
+      // A client-rendered app: the nav swaps the view and pushes a URL; "Play" embeds a frame.
+      const view = document.getElementById("view");
+      const render = (route) => {
+        view.innerHTML =
+          route === "lessons"
+            ? '<button id="play" style="left: 40px; top: 100px">Play lesson 1</button>'
+            : "<p>Welcome</p>";
+        document.getElementById("play")?.addEventListener("click", () => {
+          const player = document.createElement("iframe");
+          player.id = "player";
+          player.srcdoc = '<button onclick="parent.window.__played = true">Pause</button>';
+          document.body.append(player);
+        });
+      };
+      for (const id of ["home", "lessons"])
+        document.getElementById(id).addEventListener("click", () => {
+          history.pushState(null, "", `?route=${id}`);
+          render(id);
+        });
+      render(new URLSearchParams(location.search).get("route") ?? "home");
+    </script>
+  </body>
+</html>

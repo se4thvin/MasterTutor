@@ -47,7 +47,9 @@ profile() { # name is_admin can_host can_share_media can_access_clipboard
     "$1" "$2" "$3" "$4" "$5"
 }
 export NEKO_MEMBER_PROVIDER=object
-NEKO_MEMBER_OBJECT_USERS="[{\"username\":\"agent\",\"password\":\"${admin_password}\",\"profile\":$(profile agent true true true true)},{\"username\":\"user\",\"password\":\"${user_password}\",\"profile\":$(profile user false true false false)}]"
+# The user member boots WITHOUT hosting or clipboard rights (spec §10.3 control lock): only the
+# agent's LiveView.giveControl grants can_host, and only while runs.controller = 'user'.
+NEKO_MEMBER_OBJECT_USERS="[{\"username\":\"agent\",\"password\":\"${admin_password}\",\"profile\":$(profile agent true true true true)},{\"username\":\"user\",\"password\":\"${user_password}\",\"profile\":$(profile user false false false false)}]"
 export NEKO_MEMBER_OBJECT_USERS
 unset admin_password user_password
 
@@ -68,14 +70,14 @@ if ! ipv6_disabled; then
   } || { echo "slot-entrypoint: cannot disable or filter IPv6" >&2; exit 70; }
 fi
 
-# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223)
-# and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
+# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223),
+# the X idle probe (9224) and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
 iptables -F INPUT
 iptables -F OUTPUT
 iptables -P INPUT DROP
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-for port in 9223 4713; do
+for port in 9223 9224 4713; do
   iptables -A INPUT -p tcp --dport "$port" -s "$CDP_ALLOWED_IP" -j ACCEPT
 done
 IFS=',' read -r -a neko_ips <<< "$NEKO_ALLOWED_IPS"

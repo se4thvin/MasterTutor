@@ -29,6 +29,8 @@ export interface InsertRunOptions {
   approvalMode?: ApprovalMode;
   budget?: Budget;
   controller?: Controller;
+  /** Required by runs_control_user_matches_controller when controller is 'user'. */
+  controlUserId?: string;
   leaseOwner?: string;
 }
 
@@ -43,6 +45,7 @@ export async function insertRun(db: Database, options: InsertRunOptions): Promis
       waitReason: options.waitReason ?? null,
       approvalMode: options.approvalMode ?? "ask",
       controller: options.controller ?? "agent",
+      controlUserId: options.controller === "user" ? (options.controlUserId ?? "test-user") : null,
       ...(options.budget ? { budget: options.budget } : {}),
       ...(options.leaseOwner
         ? { leaseOwner: options.leaseOwner, leaseExpiresAt: sql`now() + interval '1 hour'` }

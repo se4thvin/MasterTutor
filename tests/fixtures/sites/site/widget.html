@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Account actions</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      button {
+        position: absolute;
+        left: 0;
+        width: 200px;
+        height: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="cancel" style="top: 50px" onclick="window.__clicked = this.id">Cancel</button>
+    <button id="delete" style="top: 100px" onclick="window.__clicked = this.id">
+      Delete account
+    </button>
+    <script>
+      // ?scroll=1: the widget's own document is scrolled; the buttons stay where they were on screen.
+      // No scrollbar, so a click near the edge never scrolls it.
+      if (new URLSearchParams(location.search).has("scroll")) {
+        document.documentElement.style.scrollbarWidth = "none";
+        document.body.style.height = "2000px";
+        for (const button of document.querySelectorAll("button"))
+          button.style.top = `${parseInt(button.style.top, 10) + 300}px`;
+        addEventListener("load", () => scrollTo(0, 300));
+      }
+      // ?swap=N: a hostile page swaps the two buttons every N ms.
+      const swap = Number(new URLSearchParams(location.search).get("swap") ?? 0);
+      if (swap) {
+        const [cancel, remove] = document.querySelectorAll("button");
+        setInterval(
+          () => ([cancel.style.top, remove.style.top] = [remove.style.top, cancel.style.top]),
+          swap,
+        );
+      }
+      // ?only=delete: just Delete, where Cancel would be (the page a frame is swapped to).
+      if (new URLSearchParams(location.search).get("only") === "delete") {
+        document.getElementById("cancel").remove();
+        document.getElementById("delete").style.top = "50px";
+      }
+      // ?gap: window.__gap is the ms from the pointer entering Cancel to the press.
+      if (new URLSearchParams(location.search).has("gap")) {
+        let entered = 0;
+        document.getElementById("cancel").addEventListener("mouseenter", () => {
+          entered = performance.now();
+        });
+        addEventListener("mousedown", () => (window.__gap = performance.now() - entered), true);
+      }
+      // ?frames=N: N tiny same-process frames first (more documents than the guard arms).
+      const params = new URLSearchParams(location.search);
+      for (let i = 0; i < Number(params.get("frames") ?? 0); i++) {
+        const tiny = document.createElement("iframe");
+        tiny.srcdoc = "x";
+        tiny.style.cssText = "position: absolute; left: 900px; width: 1px; height: 1px; border: 0";
+        document.body.append(tiny);
+      }
+      // ?cover=N: N ms after the pointer enters Cancel, a same-origin frame holding a Delete
+      // button is inserted over it (a document that did not exist when the click was guarded).
+      // A press on that Delete counts like a click. &shadow=open: the frame goes into an open
+      // shadow root that already covers Cancel; &shadow=closed: into a new closed one.
+      // window.__gap: ms from the pointer entering Cancel to the press, to aim N just before it.
+      if (params.has("cover")) {
+        const cancel = document.getElementById("cancel");
+        const shadow = params.get("shadow");
+        const place = "position: absolute; left: 0; top: 50px; width: 200px; height: 40px";
+        const host = () => {
+          const element = document.createElement("div");
+          element.style.cssText = `${place}; pointer-events: none`;
+          document.body.append(element);
+          return element;
+        };
+        const openRoot = shadow === "open" ? host().attachShadow({ mode: "open" }) : null;
+        let entered = 0;
+        addEventListener("mousedown", () => (window.__gap = performance.now() - entered), true);
+        cancel.addEventListener("mouseenter", () =>
+          setTimeout(
+            () => {
+              const frame = document.createElement("iframe");
+              if (shadow) {
+                frame.style.cssText =
+                  "display: block; width: 200px; height: 40px; border: 0; pointer-events: auto";
+                (openRoot ?? host().attachShadow({ mode: "closed" })).append(frame);
+              } else {
+                frame.style.cssText = `${place}; border: 0`;
+                document.body.append(frame);
+              }
+              frame.contentDocument.write(
+                '<body style="margin: 0"><button style="width: 200px; height: 40px"' +
+                  " onpointerdown=\"window.__clicked = 'delete'\"" +
+                  " onclick=\"window.__clicked = 'delete'\">Delete account</button></body>",
+              );
+              frame.contentDocument.close();
+            },
+            Number(params.get("cover")),
+          ),
+        );
+        cancel.addEventListener("mouseenter", () => (entered = performance.now()));
+      }
+    </script>
+  </body>
+</html>

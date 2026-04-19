@@ -90,7 +90,10 @@ test("under reduced motion the flap never tilts; the paper only fades", async ({
   expect(await movingAnimations(page, ".ftiles")).toEqual([]);
 });
 
-test("a 120-character folder name stays inside its tile (Review Focus 4)", async ({ page }) => {
+test("a 120-character folder name stays inside its tile (Review Focus 4)", async ({
+  page,
+  baseURL,
+}) => {
   const name = `Lecture recordings, annotated slides and problem sets ${"x".repeat(66)}`.slice(
     0,
     120,
@@ -98,6 +101,7 @@ test("a 120-character folder name stays inside its tile (Review Focus 4)", async
   await page.goto("/library");
   const created = await page.request.post("/api/rpc/folders/create", {
     data: { json: { name, parentId: null } },
+    headers: { origin: new URL(baseURL!).origin },
   });
   expect(created.ok()).toBe(true);
   await page.goto("/library");

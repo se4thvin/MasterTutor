@@ -19,6 +19,8 @@ export const CDP_LOCAL_PORT = 9222;
 export const CDP_PROXY_PORT = 9223;
 export const NEKO_PORT = 8080;
 export const PULSE_TCP_PORT = 4713;
+/** Slot X-idle probe (xprintidle over socat); agent IP only. */
+export const SLOT_IDLE_PORT = 9224;
 export const MEDIA_PORT_BASE = 59000;
 
 export function mediaPortForSlot(slot: string): number {

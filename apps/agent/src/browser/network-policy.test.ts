@@ -94,10 +94,11 @@ describe("PrivateHostCheck", () => {
 });
 
 describe("isFixtureHost", () => {
-  it("matches only *.fixtures.test and the second fixture site *.fixtures-isolated.test", () => {
+  it("matches only *.fixtures.test and the fixture sites *.fixtures-isolated.test, *.fixtures-hung.test", () => {
     expect(isFixtureHost("site.fixtures.test")).toBe(true);
     expect(isFixtureHost("fixtures.test")).toBe(true);
     expect(isFixtureHost("other.fixtures-isolated.test")).toBe(true);
+    expect(isFixtureHost("ads.fixtures-hung.test")).toBe(true);
     expect(isFixtureHost("fixtures.test.evil.com")).toBe(false);
     expect(isFixtureHost("fixtures-other.test")).toBe(false);
   });

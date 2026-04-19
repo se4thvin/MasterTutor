@@ -5,6 +5,7 @@
 #   - private egress is blocked;
 #   - the display is 1280x800;
 #   - n.eko passwords are derived from the shared secrets;
+#   - downloads fail closed without the agent, and File System Access is blocked;
 #   - the profile is fresh after Chromium exits.
 # Usage: bash apps/browser-slot/test/verify.sh
 set -euo pipefail
@@ -69,6 +70,32 @@ pass "n.eko blocked for other IPs"
 [[ "$(login user "$(hmac "$MEMBER_SECRET")")" == "200" ]] || fail "user member login"
 [[ "$(login user wrong-password)" == "401" ]] || fail "wrong password accepted"
 pass "n.eko member passwords derived from the secrets"
+# A1 (S2): the user member cannot host until the agent grants it, so a live iframe can never send
+# X input while the agent drives over CDP. The whoami and admin checks keep the 403s meaningful:
+# the user session is authenticated, and hosting itself works for a member that has the right.
+neko_as() { # member password method path -> HTTP status, using that member's own session
+  docker run --rm -i --network "$NET" --ip "$PREFIX.11" --entrypoint sh "$CURL" -s -- \
+    "$1" "$2" "$3" "$4" "http://$PREFIX.20:8080" <<'SH'
+body=$(curl -s -m 4 -c /tmp/jar -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$1\",\"password\":\"$2\"}" "$5/api/login") || exit 1
+tok=$(printf '%s' "$body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+if [ -n "$tok" ]; then
+  curl -s -m 4 -b /tmp/jar -H "Authorization: Bearer $tok" -o /dev/null -w '%{http_code}' -X "$3" "$5$4"
+else
+  curl -s -m 4 -b /tmp/jar -o /dev/null -w '%{http_code}' -X "$3" "$5$4"
+fi
+SH
+}
+user_pw="$(hmac "$MEMBER_SECRET")"
+admin_pw="$(hmac "$ADMIN_SECRET")"
+[[ "$(neko_as user "$user_pw" GET /api/whoami)" == "200" ]] || fail "user member session is not authenticated"
+[[ "$(neko_as user "$user_pw" POST /api/room/control/request)" == "403" ]] \
+  || fail "user member can request host control at boot (can_host must be false)"
+[[ "$(neko_as user "$user_pw" GET /api/room/control)" == "403" ]] \
+  || fail "user member can read host control at boot (can_host must be false)"
+[[ "$(neko_as agent "$admin_pw" GET /api/room/control)" == "200" ]] \
+  || fail "control: the agent member cannot use host control"
+pass "user member cannot host until the agent grants it"
 
 # The environ read must itself succeed and be non-empty (as root), so an unreadable
 # or missing process can never make this check pass vacuously.
@@ -81,6 +108,49 @@ if grep -q -E '^NEKO_(ADMIN|MEMBER)_SECRET=' <<<"$neko_environ"; then
 fi
 pass "raw secrets scrubbed before supervisord"
 
+# A5: legacy client, cookie auth, chat off, implicit hosting off (read from the n.eko process itself).
+for setting in NEKO_LEGACY=true NEKO_SESSION_COOKIE_ENABLED=true NEKO_SESSION_COOKIE_SECURE=false \
+  NEKO_SESSION_IMPLICIT_HOSTING=false NEKO_DESKTOP_FILE_CHOOSER_DIALOG=true \
+  NEKO_DESKTOP_UPLOAD_DROP=true NEKO_CHAT_ENABLED=false; do
+  grep -qx "$setting" <<<"$neko_environ" || fail "n.eko runs without $setting"
+done
+pass "n.eko legacy, cookie, hosting, upload and chat settings"
+[[ "$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080/ws")" != "404" ]] \
+  || fail "legacy client endpoint /ws missing (NEKO_LEGACY)"
+from_ip "$PREFIX.11" -o /dev/null -D - -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"user\",\"password\":\"$(hmac "$MEMBER_SECRET")\"}" \
+  "http://$PREFIX.20:8080/api/login" | grep -qi '^set-cookie: NEKO_SESSION=' \
+  || fail "n.eko login does not set the NEKO_SESSION cookie (cookie auth off)"
+pass "legacy /ws endpoint and cookie auth enabled"
+# S5: the legacy side endpoints never answer without credentials.
+for path in /stats /screenshot.jpg /file; do
+  code="$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080$path")"
+  [[ "$code" != "200" ]] || fail "n.eko $path answers 200 without credentials"
+done
+pass "legacy side endpoints need credentials"
+
+# A5: X idle probe on 9224, agent IP only; it grows without input and XTest (n.eko's path) resets it.
+idle_ms() { from_ip "$PREFIX.10" "http://$PREFIX.20:9224/" | tr -d '\r\n'; }
+first="$(idle_ms)"
+[[ "$first" =~ ^[0-9]+$ ]] || fail "idle probe did not return milliseconds ($first)"
+if from_ip "$PREFIX.11" "http://$PREFIX.20:9224/" >/dev/null; then fail "idle probe reachable from a non-agent IP"; fi
+grown=""
+for _ in $(seq 1 20); do
+  now_ms="$(idle_ms)"
+  if [[ "$now_ms" =~ ^[0-9]+$ ]] && (( now_ms >= first + 1500 )); then grown=1; break; fi
+  sleep 0.5
+done
+[[ -n "$grown" ]] || fail "X idle time does not grow without input"
+docker exec -u neko "$SLOT" sh -c 'DISPLAY=:99.0 xdotool mousemove 37 41 && DISPLAY=:99.0 xdotool mousemove 51 63'
+reset=""
+for _ in $(seq 1 10); do
+  now_ms="$(idle_ms)"
+  if [[ "$now_ms" =~ ^[0-9]+$ ]] && (( now_ms < 1000 )); then reset=1; break; fi
+  sleep 0.3
+done
+[[ -n "$reset" ]] || fail "XTest input did not reset the X idle time"
+pass "idle probe measures XTest input and is agent-only"
+
 [[ "$(docker exec -u neko "$SLOT" sh -c 'DISPLAY=:99.0 xdotool getdisplaygeometry')" == "1280 800" ]] || fail "display is not 1280x800"
 pass "display 1280x800"
 
@@ -91,6 +161,16 @@ if grep -q -- '--no-sandbox' <<<"$chromium_cmdlines"; then fail "Chromium runs w
 docker exec "$SLOT" sh -c 'r=$(pgrep -f "type=renderer" | head -1); test -n "$r" && a=$(readlink /proc/1/ns/user) && b=$(readlink /proc/$r/ns/user) && test -n "$a" && test -n "$b" && test "$a" != "$b"' \
   || fail "renderer shares the container user namespace or its ns link is unreadable (sandbox off)"
 pass "Chromium sandbox on"
+
+# Downloads fail closed when no agent holds the browser (I3): Chromium's own default target is the
+# root-owned "/", so only the agent's CDP allowAndName into /downloads/<runId> can save a file.
+# The File System Access API (a native save dialog writing anywhere) is blocked (m1).
+policies="$(docker exec "$SLOT" cat /etc/chromium/policies/managed/policies.json)"
+grep -q '"DownloadDirectory": "/"' <<<"$policies" || fail "no fail-closed DownloadDirectory policy"
+grep -q '"DefaultFileSystemWriteGuardSetting": 2' <<<"$policies" || fail "File System Access writes not blocked"
+grep -q '"DefaultFileSystemReadGuardSetting": 2' <<<"$policies" || fail "File System Access reads not blocked"
+if docker exec -u neko "$SLOT" touch /download-probe 2>/dev/null; then fail "the default download directory is writable"; fi
+pass "downloads fail closed without the agent; File System Access blocked"
 
 from_ip "$PREFIX.10" -o /dev/null "http://$PREFIX.40/" || fail "control: peer not reachable from the test network"
 if docker exec "$SLOT" curl -s -m 3 -o /dev/null "http://$PREFIX.40/"; then fail "slot reached a private address"; fi

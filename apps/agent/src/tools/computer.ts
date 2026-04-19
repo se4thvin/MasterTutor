@@ -1,15 +1,10 @@
 import type { ComputerAction } from "@mastertutor/contracts";
-import {
-  armSecretBlock,
-  focusTarget,
-  hitTest,
-  scrollState,
-  type ScrollState,
-} from "../browser/hit-test.ts";
+import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { abortable, pause } from "../runtime/abortable.ts";
+import { armClickGuard, armTypingGuard, markUnguarded } from "../browser/input-guard.ts";
+import { pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
 import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
@@ -17,15 +12,42 @@ import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
 export interface ComputerRun {
   executed: number;
   notes: string[];
+  /** Set when only the user can go on (the run waits for a takeover), with the reason to show. */
+  handOver: string | null;
 }
 
-export type ActionGate = (action: ComputerAction) => Promise<boolean>;
+/** The gate's classification of an action it lets run. */
+export interface GateVerdict {
+  /** The target the gate classified; a click whose own hit test at dispatch differs is not run. */
+  target: TargetDescription | null;
+  /** A person (not policy) approved this action on this very element: typing may then run with an incomplete guard. */
+  personApproved: boolean;
+  /** This click (or Enter) starts a download that was approved: let exactly it through, at the press. */
+  allowDownload?: string;
+}
+/** false: do not run; true: run (no classification to hold it to); or the gate's verdict. */
+export type ActionGate = (action: ComputerAction) => Promise<boolean | GateVerdict>;
 
 export const FOCUS_MOVED_REFUSAL =
   "Stopped typing: the page moved focus into another part of the page (another frame) while typing, and the rest was not typed there. Look at the screen and decide again.";
+export const PAGE_CHANGED_REFUSAL =
+  "Stopped typing: the page added or replaced an embedded page (a frame) while typing, and the rest was not typed. Look at the screen and decide again.";
+export const UNRESPONSIVE_REFUSAL =
+  "Nothing was typed: the page's embedded frames could not all be guarded against misdirected typing (one is not responding, or there are too many). Typing on this page now needs the user's approval: ask for it again as its own step.";
+export const TARGET_MOVED_REFUSAL =
+  "Nothing was clicked: what is under the pointer changed after the click was checked. Look at the screen and decide again.";
+export const UNGUARDED_CLICK_REFUSAL =
+  "Nothing was clicked: the page's embedded frames could not all be guarded against the click landing somewhere else (one is not responding, or there are too many). Clicking on this page needs the user's approval: ask for it again as its own step.";
+/** Why the run waits for the user when a page has more documents than a click can be guarded in. */
+export const PAGE_TOO_COMPLEX =
+  "This page has too many embedded frames for the agent to click on it safely. Please take over.";
+export const PAGE_TOO_COMPLEX_REFUSAL =
+  "Nothing was clicked: this page has too many embedded frames for a click to be guarded, even with approval. The user has been asked to take over.";
 export const SECRET_FIELD_REFUSAL =
   "Refused: typing into password, one-time-code or PIN fields is not allowed. Use fill_credential with the vault alias and the field's element ref.";
 const TYPE_CHUNK = 24;
+/** How long a click waits for frames mid-navigation to commit before it is refused. */
+const NAVIGATION_SETTLE_MS = 1_000;
 const SCROLL_STEP = 240;
 
 /** True when the combo would type a character: no Ctrl/Alt/Meta and any non-modifier key is printable. */
@@ -34,6 +56,16 @@ function typesText(keys: readonly string[]): boolean {
   if (names.some((name) => ["CTRL", "ALT", "META"].includes(name))) return false;
   return names.some((name) => name !== "SHIFT" && (name.length === 1 || name === "SPACE"));
 }
+
+/** The same element by path, label and record (R29-3), and equally (un)inspectable. */
+const sameTarget = (a: TargetDescription | null, b: TargetDescription | null) =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.path === b.path &&
+    a.label === b.label &&
+    a.context === b.context &&
+    Boolean(a.opaqueFrame) === Boolean(b.opaqueFrame));
 
 const step = (remaining: number) =>
   Math.sign(remaining) * Math.min(Math.abs(remaining), SCROLL_STEP);
@@ -63,6 +95,8 @@ export class ComputerExecutor {
   readonly #waitActionMs: number;
   /** Set when the current action ended in a refusal or no-op note (the batch must stop). */
   #refused = false;
+  /** Set when an action found the page beyond what the agent can act on safely. */
+  #handOver: string | null = null;
 
   constructor(session: BrowserSession, options: { clock: Clock; waitActionMs: number }) {
     this.#session = session;
@@ -77,9 +111,11 @@ export class ComputerExecutor {
   ): Promise<ComputerRun> {
     const notes: string[] = [];
     let executed = 0;
+    this.#handOver = null;
     for (const [index, action] of actions.entries()) {
       this.#session.guard.assertAgent(signal);
-      if (!(await gate(action))) {
+      const verdict = await gate(action);
+      if (!verdict) {
         notes.push(
           `Stopped before action ${index + 1} (${action.type}): it needs the user's approval on the page as it is now. Ask for it again as its own step.`,
         );
@@ -87,7 +123,7 @@ export class ComputerExecutor {
       }
       const urlBefore = this.#session.page.url();
       this.#refused = false;
-      const note = await this.execute(action, signal);
+      const note = await this.execute(action, signal, verdict === true ? undefined : verdict);
       executed += 1;
       if (note) notes.push(note);
       const remaining = actions.length - index - 1;
@@ -107,23 +143,30 @@ export class ComputerExecutor {
         break;
       }
     }
-    return { executed, notes };
+    return { executed, notes, handOver: this.#handOver };
   }
 
   async toPage(x: number, y: number): Promise<{ x: number; y: number } | null> {
     const scale = this.#session.lastScale;
     const layout = await this.#session.layout();
-    const px = x / scale;
-    const py = y / scale;
+    // Whole CSS pixels: the hit test, the browser's own hit test and the click all use this point.
+    const px = Math.floor(x / scale);
+    const py = Math.floor(y / scale);
     return px >= 0 && py >= 0 && px < layout.width && py < layout.height ? { x: px, y: py } : null;
   }
 
-  async execute(action: ComputerAction, signal: AbortSignal): Promise<string | null> {
+  /** `verdict`: what the gate classified; without it a click is not held to a target. */
+  async execute(
+    action: ComputerAction,
+    signal: AbortSignal,
+    verdict?: GateVerdict,
+  ): Promise<string | null> {
+    const approved = verdict?.personApproved === true;
     switch (action.type) {
       case "click":
-        return this.#click(action.x, action.y, action.button, signal, false);
+        return this.#click(action.x, action.y, action.button, signal, false, verdict);
       case "double_click":
-        return this.#click(action.x, action.y, "left", signal, true);
+        return this.#click(action.x, action.y, "left", signal, true, verdict);
       case "move":
         return this.#move(action.x, action.y, signal);
       case "drag":
@@ -131,9 +174,11 @@ export class ComputerExecutor {
       case "scroll":
         return this.#scroll(action, signal);
       case "keypress":
-        return this.#keypress(action.keys, signal);
+        if (verdict?.allowDownload)
+          await this.#session.downloads.allowOnce((url) => url === verdict.allowDownload);
+        return this.#keypress(action.keys, signal, approved);
       case "type":
-        return this.#type(action.text, signal);
+        return this.#type(action.text, signal, approved);
       case "wait":
         await this.#clock.sleep(this.#waitActionMs, signal);
         await settle(this.#session, signal);
@@ -162,20 +207,62 @@ export class ComputerExecutor {
     button: "left" | "right" | "wheel" | "back" | "forward",
     signal: AbortSignal,
     double: boolean,
+    verdict: GateVerdict | undefined,
   ): Promise<string | null> {
     this.omnibox.cancel();
     if (button === "back" || button === "forward") return this.#accelerator(button, signal);
     const point = await this.toPage(x, y);
     if (!point) return this.#outside(x, y);
-    const hit = await hitTest(this.#session, point);
-    const at = hit.snap ?? point;
-    this.#session.guard.assertAgent(signal);
     const mouse = this.#session.page.mouse;
-    if (double) await mouse.dblclick(at.x, at.y);
-    else
-      await mouse.click(at.x, at.y, {
+    this.#session.guard.assertAgent(signal);
+    await mouse.move(point.x, point.y);
+    // A frame mid-navigation refuses the click (its next document is not guarded): give a page
+    // whose frames load all the time a moment to settle, then check what is under the pointer.
+    for (let waited = 0; waited < NAVIGATION_SETTLE_MS && this.#session.navigationPending();)
+      waited += await pause(25, signal).then(() => 25);
+    const hit = await hitTest(this.#session, point);
+    // The page may have changed since the gate classified this click (TOCTOU): if anything
+    // differs, nothing is pressed and the model's next click is gated again.
+    if (verdict && !sameTarget(verdict.target, markUnguarded(this.#session, hit.target)))
+      return this.#refuse(TARGET_MOVED_REFUSAL);
+    if (hit.snap) await mouse.move(hit.snap.x, hit.snap.y);
+    // Only now that the press will go to the approved link (m6).
+    if (verdict?.allowDownload)
+      await this.#session.downloads.allowOnce((url) => url === verdict.allowDownload);
+    // ...and from here to the press, the page itself cancels a press that reaches anything but
+    // the element just classified. (Inside an uninspectable frame there is none to hold it to:
+    // that click was approved as it is.)
+    const guard =
+      hit.target && !hit.target.opaqueFrame
+        ? await armClickGuard(this.#session, signal, hit.key)
+        : null;
+    let cancelled = false;
+    try {
+      // Past the document cap nothing is armed, so not even an approved click is safe: the user
+      // takes over.
+      if (guard?.tooMany) {
+        this.#handOver = PAGE_TOO_COMPLEX;
+        return this.#refuse(PAGE_TOO_COMPLEX_REFUSAL);
+      }
+      // A document the guard could not arm (a hung frame) would take an unchecked press: fail
+      // closed, as typing does (approval needed), unless a person approved this very element.
+      if (guard && !guard.complete && verdict?.personApproved !== true)
+        return this.#refuse(UNGUARDED_CLICK_REFUSAL);
+      this.#session.guard.assertAgent(signal);
+      const options = {
         button: button === "right" ? "right" : button === "wheel" ? "middle" : "left",
-      });
+      } as const;
+      for (let clickCount = 1; clickCount <= (double ? 2 : 1); clickCount++) {
+        // A document added or replaced since arming is not guarded: press nothing.
+        if (guard && (await guard.changedNow())) return this.#refuse(TARGET_MOVED_REFUSAL);
+        await mouse.down({ ...options, clickCount });
+        await mouse.up({ ...options, clickCount });
+      }
+    } finally {
+      if (signal.aborted) void guard?.disarm();
+      else cancelled = (await guard?.disarm()) ?? false;
+    }
+    if (cancelled) return this.#refuse(TARGET_MOVED_REFUSAL);
     await settle(this.#session, signal);
     return null;
   }
@@ -269,7 +356,7 @@ export class ComputerExecutor {
     return null;
   }
 
-  async #type(text: string, signal: AbortSignal): Promise<string | null> {
+  async #type(text: string, signal: AbortSignal, approved: boolean): Promise<string | null> {
     if (this.omnibox.active) {
       this.omnibox.type(text);
       return null;
@@ -281,40 +368,45 @@ export class ComputerExecutor {
     }
     let refusal = this.#typingRefusal(await focusTarget(this.#session));
     if (refusal) return refusal;
-    // Arming every document can take a round trip per frame: a takeover must not wait for it
-    // (target ≤ 300 ms). If aborted meanwhile, the arm finishes and is undone in the background.
-    const arming = armSecretBlock(this.#session);
-    const { focusMoved, disarm } = await abortable(arming, signal).catch((error: unknown) => {
-      void arming.then(
-        (block) => block.disarm(),
-        () => undefined,
-      );
-      throw error;
-    });
+    const guard = await armTypingGuard(this.#session, signal);
     try {
-      for (let offset = 0; offset < text.length; offset += TYPE_CHUNK) {
-        this.#session.guard.assertAgent(signal);
+      // A document that could not be armed fails closed (approval needed), unless a person
+      // approved this action.
+      if (!guard.complete && !approved) return this.#refuse(UNRESPONSIVE_REFUSAL);
+      const chars = [...text];
+      for (let offset = 0; offset < chars.length; offset += TYPE_CHUNK) {
         // Focus can move while typing (auto-advance fields): check before every chunk.
         if (offset > 0) {
           refusal = this.#typingRefusal(await focusTarget(this.#session));
           if (refusal) return refusal;
         }
-        await this.#session.page.keyboard.type(text.slice(offset, offset + TYPE_CHUNK));
+        // One character at a time: a document that appears mid-chunk is not armed, so typing
+        // stops before the next character.
+        for (const char of chars.slice(offset, offset + TYPE_CHUNK)) {
+          this.#session.guard.assertAgent(signal);
+          if (guard.changed) return this.#refuse(PAGE_CHANGED_REFUSAL);
+          await this.#session.page.keyboard.type(char);
+        }
+        if (guard.changed) return this.#refuse(PAGE_CHANGED_REFUSAL);
         // A page script moved focus into another document mid-chunk: the rest was cancelled
-        // there (armSecretBlock); stop and let the model look again.
-        if (await focusMoved()) return this.#refuse(FOCUS_MOVED_REFUSAL);
+        // there by the guard; stop and let the model look again.
+        if (await guard.focusMoved()) return this.#refuse(FOCUS_MOVED_REFUSAL);
       }
       const focus = await focusTarget(this.#session);
       if (focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     } finally {
-      if (signal.aborted) void disarm();
-      else await disarm();
+      if (signal.aborted) void guard.disarm();
+      else await guard.disarm();
     }
     await settle(this.#session, signal);
     return null;
   }
 
-  async #keypress(keys: readonly string[], signal: AbortSignal): Promise<string | null> {
+  async #keypress(
+    keys: readonly string[],
+    signal: AbortSignal,
+    approved: boolean,
+  ): Promise<string | null> {
     if (this.omnibox.active) {
       const combo = normalizeCombo(keys);
       if (combo === "ENTER") {
@@ -351,15 +443,19 @@ export class ComputerExecutor {
     }
     this.#session.guard.assertAgent(signal);
     // Printable keys type characters: refuse them in a secret field like `type` does. Any key
-    // aimed at an editable element runs with the in-page secret-field cancel listeners armed.
+    // aimed at an editable element runs with the typing guard armed.
     const focus = await focusTarget(this.#session);
-    if (typesText(keys) && focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
+    const typing = typesText(keys);
+    if (typing && focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
     if (focus?.editable || focus?.isSecretField) {
-      const { disarm } = await armSecretBlock(this.#session);
+      const guard = await armTypingGuard(this.#session, signal);
       try {
+        if (typing && !guard.complete && !approved) return this.#refuse(UNRESPONSIVE_REFUSAL);
+        this.#session.guard.assertAgent(signal);
         await this.#session.page.keyboard.press(combo);
       } finally {
-        await disarm();
+        if (signal.aborted) void guard.disarm();
+        else await guard.disarm();
       }
     } else {
       await this.#session.page.keyboard.press(combo);

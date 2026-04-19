@@ -178,8 +178,13 @@ test("a late defaults response cannot switch the kill switch back off (R29-5)", 
 
 test("the kill switch keeps keyboard focus and its tab stop while a change is in flight (parked)", async ({
   page,
+  baseURL,
 }) => {
-  await page.request.post("/api/rpc/settings/setKillSwitch", { data: { json: { on: true } } });
+  // State-changing RPCs need a same-origin Origin header (the CSRF check from the backend merge).
+  await page.request.post("/api/rpc/settings/setKillSwitch", {
+    data: { json: { on: true } },
+    headers: { origin: new URL(baseURL!).origin },
+  });
   let calls = 0;
   let release: () => void = () => undefined;
   const held = new Promise<void>((resolve) => (release = resolve));
