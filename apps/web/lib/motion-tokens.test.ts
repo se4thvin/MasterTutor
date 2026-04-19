@@ -37,6 +37,12 @@ describe("motion tokens", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
+  it("under reduced motion no animation waits on a delay (I-3: a delayed from-frame is a snap)", () => {
+    const reduce = renderMotionCss().split("@media (prefers-reduced-motion: reduce)")[1] ?? "";
+    // -1ms with the 1ms duration: no offset from-frame is ever painted, staggered or not.
+    expect(reduce).toContain("animation-delay: -1ms !important;");
+  });
+
   it("still exports every motion API this app uses (motion 12 to 14 guard)", () => {
     for (const name of [
       "LazyMotion",

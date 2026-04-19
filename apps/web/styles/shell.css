@@ -213,9 +213,17 @@
       position: static;
       margin-left: auto;
     }
+    /* The badge fades out when it clears (a finished run's outcome, or a run that left quietly). */
+    transition-property: opacity;
+    transition-duration: var(--motion-dur-base);
+    transition-timing-function: var(--motion-ease-out);
+    &[data-leaving] {
+      opacity: 0;
+    }
   }
+  /* 1.2rem keeps the running dot at the 0.45rem of mockup D's live dot (D25). */
   .nav-meta .smark {
-    --smark-size: 1rem;
+    --smark-size: 1.2rem;
   }
   /* Visually hidden below lg so the live-run count is still read aloud beside the dot. */
   .nav-meta-text {

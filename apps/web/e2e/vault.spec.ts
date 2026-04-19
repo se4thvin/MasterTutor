@@ -56,10 +56,7 @@ test("the session mark turns from saved to pending when you sign out", async ({ 
   await row.getByRole("button", { name: "Sign out of github" }).click();
   await expect(row.locator('.vrow-session .smark[data-status="pending"]')).toBeVisible();
   await expect(row).toContainText("Signs in on next use");
-  // Hold the "Signed out" toast (hover pauses its countdown) so axe never measures it mid-fade.
-  const toast = page.getByRole("group").filter({ hasText: "Signed out of github" });
-  await toast.hover();
-  await expect(toast).toHaveCSS("opacity", "1");
+  // A toast has just appeared: expectCleanScreen waits for it to settle before axe (m-6).
   await expectCleanScreen(page);
 });
 

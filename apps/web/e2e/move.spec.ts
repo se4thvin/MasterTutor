@@ -117,6 +117,16 @@ test("a second pick during the receive animation is ignored (Review Focus 2)", a
     "aria-disabled",
     "true",
   );
+  // A disabled row does not light up under the pointer (m-8). Read it at once: a retrying
+  // assertion would pass later, when the closing sheet drops pointer events.
+  const databases = sheet.getByRole("button", { name: "Databases" });
+  await databases.hover({ force: true });
+  expect(
+    await databases.evaluate((row) => [
+      row.matches(":hover"),
+      getComputedStyle(row).backgroundColor,
+    ]),
+  ).toEqual([true, "rgba(0, 0, 0, 0)"]);
   await sheet.getByRole("button", { name: "Databases" }).click({ force: true });
   await expect(sheet).toBeHidden();
   await expect(page.getByRole("group").filter({ hasText: "Moved to Papers" })).toBeVisible();
@@ -140,9 +150,9 @@ test("under reduced motion the sheet closes at once and nothing flies", async ({
     false,
   );
   // The "Moved to" toast's countdown fuse is a timer, kept under reduced motion by design
-  // (swipe-toast.tsx); everything else must stay still.
+  // (swipe-toast.tsx header); everything else must stay still.
   const moving = await movingAnimations(page, "body");
-  expect(moving.filter((a) => !a.includes("toast-fuse"))).toEqual([]);
+  expect(moving.filter((a) => a !== "script on toast-fuse")).toEqual([]);
 });
 
 test("moving a folder plays the same receive moment", async ({ page }) => {

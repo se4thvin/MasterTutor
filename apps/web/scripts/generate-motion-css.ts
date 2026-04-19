@@ -56,6 +56,9 @@ export function renderMotionCss(): string {
     "  *::before,",
     "  *::after {",
     "    animation-duration: 1ms !important;",
+    // No delay, and a 1ms animation starts already finished: a delayed (staggered) animation
+    // would hold its offset from-frame on screen, and even an undelayed one paints it for a frame.
+    "    animation-delay: -1ms !important;",
     "    animation-iteration-count: 1 !important;",
     "    transition-property: opacity !important;",
     "    transition-duration: var(--motion-dur-micro) !important;",

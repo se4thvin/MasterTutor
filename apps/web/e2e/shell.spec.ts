@@ -1,5 +1,5 @@
 import type { Page, Route } from "@playwright/test";
-import { movingAnimations } from "./helpers/motion.ts";
+import { movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, isCompact, isWide, test } from "./helpers/test.ts";
 
 test("shell adapts: sidebar, icon rail or tab bar, with every destination reachable", async ({
@@ -63,23 +63,40 @@ test.describe("Runs badge (StatusMark)", () => {
   const RUN = "00000000-0000-4000-8000-000008000001";
   const SECOND_RUN = "00000000-0000-4000-8000-000008000099";
 
-  async function finishRun(page: Page, runGet: (route: Route) => Promise<void>, runs = 1) {
+  /** The one live region that announces a run's outcome. */
+  const outcome = (page: Page) => page.locator(".sidebar [data-qa=run-outcome]");
+
+  async function finishRun(
+    page: Page,
+    runGet: (route: Route) => Promise<void>,
+    runs = 1,
+    /** Ids still running in each later list response; default: none. */
+    later: string[][] = [[]],
+  ) {
     await page.clock.install({ time: new Date("2026-10-05T17:00:00Z") });
     let lists = 0;
+    let firstItems: Array<{ id: string }> = [];
     await page.route("**/api/rpc/runs/list", async (route) => {
       lists += 1;
-      if (lists > 1) return route.fulfill({ json: { json: { items: [], nextCursor: null } } });
-      if (runs === 1) return route.continue();
-      // A second running run, so two finish at once.
+      if (lists > 1) {
+        const still = later[Math.min(lists - 2, later.length - 1)] ?? [];
+        const items = firstItems.filter((r) => still.includes(r.id));
+        return route.fulfill({ json: { json: { items, nextCursor: null } } });
+      }
       const response = await route.fetch();
       const body = (await response.json()) as { json: { items: Array<{ id: string }> } };
-      const first = body.json.items[0]!;
-      body.json.items.push({ ...first, id: SECOND_RUN });
+      // Optionally a second running run, so two finish together.
+      if (runs === 2) body.json.items.push({ ...body.json.items[0]!, id: SECOND_RUN });
+      firstItems = body.json.items;
       return route.fulfill({ response, json: body });
     });
     await page.route("**/api/rpc/runs/get", runGet);
     await page.goto("/library");
     await expect(runsLink(page).locator('.smark[data-status="running"]')).toBeVisible();
+    // Tag the mark: the outcome must morph this same element, not a remount (I-1).
+    await runsLink(page)
+      .locator(".smark")
+      .evaluate((el: HTMLElement) => (el.dataset["k"] = "kept"));
     // Past staleTime, then a reconnect: React Query refetches the list (no polling involved).
     await page.clock.fastForward("00:31");
     await page.evaluate(() => {
@@ -93,9 +110,13 @@ test.describe("Runs badge (StatusMark)", () => {
     await finishRun(page, (route) =>
       route.fulfill({ json: { json: { id: RUN, status: "completed" } } }),
     );
-    await expect(runsLink(page).locator('.smark[data-status="done"]')).toBeVisible();
+    await expect(runsLink(page).locator('.smark[data-status="done"][data-k="kept"]')).toBeVisible();
     await expect(runsLink(page)).toContainText("Run finished");
+    // Announced once, outside the link, so the link's name does not churn (I-2).
+    await expect(outcome(page)).toHaveText("Run finished");
     await page.clock.fastForward(2500);
+    // The badge fades out (durations.base), then unmounts.
+    await page.clock.runFor(300);
     await expect(runsLink(page).locator(".nav-meta")).toHaveCount(0);
   });
 
@@ -111,6 +132,8 @@ test.describe("Runs badge (StatusMark)", () => {
     await expect.poll(() => gets).toBe(1);
     await page.clock.runFor(1500);
     await expect.poll(() => gets).toBe(2);
+    // Nothing to flash: the running badge fades out (durations.base), then unmounts.
+    await page.clock.runFor(300);
     await expect(runsLink(page).locator(".nav-meta")).toHaveCount(0);
     await expect(runsLink(page).locator('.smark[data-status="running"]')).toHaveCount(0);
     await expect(page.getByRole("group").filter({ hasText: /Couldn't/ })).toHaveCount(0);
@@ -127,8 +150,64 @@ test.describe("Runs badge (StatusMark)", () => {
     );
     // The 404 is retried once before the outcome is known.
     await page.clock.runFor(1500);
-    await expect(runsLink(page).locator('.smark[data-status="failed"]')).toBeVisible();
+    await expect(
+      runsLink(page).locator('.smark[data-status="failed"][data-k="kept"]'),
+    ).toBeVisible();
     await expect(runsLink(page)).toContainText("Run failed");
+    await expect(outcome(page)).toHaveText("Run failed");
+  });
+
+  test("a failure is kept when another run finishes while it is being fetched (m-1)", async ({
+    page,
+  }) => {
+    let releaseFirst: () => void = () => undefined;
+    const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+    await finishRun(
+      page,
+      async (route) => {
+        if (route.request().postData()?.includes(SECOND_RUN)) {
+          return route.fulfill({ json: { json: { id: SECOND_RUN, status: "completed" } } });
+        }
+        await firstHeld;
+        return route.fulfill({ json: { json: { id: RUN, status: "failed" } } });
+      },
+      2,
+      // The first list drops only RUN; the next drops SECOND_RUN too.
+      [[SECOND_RUN], []],
+    );
+    // RUN's details are still in flight when SECOND_RUN leaves the list too.
+    const secondGet = page.waitForRequest(
+      (r) => r.url().includes("/runs/get") && (r.postData() ?? "").includes(SECOND_RUN),
+    );
+    await page.clock.fastForward("00:31");
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("offline"));
+      window.dispatchEvent(new Event("online"));
+    });
+    await secondGet;
+    releaseFirst();
+    await expect(runsLink(page).locator('.smark[data-status="failed"]')).toBeVisible();
+    await expect(outcome(page)).toHaveText("Run failed");
+  });
+
+  test("the outcome fades out instead of vanishing (m-10)", async ({ page }) => {
+    test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+    await finishRun(page, (route) =>
+      route.fulfill({ json: { json: { id: RUN, status: "completed" } } }),
+    );
+    const meta = runsLink(page).locator(".nav-meta");
+    await expect(meta.locator('.smark[data-status="done"]')).toBeVisible();
+    await page.clock.runFor(2400);
+    await expect(meta).toHaveAttribute("data-leaving", "");
+    // Let real time run, so the CSS fade and the unmount timer play out.
+    await page.clock.resume();
+    await startSampling(page, "fade", ".nav .nav-meta", "opacity", 30);
+    const samples = (await readSamples(page, "fade", 30)).filter(Boolean).map(Number);
+    expect(
+      samples.some((o) => o > 0 && o < 1),
+      samples.join(","),
+    ).toBe(true);
+    await expect(meta).toHaveCount(0);
   });
 
   test("under reduced motion the live dot does not pulse", async ({ page }) => {

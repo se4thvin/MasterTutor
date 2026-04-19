@@ -34,6 +34,7 @@ export function FolderMoveSheet({
       description={folder ? `Choose a new parent for “${folder.name}”.` : undefined}
     >
       <FolderPickList
+        key={folder?.id ?? "none"}
         root={topLevel ? { label: "Top level", icon: "library" } : null}
         folders={rows}
         receiveLabel={folder?.name ?? ""}

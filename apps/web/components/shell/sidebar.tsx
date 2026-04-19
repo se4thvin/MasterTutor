@@ -53,7 +53,8 @@ export function Sidebar({
                   <Icon name={item.icon} />
                   <span className="nav-label">{item.label}</span>
                   {item.href === "/runs" && pulse ? (
-                    <span className="nav-meta">
+                    // One badge element from the live dot to the outcome; it fades out to clear.
+                    <span className="nav-meta" data-leaving={pulse.leaving ? "" : undefined}>
                       <StatusMark status={pulse.status} decorative />
                       <span className="nav-meta-text">
                         {pulse.status === "running"
@@ -67,6 +68,10 @@ export function Sidebar({
             );
           })}
         </ul>
+        {/* The outcome is announced once, here, outside the link, so its name does not churn. */}
+        <span className="sr-only" role="status" data-qa="run-outcome">
+          {pulse && pulse.status !== "running" ? PULSE_TEXT[pulse.status] : ""}
+        </span>
       </nav>
       {libraryTree ? (
         <div className="sidebar-section">
