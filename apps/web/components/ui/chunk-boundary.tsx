@@ -3,21 +3,27 @@
 import { Component, type ReactNode } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 
+/** Turbopack names a chunk that failed to arrive "ChunkLoadError". */
+const isChunkLoadError = (error: unknown) =>
+  error instanceof Error && error.name === "ChunkLoadError";
+
+/** Catches only a failed chunk; any other error is rethrown to the next boundary (Next's). */
 class CatchFailedChunk extends Component<
   { onError: () => void; children: ReactNode },
-  { failed: boolean }
+  { failed: boolean; error: unknown }
 > {
-  override state = { failed: false };
+  override state: { failed: boolean; error: unknown } = { failed: false, error: null };
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown) {
+    return isChunkLoadError(error) ? { failed: true, error: null } : { failed: false, error };
   }
 
-  override componentDidCatch() {
-    this.props.onError();
+  override componentDidCatch(error: unknown) {
+    if (isChunkLoadError(error)) this.props.onError();
   }
 
   override render() {
+    if (this.state.error) throw this.state.error;
     return this.state.failed ? null : this.props.children;
   }
 }
@@ -25,8 +31,9 @@ class CatchFailedChunk extends Component<
 /**
  * Wraps a lazily loaded surface (lib/hooks/lazy-component.ts). If its chunk fails to arrive
  * (offline, or a deploy replaced it), the surface renders nothing, a toast says so and offers a
- * reload, and `onFailed` lets the owner close it; the error never reaches Next's root error page.
- * A reload is the retry: the bundler's runtime keeps a failed chunk load for the page's lifetime.
+ * reload, and `onFailed` lets the owner close it; that failure never reaches Next's error page.
+ * A reload is the only retry: React.lazy and Turbopack both keep a failed load for the page's
+ * lifetime. Any other error (a bug) is not caught here: it goes on to Next's error handling.
  */
 export function ChunkBoundary({
   what,

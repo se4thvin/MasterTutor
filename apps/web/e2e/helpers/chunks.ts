@@ -16,3 +16,20 @@ export async function failChunksContaining(
     return route.fulfill({ response, body });
   });
 }
+
+/** Serves every JS chunk containing `marker` with `from` replaced by `to` (all occurrences). */
+export async function rewriteChunksContaining(
+  page: Page,
+  marker: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await page.route("**/_next/static/chunks/**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.text();
+    return route.fulfill({
+      response,
+      body: body.includes(marker) ? body.split(from).join(to) : body,
+    });
+  });
+}

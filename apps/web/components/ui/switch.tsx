@@ -29,7 +29,7 @@ export function Switch({
       checked={checked}
       disabled={disabled}
       readOnly={busy}
-      aria-disabled={busy || undefined}
+      aria-disabled={busy || disabled || undefined}
       aria-busy={busy || undefined}
       aria-label={label}
       onCheckedChange={(next) => onCheckedChange(next)}

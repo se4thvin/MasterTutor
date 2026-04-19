@@ -9,6 +9,7 @@ import { ButtonLink } from "@/components/ui/button.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
+import { durations } from "@/lib/motion-tokens.ts";
 import { orpc } from "@/lib/api/client.ts";
 import { MEDIA } from "@/lib/breakpoints.ts";
 import { cx } from "@/lib/cx.ts";
@@ -37,6 +38,13 @@ export function NoteReader({ noteId }: { noteId: string }) {
   const [openBlockId, setOpenBlockId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
+  // The arrival highlight lasts as long as the flash; under reduced motion it is a static tint,
+  // which must not linger until the next pick.
+  useEffect(() => {
+    if (flashId === null) return undefined;
+    const timer = setTimeout(() => setFlashId(null), durations.shimmer);
+    return () => clearTimeout(timer);
+  }, [flashId]);
   const [pinnedBlockId, setPinnedBlockId] = useState<string | null>(null);
   const wide = useMediaQuery(MEDIA.lg);
   const search = useSearchParams();

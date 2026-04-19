@@ -43,9 +43,13 @@ describe("motion tokens", () => {
     expect(reduce).toContain("animation-delay: -1ms !important;");
   });
 
-  it("leaves scroll-linked animations on their scroll mapping under reduced motion", () => {
+  it("lets scroll-linked animations opt out of the reduced-motion delay", () => {
     const reduce = renderMotionCss().split("@media (prefers-reduced-motion: reduce)")[1] ?? "";
-    expect(reduce).toMatch(/\.toolbar::after \{\s*animation-delay: 0s !important;/);
+    // A generic opt-out, not a component selector in the token generator (M-7).
+    expect(reduce).not.toContain(".toolbar");
+    expect(reduce).toMatch(
+      /\[data-motion-keep-delay\]::after[^{]*\{\s*animation-delay: 0s !important;/,
+    );
   });
 
   it("still exports every motion API this app uses (motion 12 to 14 guard)", () => {

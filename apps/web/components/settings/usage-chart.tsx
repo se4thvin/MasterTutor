@@ -56,8 +56,9 @@ export function UsageChart({ perDay }: { perDay: UsageReport["perDay"] }) {
           <span>{formatUsd(max)}</span>
           <span>{formatUsd(0)}</span>
         </div>
-        {/* Keyed by range, so a new range replays the bars' growth. */}
-        <ol className="chart-bars" key={`${perDay[0]?.day ?? ""}-${perDay.length}`}>
+        {/* Keyed by range length, so a new range replays the bars' growth, but a refetch that
+            moves the window a day does not remount the bars (and drop keyboard focus). */}
+        <ol className="chart-bars" key={perDay.length}>
           {perDay.map((d, i) => (
             <li
               key={d.day}

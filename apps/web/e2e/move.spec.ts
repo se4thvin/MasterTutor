@@ -221,3 +221,15 @@ test("if the move sheet can't load, Move to… says so and works on the next try
   await openSheet();
   await expect(page.getByRole("dialog", { name: "Move to…" })).toBeVisible();
 });
+
+test("if the folder move sheet can't load, Move folder to… says so (M-12)", async ({ page }) => {
+  await failChunksContaining(page, "No other folder can hold this one.", () => true);
+  await page.goto("/library?folder=00000000-0000-4000-8000-000001000004");
+  await page.getByRole("button", { name: "Folder actions" }).click();
+  await page.getByRole("menuitem", { name: /Move folder/ }).click();
+  const toast = page.getByRole("group").filter({ hasText: "Couldn't open Move folder to…" });
+  await expect(toast).toBeVisible();
+  await expect(toast.getByRole("button", { name: "Reload" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Move folder to…" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Papers" })).toBeVisible();
+});

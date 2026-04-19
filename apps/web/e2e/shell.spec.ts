@@ -230,6 +230,29 @@ test("under reduced motion the toolbar hairline stays hidden at the top of the p
   await page.goto("/library");
   const toolbar = page.locator(".toolbar").first();
   await expect(toolbar).toBeVisible();
-  // The scroll-linked fade must keep its scroll mapping: hidden until the page scrolls.
+  // The scroll-linked fade must keep its scroll mapping: hidden until the page scrolls...
   expect(await toolbar.evaluate((el) => getComputedStyle(el, "::after").opacity)).toBe("0");
+  // ...then shown once it has (the range is 0–1rem of scroll).
+  await page.locator("#main").evaluate((main) => main.scrollTo(0, 64));
+  await expect
+    .poll(() => toolbar.evaluate((el) => getComputedStyle(el, "::after").opacity))
+    .toBe("1");
+});
+
+test("a compact page whose main has nothing to focus can still be scrolled by keyboard (M-3)", async ({
+  page,
+}) => {
+  test.skip(page.viewportSize()?.width !== 390, "the compact audit log is the case");
+  await page.goto("/settings/audit");
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+  await expectCleanScreen(page);
+  // Tab reaches the scrolling main, and the keyboard scrolls it.
+  const main = page.locator("#main");
+  for (let i = 0; i < 30 && !(await main.evaluate((m) => m === document.activeElement)); i++) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(main).toBeFocused();
+  await page.keyboard.press("PageDown");
+  await expect.poll(() => main.evaluate((m) => m.scrollTop)).toBeGreaterThan(0);
 });
