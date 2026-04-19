@@ -2,6 +2,7 @@
 
 import type { VaultAuditAction, VaultAuditView } from "@mastertutor/contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import type { CSSProperties } from "react";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import type { BadgeTone, IconName } from "@/lib/ui/vocabulary.ts";
@@ -52,7 +53,11 @@ export function AuditView() {
       getNextPageParam: (last) => last.nextCursor,
     }),
   );
-  const entries = audit.data?.pages.flatMap((p) => p.items) ?? [];
+  // Rows from pages after the first are marked, so only what "Load more" added eases in.
+  const entries =
+    audit.data?.pages.flatMap((p, page) =>
+      p.items.map((entry, i) => ({ entry, appended: page > 0, i })),
+    ) ?? [];
   return (
     <>
       <Toolbar>
@@ -87,8 +92,13 @@ export function AuditView() {
                 </tr>
               </thead>
               <tbody>
-                {entries.map((e) => (
-                  <tr key={e.id} data-qa="audit-entry">
+                {entries.map(({ entry: e, appended, i }) => (
+                  <tr
+                    key={e.id}
+                    data-qa="audit-entry"
+                    data-appended={appended ? "" : undefined}
+                    style={appended ? ({ "--i": Math.min(i, 12) } as CSSProperties) : undefined}
+                  >
                     <td className="whitespace-nowrap">
                       <When at={e.at} />
                     </td>
@@ -108,9 +118,18 @@ export function AuditView() {
             </table>
           </div>
         ) : (
-          <ul className="group audit-list" aria-label="Vault audit">
-            {entries.map((e) => (
-              <li key={e.id} data-qa="audit-entry" className="audit-item">
+          // Focusable so the log can be scrolled from the keyboard: once every page is loaded the
+          // compact layout has nothing else to focus inside the scrolling main (axe
+          // scrollable-region-focusable).
+          <ul className="group audit-list" aria-label="Vault audit" tabIndex={0}>
+            {entries.map(({ entry: e, appended, i }) => (
+              <li
+                key={e.id}
+                data-qa="audit-entry"
+                className="audit-item"
+                data-appended={appended ? "" : undefined}
+                style={appended ? ({ "--i": Math.min(i, 12) } as CSSProperties) : undefined}
+              >
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Action entry={e} />
                   <span className="mono audit-alias">{e.alias}</span>
