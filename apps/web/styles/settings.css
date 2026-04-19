@@ -208,4 +208,29 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
+  .chart-bar {
+    transform-origin: 50% 100%;
+    animation-name: bar-grow;
+    animation-duration: var(--motion-spring-dur);
+    animation-timing-function: var(--motion-spring);
+    animation-fill-mode: both;
+    /* A left-to-right wave that never takes longer than one panel duration, even at 90 days. */
+    animation-delay: calc(var(--x, 0) * var(--motion-dur-panel));
+  }
+  @keyframes bar-grow {
+    from {
+      scale: 1 0;
+    }
+  }
+  /* The arrow-key hint: always in the accessibility tree (aria-describedby), shown on keyboard focus. */
+  .chart-keys {
+    margin: 0.35rem 0 0;
+    opacity: 0;
+    transition-property: opacity;
+    transition-duration: var(--motion-dur-micro);
+    transition-timing-function: var(--motion-ease-out);
+  }
+  .chart:has(.chart-bar:focus-visible) .chart-keys {
+    opacity: 1;
+  }
 }
