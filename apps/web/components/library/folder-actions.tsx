@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Suspense, useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { IconButton } from "@/components/ui/button.tsx";
+import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Menu, MenuItem, MenuPanel } from "@/components/ui/menu.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
@@ -39,6 +40,10 @@ export function FolderActions({
   const [moveSheetUsed, setMoveSheetUsed] = useState(false);
   if (moving && !moveSheetUsed) setMoveSheetUsed(true);
   usePrefetchFolderMoveSheet();
+  const moveSheetFailed = () => {
+    setMoving(null);
+    setMoveSheetUsed(false);
+  };
 
   const remove = async () => {
     if (!current) return;
@@ -103,9 +108,11 @@ export function FolderActions({
         onDone={(id) => sheet?.mode === "create" && router.push(libraryHref({ folder: id }))}
       />
       {moveSheetUsed ? (
-        <Suspense fallback={null}>
-          <FolderMoveSheet folder={moving} folders={folders} onClose={() => setMoving(null)} />
-        </Suspense>
+        <ChunkBoundary what="Move folder to…" onFailed={moveSheetFailed}>
+          <Suspense fallback={null}>
+            <FolderMoveSheet folder={moving} folders={folders} onClose={() => setMoving(null)} />
+          </Suspense>
+        </ChunkBoundary>
       ) : null}
       <ConfirmDialog
         open={confirm}

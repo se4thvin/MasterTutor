@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
+import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { LayoutMotion } from "@/components/motion/layout-motion.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
@@ -186,6 +187,10 @@ export function LibraryView() {
   const [moveSheetUsed, setMoveSheetUsed] = useState(false);
   if (moving && !moveSheetUsed) setMoveSheetUsed(true);
   usePrefetchMoveSheet();
+  const moveSheetFailed = () => {
+    setMoving(null);
+    setMoveSheetUsed(false);
+  };
   const [deleting, setDeleting] = useState<NoteSummary | null>(null);
   const reduceMotion = useReducedMotion();
   const dropNote = (noteId: string, folderId: string | null) => {
@@ -325,9 +330,11 @@ export function LibraryView() {
           </LayoutMotion>
         )}
         {moveSheetUsed ? (
-          <Suspense fallback={null}>
-            <MoveSheet note={moving} onClose={() => setMoving(null)} />
-          </Suspense>
+          <ChunkBoundary what="Move to…" onFailed={moveSheetFailed}>
+            <Suspense fallback={null}>
+              <MoveSheet note={moving} onClose={() => setMoving(null)} />
+            </Suspense>
+          </ChunkBoundary>
         ) : null}
         <ConfirmDialog
           open={deleting !== null}

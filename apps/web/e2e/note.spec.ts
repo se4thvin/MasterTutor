@@ -49,3 +49,19 @@ test("a missing note shows a calm empty state", async ({ page }) => {
   await page.goto("/notes/00000000-0000-4000-8000-000002999999");
   await expect(page.getByRole("heading", { name: "This note isn't available" })).toBeVisible();
 });
+
+test("under reduced motion a picked block keeps a static highlight instead of a flash", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/library?q=grad_norm");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link").first().click();
+  const flashed = page.locator(".blk-flash");
+  await expect(flashed).toBeVisible();
+  await expect
+    .poll(() => flashed.evaluate((el) => getComputedStyle(el, "::before").opacity))
+    .toBe("1");
+  await expect
+    .poll(() => flashed.evaluate((el) => getComputedStyle(el, "::before").animationName))
+    .toBe("none");
+});

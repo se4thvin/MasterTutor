@@ -43,6 +43,11 @@ describe("motion tokens", () => {
     expect(reduce).toContain("animation-delay: -1ms !important;");
   });
 
+  it("leaves scroll-linked animations on their scroll mapping under reduced motion", () => {
+    const reduce = renderMotionCss().split("@media (prefers-reduced-motion: reduce)")[1] ?? "";
+    expect(reduce).toMatch(/\.toolbar::after \{\s*animation-delay: 0s !important;/);
+  });
+
   it("still exports every motion API this app uses (motion 12 to 14 guard)", () => {
     for (const name of [
       "LazyMotion",

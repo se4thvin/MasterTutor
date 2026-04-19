@@ -35,4 +35,7 @@
     transition-duration: var(--motion-dur-micro) !important;
     scroll-behavior: auto !important;
   }
+  .toolbar::after {
+    animation-delay: 0s !important;
+  }
 }

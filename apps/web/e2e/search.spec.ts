@@ -1,3 +1,4 @@
+import { failChunksContaining } from "./helpers/chunks.ts";
 import type { Page } from "@playwright/test";
 import { moved, movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
@@ -128,4 +129,27 @@ test("the palette with results stays clean at every width", async ({ page }) => 
   await openPaletteWith(page, "warmup");
   await page.keyboard.press("ArrowDown");
   await expectCleanScreen(page);
+});
+
+test("if the palette can't load, ⌘K says so and works on the next try", async ({ page }) => {
+  let offline = true;
+  await failChunksContaining(page, "palette-hit", () => offline);
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't open search" })).toBeVisible();
+  // The page itself is unharmed (no root error screen).
+  await expect(page.getByRole("searchbox", { name: "Search the library" })).toBeVisible();
+  offline = false;
+  // The retry is a reload: the bundler keeps a failed chunk for the page's lifetime.
+  await page
+    .getByRole("group")
+    .filter({ hasText: "Couldn't open search" })
+    .getByRole("button", { name: "Reload" })
+    .click();
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(
+    page.getByRole("dialog", { name: "Search notes" }).getByRole("combobox"),
+  ).toBeVisible();
 });
