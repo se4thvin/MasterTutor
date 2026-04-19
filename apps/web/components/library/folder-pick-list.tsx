@@ -1,6 +1,5 @@
 "use client";
 
-import { useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { IconName } from "@/components/ui/icon.tsx";
 import type { FolderNode } from "@/lib/folders/tree.ts";
@@ -33,7 +32,6 @@ export function FolderPickList({
   receiveLabel: string;
   empty?: string;
 }) {
-  const reduce = useReducedMotion();
   const [receiving, setReceiving] = useState<{ id: string | null } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -41,6 +39,8 @@ export function FolderPickList({
   const pick = (id: string | null) => {
     if (receiving) return;
     onPick(id);
+    // Read at pick time: motion's useReducedMotion keeps the value from the last render.
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduce || id === currentId) {
       onDone();
       return;

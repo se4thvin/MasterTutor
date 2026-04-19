@@ -7,7 +7,7 @@ const tree = readFileSync(
   "utf8",
 );
 const palette = readFileSync(
-  new URL("../components/library/search-palette.tsx", import.meta.url),
+  new URL("../components/library/palette-body.tsx", import.meta.url),
   "utf8",
 );
 const view = readFileSync(
