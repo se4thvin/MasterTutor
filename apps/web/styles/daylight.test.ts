@@ -6,6 +6,10 @@ const tree = readFileSync(
   new URL("../components/library/folder-tree.tsx", import.meta.url),
   "utf8",
 );
+const palette = readFileSync(
+  new URL("../components/library/search-palette.tsx", import.meta.url),
+  "utf8",
+);
 const view = readFileSync(
   new URL("../components/library/library-view.tsx", import.meta.url),
   "utf8",
@@ -26,9 +30,16 @@ describe("Daylight motion on state changes", () => {
     expect(library).toMatch(/@keyframes tree-reveal/);
   });
 
-  it("the palette selection eases in rather than jumping", () => {
-    expect(library).toMatch(/\.hit-active::before[^{]*\{[^}]*animation-name:\s*hit-select/);
-    expect(library).toMatch(/@keyframes hit-select/);
+  it("the palette selection is one highlight that glides between rows", () => {
+    expect(palette).toMatch(/layoutId="palette-hit"/);
+    expect(palette).toMatch(/<LayoutMotion>/);
+    expect(library).toMatch(/\.hit-highlight\s*\{/);
+    expect(library).not.toMatch(/@keyframes hit-select/);
+  });
+
+  it("palette results ease in on a short stagger", () => {
+    expect(library).toMatch(/\.palette \.hit[^{]*\{[^}]*animation-name:\s*hit-in/);
+    expect(library).toMatch(/@keyframes hit-in/);
   });
 
   it("removed note cards exit through AnimatePresence", () => {
