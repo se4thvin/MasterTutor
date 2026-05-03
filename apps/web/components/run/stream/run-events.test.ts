@@ -111,7 +111,7 @@ describe("connectRunEvents", () => {
   });
 
   it("after 3 refusals in a row, asks runs.get; a refusal there ends the stream (no endless retry)", async () => {
-    const denied = new Error("FORBIDDEN");
+    const denied = { code: "FORBIDDEN" };
     const probe = vi.fn(() => Promise.reject(denied));
     const { failures } = connect("12", probe);
     for (let i = 0; i < 2; i++) {
@@ -139,5 +139,31 @@ describe("connectRunEvents", () => {
     await vi.advanceTimersByTimeAsync(reconnectDelayMs(2));
     expect(FakeSource.all).toHaveLength(4);
     expect(failures).toEqual([]);
+  });
+
+  it("a 5xx from runs.get (a deploy) is not permanent: the stream keeps retrying", async () => {
+    const probe = vi.fn(() => Promise.reject({ code: "SERVICE_UNAVAILABLE", status: 503 }));
+    const { failures } = connect("12", probe);
+    for (let i = 0; i < 2; i++) {
+      last().fail(true);
+      vi.advanceTimersByTime(reconnectDelayMs(i));
+    }
+    last().fail(true);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(reconnectDelayMs(2));
+    expect(FakeSource.all).toHaveLength(4);
+    expect(failures).toEqual([]);
+  });
+
+  it("401, 403 and 404 from runs.get are permanent", async () => {
+    for (const code of ["UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND"]) {
+      FakeSource.all = [];
+      const { failures } = connect("12", () => Promise.reject({ code }));
+      for (let i = 0; i < 3; i++) {
+        last().fail(true);
+        vi.advanceTimersByTime(reconnectDelayMs(i));
+      }
+      await vi.waitFor(() => expect(failures).toEqual([{ code }]));
+    }
   });
 });

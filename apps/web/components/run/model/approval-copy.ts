@@ -1,5 +1,5 @@
 import type { ApprovalRequest, ComputerAction } from "@mastertutor/contracts";
-import { pageHost } from "./copy.ts";
+import { hostAndPath, pageHost } from "./copy.ts";
 import { untrustedText } from "./untrusted-text.ts";
 
 /** Page-derived labels are untrusted (spec §5.5): cleaned and capped. */
@@ -96,6 +96,14 @@ export function requestSummary(request: ApprovalRequest): string {
   }
 }
 
+/** The hosts a sign-in form would post to: one per listed origin, uncapped; junk is "an unknown site". */
+function destinationsOf(postsTo: string): string[] {
+  return postsTo.split(",").map((entry) => {
+    const host = hostAndPath(entry.trim())?.host;
+    return host ? host : "an unknown site";
+  });
+}
+
 export function approvalCopy(request: ApprovalRequest): ApprovalCopy {
   const none = {
     tone: "signal",
@@ -165,15 +173,18 @@ export function approvalCopy(request: ApprovalRequest): ApprovalCopy {
       ];
       const body = "The vault fills the sign-in. The agent only sees the alias, never the values.";
       // The form posts elsewhere: where the credential would go is the fact to decide on (I1).
+      // The vault lists every off-site origin joined by ", "; each is shown whole, never cut.
       if (request.postsTo) {
-        const destination = pageHost(request.postsTo);
+        const hosts = destinationsOf(request.postsTo);
         return {
           ...none,
           tone: "warn",
-          title: `Send your ${alias} sign-in to ${destination}?`,
+          title: `Send your ${alias} sign-in to ${
+            hosts.length === 1 ? hosts[0] : `${hosts.length} other sites`
+          }?`,
           body,
           risk: "This form sends your sign-in to a different site than the one you're on. Deny unless you trust it.",
-          details: [...details, ["Sends to", destination]],
+          details: [...details, ...hosts.map((host) => ["Sends to", host] as const)],
         };
       }
       return {

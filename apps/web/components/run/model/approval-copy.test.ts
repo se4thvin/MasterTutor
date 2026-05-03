@@ -131,7 +131,8 @@ describe("approvalCopy: a sign-in form that posts elsewhere (I1)", () => {
   it("cleans a spoofed destination instead of showing it raw", () => {
     const copy = approvalCopy({ ...offSiteSignInRequest(), postsTo: "not a url \u202Egpj.exe" });
     expect(copy.title).not.toContain("\u202E");
-    expect(copy.details).toContainEqual(["Sends to", "not a url gpj.exe"]);
+    // Not an origin at all: never echoed, just "an unknown site".
+    expect(copy.details).toContainEqual(["Sends to", "an unknown site"]);
   });
 
   it("keeps the plain sign-in copy when the form posts to the same site", () => {
@@ -160,5 +161,47 @@ describe("approvalCopy: hostile lengths stay bounded (S6)", () => {
       screenshotKey: null,
     } as ApprovalRequest);
     expect([...form.body].length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe("approvalCopy: a sign-in form with several destinations (I1, re-review)", () => {
+  const signIn = (postsTo: string) => ({ ...offSiteSignInRequest(), postsTo });
+
+  it("names every destination; an evil host that sorts last is never cut off", () => {
+    const copy = approvalCopy(
+      signIn(
+        "https://login.microsoftonline.com, https://shibboleth.learn.example.edu, https://zz-evil.example",
+      ),
+    );
+    expect(copy.title).toBe("Send your ada-learn sign-in to 3 other sites?");
+    expect(copy.tone).toBe("warn");
+    expect(copy.details.filter(([k]) => k === "Sends to")).toEqual([
+      ["Sends to", "login.microsoftonline.com"],
+      ["Sends to", "shibboleth.learn.example.edu"],
+      ["Sends to", "zz-evil.example"],
+    ]);
+  });
+
+  it("shows an action that has no origin as an unknown site", () => {
+    const copy = approvalCopy(signIn("null, https://evil.example"));
+    expect(copy.details.filter(([k]) => k === "Sends to")).toEqual([
+      ["Sends to", "an unknown site"],
+      ["Sends to", "evil.example"],
+    ]);
+    expect(approvalCopy(signIn("invalid")).title).toBe(
+      "Send your ada-learn sign-in to an unknown site?",
+    );
+  });
+
+  it("keeps the last host of a 2,000-character list whole", () => {
+    const hosts = Array.from(
+      { length: 80 },
+      (_, i) => `https://site-${String(i).padStart(2, "0")}.example`,
+    );
+    const list = [...hosts, "https://zz-evil.example"].join(", ");
+    expect(list.length).toBeGreaterThan(2_000);
+    const rows = approvalCopy(signIn(list)).details.filter(([k]) => k === "Sends to");
+    expect(rows).toHaveLength(81);
+    expect(rows.at(-1)).toEqual(["Sends to", "zz-evil.example"]);
   });
 });
