@@ -12,7 +12,7 @@ export const BROWSER_STATES = [
   "replay",
 ] as const;
 export type BrowserState = (typeof BROWSER_STATES)[number];
-type Connection = "connecting" | "open" | "lost";
+export type Connection = "connecting" | "open" | "lost";
 
 export interface ViewFlags {
   connection: Connection;
