@@ -5,6 +5,7 @@ import {
   RunEventRecord,
   RunStepView,
   RunSummary,
+  type RunEvent,
 } from "@mastertutor/contracts";
 import { ids } from "./ids.ts";
 
@@ -14,9 +15,9 @@ import { ids } from "./ids.ts";
  * parses it through the contract schemas.
  */
 export const RECORDED_RUN_ID = ids.run(1);
-// OTHER_RUN_ID (the seeded completed run) and rec() (follow-on events) join this module, exported,
-// with the first task that consumes them (M7: no export without an importer).
-const RECORDED_APPROVAL_ID = ids.approval(1);
+export const RECORDED_APPROVAL_ID = ids.approval(1);
+/** The seeded completed run (fixture run 2). */
+export const OTHER_RUN_ID = ids.run(2);
 
 const COURSE = "https://learn.example.edu/course/week-2";
 const LECTURE = `${COURSE}/lecture-3`;
@@ -269,4 +270,17 @@ export function recordedSteps(): RunStepView[] {
 
 export function recordedEvents(): RunEventRecord[] {
   return RunEventRecord.array().parse(EVENTS);
+}
+
+let nextId = 100;
+
+/** A follow-on event with a fresh id above the recorded stream. */
+export function rec(event: RunEvent, runId: string = RECORDED_RUN_ID): RunEventRecord {
+  const id = nextId++;
+  return RunEventRecord.parse({
+    id: String(id),
+    runId,
+    at: new Date(Date.UTC(2026, 9, 5, 17, 20, 0) + id * 1000).toISOString(),
+    event,
+  });
 }
