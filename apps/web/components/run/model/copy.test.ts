@@ -160,3 +160,11 @@ describe("state pill and takeover notices", () => {
     expect(TAKEOVER_NOTICE.now_in_control).toBe("You're in control now.");
   });
 });
+
+describe("hostile URL lengths (S6)", () => {
+  it("keeps the host whole and caps a 2,000-character path", () => {
+    const parts = hostAndPath(`https://learn.example.edu/${"p".repeat(2_000)}`);
+    expect(parts?.host).toBe("learn.example.edu");
+    expect([...(parts?.path ?? "")].length).toBeLessThanOrEqual(200);
+  });
+});

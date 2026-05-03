@@ -30,4 +30,17 @@ describe("ThoughtLine", () => {
     expect(html).toMatch(/<span class="tline-timer" aria-hidden="true">/);
     expect(html).toContain('<span class="tline-done">Thought for</span>');
   });
+
+  it("shows how long it thought, from the first thought to the act, once it stops (I2)", () => {
+    const html = renderToStaticMarkup(
+      createElement(ThoughtLine, {
+        label: "Choosing what to capture next",
+        working: false,
+        since: "2026-10-05T17:09:47.000Z",
+        until: "2026-10-05T17:09:51.500Z",
+      }),
+    );
+    expect(html).toMatch(/<span class="tline-timer" aria-hidden="true">4\.5s<\/span>/);
+    expect(html).toContain('<span class="sr-only" role="status">Thought for 4.5 seconds</span>');
+  });
 });

@@ -1,4 +1,5 @@
 import {
+  ApprovalRequest,
   DEFAULT_BUDGET,
   MODELS,
   RunDetail,
@@ -283,4 +284,19 @@ export function rec(event: RunEvent, runId: string = RECORDED_RUN_ID): RunEventR
     at: new Date(Date.UTC(2026, 9, 5, 17, 20, 0) + id * 1000).toISOString(),
     event,
   });
+}
+
+/**
+ * A first-use sign-in whose form posts to another site (B3: policy cannot clear it). The run
+ * view's approval card must name that destination (I1). Task 14 adds it to the recorded stream.
+ */
+export function offSiteSignInRequest(): Extract<ApprovalRequest, { kind: "credential_first_use" }> {
+  const request = ApprovalRequest.parse({
+    kind: "credential_first_use",
+    alias: "ada-learn",
+    origin: "https://learn.example.edu",
+    postsTo: "https://evil.example/collect",
+  });
+  if (request.kind !== "credential_first_use") throw new Error("unreachable");
+  return request;
 }

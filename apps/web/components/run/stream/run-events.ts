@@ -9,6 +9,9 @@ import type { Connection } from "../model/browser-state.ts";
 /** A blip shorter than this never flashes "Reconnecting". */
 export const LOST_GRACE_MS = 1_500;
 
+/** After this many refused reopens in a row, ask the RPC link whether the run is still there. */
+const PROBE_AFTER_CLOSED = 3;
+
 export function reconnectDelayMs(attempt: number): number {
   return Math.min(8_000, 500 * 2 ** attempt);
 }
@@ -19,6 +22,13 @@ interface RunEventsOptions {
   after: string | null;
   onRecord(record: RunEventRecord): void;
   onConnection(state: Connection): void;
+  /**
+   * runs.get through the RPC link. A refused stream (401, 403, 404) closes without a reason, so
+   * after PROBE_AFTER_CLOSED attempts this tells us why: the link's UNAUTHORIZED interceptor
+   * ends the session, and any other rejection ends the stream (onFailure).
+   */
+  probe(): Promise<unknown>;
+  onFailure(error: unknown): void;
   /** Tests inject a fake; production uses the browser's EventSource. */
   EventSourceImpl?: typeof EventSource;
 }
@@ -26,11 +36,13 @@ interface RunEventsOptions {
 /**
  * Streams RunEvents over SSE (spec §6). While the browser retries on its own (CONNECTING) it sends
  * Last-Event-ID; if the stream is CLOSED (HTTP error), we reopen with ?after=<last id> on backoff.
+ * Every PROBE_AFTER_CLOSED refusals in a row, runs.get decides: a rejection stops for good.
  */
 export function connectRunEvents(options: RunEventsOptions): { close(): void } {
   const Impl = options.EventSourceImpl ?? EventSource;
   let lastId = options.after;
   let attempt = 0;
+  let refused = 0;
   let closed = false;
   let source: EventSource | null = null;
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -56,6 +68,7 @@ export function connectRunEvents(options: RunEventsOptions): { close(): void } {
     current.addEventListener(RUN_EVENT_SSE_NAME, onMessage);
     current.onopen = () => {
       attempt = 0;
+      refused = 0;
       clearTimeout(graceTimer);
       graceTimer = undefined;
       report("open");
@@ -66,7 +79,21 @@ export function connectRunEvents(options: RunEventsOptions): { close(): void } {
       if (current.readyState === Impl.CLOSED) {
         current.close();
         source = null;
-        retryTimer = setTimeout(open, reconnectDelayMs(attempt++));
+        const delay = reconnectDelayMs(attempt++);
+        refused += 1;
+        if (refused < PROBE_AFTER_CLOSED) {
+          retryTimer = setTimeout(open, delay);
+          return;
+        }
+        refused = 0;
+        options.probe().then(
+          () => {
+            if (!closed) retryTimer = setTimeout(open, delay);
+          },
+          (error: unknown) => {
+            if (!closed) options.onFailure(error);
+          },
+        );
       }
     };
   };

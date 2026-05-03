@@ -34,17 +34,20 @@ class FakeSource extends EventTarget {
 
 const last = () => FakeSource.all.at(-1)!;
 
-function connect(after: string | null = "12") {
+function connect(after: string | null = "12", probe?: () => Promise<unknown>) {
   const records: string[] = [];
   const states: string[] = [];
+  const failures: unknown[] = [];
   const stream = connectRunEvents({
+    probe: probe ?? (() => Promise.resolve()),
+    onFailure: (error) => failures.push(error),
     runId: RUN_ID,
     after,
     onRecord: (r) => records.push(r.id),
     onConnection: (s) => states.push(s),
     EventSourceImpl: FakeSource as unknown as typeof EventSource,
   });
-  return { stream, records, states };
+  return { stream, records, states, failures };
 }
 
 beforeEach(() => {
@@ -105,5 +108,36 @@ describe("connectRunEvents", () => {
     vi.advanceTimersByTime(60_000);
     expect(FakeSource.all).toHaveLength(1);
     expect(states).toEqual([]);
+  });
+
+  it("after 3 refusals in a row, asks runs.get; a refusal there ends the stream (no endless retry)", async () => {
+    const denied = new Error("FORBIDDEN");
+    const probe = vi.fn(() => Promise.reject(denied));
+    const { failures } = connect("12", probe);
+    for (let i = 0; i < 2; i++) {
+      last().fail(true);
+      vi.advanceTimersByTime(reconnectDelayMs(i));
+    }
+    expect(FakeSource.all).toHaveLength(3);
+    expect(probe).not.toHaveBeenCalled();
+    last().fail(true);
+    expect(probe).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(failures).toEqual([denied]));
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSource.all).toHaveLength(3);
+  });
+
+  it("keeps retrying when runs.get answers (the run is fine, the stream blipped)", async () => {
+    const probe = vi.fn(() => Promise.resolve());
+    const { failures } = connect("12", probe);
+    for (let i = 0; i < 2; i++) {
+      last().fail(true);
+      vi.advanceTimersByTime(reconnectDelayMs(i));
+    }
+    last().fail(true);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(reconnectDelayMs(2));
+    expect(FakeSource.all).toHaveLength(4);
+    expect(failures).toEqual([]);
   });
 });

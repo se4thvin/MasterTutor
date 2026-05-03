@@ -23,30 +23,43 @@ export function ThoughtLine({
   label,
   working,
   since,
+  until = null,
 }: {
   label: string;
   working: boolean;
+  /** When this spell of thinking began; stable while it lasts. */
   since: string;
+  /** When it ended; the frozen timer shows until − since. */
+  until?: string | null;
 }) {
   const timerRef = useRef<HTMLSpanElement>(null);
-  const elapsed = useRef(0);
-  const [announce, setAnnounce] = useState(label);
+  // A finished spell is known from its ends, not from the clock (I2).
+  const spent =
+    !working && until !== null ? Math.max(0, Date.parse(until) - Date.parse(since)) : null;
+  const [announce, setAnnounce] = useState(
+    spent === null ? label : `Thought for ${spokenElapsed(spent)}`,
+  );
 
   useEffect(() => {
+    if (spent !== null) {
+      if (timerRef.current) timerRef.current.textContent = formatElapsed(spent);
+      return undefined;
+    }
     const start = Date.parse(since);
     const paint = () => {
-      elapsed.current = Math.max(0, Date.now() - start);
-      if (timerRef.current) timerRef.current.textContent = formatElapsed(elapsed.current);
+      if (timerRef.current) {
+        timerRef.current.textContent = formatElapsed(Math.max(0, Date.now() - start));
+      }
     };
     paint();
     if (!working) return undefined;
     const id = setInterval(paint, TICK_MS);
     return () => clearInterval(id);
-  }, [since, working]);
+  }, [since, working, spent]);
 
   useEffect(() => {
-    setAnnounce(working ? label : `Thought for ${spokenElapsed(elapsed.current)}`);
-  }, [working, label]);
+    setAnnounce(spent === null ? label : `Thought for ${spokenElapsed(spent)}`);
+  }, [spent, label]);
 
   return (
     <div className="tline" data-working={working || undefined}>
@@ -58,7 +71,7 @@ export function ThoughtLine({
         <span className="tline-done">Thought for</span>
       </span>
       <span ref={timerRef} className="tline-timer" aria-hidden="true">
-        0.0s
+        {formatElapsed(spent ?? 0)}
       </span>
       <span className="sr-only" role="status">
         {announce}
