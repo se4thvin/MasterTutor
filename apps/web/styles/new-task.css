@@ -1,3 +1,231 @@
-/* New task composer and options (F3 Task 11). */
+/* New task composer and options (F3 Task 11). Mobile first. */
 @layer components {
+  .nt {
+    padding-bottom: 4rem;
+  }
+  .nt-intro {
+    display: grid;
+    gap: 1.5rem;
+    align-items: center;
+    padding-block: 1.5rem 2rem;
+    @variant lg {
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+      gap: 2.5rem;
+      padding-top: 3.5rem;
+    }
+  }
+  .nt-copy,
+  .nt-hero {
+    min-width: 0;
+  }
+  .nt-hero {
+    display: grid;
+    order: -1;
+    @variant lg {
+      order: 0;
+    }
+  }
+  .nt-title {
+    margin: 0.75rem 0 0;
+    font: 700 clamp(2.5rem, 5.4vw, 4.5rem) / 1 var(--font-display);
+    letter-spacing: -0.04em;
+    color: var(--label);
+    overflow-wrap: anywhere;
+  }
+  .nt-lede {
+    max-width: 32rem;
+    margin: 1rem 0 0;
+    color: var(--label-2);
+    font-size: 1.1875rem;
+    line-height: 1.45;
+  }
+  .nt-composer {
+    margin-top: 2rem;
+    padding: 1.1rem 1.1rem 0.9rem;
+    border-radius: var(--r-xl);
+    background: var(--elevated);
+    box-shadow: var(--e2);
+    &:focus-within {
+      box-shadow:
+        0 0 0 0.25rem var(--tint-wash),
+        0 0 0 0.0625rem var(--tint),
+        var(--e2);
+    }
+  }
+  .nt-goal {
+    width: 100%;
+    min-height: 5.5rem;
+    border: 0;
+    outline: 0;
+    resize: none;
+    background: none;
+    color: var(--label);
+    font: 400 1.1875rem/1.5 var(--font-ui);
+    &::placeholder {
+      color: var(--label-2);
+    }
+  }
+  .nt-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0.25rem 0 0.75rem;
+    padding: 0;
+    list-style: none;
+    & > li {
+      min-width: 0;
+      max-width: 100%;
+    }
+  }
+  .nt-field {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    & input {
+      flex: 1 1 14rem;
+      min-width: 0;
+      min-height: var(--hit);
+      padding: 0 0.75rem;
+      border: 0;
+      border-radius: var(--r-sm);
+      background: var(--fill-2);
+      color: var(--label);
+      font: inherit;
+      &:focus-visible {
+        outline: 0.125rem solid var(--tint);
+        outline-offset: 0.125rem;
+      }
+    }
+  }
+  .nt-error {
+    flex-basis: 100%;
+    margin: 0.25rem 0 0;
+    color: var(--danger);
+    font-size: 0.8125rem;
+  }
+  .nt-note {
+    margin: 0.75rem 0 0;
+    color: var(--label-2);
+    font-size: 0.8125rem;
+  }
+  .nt-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding-top: 0.75rem;
+    border-top: 0.0625rem solid var(--sep);
+  }
+  .nt-spacer {
+    flex: 1;
+  }
+  .nt-suggest {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    & .btn {
+      max-width: 100%;
+      white-space: normal;
+    }
+  }
+  .nt-opts {
+    display: grid;
+    gap: 1.25rem;
+    margin-top: 1.5rem;
+    padding-block: 2rem;
+    border-top: 0.0625rem solid var(--sep);
+    @variant lg {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 2rem;
+    }
+  }
+  .nt-opt {
+    min-width: 0;
+  }
+  .nt-opt-title {
+    margin: 0.5rem 0 0.3rem;
+    color: var(--label);
+    font: 600 1.0625rem/1.3 var(--font-ui);
+    letter-spacing: -0.015em;
+  }
+  .nt-opt-text {
+    margin: 0.75rem 0;
+    color: var(--label-2);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+  .nt-risk {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 0 0.75rem;
+    padding: 0.6rem 0.7rem;
+    border-radius: var(--r-sm);
+    background: var(--warn-wash);
+    color: var(--label);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    & .ic {
+      color: var(--warn);
+    }
+  }
+  .nt-numerals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 1.5rem;
+    margin: 1.25rem 0 0;
+    & > div {
+      display: flex;
+      flex-direction: column-reverse;
+      min-width: 0;
+    }
+    & dt {
+      color: var(--label-2);
+      font-size: 0.75rem;
+    }
+    & dd {
+      margin: 0;
+      color: var(--label);
+      font: 600 2rem/1 var(--font-display);
+      letter-spacing: -0.04em;
+    }
+  }
+  .nt-select {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    color: var(--label-2);
+    font-size: 0.8125rem;
+    & select {
+      flex: 1 1 10rem;
+      min-width: 0;
+      min-height: var(--hit);
+      padding: 0 0.5rem;
+      border: 0;
+      border-radius: var(--r-sm);
+      background: var(--fill-2);
+      color: var(--label);
+      font: inherit;
+    }
+  }
+  /* D44: the bypass acknowledgement, a full-size hit target. */
+  .nt-check {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: var(--hit);
+    margin: 0 0 0.75rem;
+    color: var(--label);
+    font-size: 0.8125rem;
+    & input {
+      flex: none;
+      width: 1.125rem;
+      height: 1.125rem;
+      accent-color: var(--warn);
+    }
+  }
 }
