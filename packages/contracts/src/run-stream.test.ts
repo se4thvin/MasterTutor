@@ -52,6 +52,14 @@ describe("run stream wire format", () => {
     expect(resumeAfter(null, null)).toBeNull();
   });
 
+  it("accepts only canonical bigserial ids: no leading zeros, at most the bigint maximum's digits", () => {
+    expect(resumeAfter("012", null)).toBeNull();
+    expect(resumeAfter("0", null)).toBe("0");
+    expect(resumeAfter("9223372036854775807", null)).toBe("9223372036854775807");
+    expect(resumeAfter("12345678901234567890", null)).toBeNull();
+    expect(() => runEventsPath(runId, "007")).toThrow();
+  });
+
   it("orders bigserial ids numerically, beyond 2^53", () => {
     expect(compareEventIds("9", "10")).toBeLessThan(0);
     expect(compareEventIds("9007199254740993", "9007199254740992")).toBeGreaterThan(0);

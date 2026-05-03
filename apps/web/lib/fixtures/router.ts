@@ -109,6 +109,10 @@ export const fixtureRouter = os.router({
         finishedAt: null,
       };
       state.runs.unshift(run);
+      state.runScope[run.id] = {
+        allowedOrigins: input.allowedOrigins,
+        targetFolderId: input.targetFolderId,
+      };
       return run;
     }),
     list: os.runs.list.handler(({ input, context }) => {
@@ -119,15 +123,17 @@ export const fixtureRouter = os.router({
     }),
     get: os.runs.get.handler(({ input, context }): RunDetail => {
       if (input.runId === RECORDED_RUN_ID) return recordedDetail();
-      const run = stateFor(context.ns).runs.find((r) => r.id === input.runId);
+      const state = stateFor(context.ns);
+      const run = state.runs.find((r) => r.id === input.runId);
       if (!run) throw notFound("Run");
+      const scope = state.runScope[run.id];
       return {
         ...run,
         plan: null,
-        allowedOrigins: [],
+        allowedOrigins: scope?.allowedOrigins ?? [],
         currentUrl: null,
         slotName: null,
-        targetFolderId: null,
+        targetFolderId: scope?.targetFolderId ?? null,
         pendingApprovals: [],
         lastEventId: null,
       };

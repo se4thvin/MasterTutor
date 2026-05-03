@@ -19,8 +19,8 @@ import {
   type VaultSecretField,
 } from "@mastertutor/contracts";
 import { ids } from "./ids.ts";
-import type { FixtureState, NoteRecord } from "./types.ts";
 import { recordedSummary } from "./run-recording.ts";
+import type { FixtureState, NoteRecord } from "./types.ts";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const at = (day: string, time = "17:00:00") => `${day}T${time}.000Z`;
@@ -641,5 +641,6 @@ export function createSeed(): FixtureState {
       concurrency: 6,
     },
     runs: runs(),
+    runScope: {},
   };
 }

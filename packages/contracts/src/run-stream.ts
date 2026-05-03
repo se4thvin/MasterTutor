@@ -9,7 +9,11 @@ import { Uuid } from "./primitives.ts";
 export const RUN_EVENT_SSE_NAME = "run_event";
 /** Browsers send this on automatic reconnect; it wins over the `after` query. */
 export const LAST_EVENT_ID_HEADER = "last-event-id";
-export const EventId = z.string().regex(/^[0-9]{1,19}$/);
+/**
+ * A bigserial id in canonical form (no leading zeros, so length order is numeric order). A 19-digit
+ * value above the bigint maximum still passes; the Phase 7 route clamps or rejects it.
+ */
+export const EventId = z.string().regex(/^(0|[1-9][0-9]{0,18})$/);
 
 export function runEventsPath(runId: string, after: string | null = null): string {
   const base = `/api/runs/${Uuid.parse(runId)}/events`;
