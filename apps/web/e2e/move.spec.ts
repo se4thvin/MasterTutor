@@ -113,6 +113,9 @@ test("a second pick during the receive animation is ignored (Review Focus 2)", a
     await route.continue();
   });
   const { sheet } = await openMoveSheet(page, /Learning-rate warmup/);
+  await expect(sheet.getByRole("button", { name: "Databases" })).toBeVisible();
+  // Hold the receive window open (its end is a timer), so the checks below never race it.
+  await page.clock.install();
   await sheet.getByRole("button", { name: "Papers" }).click();
   await expect(sheet.getByRole("button", { name: "Databases" })).toHaveAttribute(
     "aria-disabled",
@@ -129,6 +132,7 @@ test("a second pick during the receive animation is ignored (Review Focus 2)", a
     ]),
   ).toEqual([true, "rgba(0, 0, 0, 0)"]);
   await sheet.getByRole("button", { name: "Databases" }).click({ force: true });
+  await page.clock.runFor(1_000);
   await expect(sheet).toBeHidden();
   await expect(page.getByRole("group").filter({ hasText: "Moved to Papers" })).toBeVisible();
   expect(moves).toBe(1);

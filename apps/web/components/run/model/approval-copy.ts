@@ -98,10 +98,11 @@ export function requestSummary(request: ApprovalRequest): string {
 
 /** The hosts a sign-in form would post to: one per listed origin, uncapped; junk is "an unknown site". */
 function destinationsOf(postsTo: string): string[] {
-  return postsTo.split(",").map((entry) => {
-    const host = hostAndPath(entry.trim())?.host;
-    return host ? host : "an unknown site";
-  });
+  // A host listed twice (http and https) is one site; the first position is kept (M8).
+  const hosts = postsTo
+    .split(",")
+    .map((entry) => hostAndPath(entry.trim())?.host || "an unknown site");
+  return [...new Set(hosts)];
 }
 
 export function approvalCopy(request: ApprovalRequest): ApprovalCopy {

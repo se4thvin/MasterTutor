@@ -1,7 +1,13 @@
 /** SubmitOtpInput accepts 4–8 digits (Phase 0 dto.ts). */
 const OTP_MIN_DIGITS = 4;
 const OTP_MAX_DIGITS = 8;
-export const OTP_DEFAULT_DIGITS = 6;
+const OTP_DEFAULT_DIGITS = 6;
+
+/** Boxes for a code of `digits` (the vault's PINs and OTPs are 4–8 digits); six by default (M9). */
+export function slotCount(digits?: number): number {
+  if (digits === undefined) return OTP_DEFAULT_DIGITS;
+  return Math.min(OTP_MAX_DIGITS, Math.max(OTP_MIN_DIGITS, Math.round(digits)));
+}
 
 export interface SlotsState {
   slots: string[];

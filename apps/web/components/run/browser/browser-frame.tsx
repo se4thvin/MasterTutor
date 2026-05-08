@@ -96,6 +96,12 @@ export function BrowserFrame(p: BrowserFrameProps) {
           secure={model.secureFillOrigin !== null && originOf(url) === model.secureFillOrigin}
         />
         <div className="run-chrome-end">
+          {model.approvalMode === "bypass" ? (
+            // D44: the indicator travels with the frame into full screen (the header does not).
+            <span className="run-bypass-chip" title="Bypass mode: approvals are automatic">
+              Bypass
+            </span>
+          ) : null}
           <StatePill
             label={state === "paused" ? pausedCopy(model).title : pill.label}
             tone={pill.tone}

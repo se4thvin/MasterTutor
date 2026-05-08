@@ -94,7 +94,8 @@ export function buildCreateRunInput(draft: TaskDraft): CreateRunInput | { error:
   if (bypass && !draft.bypassAcknowledged) {
     return { error: "Confirm that you understand bypass mode before starting." };
   }
-  return CreateRunInput.parse({
+  // Never throws: whatever the schema refuses becomes the form's error (M3).
+  const parsed = CreateRunInput.safeParse({
     goal,
     allowedOrigins: origins,
     budget: draft.budget === "standard" ? draft.standardBudget : BUDGET_PRESETS[draft.budget],
@@ -102,6 +103,7 @@ export function buildCreateRunInput(draft: TaskDraft): CreateRunInput | { error:
     approvalMode: draft.approvalMode,
     ...(bypass ? { bypassAcknowledged: true } : {}),
   });
+  return parsed.success ? parsed.data : { error: "Check the task details and try again." };
 }
 
 /** Copy for a failed runs.create. Server messages are never shown (they may echo input). */
