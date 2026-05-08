@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { RollingNumber } from "@/components/bits/rolling-number.tsx";
@@ -110,8 +111,7 @@ export function UsageView() {
                   {data.perRun.map((r) => (
                     <tr key={r.runId}>
                       <td>
-                        {/* Plain text until F3 builds /runs/<id>. */}
-                        {r.goal}
+                        <Link href={`/runs/${r.runId}`}>{r.goal}</Link>
                       </td>
                       <td>{r.status}</td>
                       <td>{r.steps}</td>

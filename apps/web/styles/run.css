@@ -395,6 +395,8 @@
     height: 100%;
     object-fit: contain;
     opacity: 0;
+    /* Even transparent, it sits over the live frame: it must never take the user's clicks. */
+    pointer-events: none;
     transition-property: opacity;
     transition-duration: var(--motion-dur-panel);
     transition-timing-function: var(--motion-ease-out);
@@ -693,5 +695,133 @@
     color: var(--label);
     font: 400 0.8125rem/1.45 var(--font-ui);
     resize: vertical;
+  }
+  /* Run view page (Task 13). */
+  .run {
+    padding-bottom: 6rem;
+    @variant md {
+      padding-bottom: 4rem;
+    }
+  }
+  .run-head {
+    display: grid;
+    align-items: end;
+    gap: 1rem;
+    padding-block: 1.5rem 1rem;
+    @variant md {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 1.5rem;
+      padding-block: 2.5rem 1.5rem;
+    }
+  }
+  .run-head-text {
+    min-width: 0;
+  }
+  .run-eyebrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0 0 0.6rem;
+  }
+  .run-status {
+    --smark-size: 1rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--label);
+    font: 600 0.8125rem/1.2 var(--font-ui);
+  }
+  .run-meta {
+    display: none;
+    color: var(--label-2);
+    font: 400 0.6875rem/1.4 var(--font-code);
+    overflow-wrap: anywhere;
+    @variant sm {
+      display: inline;
+    }
+  }
+  .run-title {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    color: var(--label);
+    font: 700 clamp(1.75rem, 3.4vw, 2.5rem) / 1.08 var(--font-display);
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .run-body {
+    display: grid;
+    align-items: start;
+    gap: 2rem;
+    @variant lg {
+      grid-template-columns: minmax(0, 1fr) 23.5rem;
+    }
+  }
+  .run-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    min-width: 0;
+  }
+  .run-skel-head {
+    display: block;
+    height: 4rem;
+    margin-block: 2.5rem 1.5rem;
+    border-radius: var(--r-md);
+  }
+  .run-skel-frame {
+    display: block;
+    aspect-ratio: 16 / 10;
+    border-radius: var(--r-frame);
+  }
+  /* Runs list (Task 13, X2). */
+  .run-list {
+    padding-bottom: 5rem;
+  }
+  /* The mark and the text share the row's free width; the goal ellipsizes, never overflows. */
+  .run-list-main {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+  .run-list-text {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+  }
+  /* Two lines at most; wrapping (not a one-line ellipsis) keeps every glyph inside the row. */
+  .run-list-goal {
+    display: -webkit-box;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .run-list-skel {
+    display: block;
+    height: 3.5rem;
+  }
+  /* D44: the bypass badge, persistent in the run header. */
+  .run-bypass {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    max-width: 40rem;
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--r-sm);
+    background: var(--warn-wash);
+    color: var(--label);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    & .ic {
+      flex: none;
+      color: var(--warn);
+    }
   }
 }

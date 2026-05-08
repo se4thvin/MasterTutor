@@ -7,6 +7,7 @@
     "/new": 389.6,
     "/notes/[noteId]": 441.6,
     "/runs": 376.7,
+    "/runs/[runId]": 392.2,
     "/settings": 383.6,
     "/settings/audit": 385.5,
     "/settings/usage": 382.4,

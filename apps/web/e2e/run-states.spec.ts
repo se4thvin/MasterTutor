@@ -1,0 +1,197 @@
+import {
+  RECORDED_RUN_ID,
+  rec,
+  recordedDetail,
+  recordedEvents,
+} from "../lib/fixtures/run-recording.ts";
+import { RpcFailure, emit, frame, gotoRun, rpcCalls } from "./helpers/run.ts";
+import { expect, test } from "./helpers/test.ts";
+
+test.describe("Run view states", () => {
+  test.skip(
+    ({ viewport }) => viewport?.width !== 1440,
+    "state checks run once; layout is Tasks 16 and 18",
+  );
+
+  test("live: origin pill, secure-fill badge, caption and the live iframe", async ({ page }) => {
+    const calls = await gotoRun(page);
+    await expect(frame(page)).toHaveAttribute("data-state", "live");
+    await expect(page.getByTestId("origin-pill")).toContainText("learn.example.edu");
+    await expect(page.getByRole("button", { name: "Filled securely" })).toBeVisible();
+    await expect(page.getByText("Thinking about the next step")).toBeVisible();
+    await expect(page.frameLocator("iframe[title^='Remote browser']").locator("svg")).toBeVisible();
+    expect(rpcCalls(calls, "runs/openLive")).toEqual([{ runId: RECORDED_RUN_ID }]);
+  });
+
+  test("acting: inner ring and the cursor moves, then pulses on a click", async ({ page }) => {
+    await gotoRun(page);
+    const [started, done] = recordedEvents();
+    await emit(page, [started!]);
+    await expect(frame(page)).toHaveAttribute("data-state", "acting");
+    await expect(page.getByText("Ticking the Honor Code box").first()).toBeVisible();
+    await emit(page, [done!]);
+    await expect(page.getByTestId("click-pulse")).toBeAttached();
+  });
+
+  test("a computer step without a pointer kind never pulses (W1)", async ({ page }) => {
+    await gotoRun(page);
+    await emit(page, [
+      rec({
+        type: "step",
+        seq: 13,
+        phase: "act",
+        state: "done",
+        caption: "Signing in",
+        url: null,
+        screenshotKey: null,
+        action: { tool: "computer", summary: "Clicked “Go”", point: { x: 100, y: 100 } },
+      }),
+    ]);
+    await expect(page.getByTestId("click-pulse")).toHaveCount(0);
+  });
+
+  test("approval: the viewport dims", async ({ page }) => {
+    await gotoRun(page);
+    await emit(page, recordedEvents());
+    await expect(frame(page)).toHaveAttribute("data-state", "approval");
+    await expect(page.getByText("Waiting for your approval").first()).toBeVisible();
+  });
+
+  test("control: banner reads 'You're in control · Agent paused · screenshots off'", async ({
+    page,
+  }) => {
+    await gotoRun(page, {
+      detail: recordedDetail({ controller: "user", status: "waiting", waitReason: "takeover" }),
+    });
+    await expect(frame(page)).toHaveAttribute("data-state", "control");
+    await expect(page.getByText("Agent paused · screenshots off")).toBeVisible();
+  });
+
+  test("paused: last masked screenshot, desaturated, with Resume", async ({ page }) => {
+    const calls = await gotoRun(page, {
+      detail: recordedDetail({ status: "sleeping", slotName: null }),
+    });
+    await expect(frame(page)).toHaveAttribute("data-state", "paused");
+    await expect(frame(page).locator("img[src$='/steps/8/screenshot']")).toBeVisible();
+    await expect(page.locator("iframe")).toHaveCount(0);
+    await page.getByRole("button", { name: "Resume" }).click();
+    await expect.poll(() => rpcCalls(calls, "runs/resume").length).toBe(1);
+  });
+
+  test("reconnecting: after the grace period, then recovers and re-opens the live view", async ({
+    page,
+  }) => {
+    const calls = await gotoRun(page);
+    await page.waitForFunction(() => window.__sse.sources.some((s) => s.readyState === 1));
+    await page.evaluate(() => {
+      window.__sse.blockOpen = true;
+      window.__sse.fail(true);
+    });
+    await expect(frame(page)).toHaveAttribute("data-state", "reconnecting", { timeout: 5_000 });
+    await expect(
+      page.getByRole("status").filter({ hasText: "Reconnecting to the browser" }),
+    ).toBeVisible();
+    await page.evaluate(() => window.__sse.openAll());
+    await expect(frame(page)).toHaveAttribute("data-state", "live");
+    await expect.poll(() => rpcCalls(calls, "runs/openLive").length).toBe(2);
+  });
+
+  test("finished runs show the outcome and offer no takeover", async ({ page }) => {
+    await gotoRun(page, { detail: recordedDetail({ status: "completed", slotName: null }) });
+    await expect(frame(page)).toHaveAttribute("data-state", "paused");
+    await expect(page.getByText("Finished").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Take control of the browser" })).toHaveCount(0);
+  });
+
+  test("the live view open in another tab says so and never loops (Review Focus 9)", async ({
+    page,
+  }) => {
+    await page.clock.install();
+    const calls = await gotoRun(page, {
+      handlers: {
+        "runs/openLive": () => {
+          throw new RpcFailure("CONFLICT", 409);
+        },
+      },
+    });
+    await expect(page.getByText("Open in another tab")).toBeVisible();
+    await page.clock.runFor(10_000);
+    expect(rpcCalls(calls, "runs/openLive")).toHaveLength(1);
+    await expect(frame(page)).not.toHaveAttribute("data-state", "reconnecting");
+  });
+
+  test("an unwired live view shows the last screenshot, never Reconnecting (Review Focus 9)", async ({
+    page,
+  }) => {
+    await gotoRun(page, {
+      handlers: {
+        "runs/openLive": () => {
+          throw new RpcFailure("NOT_IMPLEMENTED", 501);
+        },
+      },
+    });
+    await expect(page.getByText("Live view unavailable")).toBeVisible();
+    await expect(frame(page).locator("img[src$='/steps/8/screenshot']")).toBeVisible();
+    await expect(frame(page)).toHaveAttribute("data-state", "live");
+  });
+
+  test("a spoofed path never hides the real host (Review Focus 10)", async ({ page }) => {
+    await gotoRun(page, {
+      detail: recordedDetail({
+        currentUrl: "https://evil.example/learn.example.edu/login?\u202Eexe",
+      }),
+    });
+    const pill = page.getByTestId("origin-pill");
+    await expect(pill.locator(".run-host")).toHaveText("evil.example");
+    expect(await pill.textContent()).not.toContain("\u202E");
+  });
+
+  test("an informational error becomes a toast, not the failure (A7)", async ({ page }) => {
+    await gotoRun(page);
+    await emit(page, [rec({ type: "error", code: "download_blocked", message: "cancelled" })]);
+    await expect(page.getByText("Take over to download files.").first()).toBeVisible();
+    await expect(frame(page)).toHaveAttribute("data-state", "live");
+  });
+
+  test("a bypass run carries a persistent badge, in every state (D44)", async ({ page }) => {
+    await gotoRun(page, { detail: recordedDetail({ approvalMode: "bypass" }) });
+    const badge = page.getByRole("note", { name: "Bypass mode" });
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("Approvals are automatic");
+    await emit(page, [rec({ type: "control", holder: "user" })]);
+    await expect(frame(page)).toHaveAttribute("data-state", "control");
+    await expect(badge).toBeVisible();
+  });
+
+  test("an ask run shows no bypass badge", async ({ page }) => {
+    await gotoRun(page);
+    await expect(page.getByRole("note", { name: "Bypass mode" })).toHaveCount(0);
+  });
+
+  test("a stream the server keeps refusing asks runs.get, and a 404 there ends the view (no endless retry)", async ({
+    page,
+  }) => {
+    let gets = 0;
+    await gotoRun(page, {
+      handlers: {
+        "runs/get": () => {
+          gets += 1;
+          if (gets === 1) return recordedDetail();
+          throw new RpcFailure("NOT_FOUND", 404);
+        },
+      },
+    });
+    // A refused stream never opens: new sources stay CONNECTING until the server answers.
+    await page.evaluate(() => {
+      window.__sse.blockOpen = true;
+    });
+    for (let i = 0; i < 3; i++) {
+      await page.waitForFunction((n) => window.__sse.sources.length >= n, i + 1);
+      await page.evaluate(() => window.__sse.fail(true));
+    }
+    await expect(page.getByRole("alert").filter({ hasText: /couldn't be loaded/ })).toBeVisible({
+      timeout: 15_000,
+    });
+    expect(gets).toBe(2);
+  });
+});
