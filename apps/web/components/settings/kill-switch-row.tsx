@@ -49,7 +49,7 @@ export function KillSwitchRow({ settings }: { settings: SettingsView }) {
         label="Kill switch"
         tone="danger"
         checked={settings.killSwitch}
-        disabled={pending}
+        busy={pending}
         onCheckedChange={(on) => (on ? setConfirm(true) : void apply(false))}
       />
       <ConfirmDialog

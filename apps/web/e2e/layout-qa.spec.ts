@@ -74,4 +74,27 @@ test.describe("layout detector self-test", () => {
       <div style="width:60px;height:24px;overflow:hidden"><input aria-hidden="true" style="position:absolute;width:200px;opacity:0.01" /></div>`);
     expect(await findLayoutIssues(page)).toEqual([]);
   });
+
+  test("a fixed box is clipped only from its containing block up (final M1)", async ({ page }) => {
+    // No ancestor holds it: it is laid out against the screen and painted whole.
+    await page.setContent(`
+      <div style="width:300px;height:200px;overflow:hidden">
+        <div style="position:fixed;left:0;bottom:0;width:400px;height:300px">sheet</div>
+      </div>`);
+    expect(await findLayoutIssues(page)).toEqual([]);
+    // A transformed ancestor holds it; the clipping box above that one does clip it.
+    await page.setContent(`
+      <div style="width:200px;height:100px;overflow:hidden">
+        <div style="transform:translateZ(0)">
+          <div style="position:fixed;top:150px;left:0">Lost text</div>
+        </div>
+      </div>`);
+    expect((await findLayoutIssues(page)).join("\n")).toContain("clipped by");
+    // A size container is a containing block too (layout containment).
+    await page.setContent(`
+      <div style="width:200px;height:100px;overflow:hidden;container-type:size">
+        <div style="position:fixed;top:150px;left:0">Lost text</div>
+      </div>`);
+    expect((await findLayoutIssues(page)).join("\n")).toContain("clipped by");
+  });
 });

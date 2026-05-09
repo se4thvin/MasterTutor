@@ -37,6 +37,14 @@ export function buildFolderTree(folders: readonly FolderView[]): FolderNode[] {
   return build(roots, 1, new Set());
 }
 
+/** One level of the tree under `parentId` (null = top level), in the tree's order. */
+export function childFolders(
+  folders: readonly FolderView[],
+  parentId: string | null,
+): FolderView[] {
+  return folders.filter((f) => f.parentId === parentId).sort(byOrder);
+}
+
 export function folderPath(folders: readonly FolderView[], id: string): FolderView[] {
   const byId = new Map(folders.map((f) => [f.id, f]));
   const path: FolderView[] = [];

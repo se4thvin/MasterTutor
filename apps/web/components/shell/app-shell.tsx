@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { FolderTree } from "@/components/library/folder-tree.tsx";
 import { SearchPalette } from "@/components/library/search-palette.tsx";
+import { PipDock } from "@/components/run/pip/pip-dock.tsx";
 import { useMoveNote } from "@/components/library/use-move-note.ts";
 import { orpc } from "@/lib/api/client.ts";
 import { useHotkey } from "@/lib/hooks/use-hotkey.ts";
@@ -62,10 +63,14 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
           </Suspense>
         }
       />
-      <main id="main" className="main" tabIndex={-1}>
+      {/* tabIndex 0: the skip link's target, and a tab stop so the keyboard can scroll it even
+          when a page puts nothing focusable inside (axe scrollable-region-focusable). */}
+      <main id="main" className="main" tabIndex={0}>
         <KillBanner />
         {children}
       </main>
+      {/* Beside main, not in it: the mini browser is its own region over every page (M2). */}
+      <PipDock />
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
     </div>
   );

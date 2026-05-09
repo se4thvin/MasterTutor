@@ -70,7 +70,15 @@ export type IconName =
   | "usage"
   | "audit"
   | "model"
-  | "budget";
+  | "budget"
+  | "filledSecurely"
+  | "sleeping"
+  | "hand"
+  | "play"
+  | "pause"
+  | "maximize"
+  | "minimize"
+  | "send";
 
 export const SOURCE_KIND_ICON: Record<SourceKind, IconName> = {
   web: "web",

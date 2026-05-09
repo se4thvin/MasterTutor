@@ -10,7 +10,8 @@
  * tokens (styles/overlays.css) and the glyph from <Icon>; springs come from motion-tokens;
  * m.* under LazyMotion; useReducedMotion drops movement (fade only); the countdown pauses on
  * hover, focus, drag, a hidden tab and while the stack is held; inline mode (grid-template-rows animation), the
- * Tailwind arbitrary-value styling and unused props are removed.
+ * Tailwind arbitrary-value styling and unused props are removed. The countdown fuse keeps running
+ * under reduced motion: it is a timer and progress indicator, not decoration.
  */
 import { animate, m, useMotionValue, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useRef, type PointerEvent, type ReactNode } from "react";
