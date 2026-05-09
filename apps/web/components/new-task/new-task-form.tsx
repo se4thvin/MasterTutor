@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { emitHero, heroCaptureFloor } from "@/components/hero/hero-events.ts";
-import { HeroPoster } from "@/components/hero/hero-poster.tsx";
+import { Hero3D } from "@/components/hero/hero-3d.tsx";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
@@ -212,7 +212,7 @@ export function NewTaskForm() {
           </div>
         </div>
         <div className="nt-hero">
-          <HeroPoster />
+          <Hero3D />
         </div>
       </section>
       <OptionsGrid

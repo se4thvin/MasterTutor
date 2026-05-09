@@ -43,7 +43,8 @@
     "rehype-raw": "7.0.0",
     "rehype-sanitize": "6.0.0",
     "remark-gfm": "4.0.1",
-    "remark-math": "6.0.0"
+    "remark-math": "6.0.0",
+    "three": "0.170.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
@@ -52,6 +53,7 @@
     "@types/node": "24.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@types/three": "0.170.0",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3"
   }

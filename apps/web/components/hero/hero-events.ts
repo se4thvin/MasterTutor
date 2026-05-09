@@ -1,5 +1,5 @@
 /** The composer talks to the 3D hero only through these window events; it never imports three. */
-const HERO_EVENTS = {
+export const HERO_EVENTS = {
   type: "hero:type",
   focus: "hero:focus",
   start: "hero:start",
