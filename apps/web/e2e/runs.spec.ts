@@ -39,3 +39,18 @@ test("the runs list pages: Load more fetches the next page (M11)", async ({ page
   await expect(list.getByRole("link")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
 });
+
+test("a run's goal is cleaned like any other untrusted text, in the list and the header (final M11)", async ({
+  page,
+}) => {
+  test.skip(page.viewportSize()?.width !== 1440, "behaviour check runs once");
+  const goal = "Evil\u202Egoal\u200B here";
+  await mockRpc(page, {
+    "runs/list": () => ({ items: [{ ...recordedSummary(), goal }], nextCursor: null }),
+  });
+  await page.goto("/runs");
+  const link = page
+    .getByRole("navigation", { name: "Runs" })
+    .locator(`a[href="/runs/${RECORDED_RUN_ID}"]`);
+  await expect(link.locator(".run-list-goal")).toHaveText("Evilgoal here");
+});

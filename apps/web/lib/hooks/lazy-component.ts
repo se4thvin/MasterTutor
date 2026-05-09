@@ -1,4 +1,5 @@
 import { lazy, useEffect, type ComponentType } from "react";
+import { whenIdle } from "../when-idle.ts";
 
 /**
  * A component that stays out of first-load JS: `Component` renders it through React.lazy, and
@@ -17,15 +18,6 @@ export function lazyComponent<T extends ComponentType<any>>(load: () => Promise<
   const prefetch = () => void fetchChunk().catch(() => undefined);
   return {
     Component: lazy(() => fetchChunk().then((component) => ({ default: component }))),
-    usePrefetch: () =>
-      useEffect(() => {
-        // Safari has no requestIdleCallback; a zero timeout still waits for hydration to finish.
-        if ("requestIdleCallback" in window) {
-          const id = window.requestIdleCallback(prefetch);
-          return () => window.cancelIdleCallback(id);
-        }
-        const timer = setTimeout(prefetch, 0);
-        return () => clearTimeout(timer);
-      }, []),
+    usePrefetch: () => useEffect(() => whenIdle(prefetch), []),
   };
 }

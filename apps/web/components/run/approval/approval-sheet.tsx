@@ -9,6 +9,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
+import { isTyping } from "@/lib/hooks/use-hotkey.ts";
 import type { ApprovalCopy } from "../model/approval-copy.ts";
 import type { PendingApproval } from "../model/run-model.ts";
 
@@ -19,10 +20,6 @@ type Choice = "approve" | "deny" | "edit" | "extend" | "finish";
 const STANDARD_KEYS: Readonly<Record<string, Choice>> = { a: "approve", d: "deny", e: "edit" };
 /** No key cancels a run (S2): Cancel is a button that asks first. */
 const BUDGET_KEYS: Readonly<Record<string, Choice>> = { a: "extend", f: "finish" };
-
-const isTyping = (target: EventTarget | null) =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 interface ApprovalSheetProps {
   runId: string;
@@ -89,7 +86,9 @@ export function ApprovalSheet({
   useEffect(() => {
     const sheet = ref.current;
     const before = document.activeElement;
-    sheet?.focus({ preventScroll: true });
+    // Someone mid-sentence keeps their text field: the alertdialog announces itself, and the
+    // keys below work only inside the sheet, so their next letters never decide it (final I2).
+    if (!isTyping(before)) sheet?.focus({ preventScroll: true });
     const timer = setTimeout(() => setArmed(true), APPROVAL_ARM_MS);
     return () => {
       clearTimeout(timer);
@@ -109,12 +108,9 @@ export function ApprovalSheet({
     const onKey = (event: KeyboardEvent) => {
       if (!armed || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       if (isTyping(event.target) || document.fullscreenElement) return;
-      // A key pressed inside another dialog (Stop, hand back, the cancel confirm) is not for us.
-      const within =
-        event.target instanceof Element
-          ? event.target.closest('[role="dialog"], [role="alertdialog"]')
-          : null;
-      if (within && within !== ref.current) return;
+      // Only a key pressed in the sheet decides it: not one meant for the page, the composer or
+      // another dialog (Stop, hand back, the cancel confirm).
+      if (!(event.target instanceof Node) || !ref.current?.contains(event.target)) return;
       const choice = keys[event.key.toLowerCase()];
       if (!choice) return;
       event.preventDefault();

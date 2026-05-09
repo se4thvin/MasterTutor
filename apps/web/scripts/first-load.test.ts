@@ -106,6 +106,25 @@ describe("measureHeroBundle (F5 P4)", () => {
   });
 });
 
+describe("measureHeroBundle: the whole lazy chunk group (final M4)", () => {
+  it("counts every chunk the hero's import loads, not only the one with three", () => {
+    const { dir } = fakeBuild();
+    writeFileSync(
+      join(dir, "static/chunks/hero.js"),
+      `isWebGLRenderer ${randomBytes(4000).toString("hex")}`,
+    );
+    writeFileSync(join(dir, "static/chunks/scene.js"), randomBytes(3000).toString("hex"));
+    writeFileSync(
+      join(dir, "static/chunks/loader.js"),
+      `t.v(s=>Promise.all(["static/chunks/scene.js","static/chunks/hero.js"].map(s=>t.l(s))))`,
+    );
+    expect(measureHeroBundle(dir).files).toEqual([
+      "static/chunks/hero.js",
+      "static/chunks/scene.js",
+    ]);
+  });
+});
+
 describe("compareHeroBundle", () => {
   it("passes a lazy chunk within the budget", () => {
     expect(compareHeroBundle({ files: ["a.js"], kb: 139.2, leaked: [] }, HERO_BUDGET_KB)).toEqual(

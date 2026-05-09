@@ -113,11 +113,27 @@ function* staticJs(dir: string, base: string): Generator<string> {
   }
 }
 
+/** Turbopack's async loader lists a lazy import's whole chunk group: Promise.all(["static/…js", …]). */
+const CHUNK_GROUP = /Promise\.all\(\[((?:"static\/[^"]+\.js",?)+)\]/g;
+
 export function measureHeroBundle(nextDir: string, marker = "isWebGLRenderer"): HeroBundle {
   const firstLoad = new Set(Object.values(routeFiles(nextDir)).flat());
-  const files = [...staticJs(join(nextDir, "static"), nextDir)]
-    .filter((file) => readFileSync(join(nextDir, file), "utf8").includes(marker))
-    .sort();
+  const sources = new Map(
+    [...staticJs(join(nextDir, "static"), nextDir)].map((file) => [
+      file,
+      readFileSync(join(nextDir, file), "utf8"),
+    ]),
+  );
+  const three = new Set([...sources].filter(([, body]) => body.includes(marker)).map(([f]) => f));
+  // Every chunk loaded together with three counts: the scene modules may be split from it (M4).
+  const hero = new Set(three);
+  for (const body of sources.values()) {
+    for (const match of body.matchAll(CHUNK_GROUP)) {
+      const group = (JSON.parse(`[${match[1]}]`) as string[]).filter((f) => sources.has(f));
+      if (group.some((file) => three.has(file))) for (const file of group) hero.add(file);
+    }
+  }
+  const files = [...hero].sort();
   const bytes = files.reduce(
     (sum, file) => sum + gzipSync(readFileSync(join(nextDir, file))).length,
     0,

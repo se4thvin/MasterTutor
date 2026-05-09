@@ -164,6 +164,9 @@ test.describe("New task", () => {
     // The cases bypass still hands to a person (D44).
     await expect(warning).toContainText("a sign-in form that posts to another site");
     await expect(warning).toContainText("safety warnings it doesn't recognise");
+    // Never lifted, said without contradicting the pause above (final M9).
+    await expect(warning).toContainText("Sign-ins never go to another site without you.");
+    await expect(warning).not.toContainText("Sign-ins only go to their own site");
     await expect(page.getByText("Every step goes ahead without asking")).toHaveCount(0);
     // The consent checkbox is described by the warning it agrees to (M2).
     await expect(page.getByRole("checkbox", { name: /I understand/ })).toHaveAccessibleDescription(

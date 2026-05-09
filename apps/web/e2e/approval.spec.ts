@@ -9,7 +9,7 @@ import {
   recordedEvents,
 } from "../lib/fixtures/run-recording.ts";
 import { RpcFailure, emit, frame, gotoRun, rpcCalls, type RpcCall } from "./helpers/run.ts";
-import { expect, test } from "./helpers/test.ts";
+import { expect, isCompact, test } from "./helpers/test.ts";
 
 const decisions = (calls: RpcCall[]) => rpcCalls(calls, "runs/decideApproval");
 const armed = (page: Page) => expect(page.locator(".run-approval-acts[data-armed]")).toBeVisible();
@@ -271,6 +271,23 @@ test.describe("Approval sheet", () => {
     await emit(page, recordedEvents());
     await armed(page);
     await page.getByLabel("Message the agent").pressSequentially("a dead end");
+    expect(decisions(calls)).toHaveLength(0);
+  });
+
+  test("an approval arriving mid-typing never takes the text field or the letters (final I2)", async ({
+    page,
+  }) => {
+    test.skip(isCompact(page), "the composer is in the Steps sheet on compact widths");
+    const calls = await gotoRun(page);
+    const box = page.getByLabel("Message the agent");
+    await box.click();
+    await box.pressSequentially("I think");
+    await emit(page, recordedEvents());
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    await armed(page);
+    await page.keyboard.type(" a dead end");
+    await expect(box).toBeFocused();
+    await expect(box).toHaveValue("I think a dead end");
     expect(decisions(calls)).toHaveLength(0);
   });
 });
