@@ -1,5 +1,5 @@
 import { createDb, ensureWorkspaceMember, type DbHandle } from "@mastertutor/db";
-import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import { seedRun, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 // Test-only exception (W9): the test plays the agent to prove what web sealed.
 import { openSealed, vaultKeyPairFromPrivate, type VaultKeyPair } from "@mastertutor/sealing/open";
 import { createRouterClient } from "@orpc/server";
@@ -239,5 +239,16 @@ describe("runs.submitOtp", () => {
     await expect(
       client().runs.submitOtp({ runId: "00000000-0000-4000-8000-000000000000", code: "123456" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("refuses a sixth unused code for one run (D25)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "waiting", waitReason: "otp" });
+    for (let i = 0; i < 5; i++)
+      await expect(client().runs.submitOtp({ runId, code: `12345${i}` })).resolves.toEqual({
+        ok: true,
+      });
+    await expect(client().runs.submitOtp({ runId, code: "999999" })).rejects.toMatchObject({
+      code: "TOO_MANY_REQUESTS",
+    });
   });
 });
