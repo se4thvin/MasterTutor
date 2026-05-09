@@ -5,7 +5,7 @@
  * so lazy-loaded code (KaTeX, domMax, three) does not count. Sizes are gzip (Node default level).
  */
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { runInNewContext } from "node:vm";
 import { gzipSync } from "node:zlib";
 
@@ -32,20 +32,12 @@ export function routeOf(manifestKey: string): string {
 
 const toKb = (bytes: number) => Math.round((bytes / 1024) * 10) / 10;
 
-export function measureFirstLoad(nextDir: string): Record<string, number> {
+/** Every route's first-load JS files (root main files + entryJSFiles), relative to nextDir. */
+function routeFiles(nextDir: string): Record<string, string[]> {
   const build = JSON.parse(readFileSync(join(nextDir, "build-manifest.json"), "utf8")) as {
     rootMainFiles: string[];
   };
-  const gzCache = new Map<string, number>();
-  const gz = (file: string) => {
-    let size = gzCache.get(file);
-    if (size === undefined) {
-      size = gzipSync(readFileSync(join(nextDir, file))).length;
-      gzCache.set(file, size);
-    }
-    return size;
-  };
-  const result: Record<string, number> = {};
+  const result: Record<string, string[]> = {};
   for (const path of manifestFiles(join(nextDir, "server", "app"))) {
     // The manifest is a script that assigns globalThis.__RSC_MANIFEST; run it in an empty context.
     const context: { __RSC_MANIFEST?: RscManifest } = {};
@@ -57,10 +49,28 @@ export function measureFirstLoad(nextDir: string): Record<string, number> {
       for (const list of Object.values(manifest.entryJSFiles ?? {})) {
         for (const file of list) if (file.endsWith(".js")) files.add(file.replace(/^\//, ""));
       }
-      result[route] = toKb([...files].reduce((sum, file) => sum + gz(file), 0));
+      result[route] = [...files];
     }
   }
   return result;
+}
+
+export function measureFirstLoad(nextDir: string): Record<string, number> {
+  const gzCache = new Map<string, number>();
+  const gz = (file: string) => {
+    let size = gzCache.get(file);
+    if (size === undefined) {
+      size = gzipSync(readFileSync(join(nextDir, file))).length;
+      gzCache.set(file, size);
+    }
+    return size;
+  };
+  return Object.fromEntries(
+    Object.entries(routeFiles(nextDir)).map(([route, files]) => [
+      route,
+      toKb(files.reduce((sum, file) => sum + gz(file), 0)),
+    ]),
+  );
 }
 
 export function compareFirstLoad(
@@ -81,5 +91,44 @@ export function compareFirstLoad(
       );
     }
   }
+  return findings;
+}
+
+/** Spec §11.2: raw three, tree-shaken, at most 150 kB gz, and only ever loaded lazily. */
+export const HERO_BUDGET_KB = 150;
+
+interface HeroBundle {
+  /** Static chunks that contain three (relative to nextDir), sorted. */
+  files: string[];
+  kb: number;
+  /** Hero chunks that some route loads on first load: three leaked out of the lazy import. */
+  leaked: string[];
+}
+
+function* staticJs(dir: string, base: string): Generator<string> {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) yield* staticJs(path, base);
+    else if (entry.name.endsWith(".js")) yield relative(base, path);
+  }
+}
+
+export function measureHeroBundle(nextDir: string, marker = "isWebGLRenderer"): HeroBundle {
+  const firstLoad = new Set(Object.values(routeFiles(nextDir)).flat());
+  const files = [...staticJs(join(nextDir, "static"), nextDir)]
+    .filter((file) => readFileSync(join(nextDir, file), "utf8").includes(marker))
+    .sort();
+  const bytes = files.reduce(
+    (sum, file) => sum + gzipSync(readFileSync(join(nextDir, file))).length,
+    0,
+  );
+  return { files, kb: toKb(bytes), leaked: files.filter((file) => firstLoad.has(file)) };
+}
+
+export function compareHeroBundle(hero: HeroBundle, budgetKb: number): string[] {
+  if (hero.files.length === 0)
+    return ["hero: no chunk contains three (is the lazy hero import wired?)"];
+  const findings = hero.leaked.map((file) => `hero: three is in first-load JS (${file})`);
+  if (hero.kb > budgetKb) findings.push(`hero: ${hero.kb} kB gz exceeds the ${budgetKb} kB budget`);
   return findings;
 }

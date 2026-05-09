@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { compareFirstLoad, measureFirstLoad, routeOf } from "./first-load.ts";
+import {
+  HERO_BUDGET_KB,
+  compareFirstLoad,
+  compareHeroBundle,
+  measureFirstLoad,
+  measureHeroBundle,
+  routeOf,
+} from "./first-load.ts";
 
 const kb = (bytes: number) => Math.round((bytes / 1024) * 10) / 10;
 
@@ -79,6 +86,41 @@ describe("compareFirstLoad", () => {
   it("asks for a baseline for a new route", () => {
     expect(compareFirstLoad({ "/library": 384.6, "/runs/[runId]": 400 }, baseline)).toEqual([
       "/runs/[runId]: no baseline (run check:first-load -- --write-baseline and commit it)",
+    ]);
+  });
+});
+
+describe("measureHeroBundle (F5 P4)", () => {
+  it("finds the lazy three chunk and reports one that leaked into first load", () => {
+    const { dir } = fakeBuild();
+    writeFileSync(
+      join(dir, "static/chunks/hero.js"),
+      `isWebGLRenderer ${randomBytes(4000).toString("hex")}`,
+    );
+    const lazy = measureHeroBundle(dir);
+    expect(lazy.files).toEqual(["static/chunks/hero.js"]);
+    expect(lazy.leaked).toEqual([]);
+    expect(lazy.kb).toBeGreaterThan(0);
+    writeFileSync(join(dir, "static/chunks/page.js"), "isWebGLRenderer");
+    expect(measureHeroBundle(dir).leaked).toEqual(["static/chunks/page.js"]);
+  });
+});
+
+describe("compareHeroBundle", () => {
+  it("passes a lazy chunk within the budget", () => {
+    expect(compareHeroBundle({ files: ["a.js"], kb: 139.2, leaked: [] }, HERO_BUDGET_KB)).toEqual(
+      [],
+    );
+  });
+  it("names a missing, oversized or leaked hero", () => {
+    expect(compareHeroBundle({ files: [], kb: 0, leaked: [] }, 150)).toEqual([
+      "hero: no chunk contains three (is the lazy hero import wired?)",
+    ]);
+    expect(compareHeroBundle({ files: ["a.js"], kb: 151.3, leaked: [] }, 150)).toEqual([
+      "hero: 151.3 kB gz exceeds the 150 kB budget",
+    ]);
+    expect(compareHeroBundle({ files: ["a.js"], kb: 10, leaked: ["a.js"] }, 150)).toEqual([
+      "hero: three is in first-load JS (a.js)",
     ]);
   });
 });
