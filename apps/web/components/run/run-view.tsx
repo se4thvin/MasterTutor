@@ -11,17 +11,29 @@ import { BrowserFrame } from "./browser/browser-frame.tsx";
 import type { ApprovalDecisionInput } from "@mastertutor/contracts";
 import { ApprovalSheet } from "./approval/approval-sheet.tsx";
 import { approvalCopy } from "./model/approval-copy.ts";
+import { MEDIA } from "@/lib/breakpoints.ts";
+import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
+import { REPLAY_INTERVAL_MS, ReplayScrubber } from "./browser/replay-scrubber.tsx";
+import {
+  summaryLabel,
+  thinkingState,
+  timelineItems,
+  type PendingMessage,
+} from "./model/timeline-items.ts";
+import { BudgetMeters } from "./timeline/budget-meters.tsx";
+import { OtpCard } from "./timeline/otp-card.tsx";
+import { TimelinePanel } from "./timeline/timeline-panel.tsx";
 import { HandBackSheet } from "./browser/hand-back-sheet.tsx";
 import type { LiveStatus } from "./browser/live-frame.tsx";
 import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
-import { INFO_ERROR_COPY, shortRunId } from "./model/copy.ts";
-import { isInformational, latestError, type RunModel } from "./model/run-model.ts";
+import { INFO_ERROR_COPY, hostAndPath, shortRunId } from "./model/copy.ts";
+import { isInformational, isTerminal, latestError, type RunModel } from "./model/run-model.ts";
 import { inControl } from "./model/takeover.ts";
 import { RunHeader } from "./run-header.tsx";
 import { useRun } from "./stream/use-run.ts";
 import { useTakeover } from "./use-takeover.ts";
 
-export function RunView({ runId }: { runId: string; viewerId: string | null }) {
+export function RunView({ runId, viewerId }: { runId: string; viewerId: string | null }) {
   const toast = useToast();
   const { model, connection, loadError, resync } = useRun(runId);
   const { takeover, takeControl, handBack } = useTakeover(runId, model, resync);
@@ -29,6 +41,9 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("off");
   const [handBackOpen, setHandBackOpen] = useState(false);
   const [deciding, setDeciding] = useState<ReadonlySet<string>>(() => new Set());
+  const [pending, setPending] = useState<PendingMessage[]>([]);
+  const [playing, setPlaying] = useState(false);
+  const regular = useMediaQuery(MEDIA.md);
 
   // After a Reconnecting episode, open the live view again (B6 §8).
   const [liveEpoch, setLiveEpoch] = useState(0);
@@ -64,6 +79,45 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
   const replayIndex = shotSteps.findIndex((s) => s.seq === replaySeq);
   const replayStep = replayIndex >= 0 ? (shotSteps[replayIndex] ?? null) : null;
   const replayLabel = replayStep ? `step ${replayIndex + 1}/${shotSteps.length}` : "";
+  useEffect(() => {
+    if (!playing) return undefined;
+    const timer = setInterval(() => {
+      setReplaySeq((seq) => {
+        const next = shotSteps[shotSteps.findIndex((s) => s.seq === seq) + 1];
+        if (!next) {
+          setPlaying(false);
+          return null;
+        }
+        return next.seq;
+      });
+    }, REPLAY_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [playing, shotSteps]);
+  const items = useMemo(
+    () => (view ? timelineItems(view, pending, viewerId) : []),
+    [view, pending, viewerId],
+  );
+  const lastEventId = view?.lastEventId ?? null;
+  const send = useCallback(
+    async (text: string) => {
+      const entry: PendingMessage = {
+        key: crypto.randomUUID(),
+        text,
+        afterEventId: lastEventId,
+        sentAt: new Date().toISOString(),
+      };
+      setPending((p) => [...p, entry]);
+      try {
+        await api.runs.sendMessage({ runId, text });
+        return true;
+      } catch {
+        setPending((p) => p.filter((m) => m.key !== entry.key));
+        toast({ title: "Couldn't send your message. It's back in the box." });
+        return false;
+      }
+    },
+    [runId, lastEventId, toast],
+  );
   const state = view
     ? deriveBrowserState(view, {
         connection,
@@ -127,6 +181,14 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
     );
   }
 
+  const otp =
+    view.status === "waiting" && view.waitReason === "otp" ? (
+      <OtpCard
+        key={`otp-${view.steps.at(-1)?.seq ?? 0}`}
+        runId={runId}
+        host={hostAndPath(view.currentUrl)?.host ?? "The site"}
+      />
+    ) : null;
   const userHasControl = inControl(view.controller, takeover);
   return (
     <>
@@ -184,13 +246,41 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
                   ? approvalCopy(view.approvals[0].request).spotlight
                   : null
               }
+              scrubber={
+                <ReplayScrubber
+                  steps={shotSteps}
+                  seq={replaySeq}
+                  playing={playing}
+                  onSeq={setReplaySeq}
+                  onTogglePlay={() => setPlaying((p) => !p)}
+                />
+              }
               showCallouts
               onHandBack={() => setHandBackOpen(true)}
               onTakeControl={startTakeover}
               onResume={resume}
-              onJumpLive={() => setReplaySeq(null)}
+              onJumpLive={() => {
+                setPlaying(false);
+                setReplaySeq(null);
+              }}
             />
+            {regular ? null : otp}
+            <BudgetMeters usage={view.usage} budget={view.budget} />
           </section>
+          <TimelinePanel
+            runId={runId}
+            items={items}
+            summary={summaryLabel(view)}
+            thinking={thinkingState(view)}
+            otp={regular ? otp : null}
+            replaySeq={replaySeq}
+            onReplay={(seq) => {
+              setPlaying(false);
+              setReplaySeq(seq);
+            }}
+            canMessage={!isTerminal(view.status)}
+            onSend={send}
+          />
         </div>
       </div>
       <HandBackSheet

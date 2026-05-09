@@ -18,7 +18,10 @@ test.describe("Run view states", () => {
     await expect(frame(page)).toHaveAttribute("data-state", "live");
     await expect(page.getByTestId("origin-pill")).toContainText("learn.example.edu");
     await expect(page.getByRole("button", { name: "Filled securely" })).toBeVisible();
-    await expect(page.getByText("Thinking about the next step")).toBeVisible();
+    // The caption (the timeline's ThoughtLine says it too, since Task 15).
+    await expect(
+      page.locator(".run-caption").getByText("Thinking about the next step"),
+    ).toBeVisible();
     await expect(page.frameLocator("iframe[title^='Remote browser']").locator("svg")).toBeVisible();
     expect(rpcCalls(calls, "runs/openLive")).toEqual([{ runId: RECORDED_RUN_ID }]);
   });

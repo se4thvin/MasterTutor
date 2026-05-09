@@ -292,7 +292,7 @@ test.describe("Approval sheet", () => {
     await expect(takeOver).toBeFocused();
   });
 
-  test.fixme("letters typed in the composer never decide (Review Focus 3)", async ({ page }) => {
+  test("letters typed in the composer never decide (Review Focus 3)", async ({ page }) => {
     const calls = await gotoRun(page);
     await emit(page, recordedEvents());
     await armed(page);
