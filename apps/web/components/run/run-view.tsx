@@ -1,44 +1,51 @@
 "use client";
 
+import type { ApprovalDecisionInput } from "@mastertutor/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { api } from "@/lib/api/client.ts";
-import { BrowserFrame } from "./browser/browser-frame.tsx";
-import type { ApprovalDecisionInput } from "@mastertutor/contracts";
-import { ApprovalSheet } from "./approval/approval-sheet.tsx";
-import { approvalCopy } from "./model/approval-copy.ts";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
-import { useCalloutsPreference } from "./callout-preference.ts";
 import { MEDIA } from "@/lib/breakpoints.ts";
 import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
+import { ApprovalSheet } from "./approval/approval-sheet.tsx";
+import { BrowserFrame } from "./browser/browser-frame.tsx";
+import { HandBackSheet } from "./browser/hand-back-sheet.tsx";
+import type { LiveStatus } from "./browser/live-frame.tsx";
 import { REPLAY_INTERVAL_MS, ReplayScrubber } from "./browser/replay-scrubber.tsx";
+import { useCalloutsPreference } from "./callout-preference.ts";
+import { approvalCopy } from "./model/approval-copy.ts";
+import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
+import { INFO_ERROR_COPY, hostAndPath, shortRunId } from "./model/copy.ts";
+import { isInformational, isTerminal, latestError, type RunModel } from "./model/run-model.ts";
+import { inControl } from "./model/takeover.ts";
 import {
   summaryLabel,
   thinkingState,
   timelineItems,
   type PendingMessage,
 } from "./model/timeline-items.ts";
+import { forgetWatchedRun, rememberWatchedRun } from "./pip/watching.ts";
+import { RunHeader } from "./run-header.tsx";
+import { useRun } from "./stream/use-run.ts";
 import { BudgetMeters } from "./timeline/budget-meters.tsx";
 import { OtpCard } from "./timeline/otp-card.tsx";
 import { TimelinePanel } from "./timeline/timeline-panel.tsx";
-import { HandBackSheet } from "./browser/hand-back-sheet.tsx";
-import type { LiveStatus } from "./browser/live-frame.tsx";
-import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
-import { INFO_ERROR_COPY, hostAndPath, shortRunId } from "./model/copy.ts";
-import { isInformational, isTerminal, latestError, type RunModel } from "./model/run-model.ts";
-import { inControl } from "./model/takeover.ts";
-import { RunHeader } from "./run-header.tsx";
-import { useRun } from "./stream/use-run.ts";
 import { useTakeover } from "./use-takeover.ts";
 
 export function RunView({ runId, viewerId }: { runId: string; viewerId: string | null }) {
   const toast = useToast();
   const { model, connection, loadError, resync } = useRun(runId);
   const { takeover, takeControl, handBack } = useTakeover(runId, model, resync);
+  const status = model?.status ?? null;
+  useEffect(() => {
+    if (status === null) return;
+    if (isTerminal(status)) forgetWatchedRun(runId);
+    else rememberWatchedRun(runId);
+  }, [runId, status]);
   const [replaySeq, setReplaySeq] = useState<number | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("off");
   const [handBackOpen, setHandBackOpen] = useState(false);
@@ -107,6 +114,7 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   const lastEventId = view?.lastEventId ?? null;
   const send = useCallback(
     async (text: string) => {
+      // sentAt keeps the pending row's time stable across renders (group B fix).
       const entry: PendingMessage = {
         key: crypto.randomUUID(),
         text,
@@ -143,6 +151,7 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   const resume = useCallback(() => {
     api.runs.resume({ runId }).catch(() => toast({ title: "Couldn't resume the run. Try again." }));
   }, [runId, toast]);
+
   const decide = useCallback(
     (input: ApprovalDecisionInput) => {
       setDeciding((s) => new Set(s).add(input.approvalId));
@@ -323,7 +332,6 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
         destructive
         onConfirm={stop}
       />
-      {/* page-extra */}
     </>
   );
 }

@@ -1379,4 +1379,103 @@
       display: inline-flex;
     }
   }
+  /* PiP mini browser (Task 17). Hit testing follows the scale, so the unscaled box never blocks clicks. */
+  .run-pip {
+    position: fixed;
+    right: 1.25rem;
+    bottom: 4.5rem;
+    z-index: var(--z-pip);
+    pointer-events: none;
+    & > * {
+      pointer-events: auto;
+    }
+  }
+  .run-pip-screen {
+    position: relative;
+    width: 35rem;
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    border-radius: var(--r-frame);
+    background: var(--bg-2);
+    box-shadow: var(--e3);
+    transform-origin: 100% 100%;
+  }
+  .run-pip-shot {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .run-pip-expand {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    &:focus-visible {
+      outline: 0.3rem solid var(--tint);
+      outline-offset: -0.5rem;
+    }
+  }
+  .run-pip-bar {
+    position: absolute;
+    inset: auto 0 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+  .run-pip-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .run-pip-caption {
+    position: absolute;
+    right: 0;
+    bottom: -3.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 15rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--r-md);
+    box-shadow: var(--e2);
+    font-size: 0.75rem;
+    transition-property: opacity;
+    transition-duration: var(--motion-dur-base);
+    transition-timing-function: var(--motion-ease-out);
+    & bdi {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    & i {
+      flex: none;
+      width: 0.45rem;
+      height: 0.45rem;
+      border-radius: 50%;
+      background: var(--signal);
+    }
+    & i[data-tone="tint"] {
+      background: var(--tint);
+    }
+    & i[data-tone="muted"] {
+      background: var(--label-3);
+    }
+    &[data-hidden] {
+      opacity: 0;
+      pointer-events: none;
+    }
+  }
 }

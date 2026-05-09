@@ -51,7 +51,10 @@ test.describe("Takeover and hand back", () => {
       rec({ type: "control", holder: "agent" }),
     ]);
     await expect(frame(page)).toHaveAttribute("data-state", "live");
-    await expect(page.getByText("Couldn't take control. The agent kept it.")).toBeVisible();
+    // The notice toast (the timeline also lists the error since Task 15).
+    await expect(
+      page.getByRole("group").filter({ hasText: "Couldn't take control. The agent kept it." }),
+    ).toBeVisible();
   });
 
   test("names another member's control when takeControl is FORBIDDEN", async ({ page }) => {
