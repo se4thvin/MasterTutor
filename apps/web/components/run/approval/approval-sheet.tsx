@@ -9,7 +9,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
-import { approvalCopy } from "../model/approval-copy.ts";
+import type { ApprovalCopy } from "../model/approval-copy.ts";
 import type { PendingApproval } from "../model/run-model.ts";
 
 /** Keys and buttons stay inert this long after a sheet appears: a keystroke or click meant for something else never decides it (S1). */
@@ -27,6 +27,8 @@ const isTyping = (target: EventTarget | null) =>
 interface ApprovalSheetProps {
   runId: string;
   approval: PendingApproval;
+  /** approvalCopy(approval.request), computed once by the view (M8). */
+  copy: ApprovalCopy;
   count: number;
   onDecide(input: ApprovalDecisionInput): void;
   /** D19: the user may take over instead of deciding; the server supersedes the approval. */
@@ -36,6 +38,7 @@ interface ApprovalSheetProps {
 export function ApprovalSheet({
   runId,
   approval,
+  copy,
   count,
   onDecide,
   onTakeOver,
@@ -46,7 +49,6 @@ export function ApprovalSheet({
   const [editing, setEditing] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [instruction, setInstruction] = useState("");
-  const copy = approvalCopy(approval.request);
   const request = approval.request;
   const screenshot =
     (request.kind === "risky_click" || request.kind === "form_submit") &&
@@ -85,9 +87,20 @@ export function ApprovalSheet({
   };
 
   useEffect(() => {
-    ref.current?.focus({ preventScroll: true });
+    const sheet = ref.current;
+    const before = document.activeElement;
+    sheet?.focus({ preventScroll: true });
     const timer = setTimeout(() => setArmed(true), APPROVAL_ARM_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      // Decided and gone: focus goes back where it was, not to the page body (M4). A next
+      // approval's sheet mounts after this and takes focus itself.
+      const lost =
+        document.activeElement === document.body || sheet?.contains(document.activeElement);
+      if (!lost) return;
+      const back = before instanceof HTMLElement && before.isConnected && before !== document.body;
+      (back ? before : document.getElementById("main"))?.focus({ preventScroll: true });
+    };
   }, []);
 
   useEffect(() => {

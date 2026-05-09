@@ -20,7 +20,8 @@ export function PipDock() {
     if (runId) forgetWatchedRun(runId);
     setRunId(null);
   }, [runId]);
-  if (!regular || !runId || pathname === `/runs/${runId}` || pathname === "/new") return null;
+  // Never over a run's own page, this run's or another's: one stream at a time per view (M3).
+  if (!regular || !runId || pathname.startsWith("/runs/") || pathname === "/new") return null;
   return (
     <Suspense fallback={null}>
       <RunPip key={runId} runId={runId} onGone={gone} />

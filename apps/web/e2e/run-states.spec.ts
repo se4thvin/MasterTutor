@@ -1,4 +1,5 @@
 import {
+  OTHER_RUN_ID,
   RECORDED_RUN_ID,
   rec,
   recordedDetail,
@@ -227,5 +228,29 @@ test.describe("Run view states", () => {
     const sources = await page.evaluate(() => window.__sse.sources.length);
     await page.waitForTimeout(3_000);
     expect(await page.evaluate(() => window.__sse.sources.length)).toBe(sources);
+  });
+
+  test("moving to another run starts from that run's own snapshot (M6)", async ({ page }) => {
+    const other = recordedDetail({ id: OTHER_RUN_ID, lastEventId: "5" });
+    await gotoRun(page, {
+      handlers: {
+        "runs/get": (input) =>
+          (input as { runId: string }).runId === OTHER_RUN_ID ? other : recordedDetail(),
+        "runs/steps": () => ({ items: [] }),
+      },
+    });
+    await emit(page, recordedEvents());
+    // Client-side navigation to the other run (no reload): the runs list link.
+    await page.getByRole("link", { name: "Runs" }).first().click();
+    await page.locator(`a[href="/runs/${OTHER_RUN_ID}"]`).click();
+    await expect(page).toHaveURL(new RegExp(OTHER_RUN_ID));
+    await expect
+      .poll(() => page.evaluate(() => window.__sse.sources.map((source) => source.url)))
+      .toContain(`/api/runs/${OTHER_RUN_ID}/events?after=5`);
+    // It never asked the other run's stream for this run's position first.
+    const urls = await page.evaluate(() => window.__sse.sources.map((source) => source.url));
+    expect(urls.filter((url) => url.includes(OTHER_RUN_ID))).toEqual([
+      `/api/runs/${OTHER_RUN_ID}/events?after=5`,
+    ]);
   });
 });

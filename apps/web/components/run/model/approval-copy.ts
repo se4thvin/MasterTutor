@@ -9,7 +9,7 @@ const MAX_CONTEXT = 240;
 /** The safety-check code for a page that may be steering the agent (prompt injection). */
 const INJECTION_CHECK = "malicious_instructions";
 
-interface ApprovalCopy {
+export interface ApprovalCopy {
   title: string;
   body: string;
   tone: "signal" | "warn";
@@ -87,8 +87,13 @@ export function requestSummary(request: ApprovalRequest): string {
       return `submit a form on ${pageHost(request.url)}`;
     case "download":
       return `download ${untrustedText(request.filename, MAX_LABEL) || "a file"}`;
-    case "credential_first_use":
-      return `sign in as ${untrustedText(request.alias, 64)}`;
+    case "credential_first_use": {
+      const alias = untrustedText(request.alias, 64);
+      // An off-site sign-in names where it went, as its title did (M6).
+      return request.postsTo
+        ? `send your ${alias} sign-in to ${destinationPhrase(destinationsOf(request.postsTo))}`
+        : `sign in as ${alias}`;
+    }
     case "new_origin":
       return `open ${pageHost(request.origin)}`;
     case "budget":
@@ -104,6 +109,9 @@ function destinationsOf(postsTo: string): string[] {
     .map((entry) => hostAndPath(entry.trim())?.host || "an unknown site");
   return [...new Set(hosts)];
 }
+
+const destinationPhrase = (hosts: readonly string[]) =>
+  hosts.length === 1 ? hosts[0] : `${hosts.length} other sites`;
 
 export function approvalCopy(request: ApprovalRequest): ApprovalCopy {
   const none = {
@@ -180,9 +188,7 @@ export function approvalCopy(request: ApprovalRequest): ApprovalCopy {
         return {
           ...none,
           tone: "warn",
-          title: `Send your ${alias} sign-in to ${
-            hosts.length === 1 ? hosts[0] : `${hosts.length} other sites`
-          }?`,
+          title: `Send your ${alias} sign-in to ${destinationPhrase(hosts)}?`,
           body,
           risk: "This form sends your sign-in to a different site than the one you're on. Deny unless you trust it.",
           details: [...details, ...hosts.map((host) => ["Sends to", host] as const)],

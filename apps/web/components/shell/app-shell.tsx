@@ -68,8 +68,9 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
       <main id="main" className="main" tabIndex={0}>
         <KillBanner />
         {children}
-        <PipDock />
       </main>
+      {/* Beside main, not in it: the mini browser is its own region over every page (M2). */}
+      <PipDock />
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
     </div>
   );

@@ -11,11 +11,19 @@ const browserEnv = (): FlushEnv => ({
   timeout: (callback, ms) => setTimeout(callback, ms),
 });
 
+/** A frame that has not come by then never will (the tab was hidden after scheduling). */
+const FRAME_FALLBACK_MS = 100;
+
 /**
  * Applies a batch once per animation frame (A9), but a hidden tab never paints, so there the batch
- * is applied on the next task instead: background tabs still settle the cache (M5).
+ * is applied on the next task instead: background tabs still settle the cache (M5). A tab hidden
+ * after scheduling also gets a timeout behind the frame; `flush` must be safe to call twice.
  */
 export function scheduleFlush(flush: () => void, env: FlushEnv = browserEnv()): void {
-  if (env.hidden) env.timeout(flush, 0);
-  else env.raf(flush);
+  if (env.hidden) {
+    env.timeout(flush, 0);
+    return;
+  }
+  env.raf(flush);
+  env.timeout(flush, FRAME_FALLBACK_MS);
 }

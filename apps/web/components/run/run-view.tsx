@@ -1,15 +1,17 @@
 "use client";
 
 import type { ApprovalDecisionInput } from "@mastertutor/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { api } from "@/lib/api/client.ts";
 import { MEDIA } from "@/lib/breakpoints.ts";
+import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
 import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
 import { ApprovalSheet } from "./approval/approval-sheet.tsx";
 import { BrowserFrame } from "./browser/browser-frame.tsx";
@@ -32,12 +34,18 @@ import { forgetWatchedRun, rememberWatchedRun } from "./pip/watching.ts";
 import { RunHeader } from "./run-header.tsx";
 import { useRun } from "./stream/use-run.ts";
 import { BudgetMeters } from "./timeline/budget-meters.tsx";
-import { OtpCard } from "./timeline/otp-card.tsx";
 import { TimelinePanel } from "./timeline/timeline-panel.tsx";
 import { useTakeover } from "./use-takeover.ts";
 
+/** The OTP card is rare (a site asked for a code): off the run page's first load. */
+const { Component: OtpCard, usePrefetch: usePrefetchOtpCard } = lazyComponent(() =>
+  import("./timeline/otp-card.tsx").then((mod) => mod.OtpCard),
+);
+const ignoreFailure = () => undefined;
+
 export function RunView({ runId, viewerId }: { runId: string; viewerId: string | null }) {
   const toast = useToast();
+  usePrefetchOtpCard();
   const { model, connection, loadError, resync } = useRun(runId);
   const { takeover, takeControl, handBack } = useTakeover(runId, model, resync);
   const status = model?.status ?? null;
@@ -93,20 +101,21 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   const replayIndex = shotSteps.findIndex((s) => s.seq === replaySeq);
   const replayStep = replayIndex >= 0 ? (shotSteps[replayIndex] ?? null) : null;
   const replayLabel = replayStep ? `step ${replayIndex + 1}/${shotSteps.length}` : "";
+  // Each tick advances one shot; past the last one the replay ends. The updater stays pure: the
+  // end is seen below, in an effect, not inside setReplaySeq (M7).
   useEffect(() => {
     if (!playing) return undefined;
     const timer = setInterval(() => {
       setReplaySeq((seq) => {
-        const next = shotSteps[shotSteps.findIndex((s) => s.seq === seq) + 1];
-        if (!next) {
-          setPlaying(false);
-          return null;
-        }
-        return next.seq;
+        const at = shotSteps.findIndex((s) => s.seq === seq);
+        return at < 0 ? null : (shotSteps[at + 1]?.seq ?? null);
       });
     }, REPLAY_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [playing, shotSteps]);
+  useEffect(() => {
+    if (playing && replayStep === null) setPlaying(false);
+  }, [playing, replayStep]);
   const items = useMemo(
     () => (view ? timelineItems(view, pending, viewerId) : []),
     [view, pending, viewerId],
@@ -199,12 +208,19 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
 
   const otp =
     view.status === "waiting" && view.waitReason === "otp" ? (
-      <OtpCard
-        key={`otp-${view.steps.at(-1)?.seq ?? 0}`}
-        runId={runId}
-        host={hostAndPath(view.currentUrl)?.host ?? "The site"}
-      />
+      <ChunkBoundary what="the code box" onFailed={ignoreFailure}>
+        <Suspense fallback={null}>
+          <OtpCard
+            key={`otp-${view.steps.at(-1)?.seq ?? 0}`}
+            runId={runId}
+            host={hostAndPath(view.currentUrl)?.host ?? "The site"}
+          />
+        </Suspense>
+      </ChunkBoundary>
     ) : null;
+  const approval = state === "approval" ? (view.approvals[0] ?? null) : null;
+  // One copy per render, shared by the sheet and the frame's spotlight (M8).
+  const copy = approval ? approvalCopy(approval.request) : null;
   const userHasControl = inControl(view.controller, takeover);
   return (
     <>
@@ -261,22 +277,19 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
               liveStatus={liveStatus}
               onLiveStatus={setLiveStatus}
               approval={
-                state === "approval" && view.approvals[0] ? (
+                approval && copy ? (
                   <ApprovalSheet
-                    key={view.approvals[0].id}
+                    key={approval.id}
                     runId={runId}
-                    approval={view.approvals[0]}
+                    approval={approval}
+                    copy={copy}
                     count={view.approvals.length}
                     onDecide={decide}
                     onTakeOver={startTakeover}
                   />
                 ) : null
               }
-              spotlight={
-                state === "approval" && view.approvals[0]
-                  ? approvalCopy(view.approvals[0].request).spotlight
-                  : null
-              }
+              spotlight={copy?.spotlight ?? null}
               scrubber={
                 <ReplayScrubber
                   steps={shotSteps}
@@ -287,6 +300,7 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
                 />
               }
               showCallouts={callouts}
+              announceCaption={!regular}
               onHandBack={() => setHandBackOpen(true)}
               onTakeControl={startTakeover}
               onResume={resume}
