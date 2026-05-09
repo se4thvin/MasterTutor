@@ -11,6 +11,8 @@ import { BrowserFrame } from "./browser/browser-frame.tsx";
 import type { ApprovalDecisionInput } from "@mastertutor/contracts";
 import { ApprovalSheet } from "./approval/approval-sheet.tsx";
 import { approvalCopy } from "./model/approval-copy.ts";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
+import { useCalloutsPreference } from "./callout-preference.ts";
 import { MEDIA } from "@/lib/breakpoints.ts";
 import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
 import { REPLAY_INTERVAL_MS, ReplayScrubber } from "./browser/replay-scrubber.tsx";
@@ -44,6 +46,11 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   const [pending, setPending] = useState<PendingMessage[]>([]);
   const [playing, setPlaying] = useState(false);
   const regular = useMediaQuery(MEDIA.md);
+  const [callouts, setCallouts] = useCalloutsPreference();
+  const [stopOpen, setStopOpen] = useState(false);
+  const stop = useCallback(() => {
+    api.runs.cancel({ runId }).catch(() => toast({ title: "Couldn't stop the run. Try again." }));
+  }, [runId, toast]);
 
   // After a Reconnecting episode, open the live view again (B6 §8).
   const [liveEpoch, setLiveEpoch] = useState(0);
@@ -195,7 +202,14 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
       <Toolbar>
         <Crumbs items={crumbs} />
         <ToolbarSpacer />
-        {/* toolbar-extra */}
+        <Button
+          variant="plain"
+          className="run-callout-toggle"
+          aria-pressed={callouts}
+          onClick={() => setCallouts(!callouts)}
+        >
+          Callouts
+        </Button>
         {userHasControl ? (
           <Button
             variant="primary"
@@ -214,6 +228,14 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
             Take over
           </Button>
         )}
+        <Button
+          variant="plain"
+          icon="stop"
+          disabled={isTerminal(view.status)}
+          onClick={() => setStopOpen(true)}
+        >
+          Stop
+        </Button>
       </Toolbar>
       <div className="wrap run">
         <RunHeader model={view} state={state} />
@@ -255,7 +277,7 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
                   onTogglePlay={() => setPlaying((p) => !p)}
                 />
               }
-              showCallouts
+              showCallouts={callouts}
               onHandBack={() => setHandBackOpen(true)}
               onTakeControl={startTakeover}
               onResume={resume}
@@ -290,6 +312,16 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
           setHandBackOpen(false);
           handBack(note);
         }}
+      />
+      <ConfirmDialog
+        open={stopOpen}
+        onOpenChange={setStopOpen}
+        title="Stop this run?"
+        description="The agent stops now. Everything it captured stays in the draft note."
+        confirmLabel="Stop run"
+        cancelLabel="Keep running"
+        destructive
+        onConfirm={stop}
       />
       {/* page-extra */}
     </>
