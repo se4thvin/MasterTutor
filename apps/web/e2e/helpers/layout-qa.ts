@@ -24,14 +24,47 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
       return r.width > 0 && r.height > 0;
     };
 
+    // A position: fixed box is laid out against the screen, so an overflow ancestor clips it only
+    // when that ancestor is its containing block (a transform, filter, contain, … on it). The
+    // compact approval sheet is one: it sits inside the frame's markup but rises from the screen.
+    const holdsFixed = (s: CSSStyleDeclaration): boolean =>
+      s.transform !== "none" ||
+      s.translate !== "none" ||
+      s.scale !== "none" ||
+      s.rotate !== "none" ||
+      s.perspective !== "none" ||
+      s.filter !== "none" ||
+      s.backdropFilter !== "none" ||
+      /paint|layout|strict|content/.test(s.contain) ||
+      /transform|filter|perspective/.test(s.willChange);
+    const isFixed = (el: Element) => getComputedStyle(el).position === "fixed";
+
     // scrollWidth also counts ::before/::after overflow (the 44px hit areas), which is not text spilling.
-    // Measuring the real content with a Range ignores pseudo-elements.
-    const contentSpills = (el: Element, style: CSSStyleDeclaration): boolean => {
+    // Measuring the real content with a Range ignores pseudo-elements. Fixed descendants are not
+    // this box's content (see holdsFixed), so they are measured out.
+    const hasFixedInside = (el: Element) => Array.from(el.querySelectorAll("*")).some(isFixed);
+    const contentRight = (el: Element): number => {
       const range = document.createRange();
-      range.selectNodeContents(el);
-      const content = range.getBoundingClientRect();
+      if (!hasFixedInside(el)) {
+        range.selectNodeContents(el);
+        return range.getBoundingClientRect().right;
+      }
+      let right = Number.NEGATIVE_INFINITY;
+      for (const child of Array.from(el.childNodes)) {
+        if (child instanceof Element && isFixed(child)) continue;
+        if (child instanceof Element && hasFixedInside(child)) {
+          right = Math.max(right, child.getBoundingClientRect().right, contentRight(child));
+          continue;
+        }
+        range.selectNode(child);
+        const r = range.getBoundingClientRect();
+        if (r.width > 0 || r.height > 0) right = Math.max(right, r.right);
+      }
+      return right;
+    };
+    const contentSpills = (el: Element, style: CSSStyleDeclaration): boolean => {
       const box = el.getBoundingClientRect();
-      return content.right > box.right - Number.parseFloat(style.borderRightWidth) + TOL;
+      return contentRight(el) > box.right - Number.parseFloat(style.borderRightWidth) + TOL;
     };
 
     // Text-only content: an ellipsis ancestor truncates it on purpose; anything else it clips is a defect.
@@ -78,6 +111,7 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
     );
     for (const el of elements) {
       const style = getComputedStyle(el);
+      const fixed = style.position === "fixed";
       if (
         style.display !== "inline" &&
         style.whiteSpace === "nowrap" &&
@@ -112,6 +146,7 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
         parent = parent.parentElement
       ) {
         const ps = getComputedStyle(parent);
+        if (fixed && !holdsFixed(ps)) continue;
         const clipX = ps.overflowX !== "visible";
         const clipY = ps.overflowY !== "visible";
         if (!clipX && !clipY) continue;
