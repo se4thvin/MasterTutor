@@ -4,6 +4,7 @@ import { getDb } from "../db.ts";
 import { getSealer, type Sealer } from "../vault/sealer.ts";
 import { liveOs as os } from "./live-os.ts";
 import { createRunProcedures } from "./runs.ts";
+import { createSettingsProcedures } from "./settings.ts";
 import { createVaultProcedures } from "./vault.ts";
 
 /** What the live router reads, each on first use (importing it never reads env or opens the DB). */
@@ -28,6 +29,7 @@ const notWired = (): never => {
 function createLiveRouter(deps: LiveRouterDeps) {
   const vault = createVaultProcedures({ sealer: deps.sealer, db: deps.db });
   const runs = createRunProcedures({ db: deps.db });
+  const settings = createSettingsProcedures({ db: deps.db });
   return os.router({
     runs: {
       ...runs,
@@ -54,12 +56,7 @@ function createLiveRouter(deps: LiveRouterDeps) {
       delete: os.folders.delete.handler(notWired),
     },
     vault: vault.vault,
-    settings: {
-      get: os.settings.get.handler(notWired),
-      update: os.settings.update.handler(notWired),
-      setKillSwitch: os.settings.setKillSwitch.handler(notWired),
-      usage: os.settings.usage.handler(notWired),
-    },
+    settings,
     assets: { url: os.assets.url.handler(notWired) },
     benchmarks: {
       list: os.benchmarks.list.handler(notWired),
