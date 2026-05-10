@@ -1,7 +1,7 @@
 import { decodeRunEventData, type RunEvent } from "@mastertutor/contracts";
-import { createDb, emitRunEvent, runs, type DbHandle } from "@mastertutor/db";
+import { createDb, emitRunEvent, runs, workspaceMembers, type DbHandle } from "@mastertutor/db";
 import { seedMember, seedRun, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runEventStream } from "./event-stream.ts";
 
@@ -217,5 +217,24 @@ describe("GET /api/runs/:id/events (Task 0D)", () => {
     } finally {
       enqueue.mockRestore();
     }
+  });
+
+  it("closes an open stream on the heartbeat once the viewer is no longer a member", async () => {
+    const member = await seedMember(owner.db, { workspaceId, role: "member" });
+    const run = await seedRun(owner.db, { workspaceId });
+    await emit(run, { type: "user_message", text: "hi" });
+    const { response } = open(run, { viewer: member.userId, heartbeatMs: 50 });
+    const res = await response;
+    await read(res, (t) => idsIn(t).length === 1);
+    await owner.db
+      .delete(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, member.userId),
+        ),
+      );
+    const tail = await read(res, () => false, 3_000);
+    expect(tail.ended).toBe(true);
   });
 });
