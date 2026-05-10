@@ -197,9 +197,13 @@ export const fixtureRouter = os.router({
       unfinishedRun(stateFor(context.ns), input.runId);
       return { ok: true as const };
     }),
-    decideApproval: os.runs.decideApproval.handler(({ input }) => {
+    decideApproval: os.runs.decideApproval.handler(({ input, context }) => {
       // The recorded run's approval is the only one fixture mode has.
       if (input.approvalId !== RECORDED_APPROVAL_ID) throw notFound("Approval");
+      const decided = stateFor(context.ns).decidedApprovals;
+      if (decided.includes(input.approvalId))
+        throw new ORPCError("CONFLICT", { message: RUN_MESSAGES.approvalDecided });
+      decided.push(input.approvalId);
       return { ok: true as const };
     }),
     submitOtp: os.runs.submitOtp.handler(({ input, context }) => {

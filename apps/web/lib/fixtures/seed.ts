@@ -643,5 +643,6 @@ export function createSeed(): FixtureState {
     },
     runs: runs(),
     runScope: {},
+    decidedApprovals: [],
   };
 }
