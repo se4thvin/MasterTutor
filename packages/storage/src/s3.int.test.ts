@@ -72,4 +72,14 @@ describe("Storage against Garage", () => {
       web.put("assets/x/forbidden", "nope", { contentType: "text/plain" }),
     ).rejects.toThrow();
   });
+
+  it("streams an object", async () => {
+    await agent.put("assets/stream-test", new Uint8Array([1, 2, 3]), {
+      contentType: "application/octet-stream",
+    });
+    const bytes = new Uint8Array(
+      await new Response(await agent.getStream("assets/stream-test")).arrayBuffer(),
+    );
+    expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+  });
 });

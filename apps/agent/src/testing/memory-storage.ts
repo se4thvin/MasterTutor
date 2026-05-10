@@ -18,6 +18,12 @@ export function createMemoryStorage(): Storage & { objects: Map<string, Uint8Arr
       if (!value) throw new Error(`missing object ${key}`);
       return value;
     },
+    async getStream(key: string) {
+      const value = objects.get(key);
+      if (!value) throw new Error(`missing object ${key}`);
+      // A copy: Blob takes only ArrayBuffer-backed views, and the map may hold a shared one.
+      return new Blob([new Uint8Array(value)]).stream();
+    },
     async head(key: string): Promise<ObjectHead | null> {
       const value = objects.get(key);
       return value

@@ -36,6 +36,8 @@ export interface Storage {
   readonly bucket: string;
   put(key: string, body: Uint8Array | string, options: PutOptions): Promise<void>;
   getBytes(key: string): Promise<Uint8Array>;
+  /** Streams an object, so web never buffers a large PDF per request (preflight S8). */
+  getStream(key: string): Promise<ReadableStream<Uint8Array>>;
   head(key: string): Promise<ObjectHead | null>;
   delete(key: string): Promise<void>;
   presignGet(key: string, ttlSeconds: number): Promise<string>;
@@ -80,6 +82,12 @@ export function createStorage(config: StorageConfig): Storage {
       const response = await client.send(new GetObjectCommand({ Bucket, Key: key }));
       if (!response.Body) throw new Error("object has no body");
       return response.Body.transformToByteArray();
+    },
+    async getStream(key) {
+      assertKey(key);
+      const response = await client.send(new GetObjectCommand({ Bucket, Key: key }));
+      if (!response.Body) throw new Error("object has no body");
+      return response.Body.transformToWebStream() as ReadableStream<Uint8Array>;
     },
     async head(key) {
       assertKey(key);
