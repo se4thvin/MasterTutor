@@ -32,11 +32,12 @@ import {
 import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { ServiceError } from "../service-error.ts";
 import type { RunScope } from "./create-run.ts";
+import { RUN_MESSAGES } from "./messages.ts";
 import { approvalViewOf, runSummaryOf, stepViewOf } from "./views.ts";
 
 const TERMINAL: ReadonlySet<RunStatus> = new Set(TERMINAL_RUN_STATUSES);
 const missingRun = () => new ServiceError("not_found", "That run doesn't exist.");
-const finishedRun = () => new ServiceError("conflict", "The run has already finished.");
+const finishedRun = () => new ServiceError("conflict", RUN_MESSAGES.runFinished);
 const inScope = (scope: RunScope, runId: string) =>
   and(eq(runs.id, runId), eq(runs.workspaceId, scope.workspaceId));
 
@@ -249,7 +250,7 @@ export async function decideRunApproval(
       .where(eq(approvals.id, input.approvalId))
       .for("update");
     if (!approval || approval.status !== "pending")
-      throw new ServiceError("conflict", "This approval was already decided.");
+      throw new ServiceError("conflict", RUN_MESSAGES.approvalDecided);
     if (TERMINAL.has(run.status)) throw finishedRun();
     if (input.budgetChoice !== null && approval.kind !== "budget")
       throw new ServiceError("invalid", "Only a budget approval takes a budget choice.");

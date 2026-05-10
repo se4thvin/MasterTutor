@@ -14,6 +14,7 @@ import { ORPCError, implement } from "@orpc/server";
 import { buildNoteMarkdown } from "../export/note-markdown.ts";
 import { canCreateFolder, canMoveFolder, descendantIds, folderPath } from "../folders/tree.ts";
 import { requireViewer } from "../server/rpc/require-viewer.ts";
+import { RUN_MESSAGES } from "../server/runs/messages.ts";
 import { FIXTURE_ASSETS } from "./assets.ts";
 import { ids } from "./ids.ts";
 import {
@@ -59,7 +60,7 @@ function assertFolder(state: FixtureState, folderId: string | null): void {
 }
 
 const TERMINAL: ReadonlySet<RunStatus> = new Set(TERMINAL_RUN_STATUSES);
-const runFinished = () => new ORPCError("CONFLICT", { message: "The run has already finished." });
+const runFinished = () => new ORPCError("CONFLICT", { message: RUN_MESSAGES.runFinished });
 
 /** A fixture run: seeded or created, or the recorded run (always running). Unknown ids are NOT_FOUND. */
 function fixtureRun(
@@ -122,7 +123,7 @@ export const fixtureRouter = os.router({
       const state = stateFor(context.ns);
       if (state.settings.killSwitch)
         throw new ORPCError("CONFLICT", {
-          message: "The kill switch is on. Turn it off to start a run.",
+          message: RUN_MESSAGES.killSwitchOn,
         });
       assertFolder(state, input.targetFolderId);
       const run: RunSummary = {
