@@ -1,4 +1,4 @@
-import { decodeRunEventData, type RunEvent } from "@mastertutor/contracts";
+import { RunEventRecord, decodeRunEventData, type RunEvent } from "@mastertutor/contracts";
 import { createDb, emitRunEvent, runs, workspaceMembers, type DbHandle } from "@mastertutor/db";
 import { seedMember, seedRun, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { and, eq } from "drizzle-orm";
@@ -236,5 +236,21 @@ describe("GET /api/runs/:id/events (Task 0D)", () => {
       );
     const tail = await read(res, () => false, 3_000);
     expect(tail.ended).toBe(true);
+  });
+
+  it("validates each record once on the hot path", async () => {
+    const run = await seedRun(owner.db, { workspaceId });
+    for (let i = 0; i < 3; i++) await emit(run, { type: "user_message", text: `v${i}` });
+    const parse = vi.spyOn(RunEventRecord, "parse");
+    const safeParse = vi.spyOn(RunEventRecord, "safeParse");
+    try {
+      const { abort, response } = open(run);
+      await read(await response, (t) => idsIn(t).length === 3);
+      abort.abort();
+      expect(parse.mock.calls.length + safeParse.mock.calls.length).toBe(3);
+    } finally {
+      parse.mockRestore();
+      safeParse.mockRestore();
+    }
   });
 });

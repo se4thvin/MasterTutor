@@ -1,7 +1,6 @@
 import {
   EventId,
   LAST_EVENT_ID_HEADER,
-  RunEventRecord,
   TERMINAL_RUN_STATUSES,
   Uuid,
   compareEventIds,
@@ -123,18 +122,24 @@ export async function runEventStream(
       let ended = false;
       for (const row of rows) {
         last = row.id;
-        const record = RunEventRecord.safeParse({
-          id: row.id,
-          runId,
-          at: row.at.toISOString(),
-          event: row.payload,
-        });
-        // A row this version cannot read is skipped, never sent half-formed or allowed to stall the stream.
-        if (!record.success) continue;
+        // encodeRunEventSse is the one validation. A row this version cannot read is skipped,
+        // never sent half-formed or allowed to stall the stream.
+        let text: string;
+        try {
+          text = encodeRunEventSse({
+            id: row.id,
+            runId,
+            at: row.at.toISOString(),
+            event: row.payload,
+          });
+        } catch {
+          continue;
+        }
         await ready();
         if (closed) return;
-        send(encodeRunEventSse(record.data));
-        const event = record.data.event;
+        send(text);
+        // Valid, since it just encoded.
+        const event = row.payload;
         if (event.type === "status" && TERMINAL.has(event.status)) ended = true;
       }
       if (ended) return stop();
