@@ -9,3 +9,9 @@ export const OBJECT_HEADERS: Record<string, string> = {
   "Cross-Origin-Resource-Policy": "same-origin",
   "Referrer-Policy": "no-referrer",
 };
+
+/**
+ * The one Cache-Control for stored objects: a browser never keeps a masked screenshot (or any
+ * object) after sign-out (coordinator ruling, Phase 7 group 0 review). B2's object routes use it.
+ */
+export const OBJECT_CACHE = "private, no-store";

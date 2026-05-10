@@ -1,9 +1,16 @@
 import { createHash } from "node:crypto";
 import { ApprovalRequest, Uuid } from "@mastertutor/contracts";
-import { approvals, runSteps, runs, workspaceMembers, type Database } from "@mastertutor/db";
+import {
+  approvals,
+  memberOfRunWorkspace,
+  runSteps,
+  runs,
+  workspaceMembers,
+  type Database,
+} from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
 import { and, eq } from "drizzle-orm";
-import { OBJECT_HEADERS } from "../library/objects.ts";
+import { OBJECT_CACHE, OBJECT_HEADERS } from "../library/objects.ts";
 
 export interface ScreenshotDeps {
   db: Database;
@@ -13,12 +20,11 @@ export interface ScreenshotDeps {
 
 /** run_steps.seq is an int4: at most 9 digits, canonical (no sign, no leading zero). */
 const SEQ = /^(0|[1-9][0-9]{0,8})$/;
-/** Masked screenshots are never kept by a browser cache, so signing out leaves none behind (coordinator ruling). */
-const CACHE = "private, no-store";
 const status = (code: number) =>
-  new Response(null, { status: code, headers: { ...OBJECT_HEADERS, "Cache-Control": CACHE } });
-const memberOf = (userId: string) =>
-  and(eq(workspaceMembers.workspaceId, runs.workspaceId), eq(workspaceMembers.userId, userId));
+  new Response(null, {
+    status: code,
+    headers: { ...OBJECT_HEADERS, "Cache-Control": OBJECT_CACHE },
+  });
 
 /**
  * Streams one masked step screenshot. The key comes from a row, never from the request, and must
@@ -32,7 +38,7 @@ async function serve(
 ): Promise<Response> {
   if (!key || !key.startsWith(objectKeys.stepScreenshotPrefix(runId))) return status(404);
   const etag = `"${createHash("sha256").update(key).digest("hex").slice(0, 32)}"`;
-  const common = { ...OBJECT_HEADERS, ETag: etag, "Cache-Control": CACHE };
+  const common = { ...OBJECT_HEADERS, ETag: etag, "Cache-Control": OBJECT_CACHE };
   if (request.headers.get("if-none-match") === etag)
     return new Response(null, { status: 304, headers: common });
   let body: ReadableStream<Uint8Array>;
@@ -61,7 +67,7 @@ export async function stepScreenshotResponse(
     .select({ key: runSteps.screenshotKey })
     .from(runSteps)
     .innerJoin(runs, eq(runs.id, runSteps.runId))
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .where(and(eq(runSteps.runId, run.data), eq(runSteps.seq, Number(seq))));
   return serve(deps, request, run.data, row?.key);
 }
@@ -82,7 +88,7 @@ export async function approvalScreenshotResponse(
     .select({ request: approvals.request })
     .from(approvals)
     .innerJoin(runs, eq(runs.id, approvals.runId))
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .where(and(eq(approvals.id, approval.data), eq(approvals.runId, run.data)));
   const parsed = ApprovalRequest.safeParse(row?.request);
   const key =
