@@ -13,9 +13,10 @@ export interface ScreenshotDeps {
 
 /** run_steps.seq is an int4: at most 9 digits, canonical (no sign, no leading zero). */
 const SEQ = /^(0|[1-9][0-9]{0,8})$/;
-/** Revalidate every time, so signing out takes effect at once (B2's object rule). */
-const CACHE = "private, no-cache";
-const status = (code: number) => new Response(null, { status: code, headers: OBJECT_HEADERS });
+/** Masked screenshots are never kept by a browser cache, so signing out leaves none behind (coordinator ruling). */
+const CACHE = "private, no-store";
+const status = (code: number) =>
+  new Response(null, { status: code, headers: { ...OBJECT_HEADERS, "Cache-Control": CACHE } });
 const memberOf = (userId: string) =>
   and(eq(workspaceMembers.workspaceId, runs.workspaceId), eq(workspaceMembers.userId, userId));
 
