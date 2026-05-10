@@ -157,4 +157,39 @@ describe("GET /api/runs/:id/events (Task 0D)", () => {
     expect(idsIn(seen.text)).toEqual([good]);
     abort.abort();
   });
+
+  it("delivers every event in id order when a later id commits first (one run-row lock per writer)", async () => {
+    const run = await seedRun(owner.db, { workspaceId });
+    await emit(run, { type: "slot", slotName: "browser-1" });
+    const { abort, response } = open(run);
+    const res = await response;
+    await read(res, (t) => idsIn(t).length === 1);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let firstId: string | undefined;
+    let emitted!: () => void;
+    const firstEmitted = new Promise<void>((resolve) => (emitted = resolve));
+    // Transaction A takes the earlier id and stays open.
+    const first = web.db.transaction(async (tx) => {
+      firstId = await emitRunEvent(tx, run, { type: "user_message", text: "earlier" });
+      emitted();
+      await gate;
+    });
+    await firstEmitted;
+    // Transaction B takes the later id; without the lock it commits while A is still open.
+    const second = web.db.transaction((tx) =>
+      emitRunEvent(tx, run, { type: "user_message", text: "later" }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    release();
+    const [, secondId] = await Promise.all([first, second]);
+    const seen = await read(
+      res,
+      (t) => idsIn(t).includes(firstId!) && idsIn(t).includes(secondId),
+      3_000,
+    );
+    const order = idsIn(seen.text);
+    expect(order.indexOf(firstId!)).toBeLessThan(order.indexOf(secondId));
+    abort.abort();
+  });
 });
