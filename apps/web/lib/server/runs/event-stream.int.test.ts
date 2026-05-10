@@ -2,7 +2,7 @@ import { decodeRunEventData, type RunEvent } from "@mastertutor/contracts";
 import { createDb, emitRunEvent, runs, type DbHandle } from "@mastertutor/db";
 import { seedMember, seedRun, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runEventStream } from "./event-stream.ts";
 
 let tdb: TestDatabase;
@@ -198,5 +198,24 @@ describe("GET /api/runs/:id/events (Task 0D)", () => {
     expect((await open(run, { lastEventId: "abc" }).response).status).toBe(400);
     expect((await open(run, { lastEventId: "01" }).response).status).toBe(400);
     expect((await open(run, { lastEventId: "12345678901234567890" }).response).status).toBe(400);
+  });
+
+  it("enqueues only what the reader asks for (backpressure), then delivers everything", async () => {
+    const run = await seedRun(owner.db, { workspaceId });
+    const ids: string[] = [];
+    for (let i = 0; i < 20; i++) ids.push(await emit(run, { type: "user_message", text: `m${i}` }));
+    const enqueue = vi.spyOn(ReadableStreamDefaultController.prototype, "enqueue");
+    try {
+      const { abort, response } = open(run);
+      const res = await response;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // A stalled reader holds at most the retry hint and one record, never the whole log.
+      expect(enqueue.mock.calls.length).toBeLessThanOrEqual(2);
+      const all = await read(res, (t) => idsIn(t).length === ids.length);
+      expect(idsIn(all.text)).toEqual(ids);
+      abort.abort();
+    } finally {
+      enqueue.mockRestore();
+    }
   });
 });

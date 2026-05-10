@@ -94,6 +94,11 @@ export async function runEventStream(
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let unlisten: (() => Promise<void>) | null = null;
   let controller!: ReadableStreamDefaultController<Uint8Array>;
+  /** Resolved by pull(): the reader wants more. A stalled reader holds one record, not the log. */
+  let demand: (() => void) | null = null;
+  const wanted = () => (controller.desiredSize ?? 0) > 0;
+  const ready = () =>
+    closed || wanted() ? Promise.resolve() : new Promise<void>((resolve) => (demand = resolve));
 
   const send = (text: string) => {
     if (!closed) controller.enqueue(encoder.encode(text));
@@ -102,6 +107,8 @@ export async function runEventStream(
     if (closed) return;
     closed = true;
     clearInterval(heartbeat);
+    demand?.();
+    demand = null;
     request.signal.removeEventListener("abort", stop);
     void unlisten?.().catch(() => undefined);
     try {
@@ -124,6 +131,8 @@ export async function runEventStream(
         });
         // A row this version cannot read is skipped, never sent half-formed or allowed to stall the stream.
         if (!record.success) continue;
+        await ready();
+        if (closed) return;
         send(encodeRunEventSse(record.data));
         const event = record.data.event;
         if (event.type === "status" && TERMINAL.has(event.status)) ended = true;
@@ -164,10 +173,17 @@ export async function runEventStream(
         stop();
         return;
       }
-      heartbeat = setInterval(() => send(": ping\n\n"), deps.heartbeatMs ?? SSE_HEARTBEAT_MS);
+      // A reader that is behind already has bytes queued; a ping would only add to them.
+      heartbeat = setInterval(() => {
+        if (wanted()) send(": ping\n\n");
+      }, deps.heartbeatMs ?? SSE_HEARTBEAT_MS);
       schedule();
       // An already finished run closes once its tail is sent, even without a status event in it.
       if (finished) chain = chain.then(stop);
+    },
+    pull() {
+      demand?.();
+      demand = null;
     },
     cancel() {
       stop();
