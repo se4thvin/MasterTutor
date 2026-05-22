@@ -1152,3 +1152,37 @@ describe("B6 seams, fix round 1", () => {
     expect(await row(run.id)).toMatchObject({ controller: "agent", controlUserId: null });
   });
 });
+
+describe("B6: a hand back the live view cannot complete (A12 carry-over)", () => {
+  it("ends the run with the guard held instead of looping when onAgentControl fails", async () => {
+    let takeBacks = 0;
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async () => ({ ok: true }),
+          onAgentControl: async () => {
+            takeBacks += 1;
+            throw new Error("n.eko unreachable");
+          },
+        },
+      },
+    });
+    const { run, browser } = await queue([click, click, done]);
+    browser.computerHook = (_actions, signal) =>
+      new Promise<never>((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      );
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), { label: "held" });
+    browser.computerHook = null;
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "failed", "failed closed");
+    expect((await row(run.id)).error).toMatchObject({ code: "control_restore_failed" });
+    expect(takeBacks).toBe(1);
+    expect(browser.computerRuns).toHaveLength(1);
+  });
+});
