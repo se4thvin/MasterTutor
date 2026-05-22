@@ -26,7 +26,7 @@ import { createMemoryStorage } from "../../apps/agent/src/testing/memory-storage
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
 import type { Scenario } from "../llm-mock/src/scenario.ts";
 import { startLlmMock, type LlmMock } from "../llm-mock/src/server.ts";
-import { BEHAVIOUR_SLOTS, SITE, cdpBaseUrlForTests } from "./constants.ts";
+import { BEHAVIOUR_DOWNLOADS, BEHAVIOUR_SLOTS, SITE, cdpBaseUrlForTests } from "./constants.ts";
 import { behaviourEnv } from "./env.ts";
 
 const log = createLogger({ service: "behaviour", level: "silent" });
@@ -78,7 +78,7 @@ export async function startBehaviourAgent(
         leaseMs: 3_000,
         heartbeatMs: 1_000,
         sweepMs: 500,
-        downloadsDir: "/tmp/mastertutor-behaviour-downloads",
+        downloadsDir: BEHAVIOUR_DOWNLOADS,
         // The next file must start on idle slots: wait for every restart (production bounds this).
         shutdownDrainMs: 90_000,
         ...options.config,
