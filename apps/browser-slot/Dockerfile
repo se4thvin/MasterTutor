@@ -1,6 +1,6 @@
 # Browser slot (spec §3.1, run 15 §8): n.eko v3.1.6 (Apache-2.0, amd64+arm64) + headed
 # Chromium with its sandbox + socat CDP proxy + an iptables ingress/egress filter.
-FROM ghcr.io/m1k1o/neko/chromium:3.1.6
+FROM ghcr.io/m1k1o/neko/chromium:3.1.6@sha256:2471119c7b4010067f76f3421a78a8bcf35e3c223b2d1f4db084914ec915fb30
 
 RUN set -eux; \
     apt-get update; \

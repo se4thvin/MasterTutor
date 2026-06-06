@@ -1,3 +1,5 @@
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -35,6 +37,8 @@ export interface ObjectHead {
 export interface Storage {
   readonly bucket: string;
   put(key: string, body: Uint8Array | string, options: PutOptions): Promise<void>;
+  /** Streams a local file in without buffering it (downloads up to 200 MiB, spec §10.2.9). */
+  putFile(key: string, path: string, options: PutOptions): Promise<void>;
   getBytes(key: string): Promise<Uint8Array>;
   /** Streams an object, so web never buffers a large PDF per request (preflight S8). */
   getStream(key: string): Promise<ReadableStream<Uint8Array>>;
@@ -72,6 +76,20 @@ export function createStorage(config: StorageConfig): Storage {
           Bucket,
           Key: key,
           Body: body,
+          ContentType: options.contentType,
+          Metadata: options.sha256 ? { sha256: options.sha256 } : undefined,
+        }),
+      );
+    },
+    async putFile(key, path, options) {
+      assertKey(key);
+      const { size } = await stat(path);
+      await client.send(
+        new PutObjectCommand({
+          Bucket,
+          Key: key,
+          Body: createReadStream(path),
+          ContentLength: size,
           ContentType: options.contentType,
           Metadata: options.sha256 ? { sha256: options.sha256 } : undefined,
         }),

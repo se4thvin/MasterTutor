@@ -44,6 +44,7 @@ export const RUN_EVENT_TYPES = [
   "budget",
   "user_message",
   "download_ready",
+  "download_pending",
   "error",
   "filed",
   "model_fallback",
@@ -86,6 +87,16 @@ export const RunEvent = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("budget"), usage: Usage, budget: Budget }),
   z.object({ type: z.literal("user_message"), text: z.string().min(1).max(4_000) }),
+  /**
+   * A download made while a person held control, waiting for them to keep or discard it at
+   * hand-back. Nothing is stored or shown to the agent until it is kept.
+   */
+  z.object({
+    type: z.literal("download_pending"),
+    downloadId: Uuid,
+    filename: z.string().max(255),
+    bytes: z.number().int().nonnegative(),
+  }),
   z.object({
     type: z.literal("download_ready"),
     downloadId: Uuid,

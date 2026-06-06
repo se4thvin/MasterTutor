@@ -7,6 +7,7 @@ import {
   livePath,
   liveRouterRule,
   liveSlotCookiePattern,
+  liveUploadRouterRule,
   runIdFromLivePath,
 } from "./live.ts";
 
@@ -69,6 +70,13 @@ describe("live view contracts", () => {
     );
     expect(LIVE_STRIP_REGEX).toBe("^/live/[0-9a-f-]{36}");
     expect(() => liveRouterRule("browser-1", "bad host`")).toThrow();
+  });
+
+  it("renders the upload rule: the same slot match, narrowed to n.eko's upload endpoints", () => {
+    expect(liveUploadRouterRule("browser-2", "notes.example.com")).toBe(
+      "Host(`notes.example.com`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\\s*)live_slot=browser-2\\.`)",
+    );
+    expect(() => liveUploadRouterRule("browser-1", "bad host`")).toThrow();
   });
 
   it("points ForwardAuth at web's static cdp address, never the ambiguous `web` name (D41)", () => {

@@ -11,7 +11,7 @@ import { NekoLoginError, deriveNekoPassword, loginNeko } from "@mastertutor/cont
 import { getRunForMember, type Database } from "@mastertutor/db";
 import { liveSetCookies, signLiveSlot } from "./cookie.ts";
 
-interface LiveDeps {
+export interface LiveDeps {
   db: Database;
   nekoMemberSecret: string;
   liveCookieSecret: string;
@@ -20,7 +20,7 @@ interface LiveDeps {
   nowSeconds?: () => number;
 }
 
-class LiveAccessError extends Error {
+export class LiveAccessError extends Error {
   readonly code: "not_found" | "in_use" | "unavailable";
   constructor(code: "not_found" | "in_use" | "unavailable") {
     super(`live view ${code}`);
