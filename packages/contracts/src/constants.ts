@@ -12,6 +12,11 @@ export const MODELS = {
 
 export const EMBEDDING_DIMENSIONS = 1536;
 export const VIEWPORT = { width: 1280, height: 800 } as const;
+/**
+ * Bytes one live-view upload may carry, all files together (spec §10.2.8). The client refuses
+ * more; Traefik's live upload route enforces the same limit (maxRequestBodyBytes, A14).
+ */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_CONCURRENCY = 6;
 export const NOTIFY_MAX_BYTES = 200;
 

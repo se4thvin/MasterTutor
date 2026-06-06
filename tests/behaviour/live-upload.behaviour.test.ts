@@ -2,7 +2,7 @@ import { deriveNekoPassword, loginNeko } from "@mastertutor/contracts/server";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
-import { dropFiles, uploadToFileDialog } from "../../apps/web/lib/live/upload.ts";
+import { dropFiles } from "../../apps/web/lib/live/upload.ts";
 import {
   BEHAVIOUR_NEKO_ADMIN_SECRET,
   BEHAVIOUR_NEKO_MEMBER_SECRET,
@@ -50,8 +50,21 @@ afterAll(async () => {
   await browser?.close(); // connectOverCDP: disconnects Playwright, the slot browser keeps running
 });
 
+/** n.eko's file-chooser endpoint, called raw: the web offers no dialog upload in v1. */
+async function dialogStatus(token: string): Promise<number> {
+  const form = new FormData();
+  form.append("files", new File(["hello"], "notes.txt", { type: "text/plain" }), "notes.txt");
+  const response = await fetch(`${base}/api/room/upload/dialog`, {
+    method: "POST",
+    body: form,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await response.body?.cancel();
+  return response.status;
+}
+
 describe("user uploads through n.eko (spec §10.2.8)", () => {
-  it("fills an open file chooser only while the user holds control", async () => {
+  it("accepts a drop only while the user holds control, before and after", async () => {
     const token = await loginNeko({
       baseUrl: base,
       username: "user",
@@ -64,34 +77,9 @@ describe("user uploads through n.eko (spec §10.2.8)", () => {
     });
     const options = { base: `${base}/`, headers: { authorization: `Bearer ${token}` } };
     const file = () => new File(["hello"], "notes.txt", { type: "text/plain" });
-
-    await admin("POST", "/api/room/control/take");
-    expect(await uploadToFileDialog(runId, [file()], options)).toBe("not_in_control");
-    expect(await uploadToFileDialog(runId, [file()], { base: `${base}/` })).toBe("signed_out");
-
-    await admin("POST", "/api/members/user", { can_host: true });
-    await admin("POST", "/api/room/control/give/user");
-    expect(await uploadToFileDialog(runId, [file()], options)).toBe("no_file_dialog");
-
     await page.goto(`${SITE}/upload`);
     await page.bringToFront();
-    // A trusted CDP click opens Chromium's native chooser (Playwright intercepts only with a
-    // filechooser listener); n.eko detects the dialog itself, so no window title is matched.
-    await page.click("#file");
-    // n.eko 3.1.6 sees the dialog (no longer 422) but its xdotool fill fails with this image's GTK
-    // chooser (BadWindow after the first Return, HTTP 500): see the A9–A12 report. Uploads go
-    // through drop until that is fixed upstream; this pins the detection.
-    const dialogOutcome = await waitFor(
-      async () => {
-        const outcome = await uploadToFileDialog(runId, [file()], options);
-        return outcome === "no_file_dialog" ? null : outcome;
-      },
-      { label: "n.eko detected the open file chooser", timeoutMs: 15_000, intervalMs: 500 },
-    );
-    expect(["uploaded", "failed"]).toContain(dialogOutcome);
-    await page.reload();
-
-    // Drop onto the file input, at its position on the 1280×800 remote screen.
+    // The file input's centre on the 1280×800 remote screen, where a drop lands.
     const point = await page.evaluate(() => {
       const box = document.querySelector("#file")!.getBoundingClientRect();
       return {
@@ -99,15 +87,44 @@ describe("user uploads through n.eko (spec §10.2.8)", () => {
         y: window.screenY + window.outerHeight - window.innerHeight + box.top + box.height / 2,
       };
     });
+    const fileInInput = () =>
+      page.evaluate(
+        () => (document.querySelector("#file") as HTMLInputElement).files?.[0]?.name ?? null,
+      );
+
+    // Before the give: the agent hosts, so n.eko refuses the user's drop (I4).
+    await admin("POST", "/api/room/control/take");
+    expect(await dropFiles(runId, [file()], point, options)).toBe("not_in_control");
+    expect(await dropFiles(runId, [file()], point, { base: `${base}/` })).toBe("signed_out");
+    expect(await fileInInput()).toBeNull();
+
+    await admin("POST", "/api/members/user", { can_host: true });
+    await admin("POST", "/api/room/control/give/user");
     expect(await dropFiles(runId, [file()], point, options)).toBe("uploaded");
-    expect(
-      await waitFor(
-        () =>
-          page.evaluate(
-            () => (document.querySelector("#file") as HTMLInputElement).files?.[0]?.name ?? null,
-          ),
-        { label: "file in the input", timeoutMs: 5_000 },
-      ),
-    ).toBe("notes.txt");
+    expect(await waitFor(fileInInput, { label: "file in the input", timeoutMs: 5_000 })).toBe(
+      "notes.txt",
+    );
+
+    // After the hand back (the agent takes the host back and revokes can_host): refused again.
+    await admin("POST", "/api/room/control/take");
+    await admin("POST", "/api/members/user", { can_host: false });
+    await page.reload();
+    expect(await dropFiles(runId, [file()], point, options)).toBe("not_in_control");
+    expect(await fileInInput()).toBeNull();
+
+    // Upstream pin: n.eko detects an open native chooser (no longer 422) but cannot fill it in this
+    // image (500); see the A9–A12 report. When this starts answering 2xx, revisit the dialog path.
+    await admin("POST", "/api/members/user", { can_host: true });
+    await admin("POST", "/api/room/control/give/user");
+    expect(await dialogStatus(token)).toBe(422);
+    await page.click("#file");
+    const detected = await waitFor(
+      async () => {
+        const status = await dialogStatus(token);
+        return status === 422 ? null : status;
+      },
+      { label: "n.eko detected the open file chooser", timeoutMs: 15_000, intervalMs: 500 },
+    );
+    expect(detected).toBe(500);
   });
 });
