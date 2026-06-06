@@ -95,6 +95,7 @@ describe("DownloadIngestor over B1's download gate (spec §9, §10.2.9)", () => 
     const { ingestor, slot, finished, dbTouched } = await setup();
     await ingestor.attach(slot);
     expect(finished.listener).not.toBeNull();
+    dbTouched.length = 0; // attach discards a crashed lease's leftovers (N4); count from here
     // Filing it would read the database first: it must be dropped before that.
     const download = {
       url: "https://x.test/a",
