@@ -119,7 +119,8 @@ describe("createLiveHooks: the n.eko side of B1's control lock", () => {
       ok: false,
       code: "takeover_failed",
     });
-    expect(calls).toEqual([`give ${SLOT} user_1`, `take ${SLOT}`]);
+    // No take here: B1's revert calls onAgentControl, which takes the host back fail-closed.
+    expect(calls).toEqual([`give ${SLOT} user_1`]);
     userGoesIdle();
     await pause(100);
     expect(calls).not.toContain(`idle hand-back ${RUN}`);
@@ -177,7 +178,7 @@ describe("createLiveHooks: the n.eko side of B1's control lock", () => {
     const started = performance.now();
     await hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: true });
     expect(performance.now() - started).toBeLessThan(1_000);
-    expect(calls).toEqual([`detach ${RUN}`, `take ${SLOT}`]);
+    expect(calls).toEqual(["downloads off", `detach ${RUN}`, `take ${SLOT}`]);
   });
 
   it("hand back is idempotent: a second hand back takes the host again and denies downloads again", async () => {
@@ -233,7 +234,7 @@ describe("createLiveHooks: the n.eko side of B1's control lock", () => {
   it("an unreleased stop only cleans up and never touches n.eko", async () => {
     const { hooks, calls } = harness();
     await hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: false });
-    expect(calls).toEqual([`detach ${RUN}`]);
+    expect(calls).toEqual(["downloads off", `detach ${RUN}`]);
   });
 });
 

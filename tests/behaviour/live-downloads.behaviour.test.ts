@@ -196,6 +196,54 @@ describe("downloads (spec §10.2.9; v1: only the member in control downloads)", 
     expect(await rowsFor(runId)).toHaveLength(1);
   });
 
+  it("tells the user when a download cannot be stored, and keeps nothing (review minor)", async () => {
+    const failing = createDownloadIngestor({
+      db: agentDb.db,
+      storage: {
+        ...createMemoryStorage(),
+        putFile: () => Promise.reject(new Error("Garage unavailable")),
+      },
+      log,
+      localRoot: BEHAVIOUR_DOWNLOADS_DIR,
+      dirMode: 0o777,
+    });
+    // A fresh workspace: dedupe must not find this file already stored by an earlier case.
+    const other = await seedMember(owner.db);
+    const runId = await seedRun(owner.db, {
+      workspaceId: other.workspaceId,
+      status: "waiting",
+      waitReason: "takeover",
+    });
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: other.userId })
+      .where(eq(runs.id, runId));
+    await leaseSlotForTest(owner.db, SLOT, runId);
+    await failing.attach({
+      runId,
+      workspaceId: other.workspaceId,
+      slotName: SLOT,
+      session,
+      browserCdp: () => session.browserCdp(),
+    });
+    try {
+      await failing.userControl(runId, true);
+      await clickDownload("notes");
+      await waitFor(
+        async () =>
+          (await eventsFor(runId)).some((e) => e.type === "error" && e.code === "download_failed"),
+        { label: "download_failed event", timeoutMs: 15_000 },
+      );
+      expect(await rowsFor(runId)).toHaveLength(0);
+      await waitFor(async () => (await localFiles(runId)).length === 0, {
+        label: "local copy deleted",
+      });
+    } finally {
+      await failing.userControl(runId, false);
+      await failing.detach(runId);
+    }
+  });
+
   it("an inline PDF the agent opens is not a download (B5 capture path)", async () => {
     const before = storage.objects.size;
     const runId = await leasedRun("agent");
