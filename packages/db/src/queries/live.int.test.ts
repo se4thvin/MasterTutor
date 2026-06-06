@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { decodeNotify } from "@mastertutor/contracts";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,7 +13,15 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from "../testing.ts";
-import { findAssetBySha, latestDownloadApprover, recordDownload } from "./downloads.ts";
+import {
+  discardDownload,
+  fileKeptDownload,
+  findAssetBySha,
+  latestDownloadApprover,
+  pendingDownloads,
+  recordDownload,
+  recordPendingDownload,
+} from "./downloads.ts";
 import { canAccessLiveSlot, getRunForMember, requestHandBack, requestTakeover } from "./live.ts";
 
 let testDb: TestDatabase;
@@ -365,5 +374,60 @@ describe("download records (agent role)", () => {
       },
     ] as never);
     expect(await latestDownloadApprover(agent.db, runId)).toBe(member.userId);
+  });
+
+  it("holds a download made during control as pending; hand-back keeps only the listed ones (keep or discard)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const [kept, dropped, otherRun] = [randomUUID(), randomUUID(), randomUUID()];
+    const elsewhere = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    for (const [id, run] of [
+      [kept, runId],
+      [dropped, runId],
+      [otherRun, elsewhere],
+    ] as const)
+      await agent.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId: run,
+          filename: `${id.slice(0, 4)}.txt`,
+          bytes: 5,
+          approvedBy: member.userId,
+        }),
+      );
+    // Nothing pending is a stored asset yet.
+    expect((await pendingDownloads(agent.db, runId)).map((d) => d.id).sort()).toEqual(
+      [kept, dropped].sort(),
+    );
+    expect(
+      await requestHandBack(web.db, {
+        runId,
+        userId: member.userId,
+        note: null,
+        keep: [kept, otherRun],
+      }),
+    ).toEqual({ ok: true, via: "control" });
+    const pending = await pendingDownloads(agent.db, runId);
+    expect(pending.find((d) => d.id === kept)?.keptAt).not.toBeNull();
+    expect(pending.find((d) => d.id === dropped)?.keptAt).toBeNull();
+    // Another run's download is never decided through this run's hand-back.
+    expect((await pendingDownloads(agent.db, elsewhere))[0]?.keptAt).toBeNull();
+
+    const filed = await agent.db.transaction((tx) =>
+      fileKeptDownload(tx, {
+        downloadId: kept,
+        runId,
+        workspaceId: member.workspaceId,
+        sha256: "d".repeat(64),
+        bucket: "mastertutor",
+        key: `downloads/${runId}/dddddddddddd-kept.txt`,
+        mime: "text/plain",
+        sourceUrl: null,
+      }),
+    );
+    await agent.db.transaction((tx) => discardDownload(tx, runId, dropped));
+    expect(await pendingDownloads(agent.db, runId)).toEqual([]);
+    const rows = await owner.db.select().from(downloads).where(eq(downloads.runId, runId));
+    expect(rows).toEqual([expect.objectContaining({ id: kept, assetId: filed.assetId })]);
   });
 });

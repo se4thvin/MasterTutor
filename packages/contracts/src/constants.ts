@@ -17,6 +17,8 @@ export const VIEWPORT = { width: 1280, height: 800 } as const;
  * more; Traefik's live upload route enforces the same limit (maxRequestBodyBytes, A14).
  */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** Downloads a person may make in one run while holding control (B1's gate cancels the rest). */
+export const MAX_USER_DOWNLOADS_PER_RUN = 20;
 export const DEFAULT_CONCURRENCY = 6;
 export const NOTIFY_MAX_BYTES = 200;
 

@@ -11,6 +11,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { browserSlots, runs, workspaceMembers } from "../schema/index.ts";
 import { notifyRunControl, returnControlToAgent } from "./control.ts";
+import { keepPendingDownloads } from "./downloads.ts";
 import { emitRunEvent } from "./events.ts";
 
 const TERMINAL: ReadonlySet<string> = new Set(TERMINAL_RUN_STATUSES);
@@ -159,7 +160,7 @@ export async function requestTakeover(
  */
 export async function requestHandBack(
   db: Database,
-  input: { runId: string; userId: string; note: string | null },
+  input: { runId: string; userId: string; note: string | null; keep?: readonly string[] },
 ): Promise<ControlRequestResult> {
   return db.transaction(async (tx): Promise<ControlRequestResult> => {
     const run = await lockMemberRun(tx, input.runId, input.userId);
@@ -167,6 +168,8 @@ export async function requestHandBack(
     if (TERMINAL.has(run.status)) return { ok: false, reason: "finished" };
     if (run.controller === "user" && run.controlUserId !== input.userId && run.role !== "owner")
       return { ok: false, reason: "not_controller" };
+    // Committed with the hand-back, so the agent files exactly these and discards the rest.
+    await keepPendingDownloads(tx, input.runId, input.keep ?? []);
     const changed = run.controller === "user" && (await returnControlToAgent(tx, input.runId));
     if (input.note) await emitRunEvent(tx, input.runId, { type: "user_message", text: input.note });
     if (changed || input.note) await notifyRunControl(tx, input.runId);
