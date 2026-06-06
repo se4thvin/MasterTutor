@@ -168,8 +168,11 @@ export async function requestHandBack(
     if (TERMINAL.has(run.status)) return { ok: false, reason: "finished" };
     if (run.controller === "user" && run.controlUserId !== input.userId && run.role !== "owner")
       return { ok: false, reason: "not_controller" };
-    // Committed with the hand-back, so the agent files exactly these and discards the rest.
-    await keepPendingDownloads(tx, input.runId, input.keep ?? []);
+    // Only the holder's own hand-back decides what is kept, in the same transaction that passes
+    // control to the agent: after an idle hand-back, or when an owner ends someone else's
+    // takeover, the list is ignored and everything held is discarded (N1).
+    if (run.controller === "user" && run.controlUserId === input.userId)
+      await keepPendingDownloads(tx, input.runId, input.keep ?? []);
     const changed = run.controller === "user" && (await returnControlToAgent(tx, input.runId));
     if (input.note) await emitRunEvent(tx, input.runId, { type: "user_message", text: input.note });
     if (changed || input.note) await notifyRunControl(tx, input.runId);

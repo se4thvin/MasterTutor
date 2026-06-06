@@ -96,7 +96,12 @@ describe("DownloadIngestor over B1's download gate (spec §9, §10.2.9)", () => 
     await ingestor.attach(slot);
     expect(finished.listener).not.toBeNull();
     // Filing it would read the database first: it must be dropped before that.
-    const download = { url: "https://x.test/a", filename: "a", by: "user" as const };
+    const download = {
+      url: "https://x.test/a",
+      filename: "a",
+      by: "user" as const,
+      approvedBy: null,
+    };
     finished.listener!({ ...download, id: "../../etc/passwd" });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(dbTouched).toEqual([]);

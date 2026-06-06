@@ -33,7 +33,7 @@ export interface DownloadFolder {
 const LATE_SWEEP_MS = 1_000;
 /** How long an allowance waits for its download to start. */
 const ALLOW_WINDOW_MS = 60_000;
-type Allowance = { match: DownloadMatch; timer: NodeJS.Timeout };
+type Allowance = { match: DownloadMatch; approvedBy: string | null; timer: NodeJS.Timeout };
 
 /** Caps on the downloads a person starts while holding control through the live view (B6). */
 export interface UserDownloadLimits {
@@ -54,6 +54,8 @@ export interface FinishedDownload {
   filename: string;
   /** "user": a person started it while holding control; "approved": the agent's, approved. */
   by: "user" | "approved";
+  /** For "approved": who approved that very allowance (allowOnce); null if nobody did. */
+  approvedBy: string | null;
 }
 
 const DEFAULT_USER_LIMITS: UserDownloadLimits = { maxBytes: 100 * 1024 * 1024, maxCount: 20 };
@@ -85,7 +87,10 @@ export class DownloadGate {
   #userCount = 0;
   #closing: Promise<void> | null = null;
   /** Where each let-through download came from, until it finishes. */
-  readonly #letThrough = new Map<string, { url: string; filename: string }>();
+  readonly #letThrough = new Map<
+    string,
+    { url: string; filename: string; approvedBy: string | null }
+  >();
   #finished: ((download: FinishedDownload) => void) | null = null;
 
   private constructor(cdp: CDPSession, folder: DownloadFolder | null, log: Log) {
@@ -169,10 +174,11 @@ export class DownloadGate {
   }
 
   /** Lets exactly one approved download through: the next one `match` accepts, within ALLOW_WINDOW_MS. */
-  async allowOnce(match: DownloadMatch): Promise<void> {
+  async allowOnce(match: DownloadMatch, approvedBy: string | null = null): Promise<void> {
     if (this.#folder === null || this.#user) return;
     const allowance: Allowance = {
       match,
+      approvedBy,
       timer: setTimeout(() => void this.#end(allowance), ALLOW_WINDOW_MS).unref(),
     };
     this.#allowances.push(allowance);
@@ -188,7 +194,7 @@ export class DownloadGate {
   #onWillBegin(guid: string, url: string, filename: string): void {
     if (this.#user) {
       this.#userDownloads.add(guid);
-      this.#letThrough.set(guid, { url, filename });
+      this.#letThrough.set(guid, { url, filename, approvedBy: null });
       // Every download the person started counts, including one later cancelled for its size.
       if (++this.#userCount > this.#userLimits.maxCount) this.#cap(guid, "too_many");
       return;
@@ -199,7 +205,7 @@ export class DownloadGate {
       clearTimeout(allowance!.timer);
       this.#approved.add(guid);
       this.#saving.add(guid);
-      this.#letThrough.set(guid, { url, filename });
+      this.#letThrough.set(guid, { url, filename, approvedBy: allowance!.approvedBy });
       return;
     }
     // Denied by the browser, or (while downloads are let through) cancelled here at once.

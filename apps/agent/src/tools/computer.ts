@@ -22,8 +22,11 @@ export interface GateVerdict {
   target: TargetDescription | null;
   /** A person (not policy) approved this action on this very element: typing may then run with an incomplete guard. */
   personApproved: boolean;
-  /** This click (or Enter) starts a download that was approved: let exactly it through, at the press. */
-  allowDownload?: string;
+  /**
+   * This click (or Enter) starts a download that was approved: let exactly it through, at the
+   * press, bound to whoever approved it (N3).
+   */
+  allowDownload?: { url: string; approvedBy: string };
 }
 /** false: do not run; true: run (no classification to hold it to); or the gate's verdict. */
 export type ActionGate = (action: ComputerAction) => Promise<boolean | GateVerdict>;
@@ -174,8 +177,10 @@ export class ComputerExecutor {
       case "scroll":
         return this.#scroll(action, signal);
       case "keypress":
-        if (verdict?.allowDownload)
-          await this.#session.downloads.allowOnce((url) => url === verdict.allowDownload);
+        if (verdict?.allowDownload) {
+          const { url: approvedUrl, approvedBy } = verdict.allowDownload;
+          await this.#session.downloads.allowOnce((url) => url === approvedUrl, approvedBy);
+        }
         return this.#keypress(action.keys, signal, approved);
       case "type":
         return this.#type(action.text, signal, approved);
@@ -227,8 +232,10 @@ export class ComputerExecutor {
       return this.#refuse(TARGET_MOVED_REFUSAL);
     if (hit.snap) await mouse.move(hit.snap.x, hit.snap.y);
     // Only now that the press will go to the approved link (m6).
-    if (verdict?.allowDownload)
-      await this.#session.downloads.allowOnce((url) => url === verdict.allowDownload);
+    if (verdict?.allowDownload) {
+      const { url: approvedUrl, approvedBy } = verdict.allowDownload;
+      await this.#session.downloads.allowOnce((url) => url === approvedUrl, approvedBy);
+    }
     // ...and from here to the press, the page itself cancels a press that reaches anything but
     // the element just classified. (Inside an uninspectable frame there is none to hold it to:
     // that click was approved as it is.)

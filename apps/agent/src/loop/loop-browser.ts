@@ -62,7 +62,7 @@ export interface LoopBrowser {
    * The download a `download` card showed was approved: the next download that would make the
    * same card (a script's blob or data URL may differ in its id) is saved to the run's folder, once.
    */
-  allowDownload(card: { url: string; filename: string | null }): Promise<void>;
+  allowDownload(card: { url: string; filename: string | null; approvedBy: string }): Promise<void>;
   collectStorage(): Promise<CollectedStorage>;
   applyStorage(state: BrowserStorageState): Promise<() => Promise<void>>;
 }

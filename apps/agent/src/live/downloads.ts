@@ -8,7 +8,6 @@ import {
   emitRunEvent,
   fileKeptDownload,
   findAssetBySha,
-  latestDownloadApprover,
   pendingDownloads,
   readControlUser,
   recordDownload,
@@ -179,7 +178,17 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
     begun: FinishedDownload,
   ): Promise<void> {
     const filename = safeFilename(begun.filename || "download");
-    const approvedBy = (await latestDownloadApprover(deps.db, slot.runId)) ?? "policy";
+    // Bound to the approval that let this very download through (N3): none, nothing is stored.
+    const approvedBy = begun.approvedBy;
+    if (!approvedBy) {
+      await rm(localFile(slot.runId, guid), { force: true });
+      await emit(slot.runId, {
+        type: "error",
+        code: "download_failed",
+        message: `${filename} was not saved: no approval matches it.`.slice(0, 500),
+      });
+      return;
+    }
     try {
       await store(slot, guid, { filename, sourceUrl: begun.url }, (tx, object) =>
         recordDownload(tx, {

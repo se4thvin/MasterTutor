@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
-import { approvals, assets, downloads, runs } from "../schema/index.ts";
+import { assets, downloads, runs } from "../schema/index.ts";
 
 export async function findAssetBySha(
   db: Database,
@@ -77,31 +77,28 @@ export async function recordDownload(
 }
 
 /**
- * Who approved the run's latest approved download: a user id, "policy" or "bypass" (B1's gate lets
- * exactly that download through; B6 files it with this approver). Null when none was approved.
+ * A download a person made during control: recorded as pending, nothing stored (B6, A11).
+ * Only while that person still holds control, checked under the run-row lock the hand-back also
+ * takes, so a hand-back either sees the row (and settles it) or this refuses it (N2).
  */
-export async function latestDownloadApprover(db: Database, runId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ decidedBy: approvals.decidedBy })
-    .from(approvals)
-    .where(
-      and(
-        eq(approvals.runId, runId),
-        eq(approvals.kind, "download"),
-        inArray(approvals.status, ["approved", "edited"]),
-      ),
-    )
-    .orderBy(desc(approvals.decidedAt))
-    .limit(1);
-  return row?.decidedBy ?? null;
-}
-
-/** A download a person made during control: recorded as pending, nothing stored (B6, A11). */
 export async function recordPendingDownload(
   tx: DbTx,
   input: { id: string; runId: string; filename: string; bytes: number; approvedBy: string },
-): Promise<void> {
+): Promise<boolean> {
+  const [run] = await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.id, input.runId),
+        eq(runs.controller, "user"),
+        eq(runs.controlUserId, input.approvedBy),
+      ),
+    )
+    .for("update");
+  if (!run) return false;
   await tx.insert(downloads).values({ ...input, pending: true });
+  return true;
 }
 
 /** Pending downloads of the run, with keptAt set for the ones the person kept at hand-back. */
@@ -192,6 +189,15 @@ export async function fileKeptDownload(
     .set({ assetId, pending: false })
     .where(eq(downloads.id, input.downloadId));
   return { assetId };
+}
+
+/** Every held download of the run, gone (lease end, crash recovery): their ids, for the files. */
+export async function discardPendingDownloads(tx: DbTx, runId: string): Promise<string[]> {
+  const rows = await tx
+    .delete(downloads)
+    .where(and(eq(downloads.runId, runId), eq(downloads.pending, true)))
+    .returning({ id: downloads.id });
+  return rows.map((row) => row.id);
 }
 
 /** A pending download nobody kept: gone (its local file is the caller's to delete). */
