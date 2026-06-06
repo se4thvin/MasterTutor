@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
-import { assets, downloads, runs } from "../schema/index.ts";
+import { approvals, assets, downloads, runs } from "../schema/index.ts";
 
 export async function findAssetBySha(
   db: Database,
@@ -74,4 +74,24 @@ export async function recordDownload(
     .returning({ id: downloads.id });
   if (!download) throw new Error("downloads insert returned no row");
   return { downloadId: download.id, assetId };
+}
+
+/**
+ * Who approved the run's latest approved download: a user id, "policy" or "bypass" (B1's gate lets
+ * exactly that download through; B6 files it with this approver). Null when none was approved.
+ */
+export async function latestDownloadApprover(db: Database, runId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ decidedBy: approvals.decidedBy })
+    .from(approvals)
+    .where(
+      and(
+        eq(approvals.runId, runId),
+        eq(approvals.kind, "download"),
+        inArray(approvals.status, ["approved", "edited"]),
+      ),
+    )
+    .orderBy(desc(approvals.decidedAt))
+    .limit(1);
+  return row?.decidedBy ?? null;
 }

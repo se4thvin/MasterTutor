@@ -3,10 +3,19 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RunEvent } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
-import { assets, createDb, downloads, runEvents, runs, type DbHandle } from "@mastertutor/db";
+import {
+  approvals,
+  assets,
+  createDb,
+  downloads,
+  runEvents,
+  runs,
+  type DbHandle,
+} from "@mastertutor/db";
 import { leaseSlotForTest, releaseSlotForTest, seedMember, seedRun } from "@mastertutor/db/testing";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { slotDownloadPath } from "../../apps/agent/src/browser/download-gate.ts";
 import { BrowserSession } from "../../apps/agent/src/browser/session.ts";
 import {
   createDownloadIngestor,
@@ -18,6 +27,8 @@ import { BEHAVIOUR_DOWNLOADS, SITE, SLOT_CDP } from "./constants.ts";
 import { behaviourEnv } from "./env.ts";
 
 const SLOT = "browser-2";
+const NOTES = `${SITE}/files/live-notes.txt`;
+const COPY = `${SITE}/files/live-notes-copy.txt`;
 const FIXTURE = fileURLToPath(
   new URL("../fixtures/sites/site/files/live-notes.txt", import.meta.url),
 );
@@ -25,78 +36,96 @@ const log = createLogger({ service: "behaviour", level: "silent" });
 const storage = createMemoryStorage();
 let owner: DbHandle;
 let agentDb: DbHandle;
-let session: BrowserSession;
-let ingestor: DownloadIngestor;
 let member: { userId: string; workspaceId: string };
-let current: string | null = null;
+/** This test's lease: its session (with B1's gate on the run's folder) and its ingestor. */
+let lease: { runId: string; session: BrowserSession; ingestor: DownloadIngestor } | null = null;
 
 beforeAll(async () => {
   const env = behaviourEnv();
   owner = createDb(env.ownerUrl, { max: 2 });
   agentDb = createDb(env.agentUrl, { max: 4 });
   member = await seedMember(owner.db);
-  // The real BrowserSession: Playwright connects first and B1's download gate denies every
-  // download; the ingestor never changes that while the agent holds control (spec §9).
-  session = await BrowserSession.connect({
-    cdpBaseUrl: SLOT_CDP[SLOT]!,
-    allowedOrigins: () => [SITE],
-    testMode: true,
-    log,
-  });
-  ingestor = createDownloadIngestor({
-    db: agentDb.db,
-    storage,
-    log,
-    localRoot: BEHAVIOUR_DOWNLOADS,
-    dirMode: 0o777,
-  });
 });
 afterEach(async () => {
-  if (current) {
-    await ingestor.userControl(current, false);
-    await ingestor.detach(current);
+  if (lease) {
+    await lease.ingestor.userControl(lease.runId, false);
+    await lease.ingestor.detach(lease.runId);
+    await lease.session.close();
   }
-  current = null;
-  session.downloads.drainBlocked();
-  gateBlocked.length = 0;
+  lease = null;
   await releaseSlotForTest(owner.db, SLOT);
 });
 afterAll(async () => {
-  await session?.close();
   await Promise.all([owner?.close(), agentDb?.close()]);
 });
 
-/** A leased run; with "user", a member holds control and the live view lets them download. */
-async function leasedRun(controller: "agent" | "user"): Promise<string> {
+/**
+ * A leased run with the real BrowserSession: B1's gate denies every download on connect. With
+ * "user", a member holds control and the live view lets them download (userControl).
+ */
+async function leasedRun(
+  controller: "agent" | "user",
+  options: {
+    workspace?: { userId: string; workspaceId: string };
+    store?: Parameters<typeof createDownloadIngestor>[0]["storage"];
+    maxBytes?: number;
+    maxCount?: number;
+  } = {},
+) {
+  const workspace = options.workspace ?? member;
   const runId = await seedRun(
     owner.db,
     controller === "user"
-      ? { workspaceId: member.workspaceId, status: "waiting", waitReason: "takeover" }
-      : { workspaceId: member.workspaceId },
+      ? { workspaceId: workspace.workspaceId, status: "waiting", waitReason: "takeover" }
+      : { workspaceId: workspace.workspaceId },
   );
   if (controller === "user")
     await owner.db
       .update(runs)
-      .set({ controller: "user", controlUserId: member.userId })
+      .set({ controller: "user", controlUserId: workspace.userId })
       .where(eq(runs.id, runId));
   await leaseSlotForTest(owner.db, SLOT, runId);
+  const session = await BrowserSession.connect({
+    cdpBaseUrl: SLOT_CDP[SLOT]!,
+    allowedOrigins: () => [SITE],
+    testMode: true,
+    log,
+    downloads: { slotPath: slotDownloadPath(runId), localPath: join(BEHAVIOUR_DOWNLOADS, runId) },
+  });
+  const ingestor = createDownloadIngestor({
+    db: agentDb.db,
+    storage: options.store ?? storage,
+    log,
+    localRoot: BEHAVIOUR_DOWNLOADS,
+    dirMode: 0o777,
+    ...(options.maxBytes ? { maxBytes: options.maxBytes } : {}),
+    ...(options.maxCount ? { maxCount: options.maxCount } : {}),
+  });
   await ingestor.attach({
     runId,
-    workspaceId: member.workspaceId,
+    workspaceId: workspace.workspaceId,
     slotName: SLOT,
     session,
     browserCdp: () => session.browserCdp(),
   });
-  current = runId;
+  lease = { runId, session, ingestor };
   if (controller === "user") await ingestor.userControl(runId, true);
-  return runId;
+  return lease;
 }
-async function clickDownload(id: "notes" | "copy") {
+async function clickDownload(session: BrowserSession, id: "notes" | "copy") {
   expect(await session.goto(`${SITE}/live-download`, new AbortController().signal)).toBe(true);
   await session.page.click(`#${id}`);
 }
 const rowsFor = (runId: string) =>
   owner.db.select().from(downloads).where(eq(downloads.runId, runId));
+const rowCount = (runId: string, count: number, label: string) =>
+  waitFor(
+    async () => {
+      const rows = await rowsFor(runId);
+      return rows.length === count ? rows : null;
+    },
+    { label, timeoutMs: 15_000 },
+  );
 const eventsFor = async (runId: string): Promise<RunEvent[]> =>
   (
     await owner.db
@@ -105,26 +134,23 @@ const eventsFor = async (runId: string): Promise<RunEvent[]> =>
       .where(eq(runEvents.runId, runId))
       .orderBy(asc(runEvents.id))
   ).map((e) => e.payload);
+const errorEvent = (runId: string, code: string) =>
+  waitFor(async () => (await eventsFor(runId)).find((e) => e.type === "error" && e.code === code), {
+    label: `${code} event`,
+    timeoutMs: 15_000,
+  });
 const localFiles = (runId: string) =>
   readdir(join(BEHAVIOUR_DOWNLOADS, runId)).catch(() => [] as string[]);
-/** Downloads B1's gate cancelled (each becomes an approval card for the agent's next step). */
-const gateBlocked: string[] = [];
-const collectGate = () => {
-  for (const blocked of session.downloads.drainBlocked()) gateBlocked.push(blocked.url);
-  return gateBlocked.length;
-};
+const noLocalFiles = (runId: string) =>
+  waitFor(async () => (await localFiles(runId)).length === 0, { label: "nothing on disk" });
+/** The gate's record of cancelled downloads (each becomes an approval card for the agent). */
+const blocked = (session: BrowserSession) => session.downloads.drainBlocked().map((b) => b.url);
 
-describe("downloads (spec §10.2.9; v1: only the member in control downloads)", () => {
-  it("ingests a download made while the user holds control, under the run, with a safe name", async () => {
-    const runId = await leasedRun("user");
-    await clickDownload("notes");
-    const [row] = await waitFor(
-      async () => {
-        const rows = await rowsFor(runId);
-        return rows.length === 1 ? rows : null;
-      },
-      { label: "download recorded", timeoutMs: 15_000 },
-    );
+describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in control downloads)", () => {
+  it("files a download the user made while holding control, under the run, with a safe name", async () => {
+    const { runId, session } = await leasedRun("user");
+    await clickDownload(session, "notes");
+    const [row] = await rowCount(runId, 1, "download recorded");
     expect(row).toMatchObject({ filename: "live-notes.txt", approvedBy: member.userId });
     const [asset] = await owner.db.select().from(assets).where(eq(assets.id, row!.assetId!));
     expect(asset!.key).toMatch(new RegExp(`^downloads/${runId}/[0-9a-f]{12}-live-notes\\.txt$`));
@@ -137,128 +163,124 @@ describe("downloads (spec §10.2.9; v1: only the member in control downloads)", 
       filename: "live-notes.txt",
       bytes: (await readFile(FIXTURE)).length,
     });
-    await waitFor(async () => (await localFiles(runId)).length === 0, {
-      label: "local copy deleted",
-    });
+    await noLocalFiles(runId);
   });
 
-  it("leaves a download made while the agent holds control to B1's gate: denied, nothing stored (Review Focus 4)", async () => {
+  it("leaves a download made while the agent holds control to the gate: denied, nothing stored (Review Focus 4)", async () => {
     const before = storage.objects.size;
-    const runId = await leasedRun("agent");
-    await clickDownload("notes");
-    await waitFor(async () => collectGate() > 0, {
-      label: "the gate cancelled it",
-      timeoutMs: 15_000,
-    });
-    expect(gateBlocked).toEqual([`${SITE}/files/live-notes.txt`]);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const { runId, session } = await leasedRun("agent");
+    await clickDownload(session, "notes");
+    const urls = await waitFor(
+      () => {
+        const drained = blocked(session);
+        return drained.length > 0 ? drained : null;
+      },
+      { label: "the gate cancelled it", timeoutMs: 15_000 },
+    );
+    expect(urls).toEqual([NOTES]);
+    await new Promise((resolve) => setTimeout(resolve, 1_500)); // past the gate's late sweep
     expect(await localFiles(runId)).toEqual([]);
     expect(await rowsFor(runId)).toHaveLength(0);
     expect(storage.objects.size).toBe(before);
-    // The gate's approval card is the agent's path; the live view adds no event of its own.
     expect((await eventsFor(runId)).filter((e) => e.type === "error")).toEqual([]);
   });
 
   it("stores identical content once and records both downloads", async () => {
-    const runId = await leasedRun("user");
-    await clickDownload("notes");
-    await waitFor(async () => (await rowsFor(runId)).length === 1, {
-      label: "first",
-      timeoutMs: 15_000,
-    });
-    await clickDownload("copy");
-    const rows = await waitFor(
-      async () => {
-        const all = await rowsFor(runId);
-        return all.length === 2 ? all : null;
-      },
-      { label: "second", timeoutMs: 15_000 },
-    );
+    const { runId, session } = await leasedRun("user");
+    await clickDownload(session, "notes");
+    await rowCount(runId, 1, "first");
+    await clickDownload(session, "copy");
+    const rows = await rowCount(runId, 2, "second");
     expect(rows[0]!.assetId).toBe(rows[1]!.assetId);
   });
 
-  it("hands downloads back to the gate when the user hands back, without leaving the user's downloads to approve", async () => {
-    const runId = await leasedRun("user");
-    await clickDownload("notes");
-    await waitFor(async () => (await rowsFor(runId)).length === 1, {
-      label: "user download",
-      timeoutMs: 15_000,
-    });
+  it("hand-back keeps the agent's blocked downloads and never adds the user's (review minor)", async () => {
+    const { runId, session, ingestor } = await leasedRun("agent");
+    await clickDownload(session, "copy"); // the agent's, blocked: an approval card to come
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await owner.db
+      .update(runs)
+      .set({
+        controller: "user",
+        controlUserId: member.userId,
+        status: "waiting",
+        waitReason: "takeover",
+      })
+      .where(eq(runs.id, runId));
+    await ingestor.userControl(runId, true);
+    await clickDownload(session, "notes"); // the user's
+    await rowCount(runId, 1, "user download");
     await ingestor.userControl(runId, false);
-    collectGate();
-    expect(gateBlocked).toEqual([]);
-    await clickDownload("copy");
-    await waitFor(async () => collectGate() > 0, {
-      label: "denied again after hand-back",
-      timeoutMs: 15_000,
-    });
-    expect(gateBlocked).toEqual([`${SITE}/files/live-notes-copy.txt`]);
-    expect(await rowsFor(runId)).toHaveLength(1);
+    expect(blocked(session)).toEqual([COPY]);
+  });
+
+  it("cancels a download over the size cap or over the count cap as it happens, and tells the user (I1)", async () => {
+    const big = await leasedRun("user", { maxBytes: 5 });
+    await clickDownload(big.session, "notes");
+    expect(await errorEvent(big.runId, "download_too_large")).toBeDefined();
+    await noLocalFiles(big.runId);
+    expect(await rowsFor(big.runId)).toHaveLength(0);
+    await big.ingestor.userControl(big.runId, false);
+    await big.ingestor.detach(big.runId);
+    await big.session.close();
+    lease = null;
+    await releaseSlotForTest(owner.db, SLOT);
+
+    const many = await leasedRun("user", { maxCount: 1 });
+    await clickDownload(many.session, "notes");
+    await rowCount(many.runId, 1, "the one allowed");
+    await clickDownload(many.session, "copy");
+    expect(await errorEvent(many.runId, "download_too_many")).toBeDefined();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await rowsFor(many.runId)).toHaveLength(1);
   });
 
   it("tells the user when a download cannot be stored, and keeps nothing (review minor)", async () => {
-    const failing = createDownloadIngestor({
-      db: agentDb.db,
-      storage: {
-        ...createMemoryStorage(),
-        putFile: () => Promise.reject(new Error("Garage unavailable")),
-      },
-      log,
-      localRoot: BEHAVIOUR_DOWNLOADS_DIR,
-      dirMode: 0o777,
-    });
     // A fresh workspace: dedupe must not find this file already stored by an earlier case.
     const other = await seedMember(owner.db);
-    const runId = await seedRun(owner.db, {
-      workspaceId: other.workspaceId,
-      status: "waiting",
-      waitReason: "takeover",
-    });
-    await owner.db
-      .update(runs)
-      .set({ controller: "user", controlUserId: other.userId })
-      .where(eq(runs.id, runId));
-    await leaseSlotForTest(owner.db, SLOT, runId);
-    await failing.attach({
+    const failing = { ...createMemoryStorage(), putFile: () => Promise.reject(new Error("down")) };
+    const { runId, session } = await leasedRun("user", { workspace: other, store: failing });
+    await clickDownload(session, "notes");
+    expect(await errorEvent(runId, "download_failed")).toBeDefined();
+    expect(await rowsFor(runId)).toHaveLength(0);
+    await noLocalFiles(runId);
+  });
+
+  it("files a download a person approved for the agent, with that person as its approver (approvedDownloads)", async () => {
+    const { runId, session } = await leasedRun("agent");
+    await owner.db.insert(approvals).values({
       runId,
-      workspaceId: other.workspaceId,
-      slotName: SLOT,
-      session,
-      browserCdp: () => session.browserCdp(),
-    });
-    try {
-      await failing.userControl(runId, true);
-      await clickDownload("notes");
-      await waitFor(
-        async () =>
-          (await eventsFor(runId)).some((e) => e.type === "error" && e.code === "download_failed"),
-        { label: "download_failed event", timeoutMs: 15_000 },
-      );
-      expect(await rowsFor(runId)).toHaveLength(0);
-      await waitFor(async () => (await localFiles(runId)).length === 0, {
-        label: "local copy deleted",
-      });
-    } finally {
-      await failing.userControl(runId, false);
-      await failing.detach(runId);
-    }
+      stepSeq: 1,
+      kind: "download",
+      request: { kind: "download", url: NOTES, filename: "live-notes.txt" },
+      status: "approved",
+      decidedBy: member.userId,
+      decidedAt: new Date(),
+    } as never);
+    await session.downloads.allowOnce((url) => url === NOTES);
+    await clickDownload(session, "notes");
+    const [row] = await rowCount(runId, 1, "approved download filed");
+    expect(row).toMatchObject({ filename: "live-notes.txt", approvedBy: member.userId });
+    await noLocalFiles(runId);
   });
 
   it("an inline PDF the agent opens is not a download (B5 capture path)", async () => {
     const before = storage.objects.size;
-    const runId = await leasedRun("agent");
+    const { runId, session } = await leasedRun("agent");
     await session.goto(`${SITE}/pdf/doc.pdf`, new AbortController().signal);
     await waitFor(() => session.page.url().endsWith("/doc.pdf"), { label: "PDF shown inline" });
     // Sentinel: a real download after the PDF. Exactly one cancelled download (the sentinel's)
     // proves the inline PDF never started one.
-    await clickDownload("notes");
-    await waitFor(async () => collectGate() > 0, {
-      label: "sentinel blocked",
-      timeoutMs: 15_000,
-    });
+    await clickDownload(session, "notes");
+    const urls = await waitFor(
+      () => {
+        const drained = blocked(session);
+        return drained.length > 0 ? drained : null;
+      },
+      { label: "sentinel blocked", timeoutMs: 15_000 },
+    );
     await new Promise((resolve) => setTimeout(resolve, 500));
-    collectGate();
-    expect(gateBlocked).toEqual([`${SITE}/files/live-notes.txt`]);
+    expect([...urls, ...blocked(session)]).toEqual([NOTES]);
     expect(await localFiles(runId)).toEqual([]);
     expect(storage.objects.size).toBe(before);
   });

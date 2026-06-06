@@ -2,7 +2,7 @@ import { decodeNotify } from "@mastertutor/contracts";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
-import { downloads, runEvents, runs } from "../schema/index.ts";
+import { approvals, assets, downloads, runEvents, runs } from "../schema/index.ts";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -12,7 +12,7 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from "../testing.ts";
-import { findAssetBySha, recordDownload } from "./downloads.ts";
+import { findAssetBySha, latestDownloadApprover, recordDownload } from "./downloads.ts";
 import { canAccessLiveSlot, getRunForMember, requestHandBack, requestTakeover } from "./live.ts";
 
 let testDb: TestDatabase;
@@ -294,5 +294,76 @@ describe("download records (agent role)", () => {
     );
     expect(await findAssetBySha(agent.db, outsider.workspaceId, input.sha256)).toBeNull();
     expect(await owner.db.select().from(downloads).where(eq(downloads.runId, runId))).toEqual([]);
+  });
+
+  it("keeps a shared asset, and the object key it names, when the run that stored it is deleted (ruling)", async () => {
+    const first = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const second = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const shared = {
+      workspaceId: member.workspaceId,
+      filename: "c.pdf",
+      sha256: "c".repeat(64),
+      bucket: "mastertutor",
+      key: `downloads/${first}/cccccccccccc-c.pdf`,
+      mime: "application/pdf",
+      bytes: 3,
+      sourceUrl: "https://example.com/c.pdf",
+      approvedBy: member.userId,
+    };
+    const stored = await agent.db.transaction((tx) =>
+      recordDownload(tx, { ...shared, runId: first }),
+    );
+    const reused = await agent.db.transaction((tx) =>
+      recordDownload(tx, { ...shared, runId: second }),
+    );
+    expect(reused.assetId).toBe(stored.assetId);
+    await owner.db.delete(runs).where(eq(runs.id, first));
+    // The first run's download row goes with it; the asset (and so its object) stays referenced.
+    expect(await owner.db.select().from(downloads).where(eq(downloads.runId, first))).toEqual([]);
+    const [asset] = await owner.db.select().from(assets).where(eq(assets.id, stored.assetId));
+    expect(asset).toMatchObject({ key: shared.key });
+    expect(
+      await owner.db.select().from(downloads).where(eq(downloads.assetId, stored.assetId)),
+    ).toHaveLength(1);
+  });
+
+  it("names who approved the run's latest approved download", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    expect(await latestDownloadApprover(agent.db, runId)).toBeNull();
+    const request = {
+      kind: "download" as const,
+      url: "https://example.com/a.pdf",
+      filename: "a.pdf",
+    };
+    await owner.db.insert(approvals).values([
+      {
+        runId,
+        stepSeq: 1,
+        kind: "download",
+        request,
+        status: "approved",
+        decidedBy: "policy",
+        decidedAt: new Date(Date.now() - 60_000),
+      },
+      {
+        runId,
+        stepSeq: 2,
+        kind: "download",
+        request,
+        status: "denied",
+        decidedBy: "user_x",
+        decidedAt: new Date(),
+      },
+      {
+        runId,
+        stepSeq: 3,
+        kind: "download",
+        request,
+        status: "approved",
+        decidedBy: member.userId,
+        decidedAt: new Date(Date.now() - 1_000),
+      },
+    ] as never);
+    expect(await latestDownloadApprover(agent.db, runId)).toBe(member.userId);
   });
 });
