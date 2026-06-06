@@ -160,6 +160,37 @@ describe("applyRunEvent", () => {
     expect(model.model).toBe("gpt-6.1-sol");
   });
 
+  it("holds downloads made during control for Keep or Discard until the hand-back (B6 A11)", () => {
+    const held = rec({
+      type: "download_pending",
+      downloadId: ids.asset(11),
+      filename: "notes.txt",
+      bytes: 28,
+    });
+    const other = rec({
+      type: "download_pending",
+      downloadId: ids.asset(12),
+      filename: "other.txt",
+      bytes: 5,
+    });
+    const during = applyRunEvents(base(), [held, other]);
+    expect(during.heldDownloads.map((d) => d.filename)).toEqual(["notes.txt", "other.txt"]);
+    expect(during.downloads).toEqual([]);
+    // The hand-back settles them: kept ones arrive as download_ready, the rest are gone.
+    const after = applyRunEvents(during, [
+      rec({ type: "control", holder: "agent" }),
+      rec({
+        type: "download_ready",
+        downloadId: ids.asset(11),
+        assetId: ids.asset(13),
+        filename: "notes.txt",
+        bytes: 28,
+      }),
+    ]);
+    expect(after.heldDownloads).toEqual([]);
+    expect(after.downloads.map((d) => d.filename)).toEqual(["notes.txt"]);
+  });
+
   it("never lets an informational error become the failure reason (A7)", () => {
     const model = applyRunEvents(base(), [
       rec({ type: "error", code: "nav_timeout", message: "The page took too long" }),
