@@ -52,6 +52,12 @@ interface DownloadItem {
   bytes: number;
   at: string;
 }
+/** A download made during a takeover, held until the person keeps or discards it at hand-back. */
+interface HeldDownload {
+  id: string;
+  filename: string;
+  bytes: number;
+}
 export interface RunError {
   eventId: string;
   code: string;
@@ -86,6 +92,8 @@ export interface RunModel {
   outcomes: ApprovalOutcome[];
   messages: UserMessage[];
   downloads: DownloadItem[];
+  /** Offered for Keep or Discard at hand-back (runs.handBack's keep); cleared once control is back. */
+  heldDownloads: HeldDownload[];
   errors: RunError[];
   lastControl: ControlChange | null;
   /** Origin whose sign-in the vault filled; drives the "Filled securely" badge (run 13 §6). */
@@ -188,6 +196,7 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
     outcomes: [],
     messages: [],
     downloads: [],
+    heldDownloads: [],
     errors: [],
     lastControl: null,
     secureFillOrigin: secure,
@@ -225,7 +234,13 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
       };
     }
     case "control":
-      return { ...m, controller: e.holder, lastControl: { eventId: record.id, holder: e.holder } };
+      return {
+        ...m,
+        controller: e.holder,
+        lastControl: { eventId: record.id, holder: e.holder },
+        // The hand-back settled them: kept ones arrive as download_ready, the rest are discarded.
+        ...(e.holder === "agent" ? { heldDownloads: [] } : {}),
+      };
     case "slot":
       return { ...m, slotName: e.slotName };
     case "approval_requested":
@@ -261,9 +276,20 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
         ...m,
         messages: [...m.messages, { eventId: record.id, text: e.text, at: record.at }],
       };
+    case "download_pending":
+      return m.heldDownloads.some((d) => d.id === e.downloadId)
+        ? m
+        : {
+            ...m,
+            heldDownloads: [
+              ...m.heldDownloads,
+              { id: e.downloadId, filename: e.filename, bytes: e.bytes },
+            ],
+          };
     case "download_ready":
       return {
         ...m,
+        heldDownloads: m.heldDownloads.filter((d) => d.id !== e.downloadId),
         downloads: [
           ...m.downloads,
           {

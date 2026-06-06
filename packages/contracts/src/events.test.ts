@@ -55,6 +55,12 @@ describe("RunEvent", () => {
         filename: "a.pdf",
         bytes: 10,
       },
+      download_pending: {
+        type: "download_pending",
+        downloadId: id,
+        filename: "a.pdf",
+        bytes: 10,
+      },
       error: { type: "error", code: "openai_5xx", message: "Model unavailable" },
       filed: {
         type: "filed",

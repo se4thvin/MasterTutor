@@ -33,7 +33,7 @@ export interface DownloadFolder {
 const LATE_SWEEP_MS = 1_000;
 /** How long an allowance waits for its download to start. */
 const ALLOW_WINDOW_MS = 60_000;
-type Allowance = { match: DownloadMatch; timer: NodeJS.Timeout };
+type Allowance = { match: DownloadMatch; approvedBy: string | null; timer: NodeJS.Timeout };
 
 /** Caps on the downloads a person starts while holding control through the live view (B6). */
 export interface UserDownloadLimits {
@@ -43,6 +43,19 @@ export interface UserDownloadLimits {
   maxCount: number;
   /** Told when a download was cancelled for a cap (B6 emits download_too_large and the like). */
   onCapped?: (download: { id: string; reason: "too_large" | "too_many" }) => void;
+}
+
+/** A download this gate let through that finished writing into the run's folder (B6 files it). */
+export interface FinishedDownload {
+  /** The download id, also its file name in the run's folder. */
+  id: string;
+  url: string;
+  /** The name the page suggested (unsanitised). */
+  filename: string;
+  /** "user": a person started it while holding control; "approved": the agent's, approved. */
+  by: "user" | "approved";
+  /** For "approved": who approved that very allowance (allowOnce); null if nobody did. */
+  approvedBy: string | null;
 }
 
 const DEFAULT_USER_LIMITS: UserDownloadLimits = { maxBytes: 100 * 1024 * 1024, maxCount: 20 };
@@ -73,6 +86,12 @@ export class DownloadGate {
   readonly #capped = new Set<string>();
   #userCount = 0;
   #closing: Promise<void> | null = null;
+  /** Where each let-through download came from, until it finishes. */
+  readonly #letThrough = new Map<
+    string,
+    { url: string; filename: string; approvedBy: string | null }
+  >();
+  #finished: ((download: FinishedDownload) => void) | null = null;
 
   private constructor(cdp: CDPSession, folder: DownloadFolder | null, log: Log) {
     this.#cdp = cdp;
@@ -140,16 +159,26 @@ export class DownloadGate {
     }
   }
 
+  /**
+   * B6: told of each download this gate let through once it finished writing (and was not
+   * capped). Only this gate's CDP session receives download events, so it is the one to say.
+   * One listener; null removes it.
+   */
+  onFinished(listener: ((download: FinishedDownload) => void) | null): void {
+    this.#finished = listener;
+  }
+
   /** The ids of the downloads a person started while holding control (B6 files these). */
   userDownloads(): string[] {
     return [...this.#userDownloads];
   }
 
   /** Lets exactly one approved download through: the next one `match` accepts, within ALLOW_WINDOW_MS. */
-  async allowOnce(match: DownloadMatch): Promise<void> {
+  async allowOnce(match: DownloadMatch, approvedBy: string | null = null): Promise<void> {
     if (this.#folder === null || this.#user) return;
     const allowance: Allowance = {
       match,
+      approvedBy,
       timer: setTimeout(() => void this.#end(allowance), ALLOW_WINDOW_MS).unref(),
     };
     this.#allowances.push(allowance);
@@ -165,6 +194,7 @@ export class DownloadGate {
   #onWillBegin(guid: string, url: string, filename: string): void {
     if (this.#user) {
       this.#userDownloads.add(guid);
+      this.#letThrough.set(guid, { url, filename, approvedBy: null });
       // Every download the person started counts, including one later cancelled for its size.
       if (++this.#userCount > this.#userLimits.maxCount) this.#cap(guid, "too_many");
       return;
@@ -175,6 +205,7 @@ export class DownloadGate {
       clearTimeout(allowance!.timer);
       this.#approved.add(guid);
       this.#saving.add(guid);
+      this.#letThrough.set(guid, { url, filename, approvedBy: allowance!.approvedBy });
       return;
     }
     // Denied by the browser, or (while downloads are let through) cancelled here at once.
@@ -188,14 +219,23 @@ export class DownloadGate {
       // Checked at completion too: a small file can finish without an in-progress event.
       if (state !== "canceled" && (receivedBytes > maxBytes || totalBytes > maxBytes))
         this.#cap(guid, "too_large");
+      else if (state === "completed") this.#announce(guid, "user");
+      if (state !== "inProgress") this.#letThrough.delete(guid);
       return;
     }
+    if (state === "completed" && this.#approved.has(guid)) this.#announce(guid, "approved");
+    if (state !== "inProgress") this.#letThrough.delete(guid);
     // A download it did not let through that still finished writing (its cancel lost the race):
     // delete it now, whenever that is.
     if (state === "completed" && !this.#approved.has(guid)) void this.#removeFile(guid);
     // Only the downloads this gate let through end an allowance; anything else is not its own.
     if (state === "inProgress" || !this.#saving.delete(guid)) return;
     if (this.#allowances.length === 0 && this.#saving.size === 0 && !this.#user) void this.#close();
+  }
+
+  #announce(guid: string, by: FinishedDownload["by"]): void {
+    const source = this.#letThrough.get(guid);
+    if (source) this.#finished?.({ id: guid, ...source, by });
   }
 
   /** Cancels a person's download for a cap; Chromium removes its partial file. */
