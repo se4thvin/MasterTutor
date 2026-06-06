@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent } from "react";
 
-const isTyping = (target: EventTarget | null) =>
+/** A text field (or editable) has the keystroke: letters there are words, never shortcuts. */
+export const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 

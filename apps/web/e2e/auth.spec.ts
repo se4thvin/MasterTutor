@@ -1,3 +1,4 @@
+import { movingAnimations } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 test.use({ signedOut: true });
@@ -101,4 +102,28 @@ test("an unexpected sign-up answer is not reported as a network problem", async 
   await page.getByLabel("Password").fill("correct-horse-battery-staple");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.locator("p[role=alert]")).toHaveText("Couldn't create the account. Try again.");
+});
+
+test("the heading's words and the card arrive with a spring, and the name is unchanged", async ({
+  page,
+}) => {
+  for (const [path, name] of [
+    ["/sign-in", "Sign in"],
+    ["/sign-up", "Create account"],
+  ] as const) {
+    await page.goto(path);
+    const heading = page.getByRole("heading", { level: 1, name });
+    await expect(heading).toBeVisible();
+    await expect(heading.locator(".word")).toHaveCount(2);
+    await expect(heading.locator(".word").first()).toHaveCSS("animation-name", "word-in");
+    await expect(page.locator(".auth-card")).toHaveCSS("animation-name", "pop-in");
+    await expectCleanScreen(page);
+  }
+});
+
+test("under reduced motion the sign-in screen does not move", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/sign-in");
+  await expect(page.getByRole("heading", { level: 1, name: "Sign in" })).toBeVisible();
+  expect(await movingAnimations(page, ".auth-page")).toEqual([]);
 });

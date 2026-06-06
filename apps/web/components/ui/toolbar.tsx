@@ -4,7 +4,12 @@ import { Icon } from "./icon.tsx";
 
 /** Sticky glass header for each screen; content scrolls beneath it. */
 export function Toolbar({ children }: { children: ReactNode }) {
-  return <header className="toolbar glass">{children}</header>;
+  // Its hairline fades in on scroll (a scroll-linked animation), so it keeps its own delay.
+  return (
+    <header className="toolbar glass" data-motion-keep-delay="">
+      {children}
+    </header>
+  );
 }
 
 export function Crumbs({ items }: { items: ReadonlyArray<{ label: string; href?: string }> }) {

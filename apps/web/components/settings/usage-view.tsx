@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { RollingNumber } from "@/components/bits/rolling-number.tsx";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
@@ -54,29 +56,39 @@ export function UsageView() {
             <dl className="tiles">
               <div className="tile">
                 <dt>Spend</dt>
-                <dd>{formatUsd(totals.usd)}</dd>
+                <dd>
+                  <RollingNumber value={formatUsd(totals.usd)} />
+                </dd>
               </div>
               <div className="tile">
                 <dt>Runs</dt>
-                <dd>{totals.runs}</dd>
+                <dd>
+                  <RollingNumber value={String(totals.runs)} />
+                </dd>
               </div>
               <div className="tile">
                 <dt>Steps</dt>
-                <dd>{totals.steps}</dd>
+                <dd>
+                  <RollingNumber value={String(totals.steps)} />
+                </dd>
               </div>
               <div className="tile">
                 <dt>Step latency</dt>
                 <dd>
-                  {data.stepLatencyMs.p50 ?? "–"}
+                  <RollingNumber value={String(data.stepLatencyMs.p50 ?? "–")} />
                   <small> ms p50 · {data.stepLatencyMs.p95 ?? "–"} p95</small>
                 </dd>
               </div>
               <div className="tile">
                 <dt>OpenAI errors</dt>
                 <dd>
-                  {data.openaiErrorRate === null
-                    ? "–"
-                    : `${(data.openaiErrorRate * 100).toFixed(1)}%`}
+                  <RollingNumber
+                    value={
+                      data.openaiErrorRate === null
+                        ? "–"
+                        : `${(data.openaiErrorRate * 100).toFixed(1)}%`
+                    }
+                  />
                 </dd>
               </div>
             </dl>
@@ -99,8 +111,7 @@ export function UsageView() {
                   {data.perRun.map((r) => (
                     <tr key={r.runId}>
                       <td>
-                        {/* Plain text until F3 builds /runs/<id>. */}
-                        {r.goal}
+                        <Link href={`/runs/${r.runId}`}>{r.goal}</Link>
                       </td>
                       <td>{r.status}</td>
                       <td>{r.steps}</td>

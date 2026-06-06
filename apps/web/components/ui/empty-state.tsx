@@ -11,7 +11,7 @@ export function EmptyState({
   icon: IconName;
   eyebrow?: string;
   title: string;
-  body: ReactNode;
+  body?: ReactNode;
   actions?: ReactNode;
 }) {
   return (
@@ -27,7 +27,7 @@ export function EmptyState({
             .
           </span>
         </h2>
-        <p className="empty-body">{body}</p>
+        {body ? <p className="empty-body">{body}</p> : null}
         {actions ? <div className="empty-actions">{actions}</div> : null}
       </div>
     </div>

