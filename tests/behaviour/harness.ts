@@ -17,6 +17,7 @@ import {
 } from "@mastertutor/db";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { createOpenAIModelClient } from "../../apps/agent/src/llm/client.ts";
+import type { RunHooks } from "../../apps/agent/src/loop/hooks.ts";
 import { Supervisor } from "../../apps/agent/src/loop/supervisor.ts";
 import { instantClock, type Clock } from "../../apps/agent/src/runtime/clock.ts";
 import type { RuntimeConfig } from "../../apps/agent/src/runtime/config.ts";
@@ -53,7 +54,12 @@ const slotsIdle = async (owner: DbHandle) =>
   BEHAVIOUR_SLOTS.length;
 
 export async function startBehaviourAgent(
-  options: { scenarios?: Scenario[]; config?: Partial<RuntimeConfig>; clock?: Clock } = {},
+  options: {
+    scenarios?: Scenario[];
+    config?: Partial<RuntimeConfig>;
+    clock?: Clock;
+    hooks?: Partial<RunHooks>;
+  } = {},
 ): Promise<BehaviourAgent> {
   const env = behaviourEnv();
   const owner = createDb(env.ownerUrl);
@@ -74,6 +80,7 @@ export async function startBehaviourAgent(
       log,
       testMode: true,
       clock: options.clock ?? instantClock(),
+      hooks: options.hooks,
       config: {
         leaseMs: 3_000,
         heartbeatMs: 1_000,
