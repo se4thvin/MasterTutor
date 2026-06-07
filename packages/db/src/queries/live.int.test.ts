@@ -22,6 +22,7 @@ import {
   type TestDatabase,
 } from "../testing.ts";
 import {
+  countUserDownloads,
   discardDownload,
   fileKeptDownload,
   findAssetBySha,
@@ -408,8 +409,16 @@ describe("download records (agent role)", () => {
     );
     await agent.db.transaction((tx) => discardDownload(tx, runId, dropped));
     expect(await pendingDownloads(agent.db, runId)).toEqual([]);
-    const rows = await owner.db.select().from(downloads).where(eq(downloads.runId, runId));
-    expect(rows).toEqual([expect.objectContaining({ id: kept, assetId: filed.assetId })]);
+    const rows = await owner.db
+      .select()
+      .from(downloads)
+      .where(eq(downloads.runId, runId))
+      .orderBy(asc(downloads.createdAt));
+    // A discarded one stays as a marker (it counts toward the cap), never with an asset.
+    expect(rows).toEqual([
+      expect.objectContaining({ id: kept, assetId: filed.assetId, discardedAt: null }),
+      expect.objectContaining({ id: dropped, assetId: null, discardedAt: expect.any(Date) }),
+    ]);
   });
 
   it("applies keep only when this user's own hand-back passes control to the agent (N1)", async () => {
@@ -510,6 +519,42 @@ describe("download records (agent role)", () => {
       ids.sort(),
     );
     expect(await pendingDownloads(agent.db, runId)).toEqual([]);
+  });
+
+  it("counts only the person's own downloads toward the cap, discarded ones included (B6 minor 1)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    // An approved download the agent made does not use the person's quota.
+    await agent.db.transaction((tx) =>
+      recordDownload(tx, {
+        runId,
+        workspaceId: member.workspaceId,
+        filename: "approved.pdf",
+        sha256: "f".repeat(64),
+        bucket: "mastertutor",
+        key: `downloads/${runId}/ffffffffffff-approved.pdf`,
+        mime: "application/pdf",
+        bytes: 3,
+        sourceUrl: "https://example.com/approved.pdf",
+        approvedBy: member.userId,
+      }),
+    );
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const [one, two] = [randomUUID(), randomUUID()];
+    for (const id of [one, two])
+      await agent.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId,
+          filename: "h.txt",
+          bytes: 1,
+          approvedBy: member.userId,
+        }),
+      );
+    expect(await countUserDownloads(agent.db, runId)).toBe(2);
+    // Discarding never frees quota within the run.
+    await agent.db.transaction((tx) => discardDownload(tx, runId, one));
+    await agent.db.transaction((tx) => discardPendingDownloads(tx, runId));
+    expect(await countUserDownloads(agent.db, runId)).toBe(2);
   });
 
   it("upserts an asset once per workspace and sha256, whichever path stores it", async () => {
