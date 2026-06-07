@@ -7,7 +7,7 @@ import {
   type RunStatus,
   type WaitReason,
 } from "@mastertutor/contracts";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { browserSlots, runs, workspaceMembers } from "../schema/index.ts";
 import { notifyRunControl, returnControlToAgent } from "./control.ts";
@@ -178,4 +178,68 @@ export async function requestHandBack(
     if (changed || input.note) await notifyRunControl(tx, input.runId);
     return { ok: true, via: changed ? "control" : "none" };
   });
+}
+
+/** openLive: this member's live view is open on the run (closed on sign-out or removal). */
+export async function recordLiveViewer(db: Database, runId: string, userId: string): Promise<void> {
+  await db.update(runs).set({ liveViewerId: userId }).where(eq(runs.id, runId));
+}
+
+export interface LiveRevocationTarget {
+  runId: string;
+  slotName: string;
+  /** The person holds control: it goes back to the agent too. */
+  controlled: boolean;
+}
+
+/**
+ * The leased runs whose live view that person has open or whose control they hold, in one
+ * workspace (removal) or in any (sign-out, workspaceId null).
+ */
+export async function liveRevocationTargets(
+  db: Database,
+  input: { userId: string; workspaceId: string | null },
+): Promise<LiveRevocationTarget[]> {
+  const rows = await db
+    .select({ runId: runs.id, slotName: browserSlots.name, controlUserId: runs.controlUserId })
+    .from(runs)
+    .innerJoin(
+      browserSlots,
+      and(eq(browserSlots.runId, runs.id), eq(browserSlots.name, runs.slotName)),
+    )
+    .where(
+      and(
+        eq(browserSlots.state, "leased"),
+        or(eq(runs.liveViewerId, input.userId), eq(runs.controlUserId, input.userId)),
+        input.workspaceId ? eq(runs.workspaceId, input.workspaceId) : undefined,
+      ),
+    );
+  return rows.map((row) => ({
+    runId: row.runId,
+    slotName: row.slotName,
+    controlled: row.controlUserId === input.userId,
+  }));
+}
+
+const REVOKED =
+  "Control went back to the agent: the person holding it signed out or left the workspace.";
+
+/**
+ * The revoked person's hold on the run ends: their viewer mark is cleared, and if they hold
+ * control it goes back to the agent (B1 hands back on run_control) with a notice. Someone else's
+ * takeover is never touched.
+ */
+export async function revokeLiveControl(tx: DbTx, runId: string, userId: string): Promise<void> {
+  await tx
+    .update(runs)
+    .set({ liveViewerId: null })
+    .where(and(eq(runs.id, runId), eq(runs.liveViewerId, userId)));
+  const returned = await tx
+    .update(runs)
+    .set({ controller: "agent", controlUserId: null })
+    .where(and(eq(runs.id, runId), eq(runs.controller, "user"), eq(runs.controlUserId, userId)))
+    .returning({ id: runs.id });
+  if (returned.length === 0) return;
+  await emitRunEvent(tx, runId, { type: "error", code: "live_revoked", message: REVOKED });
+  await notifyRunControl(tx, runId);
 }
