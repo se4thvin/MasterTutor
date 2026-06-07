@@ -26,6 +26,19 @@ describe("downloadMime", () => {
 });
 
 const RUN = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+/** A drizzle-shaped stand-in: any chain of calls resolves to [] and is recorded by name. */
+function emptyDatabase(touched: string[]): Database {
+  const chain: unknown = new Proxy(() => undefined, {
+    get: (_target, property) => {
+      if (property === "then") return (resolve: (rows: unknown[]) => void) => resolve([]);
+      touched.push(String(property));
+      return chain;
+    },
+    apply: () => chain,
+  });
+  return chain as Database;
+}
 const log = createLogger({ service: "test", level: "silent" });
 
 /** A browser-level CDP session that records what it is sent and can emit Browser.* events. */
@@ -69,18 +82,8 @@ async function setup(options: { maxBytes?: number; maxCount?: number; denyFails?
     browserCdp: async () => cdp,
   };
   const ingestor = createDownloadIngestor({
-    // Records any use: these cases must decide nothing against the database.
-    db: new Proxy(
-      {},
-      {
-        get: (_target, property) => {
-          dbTouched.push(String(property));
-          return () => {
-            throw new Error("no database here");
-          };
-        },
-      },
-    ) as Database,
+    // Records every use and answers every query with no rows (a run that kept nothing yet).
+    db: emptyDatabase(dbTouched),
     storage: createMemoryStorage(),
     log,
     localRoot: await mkdtemp(join(tmpdir(), "downloads-")),
