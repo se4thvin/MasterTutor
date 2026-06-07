@@ -3,7 +3,15 @@ import { decodeNotify } from "@mastertutor/contracts";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
-import { assets, downloads, runEvents, runs, session, workspaceMembers } from "../schema/index.ts";
+import {
+  assets,
+  downloads,
+  runEvents,
+  runs,
+  session,
+  session as sessionTable,
+  workspaceMembers,
+} from "../schema/index.ts";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -27,11 +35,13 @@ import { returnControlToAgent } from "./control.ts";
 import {
   canAccessLiveSlot,
   getRunForMember,
-  liveRevocationTargets,
+  clearLiveViewer,
+  liveViewsToClose,
   recordLiveViewer,
   requestHandBack,
   requestTakeover,
-  revokeLiveControl,
+  revokeLiveHolds,
+  staleLiveHolds,
 } from "./live.ts";
 
 let testDb: TestDatabase;
@@ -548,56 +558,91 @@ describe("live revocation: sign-out or removal closes open live views (B6 final)
     });
   });
 
-  it("targets the leased runs that person views or controls, in the given workspace", async () => {
+  it("returns that person's control on any open run, leased or not, and never anyone else's", async () => {
     const person = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const other = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const leased = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const sleeping = await seedRun(owner.db, {
+      workspaceId: member.workspaceId,
+      status: "sleeping",
+    });
+    const theirs = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, "browser-1", leased);
+    await requestTakeover(web.db, { runId: leased, userId: person.userId });
+    await requestTakeover(web.db, { runId: sleeping, userId: person.userId });
+    await requestTakeover(web.db, { runId: theirs, userId: other.userId });
+    const notified = await nextNotification(owner.sql, "run_control", () =>
+      agent.db.transaction((tx) =>
+        revokeLiveHolds(tx, { userId: person.userId, workspaceId: member.workspaceId }),
+      ),
+    );
+    expect(decodeNotify("run_control", notified).runId).toMatch(/[0-9a-f-]{36}/);
+    expect(await runRow(leased)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(await runRow(sleeping)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(await runRow(theirs)).toMatchObject({ controller: "user", controlUserId: other.userId });
+    const events = (await owner.db.select().from(runEvents).where(eq(runEvents.runId, leased))).map(
+      (e) => e.payload,
+    );
+    expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "live_revoked" }));
+    // Another workspace's revocation touches nothing here.
+    await requestTakeover(web.db, { runId: theirs, userId: other.userId });
+    await agent.db.transaction((tx) =>
+      revokeLiveHolds(tx, { userId: other.userId, workspaceId: outsider.workspaceId }),
+    );
+    expect(await runRow(theirs)).toMatchObject({ controller: "user", controlUserId: other.userId });
+    await releaseSlotForTest(owner.db, "browser-1");
+  });
+
+  it("closes only live views that person has open, on leased runs; clears the mark after", async () => {
+    const person = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const other = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
     const viewed = await seedRun(owner.db, { workspaceId: member.workspaceId });
-    const controlled = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const controlledOnly = await seedRun(owner.db, { workspaceId: member.workspaceId });
     const notLeased = await seedRun(owner.db, { workspaceId: member.workspaceId });
     await leaseSlotForTest(owner.db, "browser-1", viewed);
-    await leaseSlotForTest(owner.db, "browser-2", controlled);
+    await leaseSlotForTest(owner.db, "browser-2", controlledOnly);
     await recordLiveViewer(web.db, viewed, person.userId);
     await recordLiveViewer(web.db, notLeased, person.userId);
-    await requestTakeover(web.db, { runId: controlled, userId: person.userId });
-    const targets = await liveRevocationTargets(agent.db, {
-      userId: person.userId,
-      workspaceId: null,
-    });
-    expect(targets.sort((a, b) => a.slotName.localeCompare(b.slotName))).toEqual([
-      { runId: viewed, slotName: "browser-1", controlled: false },
-      { runId: controlled, slotName: "browser-2", controlled: true },
+    // Someone else opened the view of the run the person controls: theirs is not closed (minor 5).
+    await requestTakeover(web.db, { runId: controlledOnly, userId: person.userId });
+    await recordLiveViewer(web.db, controlledOnly, other.userId);
+    expect(await liveViewsToClose(agent.db, { userId: person.userId, workspaceId: null })).toEqual([
+      { runId: viewed, slotName: "browser-1" },
     ]);
-    expect(
-      await liveRevocationTargets(agent.db, {
-        userId: person.userId,
-        workspaceId: outsider.workspaceId,
-      }),
-    ).toEqual([]);
-
-    // Control goes back to the agent, the person is told why, and B1 hands back (run_control).
-    const notified = await nextNotification(owner.sql, "run_control", () =>
-      agent.db.transaction((tx) => revokeLiveControl(tx, controlled, person.userId)),
-    );
-    expect(decodeNotify("run_control", notified)).toEqual({ runId: controlled });
-    expect(await runRow(controlled)).toMatchObject({ controller: "agent", controlUserId: null });
-    const events = (
-      await owner.db.select().from(runEvents).where(eq(runEvents.runId, controlled))
-    ).map((e) => e.payload);
-    expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "live_revoked" }));
+    await clearLiveViewer(agent.db, viewed, person.userId);
+    expect((await runRow(viewed)).liveViewerId).toBeNull();
+    await clearLiveViewer(agent.db, controlledOnly, person.userId);
+    expect((await runRow(controlledOnly)).liveViewerId).toBe(other.userId);
     await releaseSlotForTest(owner.db, "browser-1");
     await releaseSlotForTest(owner.db, "browser-2");
   });
 
-  it("never ends someone else's takeover: only the revoked person's control goes back", async () => {
-    const viewer = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
-    const holder = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
-    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
-    await recordLiveViewer(web.db, runId, viewer.userId);
-    await requestTakeover(web.db, { runId, userId: holder.userId });
-    await agent.db.transaction((tx) => revokeLiveControl(tx, runId, viewer.userId));
-    expect(await runRow(runId)).toMatchObject({
-      controller: "user",
-      controlUserId: holder.userId,
-      liveViewerId: null,
-    });
+  it("finds holds whose person signed out or left: the sweep after a missed notification", async () => {
+    const gone = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const expired = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const active = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const session = async (userId: string, expiresIn: number) =>
+      owner.db.insert(sessionTable).values({
+        id: randomUUID(),
+        token: randomUUID(),
+        userId,
+        expiresAt: new Date(Date.now() + expiresIn),
+      });
+    await session(gone.userId, 3_600_000);
+    await session(expired.userId, -1_000);
+    await session(active.userId, 3_600_000);
+    const [r1, r2, r3] = [
+      await seedRun(owner.db, { workspaceId: member.workspaceId }),
+      await seedRun(owner.db, { workspaceId: member.workspaceId }),
+      await seedRun(owner.db, { workspaceId: member.workspaceId }),
+    ];
+    await recordLiveViewer(web.db, r1!, gone.userId);
+    await requestTakeover(web.db, { runId: r2!, userId: expired.userId });
+    await recordLiveViewer(web.db, r3!, active.userId);
+    await owner.db.delete(workspaceMembers).where(eq(workspaceMembers.userId, gone.userId));
+    const stale = await staleLiveHolds(agent.db);
+    expect(stale).toContainEqual({ userId: gone.userId, workspaceId: member.workspaceId });
+    expect(stale).toContainEqual({ userId: expired.userId, workspaceId: member.workspaceId });
+    expect(stale).not.toContainEqual({ userId: active.userId, workspaceId: member.workspaceId });
   });
 });
