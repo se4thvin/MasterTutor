@@ -1,5 +1,6 @@
 import { AUTO_HAND_BACK_IDLE_MS, TAKEOVER_RESTORE_WAIT_MS } from "@mastertutor/contracts";
 import {
+  clearLiveViewer,
   emitRunEvent,
   notifyRunControl,
   readControlUser,
@@ -21,12 +22,14 @@ const RETRY_MS = 100;
 /** Hand-back attempts at n.eko, with a doubling pause between them (100 ms, then 200 ms). */
 const HAND_BACK_ATTEMPTS = 3;
 
-/** The two run-row facts the live hooks need; liveControlStore is the database implementation. */
+/** The run-row facts the live hooks need; liveControlStore is the database implementation. */
 export interface LiveControlStore {
   /** The member holding control, or null once the agent holds it again. */
   controlUser(runId: string): Promise<string | null>;
   /** Idle hand-back: control → agent, a notice for the user, NOTIFY run_control (B1 does the rest). */
   handBackIdle(runId: string): Promise<void>;
+  /** The lease ended: nobody views the run any more (revocation then has nothing to close). */
+  endLiveView(runId: string): Promise<void>;
 }
 
 export function liveControlStore(db: Database): LiveControlStore {
@@ -42,6 +45,7 @@ export function liveControlStore(db: Database): LiveControlStore {
         });
         await notifyRunControl(tx, runId);
       }),
+    endLiveView: (runId) => clearLiveViewer(db, runId),
   };
 }
 
@@ -80,10 +84,14 @@ interface Lease {
   handle?: unknown;
 }
 
+class TimedOut extends Error {
+  override name = "TimedOut";
+}
+
 function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timed out")), ms);
+    timer = setTimeout(() => reject(new TimedOut("timed out")), ms);
   });
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
@@ -159,27 +167,34 @@ export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
     }
   }
 
+  /**
+   * Gives n.eko host to the person in control, each attempt time-boxed. "gone" when control was
+   * handed back (or passed to someone else) meanwhile: nothing is given to a former holder.
+   */
   async function give(
     slotName: string,
     runId: string,
     userId: string,
     patienceMs: number,
-  ): Promise<boolean> {
+  ): Promise<"given" | "failed" | "gone"> {
     const deadline = performance.now() + patienceMs;
     for (;;) {
       try {
-        await deps.liveView.giveControl({ name: slotName }, userId);
-        return true;
+        await withTimeout(deps.liveView.giveControl({ name: slotName }, userId), nekoTimeoutMs);
+        return "given";
       } catch (error) {
-        if (!(error instanceof LiveViewError) || performance.now() >= deadline) {
+        const retryable = error instanceof LiveViewError || error instanceof TimedOut;
+        if (!retryable || performance.now() >= deadline) {
           deps.log.warn(
             { runId, errorCode: error instanceof LiveViewError ? error.code : "neko_give_failed" },
             "takeover not delivered",
           );
-          return false;
+          return "failed";
         }
         // The live view is still connecting: ask again shortly, never in a tight loop.
         await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+        const holder = await deps.store.controlUser(runId).catch(() => userId);
+        if (holder !== userId) return "gone";
       }
     }
   }
@@ -197,7 +212,10 @@ export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
         if (userId === null) return { ok: true };
         // A failed give returns takeover_failed; B1's revert then calls onAgentControl, which
         // takes the host back fail-closed, so nothing is retaken here.
-        if (!(await give(slotName, runId, userId, afterRestore ? restoreWaitMs : 0))) return FAILED;
+        const given = await give(slotName, runId, userId, afterRestore ? restoreWaitMs : 0);
+        if (given === "failed") return FAILED;
+        // Handed back while n.eko was being asked: as above, B1 hands back next.
+        if (given === "gone") return { ok: true };
         await deps.liveView
           .setClipboardAccess({ name: slotName }, true)
           .catch(() => deps.log.warn({ runId, errorCode: "clipboard_on_failed" }, "clipboard off"));
@@ -246,6 +264,11 @@ export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
         deps.log.warn({ runId: slot.runId, errorCode: "downloads_off_failed" }, "downloads"),
       );
       await deps.downloads.detach(slot.runId).catch(() => undefined);
+      await deps.store
+        .endLiveView(slot.runId)
+        .catch(() =>
+          deps.log.warn({ runId: slot.runId, errorCode: "live_view_end_failed" }, "viewer"),
+        );
     },
   };
 }
