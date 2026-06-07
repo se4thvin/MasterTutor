@@ -245,10 +245,11 @@ describe.skipIf(process.env.RUN_LIVE_STACK !== "1")(
         }).then((response) => response.status);
       expect(await upload(MAX_UPLOAD_BYTES + 1, cookies)).toBe(413);
       // Within the limit it reaches n.eko, which refuses a viewer who is not host.
-      expect(await upload(1_024, cookies)).not.toBe(413);
-      // Unauthenticated: refused by ForwardAuth before anything is buffered.
-      expect(await upload(1_024, [session])).not.toBe(200);
-      expect(await upload(MAX_UPLOAD_BYTES + 1, [])).not.toBe(200);
+      expect(await upload(1_024, cookies)).toBe(403);
+      // The upload router itself (live_slot and NEKO_SESSION, no Better Auth session): ForwardAuth
+      // answers 401 before anything is buffered, so an over-limit body never earns a 413.
+      const live = cookies.filter((cookie) => cookie !== session);
+      expect(await upload(MAX_UPLOAD_BYTES + 1, live)).toBe(401);
     });
 
     it("blocks SSRF from inside a slot (spec §12 security 5)", async () => {
@@ -273,7 +274,9 @@ describe.skipIf(process.env.RUN_LIVE_STACK !== "1")(
         `http://${ip2}:8080/health`,
       ];
       for (const target of targets) {
-        const reached = await compose([
+        // Blocked means refused (curl exit 7) or never answered (28); an empty reply (52) or any
+        // HTTP answer means something listened, so it does not count.
+        const exit = await compose([
           "exec",
           "-T",
           "browser-1",
@@ -285,10 +288,10 @@ describe.skipIf(process.env.RUN_LIVE_STACK !== "1")(
           "/dev/null",
           target,
         ]).then(
-          () => true,
-          () => false,
+          () => 0,
+          (error: { code?: number }) => error.code ?? -1,
         );
-        expect(reached, target).toBe(false);
+        expect([7, 28], `${target} (curl exit ${exit})`).toContain(exit);
       }
     });
 
