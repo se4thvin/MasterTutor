@@ -129,6 +129,9 @@ importers:
       '@mastertutor/sealing':
         specifier: workspace:*
         version: link:../../packages/sealing
+      '@mastertutor/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@orpc/client':
         specifier: 1.15.4
         version: 1.15.4

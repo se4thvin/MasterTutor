@@ -7,7 +7,19 @@ import {
   type VaultAuditAction,
   type VaultSecretField,
 } from "@mastertutor/contracts";
-import { and, desc, eq, inArray, isNotNull, notInArray, or, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { Database } from "../client.ts";
 import {
   browserSessions,
@@ -18,6 +30,10 @@ import {
   vaultItems,
   vaultSecrets,
 } from "../schema/index.ts";
+import { keysetBefore, keysetCursor, msOf, parseKeysetCursor } from "./keyset.ts";
+
+/** The audit's cursor error is the shared keyset one (same class, so `instanceof` keeps working). */
+export { KeysetCursorInvalid as VaultAuditCursorInvalid } from "./keyset.ts";
 
 /** A database or an open transaction. */
 export type DbExecutor = Pick<
@@ -29,14 +45,6 @@ export class VaultNotFound extends Error {
   constructor() {
     super("Vault item not found");
     this.name = "VaultNotFound";
-  }
-}
-
-/** A listVaultAudit cursor that is not one this module issued (review 6): the caller's 400. */
-export class VaultAuditCursorInvalid extends Error {
-  constructor() {
-    super("Invalid audit cursor");
-    this.name = "VaultAuditCursorInvalid";
   }
 }
 
@@ -91,7 +99,10 @@ export interface VaultAuditListRow {
   at: Date;
 }
 
-export type SubmitOtpOutcome = "ok" | "not_found" | "finished";
+/** D25: a run holds at most this many unused, unexpired codes; more is a client loop, not a person. */
+export const MAX_UNUSED_OTP_CODES = 5;
+
+export type SubmitOtpOutcome = "ok" | "not_found" | "finished" | "too_many";
 
 const itemColumns = {
   id: vaultItems.id,
@@ -409,26 +420,12 @@ export async function forgetBrowserSession(
   });
 }
 
-const AUDIT_CURSOR = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\|([0-9a-f-]{36})$/;
-const auditAtMs = sql`date_trunc('milliseconds', ${vaultAudit.at})`;
-
 export async function listVaultAudit(
   db: Database,
   workspaceId: string,
   page: { limit: number; cursor: string | null },
 ): Promise<{ items: VaultAuditListRow[]; nextCursor: string | null }> {
-  const match = page.cursor === null ? null : AUDIT_CURSOR.exec(page.cursor);
-  // A cursor is either absent or exactly what nextCursor produced: a real instant and an id.
-  if (
-    page.cursor !== null &&
-    (!match ||
-      !Number.isFinite(Date.parse(match[1]!)) ||
-      new Date(match[1]!).toISOString() !== match[1])
-  )
-    throw new VaultAuditCursorInvalid();
-  const after = match
-    ? sql`(${auditAtMs}, ${vaultAudit.id}) < (${match[1]!}::timestamptz, ${match[2]!}::uuid)`
-    : undefined;
+  const position = parseKeysetCursor(page.cursor);
   const rows = await db
     .select({
       id: vaultAudit.id,
@@ -442,14 +439,19 @@ export async function listVaultAudit(
       at: vaultAudit.at,
     })
     .from(vaultAudit)
-    .where(and(eq(vaultAudit.workspaceId, workspaceId), after))
-    .orderBy(desc(auditAtMs), desc(vaultAudit.id))
+    .where(
+      and(
+        eq(vaultAudit.workspaceId, workspaceId),
+        keysetBefore(vaultAudit.at, vaultAudit.id, position),
+      ),
+    )
+    .orderBy(desc(msOf(vaultAudit.at)), desc(vaultAudit.id))
     .limit(page.limit + 1);
   const items = rows.slice(0, page.limit);
   const last = items.at(-1);
   return {
     items,
-    nextCursor: rows.length > page.limit && last ? `${last.at.toISOString()}|${last.id}` : null,
+    nextCursor: rows.length > page.limit && last ? keysetCursor(last.at, last.id) : null,
   };
 }
 
@@ -465,9 +467,22 @@ export async function submitOtpCode(
       .select({ status: runs.status })
       .from(runs)
       .where(and(eq(runs.id, input.runId), eq(runs.workspaceId, input.workspaceId)))
-      .limit(1);
+      .limit(1)
+      // Serialises submissions per run, so two concurrent codes cannot both pass the D25 cap.
+      .for("update");
     if (!run) return "not_found";
     if ((TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) return "finished";
+    const [unused] = await tx
+      .select({ n: count(otpCodes.id) })
+      .from(otpCodes)
+      .where(
+        and(
+          eq(otpCodes.runId, input.runId),
+          isNull(otpCodes.consumedAt),
+          gt(otpCodes.expiresAt, sql`now()`),
+        ),
+      );
+    if ((unused?.n ?? 0) >= MAX_UNUSED_OTP_CODES) return "too_many";
     await tx.insert(otpCodes).values({ runId: input.runId, sealed: Buffer.from(input.sealed) });
     await tx
       .update(runs)
