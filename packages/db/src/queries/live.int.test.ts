@@ -21,6 +21,7 @@ import {
   pendingDownloads,
   recordDownload,
   recordPendingDownload,
+  upsertAsset,
 } from "./downloads.ts";
 import { returnControlToAgent } from "./control.ts";
 import { canAccessLiveSlot, getRunForMember, requestHandBack, requestTakeover } from "./live.ts";
@@ -491,5 +492,25 @@ describe("download records (agent role)", () => {
       ids.sort(),
     );
     expect(await pendingDownloads(agent.db, runId)).toEqual([]);
+  });
+
+  it("upserts an asset once per workspace and sha256, whichever path stores it", async () => {
+    const asset = {
+      workspaceId: member.workspaceId,
+      sha256: "e".repeat(64),
+      bucket: "mastertutor",
+      key: "downloads/00000000-0000-4000-8000-000000000001/eeeeeeeeeeee-e.pdf",
+      mime: "application/pdf",
+      bytes: 4,
+      sourceUrl: null,
+    };
+    const first = await agent.db.transaction((tx) => upsertAsset(tx, asset));
+    const again = await agent.db.transaction((tx) =>
+      upsertAsset(tx, { ...asset, key: "downloads/other/key.pdf" }),
+    );
+    expect(again).toBe(first);
+    expect((await owner.db.select().from(assets).where(eq(assets.id, first)))[0]?.key).toBe(
+      asset.key,
+    );
   });
 });
