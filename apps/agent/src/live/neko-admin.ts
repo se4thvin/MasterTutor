@@ -27,8 +27,6 @@ export interface NekoAdmin {
     path: string,
     body?: unknown,
   ): Promise<unknown>;
-  /** Drops the cached token (e.g. when the slot is released and restarts). */
-  forget(slotName: string): void;
 }
 
 /** n.eko REST as the per-slot "agent" admin member, with a cached bearer token. */
@@ -88,6 +86,5 @@ export function createNekoAdmin(options: NekoAdminOptions): NekoAdmin {
 
   return {
     request: (slotName, method, path, body) => send(slotName, method, path, body, true),
-    forget: (slotName) => void tokens.delete(slotName),
   };
 }
