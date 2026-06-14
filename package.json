@@ -23,7 +23,8 @@
     "compose:live": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml -f compose.live-test.yml",
     "test:live-stack": "RUN_LIVE_STACK=1 vitest run --project integration tests/live",
     "deploy:check-env": "node scripts/deploy/check-env.ts",
-    "deploy:restore-drill": "bash scripts/deploy/restore-drill.sh"
+    "deploy:restore-drill": "bash scripts/deploy/restore-drill.sh",
+    "prod:smoke": "node tests/smoke/prod-smoke.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
