@@ -35,6 +35,10 @@ export interface ComposeService {
   restart?: string;
   sysctls?: Record<string, string>;
   volumes?: ComposeVolumeMount[];
+  mem_limit?: string | number;
+  cpus?: string | number;
+  pids_limit?: number;
+  logging?: { driver?: string; options?: Record<string, string> };
 }
 export interface ComposeNetwork {
   name?: string;
