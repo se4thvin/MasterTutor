@@ -1,6 +1,7 @@
 # Restore drill overlay (scripts/deploy/restore-drill.sh): CI labels on everything the drill
 # creates, so the shared host's label-scoped cleanup finds it (D45). Only postgres and migrate run:
-# no slots, no cdp network, no fixed subnet or ports.
+# no slots, no cdp network, no fixed subnet or ports. migrate builds its own throwaway image, so
+# the drill never retags the shared mastertutor/node-runtime image; the drill removes it at exit.
 x-ci-labels: &ci-labels
   mastertutor.ci: "1"
   mastertutor.ci.run: ${MT_CI_RUN_ID:-local-drill}
@@ -9,6 +10,9 @@ services:
   postgres:
     labels: *ci-labels
   migrate:
+    image: mt-ci-drill-runtime:${MT_CI_RUN_ID:-local-drill}
+    build:
+      labels: *ci-labels
     labels: *ci-labels
 
 networks:
