@@ -39,6 +39,18 @@ export class GarageAdminError extends Error {
   }
 }
 
+/** An access key id already in Garage holds a different secret. Rotate the id with the secret (D61). */
+export class GarageKeyMismatchError extends Error {
+  readonly keyName: string;
+  constructor(keyName: string) {
+    super(
+      `Garage key "${keyName}" exists with a different secret. Rotate S3 keys by changing the access key id and the secret together (infra/deploy-runbook.md, key rotation).`,
+    );
+    this.name = "GarageKeyMismatchError";
+    this.keyName = keyName;
+  }
+}
+
 const ClusterStatus = z.object({
   layoutVersion: z.number().int(),
   nodes: z.array(z.object({ id: z.string(), isUp: z.boolean() })),
@@ -46,6 +58,10 @@ const ClusterStatus = z.object({
 const BucketList = z.array(z.object({ id: z.string(), globalAliases: z.array(z.string()) }));
 const BucketInfo = z.object({ id: z.string() });
 const KeyList = z.array(z.object({ id: z.string() }));
+const KeyInfo = z.object({
+  accessKeyId: z.string(),
+  secretAccessKey: z.string().nullable().optional(),
+});
 const ErrorBody = z.object({ code: z.string() });
 
 const DEFAULT_CAPACITY_BYTES = 10 * 1024 ** 3;
@@ -160,6 +176,15 @@ export async function bootstrapGarage(
         name: key.name,
       });
       importedKeys.push(key.name);
+    } else {
+      // Garage keeps the old secret under an existing id, so a rotated secret would be ignored.
+      const info = KeyInfo.parse(
+        await call(
+          `GetKeyInfo?id=${encodeURIComponent(key.accessKeyId)}&showSecretKey=true`,
+          "GET",
+        ),
+      );
+      if (info.secretAccessKey !== key.secretAccessKey) throw new GarageKeyMismatchError(key.name);
     }
     await call("AllowBucketKey", "POST", {
       bucketId,
