@@ -17,6 +17,9 @@ importers:
       '@mastertutor/db':
         specifier: workspace:*
         version: link:packages/db
+      '@mastertutor/sealing':
+        specifier: workspace:*
+        version: link:packages/sealing
       '@types/node':
         specifier: 24.19.1
         version: 24.19.1

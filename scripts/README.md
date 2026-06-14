@@ -20,6 +20,7 @@ scripts/remote-test.sh security
 scripts/remote-test.sh web-build      # next build + check:bundle
 scripts/remote-test.sh agent-image    # scripts/check-agent-image.sh
 scripts/remote-test.sh behaviour      # refused until the AppArmor profile is loaded (infra/host/apparmor/)
+scripts/remote-test.sh smoke          # the Dokploy-format backup/restore drill (scripts/deploy/restore-drill.sh)
 ```
 
 Output streams back and the script exits with the suite's exit code. Ctrl-C tears the run down.

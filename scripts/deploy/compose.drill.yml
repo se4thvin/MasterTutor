@@ -1,0 +1,20 @@
+# Restore drill overlay (scripts/deploy/restore-drill.sh): CI labels on everything the drill
+# creates, so the shared host's label-scoped cleanup finds it (D45). Only postgres and migrate run:
+# no slots, no cdp network, no fixed subnet or ports.
+x-ci-labels: &ci-labels
+  mastertutor.ci: "1"
+  mastertutor.ci.run: ${MT_CI_RUN_ID:-local-drill}
+
+services:
+  postgres:
+    labels: *ci-labels
+  migrate:
+    labels: *ci-labels
+
+networks:
+  backend:
+    labels: *ci-labels
+
+volumes:
+  pgdata:
+    labels: *ci-labels
