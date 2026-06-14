@@ -25,11 +25,13 @@ describe("generateSecrets", () => {
       "NEKO_ADMIN_SECRET",
       "NEKO_MEMBER_SECRET",
       "LIVE_COOKIE_SECRET",
-      "TURN_SECRET",
       "GARAGE_ADMIN_TOKEN",
     ]) {
       expect(s[key]!.length, key).toBeGreaterThanOrEqual(32);
     }
+  });
+  it("generates no TURN secret (D42)", () => {
+    expect(generateSecrets()).not.toHaveProperty("TURN_SECRET");
   });
 });
 
