@@ -40,4 +40,7 @@ serves production. Loading or changing it is an operator step that needs the use
 at its default; nothing here changes it.
 
 Docker Desktop (the Mac bench stack, D47) has no such profile: its local override drops the
-`apparmor=` entry (see the P9-31 check recorded in the Phase 9 report).
+`apparmor=` entry, which `tests/compose/prod-overlay.int.test.ts` proves works.
+
+**P9-31 is blocked on the user:** whether production slots start under the profile can be checked
+only after the user loads it with sudo (deploy runbook §0.4). Until then there is no result.
