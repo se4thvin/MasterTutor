@@ -72,6 +72,8 @@ export function composeConfig(
   const text = execFileSync("docker", args, {
     cwd: root,
     encoding: "utf8",
+    // Captured, never passed through: compose's errors can quote env-file values (secrets).
+    stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...options.env },
     maxBuffer: 32 * 1024 * 1024,
   });

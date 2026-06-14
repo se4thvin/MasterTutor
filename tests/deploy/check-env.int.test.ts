@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -121,6 +122,28 @@ describe("checkProductionEnv", () => {
       );
     } finally {
       delete process.env.PUBLIC_IP;
+    }
+  });
+});
+
+describe("pnpm deploy:check-env (CLI)", () => {
+  it("never prints a value, even when docker compose chokes on a malformed line (review I1)", () => {
+    const canary = `sk-canary-${randomUUID()}`;
+    const values = goodEnv();
+    delete values.OPENAI_API_KEY;
+    const file = envFile(values);
+    // An unterminated quote: docker compose's own error message quotes the value.
+    writeFileSync(file, `OPENAI_API_KEY="${canary}\n`, { flag: "a" });
+    const result = spawnSync(process.execPath, ["scripts/deploy/check-env.ts", file], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+    });
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(canary);
+    for (const [key, value] of Object.entries(values)) {
+      if (!PLAIN.has(key)) {
+        expect(`${result.stdout}\n${result.stderr}`.includes(value), key).toBe(false);
+      }
     }
   });
 });
