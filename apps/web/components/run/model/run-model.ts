@@ -53,7 +53,7 @@ interface DownloadItem {
   at: string;
 }
 /** A download made during a takeover, held until the person keeps or discards it at hand-back. */
-interface HeldDownload {
+export interface HeldDownload {
   id: string;
   filename: string;
   bytes: number;
