@@ -9,9 +9,23 @@ set -euo pipefail
 TRAEFIK_CONTAINER="${TRAEFIK_CONTAINER:-dokploy-traefik}"
 NETWORK=mastertutor-cdp
 PREFIX="${CDP_SUBNET_PREFIX:-172.30.231}"
+IFS=. read -r a b c extra <<<"$PREFIX"
+for octet in "$a" "$b" "$c"; do
+  [[ "$octet" =~ ^[0-9]{1,3}$ && "$octet" -le 255 && -z "${extra:-}" ]] || {
+    echo "invalid CDP_SUBNET_PREFIX" >&2
+    exit 2
+  }
+done
 WANT="$PREFIX.12"
 APPLY=0
-[[ "${1:-}" == "--yes" ]] && APPLY=1
+case "$*" in
+  "") ;;
+  --yes) APPLY=1 ;;
+  *)
+    echo "usage: attach-traefik.sh [--yes]" >&2
+    exit 2
+    ;;
+esac
 
 current="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$TRAEFIK_CONTAINER")"
 if [[ -n "$current" ]]; then

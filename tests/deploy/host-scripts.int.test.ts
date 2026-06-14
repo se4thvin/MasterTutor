@@ -75,6 +75,14 @@ describe("create-cdp-network.sh (P9-12)", () => {
   it("rejects an invalid prefix", () => {
     expect(run("create-cdp-network.sh", [], { CDP_SUBNET_PREFIX: "10.231.700" }).status).toBe(2);
   });
+
+  it("refuses any argument but --yes, changing nothing (review minor)", () => {
+    for (const arg of ["-y", "--Yes", "yes"]) {
+      const result = run("create-cdp-network.sh", [arg], { CDP_SUBNET_PREFIX: prefix });
+      expect(result.status, arg).toBe(2);
+      expect(result.calls, arg).toBe("");
+    }
+  });
 });
 
 describe("attach-traefik.sh (P9-13)", () => {
@@ -99,6 +107,19 @@ describe("attach-traefik.sh (P9-13)", () => {
     expect(wrong.status).toBe(1);
     expect(wrong.stderr).toContain("172.30.231.200");
     expect(wrong.calls).not.toContain("network connect");
+  });
+});
+
+describe("attach-traefik.sh arguments (review minor)", () => {
+  it("refuses any argument but --yes and an invalid prefix, changing nothing", () => {
+    for (const arg of ["-y", "--Yes"]) {
+      const result = run("attach-traefik.sh", [arg], {});
+      expect(result.status, arg).toBe(2);
+      expect(result.calls, arg).toBe("");
+    }
+    const bad = run("attach-traefik.sh", ["--yes"], { CDP_SUBNET_PREFIX: "172.30" });
+    expect(bad.status).toBe(2);
+    expect(bad.calls).toBe("");
   });
 });
 

@@ -65,7 +65,12 @@ describe("fillEnv", () => {
 
 describe("resolveOutPath (P9-18)", () => {
   const root = "/repo";
-  const ignored = new Set(["/repo/.env", "/repo/.env.bench"]);
+  const ignored = new Set([
+    "/repo/.env",
+    "/repo/.env.tmp",
+    "/repo/.env.bench",
+    "/repo/.env.bench.tmp",
+  ]);
   const isIgnored = (path: string) => ignored.has(path);
 
   it("defaults to the root .env", () => {
@@ -86,6 +91,12 @@ describe("resolveOutPath (P9-18)", () => {
       /git would track/,
     );
     expect(() => resolveOutPath(["--out", "apps/x.env"], root, isIgnored, "/repo/apps/..")).toThrow(
+      /git would track/,
+    );
+  });
+  it("refuses a target whose temporary file git would track (review minor)", () => {
+    const onlyTarget = (path: string) => path === "/repo/.env.bench";
+    expect(() => resolveOutPath(["--out", ".env.bench"], root, onlyTarget, "/repo")).toThrow(
       /git would track/,
     );
   });

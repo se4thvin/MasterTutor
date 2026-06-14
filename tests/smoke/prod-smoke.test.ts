@@ -1,6 +1,11 @@
 import { encodeRunEventSse, type NoteDetail, type RunDetail } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
-import { controlHolders, parseSmokeArgs, smokeProblems } from "./prod-smoke.ts";
+import {
+  controlHolders,
+  needsLocalPreflight,
+  parseSmokeArgs,
+  smokeProblems,
+} from "./prod-smoke.ts";
 
 const RUN = "0b0f8a64-4a8f-4c58-9df4-4f7ab2d7a8e1";
 const detail = (over: Partial<RunDetail> = {}) =>
@@ -37,6 +42,14 @@ describe("parseSmokeArgs", () => {
     );
     expect(() => parseSmokeArgs(["--base", "http://localhost:18080/x"])).toThrow(/base/);
     expect(() => parseSmokeArgs(["--retries", "2"])).toThrow();
+  });
+});
+
+describe("needsLocalPreflight (review minor)", () => {
+  it("checks the local stack's lock and config only for a loopback base", () => {
+    expect(needsLocalPreflight(new URL("http://localhost:18080"))).toBe(true);
+    expect(needsLocalPreflight(new URL("http://127.0.0.1:18080"))).toBe(true);
+    expect(needsLocalPreflight(new URL("https://notes.example.org"))).toBe(false);
   });
 });
 

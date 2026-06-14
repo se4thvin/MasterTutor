@@ -56,6 +56,14 @@ export function parseSmokeArgs(argv: readonly string[]): SmokeOptions {
   return { base, maxUsd, signUp: values["sign-up"], envFiles: values["env-file"] };
 }
 
+/**
+ * The lock and prod-mode config check describe the local D47 stack; against a real deploy they
+ * are meaningless, and `pnpm deploy:check-env` is the production gate instead.
+ */
+export function needsLocalPreflight(base: URL): boolean {
+  return base.hostname === "localhost" || base.hostname === "127.0.0.1";
+}
+
 export interface SmokeEvidence {
   detail: RunDetail;
   note: NoteDetail | null;
@@ -178,11 +186,13 @@ async function waitFor<T>(
 }
 
 export async function runProdSmoke(options: SmokeOptions): Promise<void> {
-  if (!existsSync("/tmp/mt-behaviour.lock")) {
-    throw new Error("hold /tmp/mt-behaviour.lock first (one heavy stack at a time)");
+  if (needsLocalPreflight(options.base)) {
+    if (!existsSync("/tmp/mt-behaviour.lock")) {
+      throw new Error("hold /tmp/mt-behaviour.lock first (one heavy stack at a time)");
+    }
+    const mode = prodModeProblems(composeConfig(options.envFiles, PROD_LIKE_LOCAL_FILES));
+    if (mode.length > 0) throw new Error(`stack is not production mode:\n${mode.join("\n")}`);
   }
-  const mode = prodModeProblems(composeConfig(options.envFiles, PROD_LIKE_LOCAL_FILES));
-  if (mode.length > 0) throw new Error(`stack is not production mode:\n${mode.join("\n")}`);
 
   const session = await signIn(options.base, options.signUp);
   for (const status of UNFINISHED) {
