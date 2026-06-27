@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { MAX_USER_DOWNLOADS_PER_RUN, Uuid, type RunEvent } from "@mastertutor/contracts";
 import {
+  MAX_USER_DOWNLOAD_BYTES,
+  MAX_USER_DOWNLOADS_PER_RUN,
+  Uuid,
+  type RunEvent,
+} from "@mastertutor/contracts";
+import {
+  countRunDownloads,
   discardDownload,
   discardPendingDownloads,
   emitRunEvent,
@@ -21,7 +27,6 @@ import type { DownloadGate, FinishedDownload } from "../browser/download-gate.ts
 import type { LeasedSlot } from "../loop/hooks.ts";
 import type { Log } from "../runtime/types.ts";
 
-export const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
 /** How long a lease end waits for kept downloads still being stored before it discards the rest. */
 const SETTLE_WAIT_MS = 30_000;
 
@@ -108,14 +113,14 @@ const gateOf = (slot: LeasedSlot): DownloadGate | null => slot.session?.download
  * Spec §10.2.9. B1's download gate is the only code that sets the browser's download behaviour:
  * it denies every download, lets one through after a person approved the agent's request, and,
  * while a member holds control through the live view, lets theirs complete within its caps.
- * This ingestor files only what the gate let through (userDownloads(), approvedDownloads(),
- * never the folder). A download made during control may not be the person's (a request sent
+ * This ingestor files only what the gate reports it let through (onFinished), never the
+ * folder. A download made during control may not be the person's (a request sent
  * before the takeover, or the page's own script), so it is only held: at hand-back the person
  * keeps or discards each one, and only a kept one is stored or shown to the agent.
  */
 export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadIngestor {
   const localRoot = deps.localRoot ?? "/downloads";
-  const maxBytes = deps.maxBytes ?? MAX_DOWNLOAD_BYTES;
+  const maxBytes = deps.maxBytes ?? MAX_USER_DOWNLOAD_BYTES;
   const maxCount = deps.maxCount ?? MAX_USER_DOWNLOADS_PER_RUN;
   const attached = new Map<string, Attached>();
   const localFile = (runId: string, guid: string) => path.join(localRoot, runId, guid);
@@ -343,11 +348,14 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
         entry.userMode = false;
         // Only the deny is awaited (the agent may act next); storing kept files can take long.
         await gate.userControl(false);
-        entry.settling = settle(entry)
+        // Chained: a second hand-back waits for the first settle, never stores the same file twice.
+        const settling: Promise<void> = (entry.settling ?? Promise.resolve())
+          .then(() => settle(entry))
           .catch(failed(runId, "download_settle_failed"))
           .finally(() => {
-            entry.settling = null;
+            if (entry.settling === settling) entry.settling = null;
           });
+        entry.settling = settling;
         return;
       }
       // Each cap is enforced as it happens (B1's gate cancels and deletes); the person hears why.
@@ -363,7 +371,9 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
               },
         ).catch(failed(runId, "download_cap_notice_failed"));
       entry.userMode = true;
-      await gate.userControl(true, { maxBytes, maxCount, onCapped });
+      // The count is per run: downloads it kept or holds from earlier leases are used up.
+      const used = await countRunDownloads(deps.db, runId);
+      await gate.userControl(true, { maxBytes, maxCount: Math.max(0, maxCount - used), onCapped });
     },
     async detach(runId) {
       const entry = attached.get(runId);

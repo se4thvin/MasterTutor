@@ -8,7 +8,7 @@ import {
   liveEmbedPath,
 } from "@mastertutor/contracts";
 import { NekoLoginError, deriveNekoPassword, loginNeko } from "@mastertutor/contracts/server";
-import { getRunForMember, type Database } from "@mastertutor/db";
+import { getRunForMember, recordLiveViewer, type Database } from "@mastertutor/db";
 import { liveSetCookies, signLiveSlot } from "./cookie.ts";
 
 export interface LiveDeps {
@@ -66,6 +66,8 @@ export async function openLive(
     throw new LiveAccessError("unavailable");
   }
 
+  // The agent closes this person's open n.eko session if they sign out or leave the workspace.
+  await recordLiveViewer(deps.db, run.id, input.userId);
   const liveSlot = signLiveSlot(deps.liveCookieSecret, {
     slotName,
     runId: run.id,

@@ -57,6 +57,13 @@
       "when": 1791330993495,
       "tag": "0007_download_keep_or_discard",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791346970300,
+      "tag": "0008_live_revoke",
+      "breakpoints": true
     }
   ]
 }
