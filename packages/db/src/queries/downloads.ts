@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { assets, downloads, runs } from "../schema/index.ts";
+import { lockRunRow } from "./events.ts";
 
 export async function findAssetBySha(
   db: Database,
@@ -166,6 +167,9 @@ export async function fileKeptDownload(
     sourceUrl: string | null;
   },
 ): Promise<{ assetId: string }> {
+  // Run row before download row, as the hand-back takes them (requestHandBack, then
+  // keepPendingDownloads): the caller's download_ready event would otherwise lock in reverse.
+  await lockRunRow(tx, input.runId);
   const [row] = await tx
     .select({ bytes: downloads.bytes })
     .from(downloads)

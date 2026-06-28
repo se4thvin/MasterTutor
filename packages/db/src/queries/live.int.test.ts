@@ -33,6 +33,7 @@ import {
   upsertAsset,
 } from "./downloads.ts";
 import { returnControlToAgent } from "./control.ts";
+import { emitRunEvent } from "./events.ts";
 import {
   canAccessLiveSlot,
   getRunForMember,
@@ -519,6 +520,62 @@ describe("download records (agent role)", () => {
       ids.sort(),
     );
     expect(await pendingDownloads(agent.db, runId)).toEqual([]);
+  });
+
+  it("files a kept download while the same member hands back again, with no deadlock (run row before download row)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const id = randomUUID();
+    await agent.db.transaction((tx) =>
+      recordPendingDownload(tx, {
+        id,
+        runId,
+        filename: "race.txt",
+        bytes: 5,
+        approvedBy: member.userId,
+      }),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let filedSignal!: () => void;
+    const filedFirst = new Promise<void>((resolve) => (filedSignal = resolve));
+    // The agent's settle: file the kept download, then announce it, in one transaction.
+    const settle = agent.db.transaction(async (tx) => {
+      const { assetId } = await fileKeptDownload(tx, {
+        downloadId: id,
+        runId,
+        workspaceId: member.workspaceId,
+        sha256: "e".repeat(64),
+        bucket: "mastertutor",
+        key: `downloads/${runId}/eeeeeeeeeeee-race.txt`,
+        mime: "text/plain",
+        sourceUrl: null,
+      });
+      filedSignal();
+      await gate;
+      await emitRunEvent(tx, runId, {
+        type: "download_ready",
+        downloadId: id,
+        assetId,
+        filename: "race.txt",
+        bytes: 5,
+      });
+    });
+    await filedFirst;
+    // The member retook control during the settle and hands back again, keeping the same id.
+    const handBack = requestHandBack(web.db, {
+      runId,
+      userId: member.userId,
+      note: null,
+      keep: [id],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    release();
+    const outcomes = await Promise.allSettled([settle, handBack]);
+    expect(outcomes.map((o) => (o.status === "rejected" ? String(o.reason) : "ok"))).toEqual([
+      "ok",
+      "ok",
+    ]);
   });
 
   it("counts only the person's own downloads toward the cap, discarded ones included (B6 minor 1)", async () => {
