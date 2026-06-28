@@ -202,3 +202,40 @@ describe("messages (S6, pending)", () => {
     expect(after.filter((m) => m.kind === "message" && !m.pending)).toHaveLength(1);
   });
 });
+
+describe("step replay shots: the agent keeps screenshots on observe steps (Phase 7 Task 3)", () => {
+  const shot = (seq: number) =>
+    rec({
+      type: "step",
+      seq,
+      phase: "observe",
+      state: "done",
+      caption: null,
+      url: "http://site.fixtures.test/",
+      screenshotKey: `runs/r/steps/${seq}-k.png`,
+      action: null,
+    });
+
+  it("replays the screen an act was taken on when the act step has no screenshot of its own", () => {
+    const model = applyRunEvents(base(), [
+      shot(40),
+      step(41, "decide", "done"),
+      step(42, "act", "done"),
+      shot(43),
+      step(44, "act", "done"),
+    ]);
+    const rows = timelineItems(model, [], VIEWER).filter((i) => i.kind === "step" && i.seq >= 40);
+    expect(rows.map((i) => (i.kind === "step" ? [i.seq, i.shotSeq] : null))).toEqual([
+      [42, 40],
+      [44, 43],
+    ]);
+  });
+
+  it("keeps an act step's own screenshot when it has one", () => {
+    const rows = timelineItems(base(), [], VIEWER).filter((i) => i.kind === "step");
+    for (const row of rows)
+      if (row.kind === "step" && row.shotSeq !== null)
+        expect(base().steps.find((s) => s.seq === row.shotSeq)?.screenshotKey).not.toBeNull();
+    expect(rows.some((row) => row.kind === "step" && row.shotSeq === row.seq)).toBe(true);
+  });
+});
