@@ -57,3 +57,57 @@ describe("ESLint OpenAI data policy (D38)", () => {
     }
   });
 });
+
+async function ruleMessages(code: string, filePath: string, ruleId: string): Promise<string[]> {
+  const [result] = await eslint.lintText(code, { filePath });
+  return (result?.messages ?? []).filter((m) => m.ruleId === ruleId).map((m) => m.message);
+}
+
+describe("ESLint fixture-API boundary (P7-14, §3.1)", () => {
+  const staticImport =
+    'import { FIXTURE_AUTH_COOKIE } from "@/lib/fixtures/cookies.ts";\nexport default FIXTURE_AUTH_COOKIE;\n';
+  const relativeImport =
+    'import { FIXTURE_AUTH_COOKIE } from "../fixtures/cookies.ts";\nexport default FIXTURE_AUTH_COOKIE;\n';
+  const dynamicImport = 'export const load = () => import("@/lib/fixtures/router.ts");\n';
+
+  it("bans fixture imports, static, relative or dynamic, from runtime web code", async () => {
+    for (const filePath of [
+      "apps/web/components/run/probe.tsx",
+      "apps/web/lib/server/probe.ts",
+      "apps/web/app/(app)/probe/page.tsx",
+      "apps/web/components/ui/icons.ts",
+    ]) {
+      expect(
+        await ruleMessages(staticImport, filePath, "no-restricted-imports"),
+        filePath,
+      ).toHaveLength(1);
+      expect(
+        await ruleMessages(relativeImport, filePath, "no-restricted-imports"),
+        filePath,
+      ).toHaveLength(1);
+      expect(
+        await ruleMessages(dynamicImport, filePath, "no-restricted-syntax"),
+        filePath,
+      ).toHaveLength(1);
+    }
+  });
+
+  it("allows the fixture module, its gated entry points, tests and the Playwright suites", async () => {
+    for (const filePath of [
+      "apps/web/lib/fixtures/router.ts",
+      "apps/web/app/api/rpc/[[...rest]]/route.ts",
+      "apps/web/app/api/assets/[assetId]/route.ts",
+      "apps/web/lib/server/viewer.ts",
+      "apps/web/components/run/model/run-model.test.ts",
+      "apps/web/e2e/run-states.spec.ts",
+      "apps/web/playwright.stack.config.ts",
+    ]) {
+      expect(await ruleMessages(staticImport, filePath, "no-restricted-imports"), filePath).toEqual(
+        [],
+      );
+      expect(await ruleMessages(dynamicImport, filePath, "no-restricted-syntax"), filePath).toEqual(
+        [],
+      );
+    }
+  });
+});
