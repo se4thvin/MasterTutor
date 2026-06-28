@@ -27,6 +27,8 @@ const serverEnv: Record<string, string> = {
 
 export default defineConfig({
   testDir: "./e2e",
+  // The full-stack suite (playwright.stack.config.ts) runs only against compose.test.yml.
+  testIgnore: ["stack/**"],
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,

@@ -9,12 +9,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DC=(docker compose --env-file .env.test -f compose.yml -f compose.test.yml)
+# shellcheck source=lib/test-stack.sh
+source scripts/lib/test-stack.sh
 PORT="$(grep -E '^TEST_HTTP_PORT=' .env.test | cut -d= -f2)"
 BASE="http://localhost:${PORT:-18080}"
 
-cleanup() { if [[ "${KEEP_STACK:-0}" != "1" ]]; then "${DC[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; fi; }
-trap cleanup EXIT
+take_stack_lock
+trap stop_stack EXIT
 fail() { echo "SMOKE FAIL: $*" >&2; "${DC[@]}" ps -a >&2 || true; "${DC[@]}" logs --tail=60 >&2 || true; exit 1; }
 pass() { echo "ok - $*"; }
 psql_value() { "${DC[@]}" exec -T postgres psql -U owner -d mastertutor -tAc "$1"; }
@@ -33,7 +34,8 @@ for svc in migrate garage-init; do
 done
 pass "migrate and garage-init completed"
 
-[[ "$(psql_value "select count(*) from browser_slots")" == "1" ]] || fail "browser_slots not synced to BROWSER_SLOTS"
+expected_slots="$(grep -E '^BROWSER_SLOTS=' .env.test | cut -d= -f2 | tr ',' '\n' | grep -c .)"
+[[ "$(psql_value "select count(*) from browser_slots")" == "$expected_slots" ]] || fail "browser_slots not synced to BROWSER_SLOTS"
 [[ "$(psql_value "select count(*) from pg_extension where extname = 'vector'")" == "1" ]] || fail "pgvector missing"
 pass "migrations applied"
 
