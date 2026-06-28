@@ -12,6 +12,7 @@ import {
   type TestDatabase,
 } from "@mastertutor/db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { RUN_MESSAGES } from "../runs/messages.ts";
 import type { LiveDeps } from "./open-live.ts";
 import { createLiveHandlers } from "./procedures.ts";
 
@@ -111,7 +112,7 @@ describe("live handlers on liveRouter", () => {
     const done = await seedRun(owner.db, { workspaceId: member.workspaceId, status: "cancelled" });
     await expect(
       handlers.handBack({ runId: done, note: null, keep: [] }, as(member.userId)),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+    ).rejects.toMatchObject({ code: "CONFLICT", message: RUN_MESSAGES.runFinished });
   });
 
   it("maps another member's takeover or hand-back of a held run to FORBIDDEN", async () => {
