@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { matchesGlob } from "node:path";
 import { Base64Key32, DbPassword, GarageKeyId, GarageSecret } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import { ENV_DEFAULTS, fillEnv, generateSecrets, resolveOutPath } from "./env-init.ts";
@@ -108,9 +109,16 @@ describe("resolveOutPath (P9-18)", () => {
 });
 
 describe(".gitignore (re-review N3)", () => {
+  // Read the file, not `git check-ignore`: the remote runner syncs the tree without .git.
+  const patterns = readFileSync(new URL("../.gitignore", import.meta.url), "utf8")
+    .split("\n")
+    .filter((line) => line !== "" && !line.startsWith("#"));
   it("ignores env:init's temporary file for every env file, .env.bench included", () => {
     for (const file of [".env.tmp", ".env.bench.tmp", ".env.local.tmp"]) {
-      expect(spawnSync("git", ["check-ignore", "-q", file]).status, file).toBe(0);
+      expect(
+        patterns.some((pattern) => matchesGlob(file, pattern)),
+        file,
+      ).toBe(true);
     }
   });
 });
