@@ -46,6 +46,12 @@ describe("infra/deploy-runbook.md (review I7, I8 and minors)", () => {
     expect(section(5)).toMatch(/create-cdp-network\.sh/);
   });
 
+  it("warns that the whole site depends on Traefik's attachment, with a post-update check (N2)", () => {
+    expect(section(5)).toMatch(/whole app is down/);
+    expect(section(8)).toMatch(/After any Dokploy or Traefik update/);
+    expect(section(8)).toMatch(/attach-traefik\.sh/);
+  });
+
   it("never puts the smoke password on a command line", () => {
     expect(runbook).not.toMatch(/SMOKE_PASSWORD=…/);
     expect(section(10)).toMatch(/read -rs SMOKE_PASSWORD/);
