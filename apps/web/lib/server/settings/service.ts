@@ -19,9 +19,12 @@ import { ServiceError } from "../service-error.ts";
 /** settings.updated_at to the microsecond, as text: the defaults' version (D14). */
 const version = sql<string>`to_char(${settings.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 const LIVE_VERSION = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
-/** A version this module could have issued: the format, and a real instant (no month 13 or Feb 30). */
+/**
+ * A version this module could have issued: the format, and a real instant Postgres accepts (no
+ * month 13 or Feb 30, and no year 0000, which JS allows but timestamptz input refuses).
+ */
 function isLiveVersion(version: string): boolean {
-  if (!LIVE_VERSION.test(version)) return false;
+  if (!LIVE_VERSION.test(version) || version.startsWith("0000")) return false;
   const toMs = `${version.slice(0, 23)}Z`;
   const at = Date.parse(toMs);
   return Number.isFinite(at) && new Date(at).toISOString() === toMs;
