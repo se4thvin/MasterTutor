@@ -41,7 +41,6 @@ export const WebEnv = z.object({
   VAULT_PUBLIC_KEY: Base64Key32,
   NEKO_MEMBER_SECRET: Secret,
   LIVE_COOKIE_SECRET: Secret,
-  TURN_SECRET: Secret,
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_BASE_URL: z.url().optional(),
   ...S3Access,

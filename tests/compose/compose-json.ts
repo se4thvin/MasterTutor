@@ -11,6 +11,12 @@ export interface ComposeServiceNetwork {
   ipv4_address?: string;
   aliases?: string[];
 }
+export interface ComposeVolumeMount {
+  type?: string;
+  source?: string;
+  target: string;
+  read_only?: boolean;
+}
 export interface ComposeService {
   image?: string;
   build?: unknown;
@@ -28,6 +34,11 @@ export interface ComposeService {
   tmpfs?: string[];
   restart?: string;
   sysctls?: Record<string, string>;
+  volumes?: ComposeVolumeMount[];
+  mem_limit?: string | number;
+  cpus?: string | number;
+  pids_limit?: number;
+  logging?: { driver?: string; options?: Record<string, string> };
 }
 export interface ComposeNetwork {
   name?: string;
@@ -49,14 +60,13 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
  * compose test uses). Needs only the docker CLI; starts nothing.
  */
 export function composeConfig(
-  envFile: string,
+  envFile: string | readonly string[],
   files: readonly string[],
   options: { profiles?: readonly string[]; env?: Readonly<Record<string, string>> } = {},
 ): ComposeConfig {
   const args = [
     "compose",
-    "--env-file",
-    envFile,
+    ...(typeof envFile === "string" ? [envFile] : envFile).flatMap((file) => ["--env-file", file]),
     ...files.flatMap((file) => ["-f", file]),
     ...(options.profiles ?? []).flatMap((profile) => ["--profile", profile]),
     "config",
@@ -66,6 +76,8 @@ export function composeConfig(
   const text = execFileSync("docker", args, {
     cwd: root,
     encoding: "utf8",
+    // Captured, never passed through: compose's errors can quote env-file values (secrets).
+    stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...options.env },
     maxBuffer: 32 * 1024 * 1024,
   });

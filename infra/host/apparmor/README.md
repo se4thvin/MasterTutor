@@ -30,3 +30,17 @@ sudo aa-status | grep -w mastertutor-slot
 ```sh
 sudo apparmor_parser -R /etc/apparmor.d/mastertutor-slot && sudo rm /etc/apparmor.d/mastertutor-slot
 ```
+
+## Production slots
+
+`compose.prod.yml` runs every production slot with `security_opt: apparmor=mastertutor-slot`.
+The Dokploy host is the same machine as the CI host (D45), so the profile installed above also
+serves production. Loading or changing it is an operator step that needs the user's approval
+(infra/deploy-runbook.md). The host sysctl `kernel.apparmor_restrict_unprivileged_userns` stays
+at its default; nothing here changes it.
+
+Docker Desktop (the Mac bench stack, D47) has no such profile: its local override drops the
+`apparmor=` entry, which `tests/compose/prod-overlay.int.test.ts` proves works.
+
+**P9-31 is blocked on the user:** whether production slots start under the profile can be checked
+only after the user loads it with sudo (deploy runbook §0.4). Until then there is no result.
