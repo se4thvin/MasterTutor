@@ -21,7 +21,6 @@ host=coursebite-build
 suites="unit integration security web-build agent-image behaviour ui e2e smoke qa bench-mock"
 # Every suite but qa, whose stack is meant to outlive the run.
 all_suites="unit integration security web-build agent-image behaviour ui e2e smoke bench-mock"
-behaviour_shards=3
 
 suite="${1:-}"
 if [[ -z "$suite" || " $suites all " != *" $suite "* ]]; then
@@ -97,29 +96,17 @@ if [[ "$suite" == all ]]; then
   logs="$(mktemp -d "${TMPDIR:-/tmp}/mt-remote-all.XXXXXX")"
   echo "remote-test: all suites at once; logs in $logs" >&2
   start=$SECONDS
-  # Each entry: a log name, its suite and the suite's args. Behaviour, by far the longest suite,
-  # runs as $behaviour_shards Vitest shards, each on its own stack (shard counts add up to the whole).
-  names=() entries=() pids=() projects=()
+  ran=() pids=() projects=()
   for s in $all_suites; do
     if [[ "$s" == bench-mock && ! -f "$root/scripts/bench-mock.sh" ]]; then continue; fi
-    if [[ "$s" == behaviour ]]; then
-      for ((i = 1; i <= behaviour_shards; i++)); do
-        names+=("behaviour-$i/$behaviour_shards") entries+=("behaviour --shard=$i/$behaviour_shards")
-      done
-    else
-      names+=("$s") entries+=("$s")
-    fi
-  done
-  for ((n = 0; n < ${#names[@]}; n++)); do
-    p="$(new_project)" log="$logs/$(echo "${names[n]}" | tr / -)"
-    read -r -a entry <<<"${entries[n]}"
+    p="$(new_project)"
     (
       t=$SECONDS status=0
-      ssh "$host" "$(remote "${entry[0]}" "$p" "${entry[@]:1}")" >"$log.log" 2>&1 </dev/null || status=$?
-      echo "$status $((SECONDS - t))" >"$log.status"
+      ssh "$host" "$(remote "$s" "$p")" >"$logs/$s.log" 2>&1 </dev/null || status=$?
+      echo "$status $((SECONDS - t))" >"$logs/$s.status"
     ) &
-    pids+=($!) projects+=("$p")
-    echo "remote-test: ${names[n]} as $p" >&2
+    ran+=("$s") pids+=($!) projects+=("$p")
+    echo "remote-test: $s as $p" >&2
   done
   cancel_all() {
     for pid in "${pids[@]}"; do pkill -P "$pid" 2>/dev/null || true; done
@@ -131,15 +118,14 @@ if [[ "$suite" == all ]]; then
   wait
   trap - INT TERM HUP
   failed=0
-  printf '\n%-14s %-5s %6s  %s\n' suite result time tests
-  for ((n = 0; n < ${#names[@]}; n++)); do
-    log="$logs/$(echo "${names[n]}" | tr / -)"
-    read -r status secs <"$log.status"
+  printf '\n%-12s %-5s %6s  %s\n' suite result time tests
+  for s in "${ran[@]}"; do
+    read -r status secs <"$logs/$s.status"
     [[ "$status" == 0 ]] && result=pass || { result=FAIL failed=1; }
-    printf '%-14s %-5s %5ss  %s\n' "${names[n]}" "$result" "$secs" "$(test_counts "$log.log")"
-    fetch_results "${entries[n]%% *}"
+    printf '%-12s %-5s %5ss  %s\n' "$s" "$result" "$secs" "$(test_counts "$logs/$s.log")"
+    fetch_results "$s"
   done
-  [[ -f "$root/scripts/bench-mock.sh" ]] || printf '%-14s %-5s\n' bench-mock "n/a (scripts/bench-mock.sh not added yet)"
+  [[ -f "$root/scripts/bench-mock.sh" ]] || printf '%-12s %-5s\n' bench-mock "n/a (scripts/bench-mock.sh not added yet)"
   echo "remote-test: all finished in $((SECONDS - start))s; logs in $logs" >&2
   exit "$failed"
 fi
