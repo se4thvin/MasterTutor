@@ -179,7 +179,7 @@ describe("tests/e2e/compose.remote.yml on the shared CI host (X4, D45)", () => {
   it("tags every image the stack builds with the run, never the shared :local tag", () => {
     for (const [name, service] of Object.entries(remote.services))
       if (service.image?.startsWith("mastertutor/"))
-        expect(service.image, name).toMatch(new RegExp(`^mastertutor/[a-z-]+:${RUN}$`));
+        expect(service.image, name).toMatch(new RegExp(`^mastertutor/[a-z0-9-]+:${RUN}$`));
     for (const [name, service] of Object.entries(stack.services))
       if (service.build) expect(remote.services[name]?.image, name).toContain(`:${RUN}`);
   });
