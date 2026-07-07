@@ -30,6 +30,14 @@ describe("tool_profiles migration (journal order, never a hard-coded number: P10
     for (const entry of earlier) expect(entry.when).toBeLessThan(mine.when);
   });
 
+  it("a fresh database applies every journal migration, in journal order", async () => {
+    const applied = await owner<{ created_at: string }[]>`
+      select created_at from drizzle.__drizzle_migrations order by id`;
+    expect(applied.map((row) => Number(row.created_at))).toEqual(
+      [...journal.entries].sort((a, b) => a.idx - b.idx).map((entry) => entry.when),
+    );
+  });
+
   it("adds tool_profile with a browser_use default and takeovers with 0", async () => {
     const rows = await owner<
       { table_name: string; column_name: string; column_default: string; is_nullable: string }[]
