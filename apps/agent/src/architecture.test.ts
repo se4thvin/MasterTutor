@@ -47,3 +47,24 @@ describe("approval modes reach only the approval decisions (D44 hard invariants)
     expect(readers).toEqual([]);
   });
 });
+
+describe("tool profiles stay out of the browser and the vault (pre-flight §3.3(d))", () => {
+  it("browser/ and vault/ never read the tool profile", async () => {
+    const readers: string[] = [];
+    const walk = async (path: string): Promise<void> => {
+      for (const entry of await readdir(join(SRC, path), { withFileTypes: true })) {
+        const child = join(path, entry.name);
+        if (entry.isDirectory()) await walk(child);
+        else if (entry.name.endsWith(".ts") && !entry.name.includes(".test."))
+          if (
+            /toolProfile|ToolProfile|TOOL_PROFILE|isToolInProfile/.test(
+              await readFile(join(SRC, child), "utf8"),
+            )
+          )
+            readers.push(child);
+      }
+    };
+    for (const dir of ["browser", "vault"]) await walk(dir);
+    expect(readers).toEqual([]);
+  });
+});
