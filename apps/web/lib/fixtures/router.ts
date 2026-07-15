@@ -169,6 +169,7 @@ export const fixtureRouter = os.router({
         targetFolderId: scope?.targetFolderId ?? null,
         pendingApprovals: [],
         heldDownloads: [],
+        downloads: [],
         lastEventId: null,
       };
     }),
