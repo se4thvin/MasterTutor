@@ -120,7 +120,7 @@ case "$suite" in
   behaviour)
     command="$install && docker build --quiet --label mastertutor.ci=1 -t mastertutor/browser-slot:local apps/browser-slot >/dev/null && NODE_OPTIONS=$preload exec pnpm exec vitest run \"\$@\"" ;;
   web-build)
-    command="$install && pnpm --filter @mastertutor/web build && exec pnpm --filter @mastertutor/web check:bundle" ;;
+    command="$install && pnpm --filter @mastertutor/web build && pnpm --filter @mastertutor/web check:bundle && exec pnpm --filter @mastertutor/web check:first-load" ;;
   agent-image)
     command="AGENT_IMAGE_TAG=mt-ci-agent-image-check:$project exec bash scripts/check-agent-image.sh" ;;
   e2e)
