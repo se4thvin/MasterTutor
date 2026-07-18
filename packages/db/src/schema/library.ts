@@ -133,10 +133,15 @@ export const noteBlocks = pgTable(
     edited: boolean("edited").notNull().default(false),
     originalMarkdown: text("original_markdown"),
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    /** Full-text over block Markdown (B2; Phase 0 note 6). Generated, never written. */
+    search: tsvector("search").generatedAlwaysAs(
+      sql`to_tsvector('english'::regconfig, "markdown")`,
+    ),
     createdAt: createdAt(),
   },
   (t) => [
     unique("note_blocks_note_position_uq").on(t.noteId, t.position),
     index("note_blocks_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("note_blocks_search_idx").using("gin", t.search),
   ],
 );
