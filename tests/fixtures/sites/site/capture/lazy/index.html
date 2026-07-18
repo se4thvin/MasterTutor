@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lazy feed</title>
+    <style>
+      .batch {
+        min-height: 900px;
+        border-bottom: 1px solid #ccc;
+      }
+      img {
+        display: block;
+        width: 300px;
+        height: 200px;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="feed">
+      <section class="batch">
+        <img loading="lazy" src="img/a.svg" alt="A" />
+        <p>Batch 1.</p>
+      </section>
+    </main>
+    <p id="end" hidden>End of feed</p>
+    <script>
+      const feed = document.getElementById("feed");
+      let batches = 1;
+      const io = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting || batches >= 3) continue;
+          batches++;
+          const section = document.createElement("section");
+          section.className = "batch";
+          section.innerHTML = `<img loading="lazy" src="img/${batches === 2 ? "b" : "c"}.svg" alt="Batch ${batches}"><p>Batch ${batches}.</p>`;
+          feed.append(section);
+          io.unobserve(entry.target);
+          io.observe(section);
+          if (batches === 3) document.getElementById("end").hidden = false;
+        }
+      });
+      io.observe(feed.lastElementChild);
+    </script>
+  </body>
+</html>

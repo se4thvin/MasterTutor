@@ -13,6 +13,8 @@
     "@mastertutor/db": "workspace:*",
     "@mastertutor/sealing": "workspace:*",
     "@mastertutor/storage": "workspace:*",
+    "@mozilla/readability": "0.6.0",
+    "defuddle": "0.19.4",
     "drizzle-orm": "0.45.3",
     "fractional-indexing": "4.0.0",
     "imapflow": "2.2.5",
