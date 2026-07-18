@@ -10,8 +10,13 @@ export interface Motion {
   scope: string;
   /** Brings the screen to the state just before the motion (fixture mode, no stack). */
   open(page: Page): Promise<void>;
-  /** Starts the motion; may navigate (mount animations, P8-27). */
+  /**
+   * Starts the motion; may navigate (mount animations, P8-27). It must not wait for the end state:
+   * the trace window opens before it and the measured part starts as it returns (I6).
+   */
   trigger(page: Page): Promise<void>;
+  /** Waits for the motion's end state (the reduced-motion check reads it); default: nothing. */
+  settled?(page: Page): Promise<void>;
   durationMs: number;
   /** A rAF spring that movingAnimations cannot see: sampled under reduced motion instead. */
   sample?: { selector: string; property: string };
@@ -94,10 +99,8 @@ export const MOTIONS: readonly Motion[] = [
       await page.goto("/settings");
       await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
     },
-    trigger: async (page) => {
-      await page.keyboard.press("ControlOrMeta+k");
-      await page.getByRole("dialog", { name: "Search notes" }).waitFor();
-    },
+    trigger: async (page) => page.keyboard.press("ControlOrMeta+k"),
+    settled: async (page) => page.getByRole("dialog", { name: "Search notes" }).waitFor(),
     durationMs: 500,
   },
   {
@@ -121,23 +124,20 @@ export const MOTIONS: readonly Motion[] = [
     scope: ".toast-region",
     open: async (page) => {
       await page.goto(`/library?folder=${ids.folder(2)}`);
-      await page
-        .locator('[data-qa="note-card"]')
-        .filter({ hasText: "Learning-rate warmup" })
-        .waitFor();
-    },
-    trigger: async (page) => {
       const card = page
         .locator('[data-qa="note-card"]')
         .filter({ hasText: "Learning-rate warmup" });
       await card.getByRole("button", { name: /Actions for Learning-rate/ }).click();
       await page.getByRole("menuitem", { name: "Move to…" }).click();
-      await page
+      await page.getByRole("dialog", { name: "Move to…" }).waitFor();
+    },
+    trigger: async (page) =>
+      page
         .getByRole("dialog", { name: "Move to…" })
         .getByRole("button", { name: "Papers" })
-        .click();
-      await page.getByRole("group").filter({ hasText: "Moved to Papers" }).waitFor();
-    },
+        .click(),
+    settled: async (page) =>
+      page.getByRole("group").filter({ hasText: "Moved to Papers" }).waitFor(),
     durationMs: 900,
   },
   {

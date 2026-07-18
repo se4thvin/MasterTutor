@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_LEDGER,
+  autoFindings,
   SwarmReport,
   citedEvidence,
   dismiss,
@@ -61,6 +62,7 @@ describe("findings ledger (Phase 8 Task 9)", () => {
   it("re-opens a fixed or verified finding that a later run reports again (a regression)", () => {
     let ledger = mergeReports(EMPTY_LEDGER, [{ runId: RUN_A, report: report(finding()) }]);
     ledger = markFixed(ledger, "QA-001", "abc1234");
+    ledger = mergeReports(ledger, [{ runId: RUN_B, report: report() }]);
     ledger = markVerified(ledger, "QA-001", RUN_B);
     ledger = mergeReports(ledger, [{ runId: RUN_C, report: report(finding()) }]);
     expect(ledger.entries[0]).toMatchObject({
@@ -112,6 +114,37 @@ describe("findings ledger (Phase 8 Task 9)", () => {
     expect(() => dismiss(ledger, "QA-001", "no")).toThrow();
   });
 
+  it("verifies only with a run merged after the fix that re-checked the same place (I4)", () => {
+    let ledger = mergeReports(EMPTY_LEDGER, [{ runId: RUN_A, report: report(finding()) }]);
+    ledger = markFixed(ledger, "QA-001", "abc1234");
+    // Never merged: no evidence it looked.
+    expect(() => markVerified(ledger, "QA-001", RUN_B)).toThrow(/not merged/);
+    // Merged after the fix, but it checked another screen.
+    const elsewhere = SwarmReport.parse({
+      group: "G3",
+      agent: "layout",
+      checked: [{ screen: "run-live", width: 390, theme: "dark" }],
+      findings: [],
+    });
+    ledger = mergeReports(ledger, [{ runId: RUN_B, report: elsewhere }]);
+    expect(() => markVerified(ledger, "QA-001", RUN_B)).toThrow(/did not re-check/);
+    // Merged after the fix and checked run-otp at 390 dark: verified.
+    ledger = mergeReports(ledger, [{ runId: RUN_C, report: report() }]);
+    expect(markVerified(ledger, "QA-001", RUN_C).entries[0]).toMatchObject({
+      status: "verified",
+      verifiedInRun: RUN_C,
+    });
+  });
+
+  it("refuses a verifying run merged before the fix (I4)", () => {
+    let ledger = mergeReports(EMPTY_LEDGER, [
+      { runId: RUN_A, report: report(finding()) },
+      { runId: RUN_B, report: report() },
+    ]);
+    ledger = markFixed(ledger, "QA-001", "abc1234");
+    expect(() => markVerified(ledger, "QA-001", RUN_B)).toThrow(/before the fix/);
+  });
+
   it("keys on group, screen, width, theme, category and selector", () => {
     expect(findingKey(finding())).toBe(
       findingKey(finding({ title: "Different words", severity: "minor" })),
@@ -137,5 +170,84 @@ describe("findings ledger (Phase 8 Task 9)", () => {
     );
     const md = renderLedgerMarkdown(ledger);
     expect(md.indexOf("QA-002")).toBeLessThan(md.indexOf("QA-001"));
+  });
+
+  describe("auto-detected findings come from the shooter with stable keys (I5)", () => {
+    const shot = (
+      width: number,
+      theme: "light" | "dark",
+      layout: string[],
+      axe: string[] = [],
+    ) => ({
+      screen: "settings",
+      width,
+      theme,
+      layout,
+      axe,
+    });
+    const nav = (h: number) => `target smaller than 44px (223×${h}): a.nav-item "Library"`;
+
+    it("files one finding per issue and screen, across widths and themes, citing every shot", () => {
+      const found = autoFindings("G1", RUN_A, [
+        shot(1440, "light", [nav(38)]),
+        shot(1440, "dark", [nav(38)]),
+        shot(1180, "light", [nav(37)]),
+        shot(390, "dark", [], ["color-contrast: .meta"]),
+      ]);
+      expect(found).toHaveLength(2);
+      const [target, contrast] = found;
+      expect(target).toMatchObject({
+        group: "G1",
+        screen: "settings",
+        width: null,
+        theme: null,
+        category: "target-size",
+        selector: 'target smaller than 44px: a.nav-item "Library"',
+        autoDetected: true,
+      });
+      expect(target!.evidence).toEqual([
+        `orchestration/runs/${RUN_A}/artifacts/shots/settings/w1440-light.png`,
+        `orchestration/runs/${RUN_A}/artifacts/shots/settings/w1440-dark.png`,
+        `orchestration/runs/${RUN_A}/artifacts/shots/settings/w1180-light.png`,
+      ]);
+      expect(contrast).toMatchObject({ width: 390, theme: "dark", category: "contrast" });
+    });
+
+    it("gives a later round the same key, so a fixed finding re-reported is a regression", () => {
+      const round1 = autoFindings("G1", RUN_A, [
+        shot(1440, "light", [nav(38)]),
+        shot(820, "dark", [nav(38)]),
+      ]);
+      const round2 = autoFindings("G1", RUN_C, [
+        shot(820, "dark", [nav(36)]),
+        shot(1440, "light", [nav(38)]),
+      ]);
+      expect(round2.map(findingKey)).toEqual(round1.map(findingKey));
+      let ledger = mergeReports(EMPTY_LEDGER, [
+        {
+          runId: RUN_A,
+          report: SwarmReport.parse({
+            group: "G1",
+            agent: "layout",
+            checked: [],
+            findings: round1,
+          }),
+        },
+      ]);
+      ledger = markFixed(ledger, "QA-001", "abc1234");
+      ledger = mergeReports(ledger, [
+        {
+          runId: RUN_C,
+          report: SwarmReport.parse({
+            group: "G1",
+            agent: "layout",
+            checked: [],
+            findings: round2,
+          }),
+        },
+      ]);
+      expect(ledger.entries).toHaveLength(1);
+      expect(ledger.entries[0]!.status).toBe("open");
+    });
   });
 });

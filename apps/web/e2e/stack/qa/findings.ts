@@ -61,18 +61,18 @@ export const FindingInput = z.strictObject({
 });
 export type FindingInput = z.infer<typeof FindingInput>;
 
+/** One place a run looked at; a null width or theme means every one. */
+const Checked = z.strictObject({
+  screen: z.string().min(1).max(80),
+  width: z.number().int().nullable(),
+  theme: Theme.nullable(),
+});
+type Checked = z.infer<typeof Checked>;
+
 export const SwarmReport = z.strictObject({
   group: z.enum(QA_GROUPS),
   agent: z.enum(["layout", "interactive", "animation", "orchestrator"]),
-  checked: z
-    .array(
-      z.strictObject({
-        screen: z.string().min(1).max(80),
-        width: z.number().int().nullable(),
-        theme: Theme.nullable(),
-      }),
-    )
-    .max(1_000),
+  checked: z.array(Checked).max(1_000),
   findings: z.array(FindingInput).max(500),
 });
 export type SwarmReport = z.infer<typeof SwarmReport>;
@@ -89,9 +89,16 @@ export const LedgerEntry = z
       .regex(/^[0-9a-f]{7,40}$/)
       .nullable(),
     verifiedInRun: RunId.nullable(),
+    /** How many runs the ledger had merged when this was fixed: a verifying run comes later (I4). */
+    fixedAfterRuns: z.number().int().min(0).nullable(),
     rationale: z.string().trim().min(10).max(1_000).nullable(),
   })
   .superRefine((e, ctx) => {
+    if ((e.status === "fixed" || e.status === "verified") && e.fixedAfterRuns === null)
+      ctx.addIssue({
+        code: "custom",
+        message: `${e.id}: a fixed finding records when it was fixed`,
+      });
     if ((e.status === "fixed" || e.status === "verified") && e.fixCommit === null)
       ctx.addIssue({ code: "custom", message: `${e.id}: a fixed finding names its commit` });
     if (e.status === "verified" && e.verifiedInRun === null)
@@ -101,7 +108,12 @@ export const LedgerEntry = z
   });
 export type LedgerEntry = z.infer<typeof LedgerEntry>;
 
-export const Ledger = z.strictObject({ mergedRuns: z.array(RunId), entries: z.array(LedgerEntry) });
+/** Each merged run, in merge order, with the places it checked (the evidence for a verify, I4). */
+const MergedRun = z.strictObject({ runId: RunId, checked: z.array(Checked) });
+export const Ledger = z.strictObject({
+  mergedRuns: z.array(MergedRun),
+  entries: z.array(LedgerEntry),
+});
 export type Ledger = z.infer<typeof Ledger>;
 export const EMPTY_LEDGER: Ledger = { mergedRuns: [], entries: [] };
 
@@ -111,6 +123,86 @@ export function findingKey(f: FindingInput): string {
   return [f.group, f.screen, f.width ?? "*", f.theme ?? "*", f.category, norm(f.selector)].join(
     "|",
   );
+}
+
+/** One shooter shot's detector output (shoot.ts writes these per screen, width and theme). */
+export interface Shot {
+  screen: string;
+  width: number;
+  theme: "light" | "dark";
+  layout: readonly string[];
+  axe: readonly string[];
+}
+
+const CATEGORY_BY_PREFIX: readonly [RegExp, (typeof FINDING_CATEGORIES)[number]][] = [
+  [/^target smaller/, "target-size"],
+  [/^wraps onto/, "wrapping"],
+  [/^overlaps/, "overlap"],
+  [/^(clipped by|text clipped)/, "clipping"],
+  [/^(text overflows|page scrolls|starts before)/, "overflow"],
+];
+
+/** The issue without its measurements, which change with the width and between rounds. */
+const stableIssue = (issue: string) =>
+  issue
+    .replace(/\s*\([^)]*\d[^)]*\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 400);
+
+/**
+ * The shooter's detector and axe output as findings with stable keys (I5): one per issue and
+ * screen; `selector` is the issue without its measurements; `width`/`theme` are null when the
+ * issue shows at more than one. The swarm agent copies these verbatim, never re-words them.
+ */
+export function autoFindings(
+  group: (typeof QA_GROUPS)[number],
+  runId: string,
+  shots: readonly Shot[],
+): FindingInput[] {
+  const found = new Map<string, { issue: string; axe: boolean; shots: Shot[] }>();
+  for (const shot of shots) {
+    for (const [issues, axe] of [
+      [shot.layout, false],
+      [shot.axe, true],
+    ] as const) {
+      for (const issue of issues) {
+        const key = `${shot.screen}\n${stableIssue(issue)}`;
+        const entry = found.get(key) ?? { issue, axe, shots: [] };
+        entry.shots.push(shot);
+        found.set(key, entry);
+      }
+    }
+  }
+  const only = <T>(values: readonly T[]) => (new Set(values).size === 1 ? values[0]! : null);
+  return [...found.values()].map(({ issue, axe, shots: seen }) => {
+    const category = axe
+      ? issue.startsWith("color-contrast")
+        ? "contrast"
+        : "a11y"
+      : (CATEGORY_BY_PREFIX.find(([prefix]) => prefix.test(issue))?.[1] ?? "other");
+    return FindingInput.parse({
+      group,
+      screen: seen[0]!.screen,
+      width: only(seen.map((s) => s.width)),
+      theme: only(seen.map((s) => s.theme)),
+      category,
+      severity: category === "target-size" ? "minor" : "major",
+      title: issue.slice(0, 160),
+      detail: `${axe ? "axe (serious or critical)" : "fe's layout detector"}: ${issue}`.slice(
+        0,
+        4_000,
+      ),
+      evidence: seen
+        .slice(0, 20)
+        .map(
+          (s) =>
+            `orchestration/runs/${runId}/artifacts/shots/${s.screen}/w${s.width}-${s.theme}.png`,
+        ),
+      selector: stableIssue(issue),
+      autoDetected: true,
+    });
+  });
 }
 
 /** A swarm agent's final reply carries its report as one ```json qa-report block (P8-21). */
@@ -128,7 +220,7 @@ export function mergeReports(
 ): Ledger {
   const runIds = reports.map((r) => RunId.parse(r.runId));
   const again = runIds.filter(
-    (id, i) => ledger.mergedRuns.includes(id) || runIds.indexOf(id) !== i,
+    (id, i) => ledger.mergedRuns.some((m) => m.runId === id) || runIds.indexOf(id) !== i,
   );
   if (again.length > 0) {
     throw new Error(
@@ -151,6 +243,7 @@ export function mergeReports(
             finding,
             fixCommit: null,
             verifiedInRun: null,
+            fixedAfterRuns: null,
           });
         }
         continue;
@@ -163,13 +256,15 @@ export function mergeReports(
         seenInRuns: [runId],
         fixCommit: null,
         verifiedInRun: null,
+        fixedAfterRuns: null,
         rationale: null,
       };
       entries.push(entry);
       byKey.set(key, entry);
     }
   }
-  return Ledger.parse({ mergedRuns: [...ledger.mergedRuns, ...runIds], entries });
+  const merged = reports.map(({ runId, report }) => ({ runId, checked: report.checked }));
+  return Ledger.parse({ mergedRuns: [...ledger.mergedRuns, ...merged], entries });
 }
 
 function update(
@@ -188,12 +283,29 @@ function update(
 export const markFixed = (ledger: Ledger, id: string, commit: string): Ledger =>
   update(ledger, id, (e) => {
     if (e.status !== "open") throw new Error(`${id} is ${e.status}, not open`);
-    return { status: "fixed", fixCommit: commit };
+    return { status: "fixed", fixCommit: commit, fixedAfterRuns: ledger.mergedRuns.length };
   });
 
+const covers = (check: Checked, f: FindingInput) =>
+  check.screen === f.screen &&
+  (check.width === null || f.width === null || check.width === f.width) &&
+  (check.theme === null || f.theme === null || check.theme === f.theme);
+
+/**
+ * fixed → verified, only on evidence (I4): `runId` was merged after the fix and re-checked the
+ * finding's screen, width and theme without reporting it again (a re-report re-opens it on merge).
+ */
 export const markVerified = (ledger: Ledger, id: string, runId: string): Ledger =>
   update(ledger, id, (e) => {
     if (e.status !== "fixed") throw new Error(`${id} must be fixed before it is verified`);
+    const at = ledger.mergedRuns.findIndex((m) => m.runId === runId);
+    if (at === -1) throw new Error(`${runId} is not merged; merge its report first`);
+    if (at < (e.fixedAfterRuns ?? Number.POSITIVE_INFINITY)) {
+      throw new Error(`${runId} was merged before the fix of ${id}`);
+    }
+    if (!ledger.mergedRuns[at]!.checked.some((check) => covers(check, e.finding))) {
+      throw new Error(`${runId} did not re-check ${e.finding.screen} for ${id}`);
+    }
     return { status: "verified", verifiedInRun: RunId.parse(runId) };
   });
 

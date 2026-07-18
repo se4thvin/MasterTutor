@@ -15,7 +15,7 @@ import { settle } from "../../helpers/clean-screen.ts";
 import { findLayoutIssues } from "../../helpers/layout-qa.ts";
 import { chromium } from "@playwright/test";
 import { AUTH_STATE, BASE_URL } from "../support/env.ts";
-import { QA_RUN_ID } from "./findings.ts";
+import { QA_RUN_ID, autoFindings, type Shot } from "./findings.ts";
 import { openScreen } from "./qa-page.ts";
 import { SCREEN_GROUPS, SCREENS } from "./screens.ts";
 
@@ -31,6 +31,7 @@ if (!group || !values.run || !QA_RUN_ID.test(values.run)) {
 }
 const root = join(fileURLToPath(new URL("../../.out/qa/", import.meta.url)), values.run);
 const summary: { screen: string; width: number; theme: string; layout: number; axe: number }[] = [];
+const shots: Shot[] = [];
 const browser = await chromium.launch();
 try {
   for (const screen of SCREENS.filter((s) => s.group === group)) {
@@ -65,6 +66,7 @@ try {
             `${base}.json`,
             `${JSON.stringify({ screen: screen.id, width: vp.width, theme, layout, axe }, null, 2)}\n`,
           );
+          shots.push({ screen: screen.id, width: vp.width, theme, layout, axe });
           summary.push({
             screen: screen.id,
             width: vp.width,
@@ -81,5 +83,10 @@ try {
 } finally {
   await browser.close();
 }
+// The detector and axe findings with stable keys: the swarm copies them verbatim (I5).
+writeFileSync(
+  join(root, "auto-findings.json"),
+  `${JSON.stringify(autoFindings(group, values.run, shots), null, 2)}\n`,
+);
 writeFileSync(join(root, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
 console.log(`qa:shoot: ${summary.length} shots for ${group} in apps/web/e2e/.out/qa/${values.run}`);

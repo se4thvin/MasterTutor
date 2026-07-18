@@ -123,9 +123,10 @@ export async function findLayoutIssues(
         return false;
       };
 
-      const elements = all.filter(
+      // Everything a viewer sees. [data-qa-allow-clip] opts out of the clipping checks only: the
+      // struck-out and 44px target rules still apply inside it.
+      const seen = all.filter(
         (el) =>
-          !el.closest("[data-qa-allow-clip]") &&
           !inHiddenBox(el) &&
           !el.parentElement?.closest("svg") &&
           // A closed <details> does not render its content; only its summary is on screen.
@@ -135,6 +136,7 @@ export async function findLayoutIssues(
           !isVisuallyHidden(el) &&
           visible(el),
       );
+      const elements = seen.filter((el) => !el.closest("[data-qa-allow-clip]"));
       for (const el of elements) {
         const style = getComputedStyle(el);
         // Until the walk reaches a fixed box's containing block, overflow above it does not clip
@@ -225,7 +227,7 @@ export async function findLayoutIssues(
         }
       }
       // D22: a struck-out word ("the model") never wraps onto its own line. No opt-in needed.
-      for (const el of elements) {
+      for (const el of seen) {
         if (!getComputedStyle(el).textDecorationLine.includes("line-through")) continue;
         const text = (el.textContent ?? "").trim();
         if (text === "" || text.length > 40) continue;
@@ -294,7 +296,7 @@ export async function findLayoutIssues(
           Array.from(el.parentElement?.childNodes ?? []).some(
             (n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== "",
           );
-        for (const el of elements) {
+        for (const el of seen) {
           if (!el.matches(TARGETS) || el.matches(":disabled,[aria-disabled='true']")) continue;
           if (el.closest("[inert],[aria-hidden='true']")) continue;
           const style = getComputedStyle(el);

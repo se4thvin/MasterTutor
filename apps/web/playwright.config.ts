@@ -5,7 +5,9 @@ import { QA_VIEWPORTS } from "./e2e/helpers/breakpoints.ts";
 
 // WEB_UI_PORT: the shared CI host gives each concurrent run its own (scripts/remote-test/slots.sh).
 const PORT = Number(process.env["WEB_UI_PORT"] || 3100);
-const baseURL = `http://localhost:${PORT}`;
+// Loopback only: on the shared CI host the runner uses the host network (D45, I3).
+const HOST = "127.0.0.1";
+const baseURL = `http://${HOST}:${PORT}`;
 const testEnv = parseEnv(readFileSync(new URL("../../.env.test", import.meta.url), "utf8"));
 
 /** WebEnv for the fixture server. The DB, S3 and OpenAI are never contacted in fixture mode. */
@@ -34,6 +36,8 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   // No retries anywhere (D48): a test that passes only on retry is a failure to fix, not to hide.
   retries: 0,
+  // A missing or changed visual baseline fails; only an explicit `--update-snapshots` writes one (I2).
+  updateSnapshots: "none",
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: { baseURL, locale: "en-US", timezoneId: "UTC", trace: "retain-on-failure" },
   projects: QA_VIEWPORTS.map((vp) => ({
@@ -46,8 +50,8 @@ export default defineConfig({
   })),
   webServer: {
     command: process.env.PW_DEV
-      ? `pnpm exec next dev -p ${PORT}`
-      : `pnpm exec next build && pnpm exec next start -p ${PORT}`,
+      ? `pnpm exec next dev -H ${HOST} -p ${PORT}`
+      : `pnpm exec next build && pnpm exec next start -H ${HOST} -p ${PORT}`,
     // /healthz checks the database (503 in fixture mode), so wait on /sign-in: in fixture mode
     // it redirects to /library for the default signed-in user, which still proves the app serves.
     url: `${baseURL}/sign-in`,

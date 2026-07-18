@@ -6,7 +6,7 @@ start, stop or reseed any stack.
 ## Inputs
 - Your shots were already taken (the orchestrator ran `pnpm qa:shoot --group {{GROUP}} --run {{RUN_ID}}`):
   `orchestration/runs/{{RUN_ID}}/artifacts/shots/<screen>/<w1440|w1180|w1024|w820|w390>-<light|dark>.{png,json}`
-  plus `summary.json`. Each JSON lists fe's layout issues (44px targets included) and serious or
+  plus `summary.json` and `auto-findings.json`. Each JSON lists fe's layout issues (44px targets included) and serious or
   critical axe violations.
 - Screens: `apps/web/e2e/stack/qa/screens.ts` (`group === "{{GROUP}}"`). Widths come from
   `apps/web/e2e/helpers/breakpoints.ts`.
@@ -23,8 +23,11 @@ start, stop or reseed any stack.
    - **Contrast:** text on glass in both themes, disabled states, focus rings.
    - **Layout rules (spec §11.5):** full sidebar over 1180; icon rail at ≤ 1180 with the browser
      stacked above the timeline; bottom tab bar at ≤ 820; trimmed path at ≤ 420.
-2. Every layout or axe entry in the JSON files is a finding with `autoDetected: true`. Do not
-   re-judge them; merge duplicates across widths only when the selector is identical.
+2. `auto-findings.json` holds every layout and axe entry as a finding with a stable key: one per
+   issue and screen; `selector` is the issue without its measurements; `width`/`theme` are null
+   when it shows at more than one; `autoDetected: true`. Copy them into your report **verbatim**:
+   do not re-word, re-judge, re-key, split or merge them, or later rounds will not dedupe.
+   Your own visual findings use the `screens.ts` id as `screen` and a CSS selector for the element.
 3. Crops: if a finding needs a closer look, write a cropped PNG next to the original inside
    `orchestration/runs/{{RUN_ID}}/artifacts/` and cite it.
 
@@ -48,7 +51,7 @@ under `orchestration/runs/{{RUN_ID}}/artifacts/`.
 - Use the claude-in-chrome tools in your own new tab at http://localhost:18080 (an SSH tunnel to the
   remote QA stack, already open). Sign in as the T1 test owner (`apps/web/e2e/stack/support/env.ts` `OWNER`).
 - Widths 1440, 1180, 1024 and 820 with `resize_window`. 390 is covered by emulation in fe's w390
-  project (`scripts/remote-test.sh qa ui`); note it in `checked` as `width: 390` only if you used it.
+  project (`scripts/remote-test.sh ui`); note it in `checked` as `width: 390` only if you used it.
 - Check the stateful flows the shooter cannot reach: sheets opening and closing, the approval
   spotlight, ⌘K search, drag-to-move, toasts and Undo, keyboard focus order and visible focus, the
   takeover affordance on `run-live` (the frame is a stub; judge the chrome, not the stream).
