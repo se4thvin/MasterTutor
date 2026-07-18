@@ -243,4 +243,25 @@ describe("Task 0 re-review (fix 1)", () => {
     ).catch(() => null);
     expect(await session.page.evaluate(() => window.scrollY)).toBe(0);
   });
+
+  it("leaves the page where it is once a person has taken over (Task 0 approval note)", async () => {
+    await session.goto(`${FIXTURES}/capture/tall.html`, signal);
+    await session.page.evaluate(() => window.scrollTo(0, 0));
+    // A person takes the browser while the capture is between tiles: the restore must not scroll
+    // the page under them.
+    const takeover = new Promise<void>((resolve) => {
+      const tick = setInterval(async () => {
+        if ((await session.page.evaluate(() => window.scrollY)) > 0) {
+          clearInterval(tick);
+          session.guard.hold();
+          resolve();
+        }
+      }, 5);
+    });
+    const capture = captureMaskedRegion(session, NO_MASK_SOURCES, clipOf(0, 0, 400, 2900), signal);
+    await takeover;
+    await expect(capture).rejects.toThrow();
+    session.guard.release();
+    expect(await session.page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  });
 });
