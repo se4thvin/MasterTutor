@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isRiskyLabel, type ApprovalRequest, type ComputerAction } from "@mastertutor/contracts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { normalizeCombo } from "../tools/keys.ts";
@@ -137,7 +138,10 @@ export function downloadUrlForCard(url: string): string {
   let shown = url;
   try {
     const parsed = new URL(url);
-    if (parsed.protocol === "data:") shown = `data:${url.slice(5).split(/[,;]/)[0] ?? ""},...`;
+    // A data: URL has no origin to bind an approval to: the card names its content's hash, so an
+    // approval saves only that very content (I4).
+    if (parsed.protocol === "data:")
+      shown = `data:${url.slice(5).split(/[,;]/)[0] ?? ""},... (sha256 ${createHash("sha256").update(url).digest("hex").slice(0, 16)})`;
     else if (parsed.username || parsed.password) {
       parsed.username = "";
       parsed.password = "";

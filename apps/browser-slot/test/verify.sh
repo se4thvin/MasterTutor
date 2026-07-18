@@ -162,14 +162,17 @@ docker exec "$SLOT" sh -c 'r=$(pgrep -f "type=renderer" | head -1); test -n "$r"
   || fail "renderer shares the container user namespace or its ns link is unreadable (sandbox off)"
 pass "Chromium sandbox on"
 
-# Downloads fail closed when no agent holds the browser (I3): Chromium's own default target is the
-# root-owned "/", so only the agent's CDP allowAndName into /downloads/<runId> can save a file.
+# Downloads fail closed when no agent holds the browser (I3): Chromium itself blocks every
+# download (DownloadRestrictions 3), into a throwaway default folder so it never falls back to a
+# native "Save File" dialog a person in the live view could use. Only the agent's CDP
+# allowAndName into /downloads/<runId> saves a file (the behaviour suite drives both).
 # The File System Access API (a native save dialog writing anywhere) is blocked (m1).
 policies="$(docker exec "$SLOT" cat /etc/chromium/policies/managed/policies.json)"
-grep -q '"DownloadDirectory": "/"' <<<"$policies" || fail "no fail-closed DownloadDirectory policy"
+grep -q '"DownloadRestrictions": 3' <<<"$policies" || fail "downloads not blocked by policy"
+grep -q '"DownloadDirectory": "/tmp"' <<<"$policies" || fail "no throwaway default download folder"
+grep -q '"PromptForDownloadLocation": false' <<<"$policies" || fail "downloads may prompt for a location"
 grep -q '"DefaultFileSystemWriteGuardSetting": 2' <<<"$policies" || fail "File System Access writes not blocked"
 grep -q '"DefaultFileSystemReadGuardSetting": 2' <<<"$policies" || fail "File System Access reads not blocked"
-if docker exec -u neko "$SLOT" touch /download-probe 2>/dev/null; then fail "the default download directory is writable"; fi
 pass "downloads fail closed without the agent; File System Access blocked"
 
 from_ip "$PREFIX.10" -o /dev/null "http://$PREFIX.40/" || fail "control: peer not reachable from the test network"

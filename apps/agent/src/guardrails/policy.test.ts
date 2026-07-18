@@ -212,11 +212,14 @@ describe("downloads (spec §9)", () => {
       url: "https://a.test/f.csv",
       filename: "_.._etc_passwd",
     });
-    expect(downloadRequest("data:text/csv;base64,c2VjcmV0", null)).toEqual({
-      kind: "download",
-      url: "data:text/csv,...",
-      filename: null,
-    });
+    const data = downloadRequest("data:text/csv;base64,c2VjcmV0", null);
+    expect(data).toMatchObject({ kind: "download", filename: null });
+    // No payload on the card, but its hash: another content makes another card (I4).
+    expect(data.kind === "download" && data.url).toMatch(
+      /^data:text\/csv,\.\.\. \(sha256 [0-9a-f]{16}\)$/,
+    );
+    expect(downloadRequest("data:text/csv;base64,b3RoZXI=", null)).not.toEqual(data);
+    expect(JSON.stringify(data)).not.toContain("c2VjcmV0");
     expect(downloadRequest("blob:https://a.test/0b1c", ". . .")).toMatchObject({ filename: null });
     expect(downloadRequest("https://a.test/f", "x".repeat(300))).toMatchObject({
       filename: "x".repeat(255),
