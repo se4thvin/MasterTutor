@@ -8,9 +8,10 @@ import { createLogger } from "@mastertutor/contracts/server";
 import { describe, expect, it } from "vitest";
 import type { BrowserSession } from "../browser/session.ts";
 import { Interrupted, StaleRef } from "../runtime/errors.ts";
-import { SECRET_REDACTION, type MaskSources } from "../browser/masking.ts";
+import { NO_MASK_SOURCES, SECRET_REDACTION, type MaskSources } from "../browser/masking.ts";
+import { StepCollector } from "../loop/step-collector.ts";
 import { ToolRegistry } from "./registry.ts";
-import { register, type CallApproval, type ToolContext } from "./types.ts";
+import { ToolError, register, type CallApproval, type ToolContext } from "./types.ts";
 
 const log = createLogger({ service: "test", level: "silent" });
 const ctx = (
@@ -22,12 +23,47 @@ const ctx = (
   signal,
   log,
   approval: null,
+  step: new StepCollector(),
+  mask: NO_MASK_SOURCES,
+  slotName: "browser-1",
 });
 const readArgs = { mode: "text", sinceHash: null } as const;
 const fakeReadPage = (run: () => Promise<ReadPageResult>) =>
   register({ name: "read_page", args: ReadPageArgs, result: ReadPageResult, untrusted: true, run });
 
 describe("ToolRegistry", () => {
+  it("returns a ToolError's code and message to the model and marks the run failed (B2 seam)", async () => {
+    const registry = new ToolRegistry(
+      [
+        fakeReadPage(async () => {
+          throw new ToolError("selector_not_found", "No element matches the selector");
+        }),
+      ],
+      log,
+    );
+    expect(await registry.run("read_page", readArgs, ctx())).toEqual({
+      output: '{"error":"selector_not_found","message":"No element matches the selector"}',
+      notesChanged: false,
+      failed: true,
+      wait: null,
+      handOver: null,
+    });
+    expect(() => new ToolError("Bad Code", "x")).toThrow(TypeError);
+  });
+  it("marks every other error answer failed, and a success not", async () => {
+    const ok = new ToolRegistry([fakeReadPage(async () => ({ unchanged: true }))], log);
+    expect((await ok.run("read_page", readArgs, ctx())).failed).toBe(false);
+    expect((await new ToolRegistry([], log).run("capture", {}, ctx())).failed).toBe(true);
+    const stale = new ToolRegistry(
+      [
+        fakeReadPage(async () => {
+          throw new StaleRef("e1");
+        }),
+      ],
+      log,
+    );
+    expect((await stale.run("read_page", readArgs, ctx())).failed).toBe(true);
+  });
   it("wraps untrusted results with the page origin", async () => {
     const registry = new ToolRegistry([fakeReadPage(async () => ({ unchanged: true }))], log);
     const { output, wait } = await registry.run("read_page", readArgs, ctx());
@@ -96,6 +132,7 @@ describe("ToolRegistry", () => {
     expect(result).toEqual({
       output: '{"error":"otp_unavailable"}',
       notesChanged: false,
+      failed: false,
       wait: "otp",
       handOver: null,
     });

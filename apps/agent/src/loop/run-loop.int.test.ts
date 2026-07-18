@@ -1,4 +1,5 @@
-import { MODELS, type ApprovalMode, type Budget } from "@mastertutor/contracts";
+import { randomUUID } from "node:crypto";
+import { EMPTY_USAGE, MODELS, type ApprovalMode, type Budget } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
   approvals,
@@ -1688,5 +1689,73 @@ describe("RunLoop (spec §5.3)", () => {
       });
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
     });
+  });
+});
+
+describe("function-tool writes join the act commit (B2 seam F2)", () => {
+  const capture: MockTurn = {
+    outputs: [
+      { type: "function", name: "capture", args: { scope: "page", selector: null, kind: null } },
+    ],
+  };
+  const blockAdded = () => ({
+    type: "block_added" as const,
+    noteId: randomUUID(),
+    blockId: randomUUID(),
+    blockType: "paragraph" as const,
+    origin: "dom" as const,
+  });
+
+  it("commits deferred events and usage with the act, then runs after-commit tasks", async () => {
+    const { run, browser, loop } = await setup([capture, done()]);
+    let afterRan = false;
+    browser.functionHook = async (_name, step) => {
+      step.emit(blockAdded());
+      step.addUsage({ ...EMPTY_USAGE, usd: 0.5 });
+      step.afterCommit(async () => {
+        afterRan = true;
+      });
+    };
+    expect((await drive(loop)).kind).toBe("completed");
+    const rows = await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(rows.some((row) => row.type === "block_added")).toBe(true);
+    const [fresh] = await owner.db.select().from(runs).where(eq(runs.id, run.id));
+    expect(fresh!.usage.usd).toBeGreaterThanOrEqual(0.5);
+    expect(afterRan).toBe(true);
+  });
+
+  it("drops a failed tool's writes and deletes the objects it uploaded", async () => {
+    const { run, browser, storage, loop } = await setup([capture, done()]);
+    await storage.put("assets/orphan", new Uint8Array([1]), { contentType: "image/png" });
+    browser.functionHook = async (_name, step) => {
+      step.emit(blockAdded());
+      step.ownObject("assets/orphan");
+      return {
+        output: '{"error":"selector_not_found","message":"x"}',
+        notesChanged: false,
+        failed: true,
+        wait: null,
+        handOver: null,
+      };
+    };
+    expect((await drive(loop)).kind).toBe("completed");
+    const rows = await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(rows.some((row) => row.type === "block_added")).toBe(false);
+    expect(await storage.head("assets/orphan")).toBeNull();
+  });
+
+  it("commits onComplete's writes with the completed transition", async () => {
+    const event = blockAdded();
+    const { run, loop } = await setup([done()], {
+      hooks: {
+        onComplete: async ({ step }) => {
+          step.emit(event);
+          return { ok: true };
+        },
+      },
+    });
+    expect((await drive(loop)).kind).toBe("completed");
+    const rows = await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(rows.map((row) => row.type)).toContain("block_added");
   });
 });

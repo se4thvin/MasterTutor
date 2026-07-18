@@ -6,6 +6,7 @@ import {
 } from "../../../../tests/fixtures/vault-sites/server.ts";
 import { fillApproval, fillCredential, forgetFillState } from "./fill.ts";
 import { generateVaultKeyPair, vaultKeyPairFromPrivate } from "@mastertutor/sealing/open";
+import { StepCollector } from "../loop/step-collector.ts";
 import { readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import { register } from "../tools/types.ts";
@@ -318,6 +319,9 @@ describe("fill_credential", () => {
         signal: new AbortController().signal,
         log: env.log.logger,
         approval: null,
+        step: new StepCollector(),
+        mask,
+        slotName: "browser-1",
       },
     );
     expect(output).not.toContain(account.password);

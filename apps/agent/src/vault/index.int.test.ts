@@ -9,6 +9,7 @@ import { withHooks } from "../loop/hooks.ts";
 import type { LoopBrowser } from "../loop/loop-browser.ts";
 import type { RunSnapshot } from "../loop/run-state.ts";
 import { slotBrowserConnector } from "../loop/session-browser.ts";
+import { StepCollector } from "../loop/step-collector.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { SlotPool } from "../slots/pool.ts";
@@ -93,6 +94,7 @@ async function refNamed(browser: LoopBrowser, name: string): Promise<string> {
     { mode: "interactive", sinceHash: null },
     signal,
     null,
+    new StepCollector(),
   );
   const match = new RegExp(`"ref":"(e\\d+)","tag":"[a-z]+","role":"[^"]*","name":"${name}`).exec(
     output,

@@ -77,9 +77,10 @@ const ALL_BANNED = [
 ];
 
 const OPENAI_IMPORTS = {
-  group: ["openai", "openai/*"],
+  // The SDK package itself, not every module named "openai" (the contracts factory is one).
+  regex: "^openai(/|$)",
   message:
-    "Import OpenAI only through apps/agent/src/llm/openai.ts (stateless factory, openai-data-policy.md).",
+    "Import OpenAI only through @mastertutor/contracts/server/openai (stateless factory, openai-data-policy.md).",
 };
 
 export default defineConfig(
@@ -120,7 +121,7 @@ export default defineConfig(
   {
     // OpenAI data-minimisation policy (D38): one client factory, stateless endpoints only.
     files: ["**/*.{ts,tsx,js,mjs}"],
-    ignores: ["apps/agent/src/llm/openai.ts"],
+    ignores: ["packages/contracts/src/server/openai.ts"],
     rules: {
       "no-restricted-imports": ["error", { patterns: [OPENAI_IMPORTS] }],
     },

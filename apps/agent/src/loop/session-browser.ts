@@ -33,7 +33,7 @@ import { matchAccelerator } from "../tools/accelerators.ts";
 import { ComputerExecutor, type ActionGate } from "../tools/computer.ts";
 import { readPage, readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry } from "../tools/registry.ts";
-import { register, type CallApproval } from "../tools/types.ts";
+import { register, type CallApproval, type StepWriter } from "../tools/types.ts";
 import type { RunHooks } from "./hooks.ts";
 import type { ConnectBrowser, LoopBrowser, Observation } from "./loop-browser.ts";
 import type { RunSnapshot } from "./run-state.ts";
@@ -136,6 +136,7 @@ export class SessionLoopBrowser implements LoopBrowser {
   readonly #mask: MaskSources;
   readonly #run: () => RunSnapshot;
   readonly #log: Log;
+  readonly #slotName: string;
 
   constructor(options: {
     session: BrowserSession;
@@ -144,7 +145,10 @@ export class SessionLoopBrowser implements LoopBrowser {
     mask: MaskSources;
     run: () => RunSnapshot;
     log: Log;
+    /** The leased slot ("browser-N"), handed to tools for slot-local services. */
+    slotName: string;
   }) {
+    this.#slotName = options.slotName;
     this.#session = options.session;
     this.#executor = options.executor;
     this.#registry = options.registry;
@@ -236,6 +240,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     args: unknown,
     signal: AbortSignal,
     approval: CallApproval | null,
+    step: StepWriter,
   ) {
     const run = this.#run();
     return this.#registry.run(name, args, {
@@ -245,6 +250,9 @@ export class SessionLoopBrowser implements LoopBrowser {
       signal,
       log: this.#log,
       approval,
+      step,
+      mask: this.#mask,
+      slotName: this.#slotName,
     });
   }
 
@@ -322,6 +330,7 @@ export function slotBrowserConnector(options: {
       testMode: options.testMode,
       log: options.log,
       guard,
+      ...(options.hooks.responseLog ? { responseLog: options.hooks.responseLog } : {}),
       downloads: {
         slotPath: slotDownloadPath(run().id),
         localPath: join(options.config.downloadsDir, Uuid.parse(run().id)),
@@ -346,6 +355,7 @@ export function slotBrowserConnector(options: {
         mask,
         run,
         log: options.log,
+        slotName,
       });
       return {
         browser,

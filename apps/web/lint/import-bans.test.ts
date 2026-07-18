@@ -58,3 +58,23 @@ describe("animation and icon import bans", () => {
     },
   );
 });
+
+describe("OpenAI import ban (D38)", () => {
+  it("bans the openai SDK in web and the agent, and allows only the contracts factory", async () => {
+    const code = `import OpenAI from "openai"; export default OpenAI;`;
+    expect(await rules(code, "apps/web/lib/server/x.ts")).toContain("no-restricted-imports");
+    expect(await rules(code, "apps/agent/src/x.ts")).toContain("no-restricted-imports");
+    expect(await rules(code, "apps/agent/src/llm/openai.ts")).toContain("no-restricted-imports");
+    expect(await rules(code, "packages/contracts/src/server/openai.ts")).toEqual([]);
+    // Subpaths of the SDK are the SDK; the contracts factory's own subpath is the way in.
+    expect(
+      await rules(`export { zodTextFormat } from "openai/helpers/zod";`, "apps/agent/src/x.ts"),
+    ).toContain("no-restricted-imports");
+    expect(
+      await rules(
+        `export { createOpenAI } from "@mastertutor/contracts/server/openai";`,
+        "apps/agent/src/x.ts",
+      ),
+    ).toEqual([]);
+  });
+});

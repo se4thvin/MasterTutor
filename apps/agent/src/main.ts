@@ -5,6 +5,8 @@ import { createStorage } from "@mastertutor/storage";
 import { assertConcurrencyFitsSlots } from "./boot-checks.ts";
 import { startHealthServer } from "./health.ts";
 import { createOpenAIModelClient } from "./llm/client.ts";
+import { createOpenAI } from "./llm/openai.ts";
+import { composeRunHooks } from "./loop/hooks.ts";
 import { Supervisor } from "./loop/supervisor.ts";
 import { slotCdpBaseUrl } from "./slots/probe.ts";
 import { createVault, vaultHooks } from "./vault/index.ts";
@@ -21,6 +23,8 @@ const storage = createStorage({
   accessKeyId: env.S3_ACCESS_KEY_ID,
   secretAccessKey: env.S3_SECRET_ACCESS_KEY,
 });
+// One stateless OpenAI client per process (D38): the loop's model client and every later phase use it.
+const openai = createOpenAI({ apiKey: env.OPENAI_API_KEY, baseURL: env.OPENAI_BASE_URL });
 const vault = createVault({
   db: database.db,
   keys: vaultKeys,
@@ -39,12 +43,13 @@ try {
 const supervisor = new Supervisor({
   db: database,
   storage,
-  model: createOpenAIModelClient({ apiKey: env.OPENAI_API_KEY, baseURL: env.OPENAI_BASE_URL }),
+  model: createOpenAIModelClient(openai),
   slots: env.BROWSER_SLOTS,
   cdpBaseUrl: (name) => slotCdpBaseUrl(name),
   log,
   testMode: env.AGENT_TEST_MODE,
-  hooks: vaultHooks(vault),
+  // Each phase's hook set; a second owner of any single-owner hook is a boot error.
+  hooks: composeRunHooks(vaultHooks(vault)),
   config: { shutdownDrainMs: env.AGENT_SHUTDOWN_DRAIN_MS },
 });
 

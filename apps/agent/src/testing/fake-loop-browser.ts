@@ -12,7 +12,7 @@ import type { CollectedStorage } from "../browser/storage-state.ts";
 import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
-import type { CallApproval } from "../tools/types.ts";
+import type { CallApproval, StepWriter } from "../tools/types.ts";
 
 export const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
@@ -149,21 +149,31 @@ export class FakeLoopBrowser implements LoopBrowser {
   functionApproval: (name: FunctionToolName, args: unknown) => Promise<ApprovalRequest | null> =
     async () => null;
 
+  /** Lets a test stage step writes, or answer as a failed tool; returning nothing uses functionOutput. */
+  functionHook:
+    | ((name: FunctionToolName, step: StepWriter, signal: AbortSignal) => Promise<ToolRun | void>)
+    | null = null;
+
   async runFunction(
     name: FunctionToolName,
     args: unknown,
     signal: AbortSignal,
     approval: CallApproval | null,
+    step: StepWriter,
   ): Promise<ToolRun> {
     signal.throwIfAborted();
     this.functionRuns.push({ name, args });
     this.functionApprovals.push(approval);
-    return {
-      output: this.functionOutput(name),
-      notesChanged: false,
-      wait: this.functionWait(name),
-      handOver: this.functionHandOver(name),
-    };
+    const custom = await this.functionHook?.(name, step, signal);
+    return (
+      custom ?? {
+        output: this.functionOutput(name),
+        notesChanged: false,
+        failed: false,
+        wait: this.functionWait(name),
+        handOver: this.functionHandOver(name),
+      }
+    );
   }
 
   /** Runs inside navigate, e.g. to block a restore navigation until it is aborted. */
