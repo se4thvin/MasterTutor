@@ -78,3 +78,39 @@ describe("OpenAI import ban (D38)", () => {
     ).toEqual([]);
   });
 });
+
+describe("server-only contracts stay out of web client code (Task 0 review M1)", () => {
+  const imports = [
+    `import { createOpenAI } from "@mastertutor/contracts/server/openai"; export default createOpenAI;`,
+    `import { createLogger } from "@mastertutor/contracts/server"; export default createLogger;`,
+  ];
+  it.each(["apps/web/components/x.tsx", "apps/web/app/(app)/page.tsx", "apps/web/lib/x.ts"])(
+    "bans them in %s",
+    async (file) => {
+      for (const code of imports)
+        expect(await rules(code, file)).toContain("no-restricted-imports");
+    },
+  );
+  it.each(["apps/web/lib/server/x.ts", "apps/web/app/api/x/route.ts"])(
+    "allows them on the server: %s",
+    async (file) => {
+      for (const code of imports) expect(await rules(code, file)).toEqual([]);
+    },
+  );
+});
+
+describe("dynamic import of the OpenAI SDK (Task 0 review M3)", () => {
+  it.each([
+    "apps/web/components/x.tsx",
+    "apps/web/lib/server/x.ts",
+    "apps/agent/src/x.ts",
+    "packages/db/src/x.ts",
+    "packages/contracts/src/server/x.ts",
+    "tests/x.ts",
+  ])('bans import("openai") in %s', async (file) => {
+    for (const source of ["openai", "openai/helpers/zod"])
+      expect(await rules(`export const l = () => import("${source}");`, file)).toContain(
+        "no-restricted-syntax",
+      );
+  });
+});

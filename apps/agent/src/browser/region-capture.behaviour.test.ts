@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
-import { regionIsBlack } from "../testing/png.ts";
+import { imageWidth, regionIsBlack } from "../testing/png.ts";
 import { NO_MASK_SOURCES, type MaskSources } from "./masking.ts";
-import { captureMaskedRegion, hasMaskTargets } from "./region-capture.ts";
+import { MAX_REGION_WIDTH, captureMaskedRegion, hasMaskTargets } from "./region-capture.ts";
 import type { BrowserSession } from "./session.ts";
 
 let session: BrowserSession;
@@ -57,7 +57,9 @@ describe("captureMaskedRegion", () => {
       ),
     ).toBeNull();
   });
-  it("caps the region size", async () => {
+  it("caps the region size (Task 0 review M10)", async () => {
+    // The page is 6000 px wide: the region is cut to MAX_REGION_WIDTH, captured viewport by viewport.
+    await session.goto(`${FIXTURES}/capture/wide.html`, signal);
     const png = await captureMaskedRegion(
       session,
       NO_MASK_SOURCES,
@@ -65,6 +67,16 @@ describe("captureMaskedRegion", () => {
       signal,
     );
     expect(png).not.toBeNull();
+    expect(await imageWidth(png!)).toBe(MAX_REGION_WIDTH);
+    // And never past the document: the region page is no wider than the viewport.
+    await session.goto(`${FIXTURES}/capture/region.html`, signal);
+    const narrow = await captureMaskedRegion(
+      session,
+      NO_MASK_SOURCES,
+      { clip: { x: 0, y: 0, width: 10_000, height: 100 }, scale: 1 },
+      signal,
+    );
+    expect(await imageWidth(narrow!)).toBeLessThanOrEqual(1_280);
   });
 });
 
@@ -75,5 +87,91 @@ describe("hasMaskTargets", () => {
     expect(await hasMaskTargets(session, NO_MASK_SOURCES)).toBe(false);
     await session.page.setContent('<input type="password" hidden value="x">');
     expect(await hasMaskTargets(session, NO_MASK_SOURCES)).toBe(true);
+  });
+});
+
+/** The node id of `selector` in the page target, as the vault registers a filled field. */
+async function nodeIdOf(selector: string): Promise<number> {
+  const cdp = await session.cdp();
+  const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
+  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
+  const { node } = await cdp.send("DOM.describeNode", { nodeId });
+  return node.backendNodeId;
+}
+const clipOf = (x: number, y: number, width: number, height: number, scale = 1) => ({
+  clip: { x, y, width, height },
+  scale,
+});
+
+describe("cross-origin frames anywhere in the page (Task 0 review I1)", () => {
+  it("withholds a region over a cross-origin frame inside a shadow root", async () => {
+    await session.goto(`${FIXTURES}/capture/shadow-oopif.html`, signal);
+    await session.page.waitForTimeout(500);
+    expect(await captureMaskedRegion(session, vault, clipOf(550, 0, 400, 200), signal)).toBeNull();
+    expect(
+      await captureMaskedRegion(session, vault, clipOf(0, 0, 400, 200), signal),
+    ).not.toBeNull();
+  });
+
+  it("withholds a region over a cross-origin frame nested in a same-origin frame", async () => {
+    await session.goto(`${FIXTURES}/capture/nested-frame.html`, signal);
+    await session.page.waitForTimeout(500);
+    expect(await captureMaskedRegion(session, vault, clipOf(550, 0, 400, 200), signal)).toBeNull();
+    expect(
+      await captureMaskedRegion(session, vault, clipOf(0, 0, 400, 200), signal),
+    ).not.toBeNull();
+  });
+
+  it("applies B1's gate: a vault-filled field plus any cross-origin frame withholds every region", async () => {
+    await session.goto(`${FIXTURES}/capture/shadow-frame.html`, signal);
+    await session.page.waitForTimeout(500);
+    const filled = await nodeIdOf("#pw");
+    const sources: MaskSources = { ...vault, nodeIds: () => [filled] };
+    expect(await captureMaskedRegion(session, sources, clipOf(0, 0, 400, 300), signal)).toBeNull();
+  });
+});
+
+describe("the captured layout is the measured one (Task 0 review I2)", () => {
+  it("masks a field in a region below the fold of a scrolled page", async () => {
+    await session.goto(`${FIXTURES}/capture/tall.html`, signal);
+    await session.page.evaluate(() => window.scrollTo(0, 1000));
+    // The field is at (20,1500)-(220,1530) in the document.
+    const png = await captureMaskedRegion(
+      session,
+      NO_MASK_SOURCES,
+      clipOf(0, 1400, 400, 300, 2),
+      signal,
+    );
+    expect(png).not.toBeNull();
+    expect(await regionIsBlack(Buffer.from(png!), { x: 44, y: 204, width: 390, height: 50 })).toBe(
+      true,
+    );
+    expect(await regionIsBlack(Buffer.from(png!), { x: 10, y: 10, width: 100, height: 100 })).toBe(
+      false,
+    );
+  });
+
+  it("masks a field in a region taller than the viewport", async () => {
+    await session.goto(`${FIXTURES}/capture/tall.html`, signal);
+    const png = await captureMaskedRegion(
+      session,
+      NO_MASK_SOURCES,
+      clipOf(0, 0, 400, 2000),
+      signal,
+    );
+    expect(png).not.toBeNull();
+    expect(await regionIsBlack(Buffer.from(png!), { x: 22, y: 1502, width: 195, height: 25 })).toBe(
+      true,
+    );
+    expect(
+      await regionIsBlack(Buffer.from(png!), { x: 10, y: 1800, width: 100, height: 100 }),
+    ).toBe(false);
+  });
+
+  it("withholds a region when a secret field is fixed to the viewport (a one-time code bar)", async () => {
+    await session.goto(`${FIXTURES}/capture/fixed-secret.html`, signal);
+    expect(
+      await captureMaskedRegion(session, NO_MASK_SOURCES, clipOf(0, 2800, 400, 200), signal),
+    ).toBeNull();
   });
 });

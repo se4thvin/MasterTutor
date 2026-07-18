@@ -1035,11 +1035,16 @@ export class RunLoop {
         executed = await this.#execute(call, signal, step);
       } catch (error) {
         await this.#discard(step);
+        // What the tool already spent (OCR, embeddings…) is charged even though it was cut short (M7).
+        this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
         if (interruptionOf(error) === null && !signal.aborted) throw error;
         this.#results.set(call.callId, notRun(call, INTERRUPTED));
         this.#answerRest(NOT_STARTED);
         await store
-          .commit({ steps: [{ seq, phase: "act", state: "aborted", action }] })
+          .commit({
+            steps: [{ seq, phase: "act", state: "aborted", action }],
+            run: { usage: this.#run.usage },
+          })
           .catch(() => undefined);
         throw error;
       }

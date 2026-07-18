@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { policyProblems } from "../../../../tests/llm-mock/src/policy.ts";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
@@ -83,6 +83,22 @@ describe("the single OpenAI factory (openai-data-policy.md)", () => {
   it("leaves every recorded request policy-clean", () => {
     expect(policyProblems(mock.requests)).toEqual([]);
     expect(mock.failures).toEqual([]);
+  });
+
+  it("never logs a request, even when OPENAI_LOG asks for debug output (Task 0 review M2)", async () => {
+    const previous = process.env.OPENAI_LOG;
+    process.env.OPENAI_LOG = "debug";
+    const spies = (["log", "info", "debug", "warn", "error"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => undefined),
+    );
+    try {
+      await client().embeddings.create({ input: ["MARMOT4CANARY8VELVET"] }, { signal: signal() });
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      if (previous === undefined) delete process.env.OPENAI_LOG;
+      else process.env.OPENAI_LOG = previous;
+    }
   });
 
   it("still strips chaining and identifiers whatever the caller passed", () => {

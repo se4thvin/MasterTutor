@@ -22,6 +22,13 @@ const SEALING_OPEN_BAN = {
   group: [SEALING_OPEN],
   message: "web can seal but never open: @mastertutor/sealing/open is agent-only (spec §3.1).",
 };
+// Node-only contracts (the OpenAI factory, the logger, n.eko) never reach web client code: only
+// apps/web/lib/server/** and apps/web/app/api/** may import them (Task 0 review M1).
+const SERVER_CONTRACTS_BAN = {
+  group: ["@mastertutor/contracts/server", "@mastertutor/contracts/server/*"],
+  message:
+    "Server-only contracts may be imported only under apps/web/lib/server/ or apps/web/app/api/.",
+};
 const MOTION_COMPONENT_BAN = ["motion/react", "motion/react-client"].map((name) => ({
   name,
   importNames: ["motion"],
@@ -29,7 +36,7 @@ const MOTION_COMPONENT_BAN = ["motion/react", "motion/react-client"].map((name) 
 }));
 // Every apps/web no-restricted-imports block replaces the earlier one, so it must carry the D38
 // OpenAI import ban too.
-const webImports = (patterns, { sealingOpen = false } = {}) => [
+const webImports = (patterns, { sealingOpen = false, server = false } = {}) => [
   "error",
   {
     paths: MOTION_COMPONENT_BAN,
@@ -37,14 +44,21 @@ const webImports = (patterns, { sealingOpen = false } = {}) => [
       ANIMATION_BANS,
       OPENAI_IMPORTS,
       ...(sealingOpen ? [] : [SEALING_OPEN_BAN]),
+      ...(server ? [] : [SERVER_CONTRACTS_BAN]),
       ...patterns,
     ],
   },
 ];
 
-// D38: stateful OpenAI APIs. Every block that sets no-restricted-syntax for apps/** must include
-// these, because a later block's no-restricted-syntax replaces an earlier one's.
+// D38: stateful OpenAI APIs and dynamic imports of the SDK. Every block that sets
+// no-restricted-syntax must include these, because a later block's no-restricted-syntax replaces
+// an earlier one's.
 const OPENAI_STATEFUL_BANS = [
+  {
+    selector: "ImportExpression[source.value=/^openai(\\/|$)/]",
+    message:
+      "Import OpenAI only through @mastertutor/contracts/server/openai (stateless factory, openai-data-policy.md).",
+  },
   {
     selector:
       "MemberExpression[property.name=/^(files|vectorStores|conversations|batches|fineTuning|evals)$/]:matches([object.name=/^(openai|client|openaiClient)$/i], [object.property.name=/^(openai|client|openaiClient)$/i])",
@@ -124,6 +138,7 @@ export default defineConfig(
     ignores: ["packages/contracts/src/server/openai.ts"],
     rules: {
       "no-restricted-imports": ["error", { patterns: [OPENAI_IMPORTS] }],
+      "no-restricted-syntax": ["error", ...OPENAI_STATEFUL_BANS],
     },
   },
   {
@@ -166,10 +181,20 @@ export default defineConfig(
     },
   },
   {
+    // Server code may import the Node-only contracts (M1).
+    files: ["apps/web/lib/server/**/*.{ts,tsx}", "apps/web/app/api/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], { server: true }),
+    },
+  },
+  {
     // W9: this one integration test plays the agent to prove what web sealed; nothing else may.
     files: ["apps/web/lib/server/rpc/vault.int.test.ts"],
     rules: {
-      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], { sealingOpen: true }),
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
+        sealingOpen: true,
+        server: true,
+      }),
       "no-restricted-syntax": dynamicImportBan([
         ...ALL_BANNED.filter((name) => name !== SEALING_OPEN),
         "three",

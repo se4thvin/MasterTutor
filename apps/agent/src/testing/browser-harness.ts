@@ -1,6 +1,6 @@
 import { createLogger } from "@mastertutor/contracts/server";
 import { OTHER, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts";
-import { BrowserSession } from "../browser/session.ts";
+import { BrowserSession, type BrowserSessionOptions } from "../browser/session.ts";
 
 /** The behaviour stack's nginx serves tests/fixtures/sites/site/ here (tests/fixtures/nginx.conf). */
 export const FIXTURES = SITE;
@@ -12,7 +12,7 @@ const log = createLogger({ service: "test", level: "silent" });
  * for its duration; close the session in afterAll. No Supervisor is involved.
  */
 export function openTestSession(
-  options: { responseLog?: (url: URL) => boolean } = {},
+  options: Pick<BrowserSessionOptions, "responseLog" | "redactUrl" | "resolveHost"> = {},
 ): Promise<BrowserSession> {
   const cdpBaseUrl = SLOT_CDP["browser-1"];
   if (!cdpBaseUrl) throw new Error("behaviour slot browser-1 is not configured");
@@ -21,6 +21,6 @@ export function openTestSession(
     allowedOrigins: () => [SITE, OTHER],
     testMode: true,
     log,
-    ...(options.responseLog ? { responseLog: options.responseLog } : {}),
+    ...options,
   });
 }
