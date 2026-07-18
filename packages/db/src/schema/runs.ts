@@ -38,6 +38,7 @@ import {
   slotStateEnum,
   stepPhaseEnum,
   stepStateEnum,
+  toolProfileEnum,
   waitReasonEnum,
 } from "./enums.ts";
 import { assets, folders, notes } from "./library.ts";
@@ -77,6 +78,7 @@ export const runs = pgTable(
     /** Who last opened the live view (openLive): their open n.eko session is closed on sign-out. */
     liveViewerId: text("live_viewer_id"),
     approvalMode: approvalModeEnum("approval_mode").notNull().default("ask"),
+    toolProfile: toolProfileEnum("tool_profile").notNull().default("browser_use"),
     model: text("model").notNull().default(MODELS.agentPrimary),
     previousResponseId: text("previous_response_id"),
     plan: jsonb("plan").$type<Plan>(),
