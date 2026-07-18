@@ -103,7 +103,7 @@ test.describe("Takeover and hand back", () => {
     });
     // The session has ended (the fixture's sign-in page would otherwise send a signed-in user on).
     await context.addCookies([
-      { name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL ?? "http://localhost:3100" },
+      { name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL ?? "http://127.0.0.1:3100" },
     ]);
     await overlay(page).click();
     await expect(page).toHaveURL(
