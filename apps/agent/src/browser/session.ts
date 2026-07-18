@@ -176,7 +176,10 @@ export class BrowserSession {
         await cdp.send("DOM.enable");
         // Frame events (Page.frameAttached/frameNavigated) for the typing guard.
         await cdp.send("Page.enable");
-        await this.#watchResponses(cdp, this.#page);
+        const page = this.#page;
+        // Current only while this tab is followed through this very session: a re-adopted opener
+        // gets a new session, and its old one must not log a second copy (N2).
+        await this.#watchResponses(cdp, () => page === this.#page && this.#cdp === attempt);
         return cdp;
       });
       this.#cdp = attempt;
@@ -381,17 +384,16 @@ export class BrowserSession {
   }
 
   /**
-   * Logs `page`'s matching main-frame responses. A tab the session no longer follows (an opener
-   * after a popup was adopted) keeps its CDP session, so its events are dropped here: they are
-   * another document's (I3).
+   * Logs the followed tab's matching main-frame responses. A tab the session no longer follows (an
+   * opener after a popup was adopted) keeps its CDP session, so `current()` drops its events: they
+   * are another document's (I3), or a second copy once the opener is re-adopted (N2).
    */
-  async #watchResponses(cdp: CDPSession, page: Page): Promise<void> {
+  async #watchResponses(cdp: CDPSession, current: () => boolean): Promise<void> {
     const match = this.#responseLog;
     if (!match) return;
     const redact = this.#redactUrl;
     const { frameTree } = await cdp.send("Page.getFrameTree");
     const mainFrame = frameTree.frame.id;
-    const current = () => page === this.#page;
     cdp.on("Network.responseReceived", (event) => {
       if (!current() || event.frameId !== mainFrame) return;
       let url: URL;

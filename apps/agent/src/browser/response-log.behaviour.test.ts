@@ -28,6 +28,13 @@ describe("the main-frame response log (Task 0 review I3, M12)", () => {
     // Tab A keeps fetching every 100 ms; none of it may reach the adopted tab's log.
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(session.recentResponses().filter((entry) => entry.url.includes("tab=a"))).toEqual([]);
+    // Closing the popup re-adopts the opener: each of its responses is logged once (N2).
+    await session.page.close();
+    await expect.poll(() => session!.page === opener, { timeout: 10_000 }).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const ids = session.recentResponses().map((entry) => entry.requestId);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(new Set(ids).size).toBe(ids.length);
     await opener.close();
   });
 });

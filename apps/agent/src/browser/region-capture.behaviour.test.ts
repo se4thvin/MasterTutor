@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
 import { imageWidth, regionIsBlack } from "../testing/png.ts";
 import { NO_MASK_SOURCES, type MaskSources } from "./masking.ts";
+import sharp from "sharp";
 import { MAX_REGION_WIDTH, captureMaskedRegion, hasMaskTargets } from "./region-capture.ts";
 import type { BrowserSession } from "./session.ts";
 
@@ -173,5 +174,73 @@ describe("the captured layout is the measured one (Task 0 review I2)", () => {
     expect(
       await captureMaskedRegion(session, NO_MASK_SOURCES, clipOf(0, 2800, 400, 200), signal),
     ).toBeNull();
+  });
+});
+
+/** The RGB of one image pixel. */
+async function pixel(png: Uint8Array, x: number, y: number): Promise<[number, number, number]> {
+  const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+  const at = (y * info.width + x) * info.channels;
+  return [data[at]!, data[at + 1]!, data[at + 2]!];
+}
+
+describe("Task 0 re-review (fix 1)", () => {
+  it("withholds a region a fixed cross-origin frame scrolls into (N1)", async () => {
+    await session.goto(`${FIXTURES}/capture/fixed-frame.html`, signal);
+    await session.page.waitForTimeout(500);
+    // At scroll 0 the frame is at the top; scrolled to y=2000 it is painted over the clip.
+    expect(await captureMaskedRegion(session, vault, clipOf(0, 2000, 400, 300), signal)).toBeNull();
+  });
+
+  it("counts a sandboxed frame without allow-same-origin as opaque (N4)", async () => {
+    await session.goto(`${FIXTURES}/capture/sandbox-frame.html`, signal);
+    await session.page.waitForTimeout(300);
+    expect(await captureMaskedRegion(session, vault, clipOf(550, 0, 400, 200), signal)).toBeNull();
+    expect(
+      await captureMaskedRegion(session, vault, clipOf(0, 0, 400, 200), signal),
+    ).not.toBeNull();
+  });
+
+  it("captures a below-the-fold region on a page with smooth scrolling (N5)", async () => {
+    await session.goto(`${FIXTURES}/capture/smooth.html`, signal);
+    const png = await captureMaskedRegion(
+      session,
+      NO_MASK_SOURCES,
+      clipOf(0, 1400, 400, 300),
+      signal,
+    );
+    expect(png).not.toBeNull();
+    expect(await regionIsBlack(Buffer.from(png!), { x: 22, y: 102, width: 195, height: 25 })).toBe(
+      true,
+    );
+  });
+
+  it("shows fixed page chrome once, not in every viewport of a tall region (N6)", async () => {
+    await session.goto(`${FIXTURES}/capture/fixed-header.html`, signal);
+    const { height } = await session.layout();
+    const png = await captureMaskedRegion(
+      session,
+      NO_MASK_SOURCES,
+      clipOf(0, 0, 400, 2000),
+      signal,
+    );
+    expect(png).not.toBeNull();
+    const red = ([r, g, b]: [number, number, number]) => r > 180 && g < 60 && b < 60;
+    expect(red(await pixel(png!, 10, 10))).toBe(true);
+    expect(red(await pixel(png!, 10, height + 10))).toBe(false);
+  });
+
+  it("restores the page's scroll position when a capture is interrupted (N7)", async () => {
+    await session.goto(`${FIXTURES}/capture/tall.html`, signal);
+    await session.page.evaluate(() => window.scrollTo(0, 0));
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error("stop")), 30);
+    await captureMaskedRegion(
+      session,
+      NO_MASK_SOURCES,
+      clipOf(0, 0, 400, 2900),
+      controller.signal,
+    ).catch(() => null);
+    expect(await session.page.evaluate(() => window.scrollY)).toBe(0);
   });
 });
