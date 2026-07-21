@@ -348,7 +348,9 @@ export function pageExtract(options: ExtractOptions): PageExtract {
   let markdown = "";
   let result: ReturnType<typeof run> | null;
   try {
-    result = run(out, scoped ? looseOptions : {});
+    // Content patterns (bylines, read times, eyebrow labels) are page text: dropping them would
+    // fail page coverage, and a faithful note keeps them.
+    result = run(out, scoped ? looseOptions : { removeContentPatterns: false });
     if (result.content.trim()) {
       engine = "defuddle";
       markdown = result.content;

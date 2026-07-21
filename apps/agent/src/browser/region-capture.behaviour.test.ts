@@ -265,3 +265,19 @@ describe("Task 0 re-review (fix 1)", () => {
     expect(await session.page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   });
 });
+
+describe("element rects are fractional (B2 Task 8)", () => {
+  it("captures a below-the-fold region whose clip has sub-pixel coordinates", async () => {
+    await session.goto(`${FIXTURES}/capture/tall.html`, signal);
+    // getBoundingClientRect in a centred layout: half pixels and finer.
+    const png = await captureMaskedRegion(
+      session,
+      NO_MASK_SOURCES,
+      clipOf(202.5, 1245.75, 180, 160.5, 2),
+      signal,
+    );
+    expect(png).not.toBeNull();
+    // Snapped outward to whole CSS pixels: 202..383 × 1245..1407, at scale 2.
+    expect(await sharp(Buffer.from(png!)).metadata()).toMatchObject({ width: 362, height: 324 });
+  });
+});

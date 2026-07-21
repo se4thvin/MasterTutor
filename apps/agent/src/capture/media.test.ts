@@ -114,4 +114,26 @@ describe("storeMedia", () => {
     expect(report.stored.get(1)).toEqual({ assetId: null, screenshotAssetId: null });
     expect(report).toMatchObject({ lost: 1, withheld: 1 });
   });
+  it("takes one element screenshot at a time: each scrolls the same page", async () => {
+    let active = 0;
+    let overlap = 0;
+    const { ctx } = await context();
+    const shot = await png();
+    ctx.shoot = async () => {
+      active++;
+      if (active > 1) overlap++;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return shot;
+    };
+    const items = [0, 1, 2, 3, 4, 5].map((index) => ({
+      ...base,
+      index,
+      kind: "img" as const,
+      figure: true,
+    }));
+    const report = await storeMedia(ctx, items);
+    expect(overlap).toBe(0);
+    expect([...report.stored.values()].every((m) => m.screenshotAssetId !== null)).toBe(true);
+  });
 });

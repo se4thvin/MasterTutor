@@ -108,17 +108,31 @@ async function storeOne(
   return { assetId, screenshotAssetId };
 }
 
+function serialized<A extends unknown[], R>(
+  fn: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (...args) => {
+    const run = tail.then(() => fn(...args));
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
 /** Stores every media item (spec §7.4). A failure loses that image and is counted; it never aborts the capture. */
 export async function storeMedia(
   ctx: MediaContext,
   media: readonly PageMedia[],
 ): Promise<MediaReport> {
   const report: MediaReport = { stored: new Map(), lost: 0, withheld: 0 };
+  // Fetches run in parallel, element screenshots one at a time: each scrolls the same page.
+  const serial = ctx.shoot ? serialized(ctx.shoot) : null;
+  const itemCtx: MediaContext = { ...ctx, shoot: serial };
   let next = 0;
   const worker = async () => {
     while (next < media.length) {
       const item = media[next++];
-      if (item) report.stored.set(item.index, await storeOne(ctx, item, report));
+      if (item) report.stored.set(item.index, await storeOne(itemCtx, item, report));
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, media.length) }, worker));
