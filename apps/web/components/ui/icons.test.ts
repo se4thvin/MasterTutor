@@ -47,6 +47,15 @@ const REQUIRED: IconName[] = [
   "external",
   "signOut",
   "stop",
+  // run view (F3)
+  "filledSecurely",
+  "sleeping",
+  "hand",
+  "play",
+  "pause",
+  "maximize",
+  "minimize",
+  "send",
 ];
 
 describe("icon registry (spec §11.3)", () => {

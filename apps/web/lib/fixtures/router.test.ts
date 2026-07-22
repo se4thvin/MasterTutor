@@ -5,6 +5,7 @@ import { FIXTURE_VIEWER } from "../server/viewer.ts";
 import { fixtureNamespaceFrom } from "./cookies.ts";
 import { ids } from "./ids.ts";
 import { fixtureRouter } from "./router.ts";
+import { RECORDED_RUN_ID, recordedEvents, recordedSteps } from "./run-recording.ts";
 import { stateFor } from "./store.ts";
 
 let counter = 0;
@@ -200,5 +201,52 @@ describe("fixture settings and isolation", () => {
     expect(fixtureNamespaceFrom("a=1; mt_fixture_ns=abc-123")).toBe("abc-123");
     expect(fixtureNamespaceFrom("mt_fixture_ns=../../x")).toBe("default");
     expect(fixtureNamespaceFrom(null)).toBe("default");
+  });
+});
+
+describe("fixture runs (F3)", () => {
+  it("serves the recorded run's detail and steps", async () => {
+    const { api } = client();
+    const detail = await api.runs.get({ runId: RECORDED_RUN_ID });
+    expect(detail).toMatchObject({ status: "running", slotName: "browser-1", lastEventId: "12" });
+    const { items } = await api.runs.steps({ runId: RECORDED_RUN_ID });
+    expect(items.map((s) => s.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect((await api.runs.steps({ runId: RECORDED_RUN_ID, afterSeq: 9 })).items).toEqual([]);
+    const running = await api.runs.list({ status: "running", limit: 20 });
+    expect(running.items.map((r) => r.id)).toEqual([RECORDED_RUN_ID]);
+  });
+
+  it("creates a queued run that get and list then serve", async () => {
+    const { api } = client();
+    const created = await api.runs.create({
+      goal: "Capture example.com",
+      allowedOrigins: ["https://example.com"],
+    });
+    expect(created).toMatchObject({ status: "queued", approvalMode: "ask", controller: "agent" });
+    // The run keeps its scope: get reports the origins and target folder it was created with.
+    expect(await api.runs.get({ runId: created.id })).toMatchObject({
+      goal: "Capture example.com",
+      allowedOrigins: ["https://example.com"],
+      targetFolderId: null,
+    });
+    expect((await api.runs.list({ status: null, limit: 20 })).items[0]?.id).toBe(created.id);
+  });
+
+  it("records real step screenshot keys and one unpointered computer step (A8, W1)", () => {
+    const keys = recordedSteps().flatMap((s) => (s.screenshotKey ? [s.screenshotKey] : []));
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) expect(key).toMatch(/^runs\/[0-9a-f-]{36}\/steps\/\d+-[a-z0-9]+\.png$/);
+    const computer = recordedSteps().filter((s) => s.action?.tool === "computer");
+    expect(computer.some((s) => s.action?.pointer === undefined)).toBe(true);
+    expect(recordedEvents().map((r) => r.id)).toEqual([
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+    ]);
   });
 });

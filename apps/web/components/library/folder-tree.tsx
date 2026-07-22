@@ -6,14 +6,14 @@ import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "r
 import { Icon, type IconName } from "@/components/ui/icon.tsx";
 import { orpc } from "@/lib/api/client.ts";
 import { cx } from "@/lib/cx.ts";
-import { FOLDER_DRAG_TYPE, NOTE_DRAG_TYPE, getDragged, setDragged } from "@/lib/folders/drag.ts";
+import { FOLDER_DRAG_TYPE, acceptsDrop, getDragged, setDragged } from "@/lib/folders/drag.ts";
 import {
   buildFolderTree,
-  canMoveFolder,
   flattenVisible,
   folderPath,
   type FolderNode,
 } from "@/lib/folders/tree.ts";
+import { FolderMark } from "./folder-mark.tsx";
 import { useMoveFolder } from "./use-move-folder.ts";
 import { libraryHref, parseLibraryParams, type LibraryScope } from "@/lib/library/params.ts";
 
@@ -169,20 +169,8 @@ export function FolderTree({
 
   const moveFolder = useMoveFolder();
 
-  const accepts = (row: Row, event: DragEvent): boolean => {
-    const dragged = getDragged();
-    const types = event.dataTransfer.types;
-    if (dragged?.kind === "note" && types.includes(NOTE_DRAG_TYPE)) return row.key !== "all";
-    if (dragged?.kind === "folder" && types.includes(FOLDER_DRAG_TYPE)) {
-      if (row.key === "unfiled") return false;
-      const parentId = row.key === "all" ? null : row.key;
-      const current = folders.find((f) => f.id === dragged.id);
-      // Dropping on the current parent would be a no-op request.
-      if (!current || current.parentId === parentId) return false;
-      return dragged.id !== row.key && canMoveFolder(folders, dragged.id, parentId);
-    }
-    return false;
-  };
+  const accepts = (row: Row, event: DragEvent): boolean =>
+    acceptsDrop(row.key, folders, event.dataTransfer.types);
 
   const onDrop = (row: Row, event: DragEvent) => {
     event.preventDefault();
@@ -261,7 +249,11 @@ export function FolderTree({
             ) : (
               <span className="tree-disclosure" aria-hidden="true" />
             )}
-            <Icon name={row.icon} size="sm" />
+            <FolderMark
+              name={row.icon}
+              openName={row.node ? "folderOpen" : null}
+              lift={dropKey === row.key}
+            />
             <span className="tree-label">{row.label}</span>
           </li>
         );

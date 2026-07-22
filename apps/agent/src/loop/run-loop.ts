@@ -212,7 +212,7 @@ export class RunLoop {
   #pending: PendingApproval | null = null;
   #notesChanged = false;
   /** Approved download cards, let through at the start of the next act (the model repeats it). */
-  #downloadAllowances: Array<{ url: string; filename: string | null }> = [];
+  #downloadAllowances: Array<{ url: string; filename: string | null; approvedBy: string }> = [];
   /** A click was refused for an unguarded page: the next approvals go to a person (m10). */
   #personNext = false;
   #lastTick: number | null = null;
@@ -931,8 +931,8 @@ export class RunLoop {
         return {
           target,
           personApproved,
-          ...(need?.kind === "download" && decision?.approved === true
-            ? { allowDownload: need.url }
+          ...(need?.kind === "download" && decision?.approved === true && decision.decidedBy
+            ? { allowDownload: { url: need.url, approvedBy: decision.decidedBy } }
             : {}),
         };
       };
@@ -1119,7 +1119,11 @@ export class RunLoop {
       const decision = decideByPolicy(this.#run.approvalMode, "download");
       if (decision === "approved") {
         await this.#recordPolicy(request, decision);
-        if (request.kind === "download") this.#downloadAllowances.push(request);
+        if (request.kind === "download")
+          this.#downloadAllowances.push({
+            ...request,
+            approvedBy: policyDecider(this.#run.approvalMode),
+          });
         this.#notes.push(
           `Executor: downloading ${downloadUrlForCard(entry.url)} was allowed by this run's bypass mode. Do the action that started it again to save it.`,
         );
@@ -1262,9 +1266,10 @@ export class RunLoop {
         transition: TO_RUNNING,
         run: base.run,
       });
-      if (approved) {
+      // Bound to whoever decided this very card (N3); an approval with no decider lets nothing through.
+      if (approved && decision.decidedBy) {
         // Exactly the download the card showed (it may start again under a new blob URL).
-        this.#downloadAllowances.push(request);
+        this.#downloadAllowances.push({ ...request, approvedBy: decision.decidedBy });
         this.#notes.push(
           `Executor: the user approved downloading ${request.filename ?? request.url}. Do the action that started it again to save it.`,
         );

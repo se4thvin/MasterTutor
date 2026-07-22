@@ -11,4 +11,5 @@ export const ids = {
   vault: make(6),
   audit: make(7),
   run: make(8),
+  approval: make(9),
 } as const;

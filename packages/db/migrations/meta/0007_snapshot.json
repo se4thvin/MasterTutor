@@ -1,5 +1,5 @@
 {
-  "id": "e3f3e8ce-04a2-4460-ade9-a7aa2c5579d9",
+  "id": "854d22e0-d715-4ab5-a6e3-adea5d3d82f6",
   "prevId": "3b9c4daf-c904-4add-ab3e-014d558636e4",
   "version": "7",
   "dialect": "postgresql",
@@ -879,16 +879,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "search": {
-          "name": "search",
-          "type": "tsvector",
-          "primaryKey": false,
-          "notNull": false,
-          "generated": {
-            "as": "to_tsvector('english'::regconfig, \"markdown\")",
-            "type": "stored"
-          }
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -912,21 +902,6 @@
           "isUnique": false,
           "concurrently": false,
           "method": "hnsw",
-          "with": {}
-        },
-        "note_blocks_search_idx": {
-          "name": "note_blocks_search_idx",
-          "columns": [
-            {
-              "expression": "search",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "gin",
           "with": {}
         }
       },
@@ -1255,29 +1230,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "sources_note_idx": {
-          "name": "sources_note_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "(\"meta\"->>'noteId')",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "sources_workspace_id_workspaces_id_fk": {
           "name": "sources_workspace_id_workspaces_id_fk",
@@ -1551,6 +1504,19 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "pending": {
+          "name": "pending",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "kept_at": {
+          "name": "kept_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",

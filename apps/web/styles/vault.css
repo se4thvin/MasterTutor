@@ -137,15 +137,6 @@
     gap: 0.4rem;
     font-size: 0.75rem;
   }
-  .dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: var(--label-3);
-  }
-  .dot-ok {
-    background: var(--ok);
-  }
   .vrow-actions {
     display: flex;
     align-items: center;

@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bootstrapGarage, waitForGarageAdmin } from "./garage-admin.ts";
 import { createStorage, type Storage } from "./s3.ts";
@@ -71,5 +74,22 @@ describe("Storage against Garage", () => {
     await expect(
       web.put("assets/x/forbidden", "nope", { contentType: "text/plain" }),
     ).rejects.toThrow();
+  });
+
+  it("streams a local file in with putFile", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "putfile-"));
+    const file = join(dir, "blob.bin");
+    const bytes = new Uint8Array(3 * 1024 * 1024).map((_, i) => i % 251);
+    await writeFile(file, bytes);
+    await agent.putFile("downloads/00000000-0000-4000-8000-000000000001/blob.bin", file, {
+      contentType: "application/octet-stream",
+      sha256: "b".repeat(64),
+    });
+    expect(await agent.getBytes("downloads/00000000-0000-4000-8000-000000000001/blob.bin")).toEqual(
+      bytes,
+    );
+    expect(
+      await agent.head("downloads/00000000-0000-4000-8000-000000000001/blob.bin"),
+    ).toMatchObject({ bytes: bytes.length, sha256: "b".repeat(64) });
   });
 });
