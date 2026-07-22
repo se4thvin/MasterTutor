@@ -291,15 +291,17 @@ describe("NoteWriter", () => {
     const mine = await seedRun(h.db);
     const theirs = await seedRun(h.db);
     const theirWrite = testWrite(theirs);
-    const theirNote = await writer(true).ensureNote(theirWrite, { title: "Theirs", lede: null });
-    const theirSource = writer().stageSource(theirWrite, source(theirNote));
-    await writer(true).appendBlocks(theirWrite, {
+    // One writer per step, as in production (staged notes are tracked per writer).
+    const theirWriter = writer(true);
+    const theirNote = await theirWriter.ensureNote(theirWrite, { title: "Theirs", lede: null });
+    const theirSource = theirWriter.stageSource(theirWrite, source(theirNote));
+    await theirWriter.appendBlocks(theirWrite, {
       noteId: theirNote,
       sourceId: theirSource,
       afterBlockId: null,
       blocks: [block("Their text")],
     });
-    writer().stageQuality(theirWrite, theirNote, 0.9);
+    theirWriter.stageQuality(theirWrite, theirNote, 0.9);
     await commitStep(h.db, theirs.runId, theirWrite.step);
 
     const w = testWrite(mine);
@@ -371,8 +373,9 @@ describe("NoteWriter", () => {
   it("stores blocks without vectors when embeddings fail, then backfills", async () => {
     const scope = await seedRun(h.db);
     const w = testWrite(scope);
-    const noteId = await writer(true).ensureNote(w, { title: "N", lede: null });
-    await writer(true).appendBlocks(w, {
+    const failing = writer(true);
+    const noteId = await failing.ensureNote(w, { title: "N", lede: null });
+    await failing.appendBlocks(w, {
       noteId,
       sourceId: null,
       afterBlockId: null,
