@@ -26,6 +26,8 @@ export interface FixtureState {
   runs: RunSummary[];
   /** What runs.create was given that RunSummary does not carry, by run id. */
   runScope: Record<string, { allowedOrigins: string[]; targetFolderId: string | null }>;
+  /** Approvals already decided in this namespace: a second decision is CONFLICT, as live. */
+  decidedApprovals: string[];
 }
 
 export interface FixtureContext extends SessionContext {

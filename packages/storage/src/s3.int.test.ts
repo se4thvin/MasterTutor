@@ -76,6 +76,16 @@ describe("Storage against Garage", () => {
     ).rejects.toThrow();
   });
 
+  it("streams an object", async () => {
+    await agent.put("assets/stream-test", new Uint8Array([1, 2, 3]), {
+      contentType: "application/octet-stream",
+    });
+    const bytes = new Uint8Array(
+      await new Response(await agent.getStream("assets/stream-test")).arrayBuffer(),
+    );
+    expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
   it("streams a local file in with putFile", async () => {
     const dir = await mkdtemp(join(tmpdir(), "putfile-"));
     const file = join(dir, "blob.bin");
