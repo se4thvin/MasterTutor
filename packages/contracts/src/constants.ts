@@ -15,6 +15,23 @@ export const VIEWPORT = { width: 1280, height: 800 } as const;
 export const DEFAULT_CONCURRENCY = 6;
 export const NOTIFY_MAX_BYTES = 200;
 
+/** The single size cap for stored assets (fetches, screenshots, PDFs, keyframes). */
+export const MAX_ASSET_BYTES = 25 * 1024 * 1024;
+/** Content types an asset may be stored as: the web app serves them as these types. */
+export const ASSET_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "image/svg+xml",
+  "application/pdf",
+] as const;
+export type AssetMimeType = (typeof ASSET_MIME_TYPES)[number];
+export function isAssetMimeType(mime: string): mime is AssetMimeType {
+  return (ASSET_MIME_TYPES as readonly string[]).includes(mime);
+}
+
 export const CDP_LOCAL_PORT = 9222;
 export const CDP_PROXY_PORT = 9223;
 export const NEKO_PORT = 8080;

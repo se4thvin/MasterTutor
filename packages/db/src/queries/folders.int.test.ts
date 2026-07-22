@@ -1,3 +1,4 @@
+import { folderChain, MAX_FOLDER_DEPTH } from "@mastertutor/contracts";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
@@ -97,5 +98,22 @@ describe("folder queries", () => {
       .where(eq(notes.id, note!.id));
     expect(unfiled?.folderId).toBeNull();
     await expect(deleteFolder(h.db, ws, f.id)).rejects.toMatchObject({ code: "not_found" });
+  });
+  it("the database depth trigger stops at MAX_FOLDER_DEPTH, the contracts rule", async () => {
+    const ws = await workspace();
+    let parentId: string | null = null;
+    for (let depth = 1; depth <= MAX_FOLDER_DEPTH; depth++)
+      parentId = (await createFolder(h.db, ws, { name: `L${depth}`, parentId })).id;
+    await expect(createFolder(h.db, ws, { name: "Too deep", parentId })).rejects.toMatchObject({
+      code: "invalid",
+    });
+  });
+
+  it("builds paths with the contracts folderChain, cyclic input included", () => {
+    const rows = [
+      { id: "a", parentId: "b", name: "A", sort: 0 },
+      { id: "b", parentId: "a", name: "B", sort: 0 },
+    ] as unknown as Parameters<typeof folderPaths>[0];
+    expect(folderPaths(rows).get("a")).toEqual(folderChain(rows, "a").map((row) => row.name));
   });
 });

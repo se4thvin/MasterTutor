@@ -47,4 +47,20 @@ describe("preparePage", () => {
       session.guard.release();
     }
   });
+  it("re-checks control right before the first mutation (M5)", async () => {
+    await session.goto(`${FIXTURES}/capture/docs/index.html`, signal);
+    // The person takes over while the capture world is being set up.
+    const cdp = session.cdp.bind(session);
+    session.cdp = async () => {
+      session.guard.hold();
+      return cdp();
+    };
+    try {
+      await expect(preparePage(session, signal)).rejects.toBeInstanceOf(ControlHeld);
+      expect(await session.page.locator('img[loading="lazy"]').count()).toBe(1);
+    } finally {
+      session.cdp = cdp;
+      session.guard.release();
+    }
+  });
 });

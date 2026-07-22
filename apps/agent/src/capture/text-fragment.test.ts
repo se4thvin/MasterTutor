@@ -12,4 +12,7 @@ describe("textFragment", () => {
     expect(textFragment("a-b, c&d")).toBe("#:~:text=a%2Db%2C%20c%26d");
     expect(textFragment("   ")).toBeNull();
   });
+  it("keeps the page's own characters: the browser matches the fragment literally", () => {
+    expect(textFragment("x² ﬁne")).toBe(`#:~:text=${encodeURIComponent("x² ﬁne")}`);
+  });
 });

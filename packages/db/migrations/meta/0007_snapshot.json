@@ -1,5 +1,5 @@
 {
-  "id": "16b9cc82-1ae9-496a-9648-55f29e328411",
+  "id": "e3f3e8ce-04a2-4460-ade9-a7aa2c5579d9",
   "prevId": "3b9c4daf-c904-4add-ab3e-014d558636e4",
   "version": "7",
   "dialect": "postgresql",
@@ -1255,7 +1255,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "sources_note_idx": {
+          "name": "sources_note_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "(\"meta\"->>'noteId')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "sources_workspace_id_workspaces_id_fk": {
           "name": "sources_workspace_id_workspaces_id_fk",

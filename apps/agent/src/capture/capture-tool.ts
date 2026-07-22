@@ -9,7 +9,12 @@ import {
   type SourceKind,
 } from "@mastertutor/contracts";
 import type { LibraryServices } from "../library.ts";
-import { NoteWriteError, writeContext, type BlockDraft } from "../notes/note-writer.ts";
+import {
+  NoteWriteError,
+  screenValue,
+  writeContext,
+  type BlockDraft,
+} from "../notes/note-writer.ts";
 import { type Tool, type ToolContext, ToolError } from "../tools/types.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
 import { imageInfo, sniffSvg } from "./images.ts";
@@ -59,7 +64,16 @@ export async function persistCapture(
   draft: PersistDraft,
 ): Promise<CaptureResult> {
   const w = writeContext(ctx);
-  try {
+  return asToolErrors(async () => {
+    // Everything the source row and blocks will hold, screened before the first object is written.
+    screenValue(w.secrets, [
+      draft.url,
+      draft.canonicalUrl,
+      draft.title,
+      draft.lede,
+      draft.meta,
+      draft.blocks.map((block) => [block.markdown, block.anchor]),
+    ]);
     const noteId = await services.writer.ensureNote(w, { title: draft.title, lede: draft.lede });
     if (draft.dedupe) {
       const existing = await services.writer.findSource(w.scope, noteId, draft.kind, draft.url);
@@ -115,6 +129,13 @@ export async function persistCapture(
     services.writer.stageQuality(w, noteId, draft.coverage);
     if (draft.snapshot) await uploadSnapshot(services.storage, ctx.step, keys, draft.snapshot);
     return { noteId, blockIds, coverage: draft.coverage, fidelity };
+  });
+}
+
+/** The writer's and asset store's refusals reach the model as typed tool errors. */
+async function asToolErrors<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
   } catch (error) {
     if (error instanceof NoteWriteError)
       throw new ToolError(error.code, MESSAGES[error.code] ?? "The note could not be written");
@@ -140,13 +161,17 @@ async function storeFavicon(
     const info = await imageInfo(fetched.bytes);
     if (!info || info.mime === "image/svg+xml") return null;
     return (
-      await services.assets.put(ctx.workspaceId, {
-        bytes: fetched.bytes,
-        mime: info.mime,
-        width: info.width,
-        height: info.height,
-        sourceUrl: url,
-      })
+      await services.assets.put(
+        ctx.workspaceId,
+        {
+          bytes: fetched.bytes,
+          mime: info.mime,
+          width: info.width,
+          height: info.height,
+          sourceUrl: url,
+        },
+        ctx.mask,
+      )
     ).assetId;
   } catch (error) {
     if (ctx.signal.aborted) throw error;
@@ -170,7 +195,9 @@ export function createCaptureTool(services: LibraryServices): Tool<CaptureArgs, 
       const kind = args.kind ?? ((await isPdf(ctx)) ? "pdf" : "web");
       if (kind === "pdf")
         throw new ToolError("pdf_unsupported", "PDF capture is not available yet");
-      const web = await captureWeb(services, ctx, { scope: args.scope, selector: args.selector });
+      const web = await asToolErrors(() =>
+        captureWeb(services, ctx, { scope: args.scope, selector: args.selector }),
+      );
       return persistCapture(services, ctx, {
         kind: "web",
         url: web.url,

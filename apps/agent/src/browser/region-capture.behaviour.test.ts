@@ -249,8 +249,9 @@ describe("Task 0 re-review (fix 1)", () => {
     await session.page.evaluate(() => window.scrollTo(0, 0));
     // A person takes the browser while the capture is between tiles: the restore must not scroll
     // the page under them.
+    let tick: ReturnType<typeof setInterval> | undefined;
     const takeover = new Promise<void>((resolve) => {
-      const tick = setInterval(async () => {
+      tick = setInterval(async () => {
         if ((await session.page.evaluate(() => window.scrollY)) > 0) {
           clearInterval(tick);
           session.guard.hold();
@@ -258,10 +259,19 @@ describe("Task 0 re-review (fix 1)", () => {
         }
       }, 5);
     });
-    const capture = captureMaskedRegion(session, NO_MASK_SOURCES, clipOf(0, 0, 400, 2900), signal);
-    await takeover;
-    await expect(capture).rejects.toThrow();
-    session.guard.release();
+    try {
+      const capture = captureMaskedRegion(
+        session,
+        NO_MASK_SOURCES,
+        clipOf(0, 0, 400, 2900),
+        signal,
+      );
+      await takeover;
+      await expect(capture).rejects.toThrow();
+    } finally {
+      clearInterval(tick);
+      session.guard.release();
+    }
     expect(await session.page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   });
 });

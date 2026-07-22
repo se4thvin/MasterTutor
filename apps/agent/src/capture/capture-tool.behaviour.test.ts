@@ -176,10 +176,50 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       .from(runs)
       .where(eq(runs.id, scope.runId));
     expect(run?.noteId).toBeNull();
-    expect(
-      [...env.storage.objects.keys()].filter(
-        (key) => !before.has(key) && key.startsWith("snapshots/"),
-      ),
-    ).toEqual([]);
+    // The page also carries an inline SVG and an image: nothing at all was written (5-8 review I1).
+    expect([...env.storage.objects.keys()].filter((key) => !before.has(key))).toEqual([]);
+    const stored = await env.db.db.execute(
+      sql`select count(*)::int as n from assets where workspace_id = ${scope.workspaceId}`,
+    );
+    expect(stored[0]?.n).toBe(0);
+  });
+
+  it("captures a short text page from the DOM, without OCR (opaque ruling)", async () => {
+    const calls = env.ocrCalls.length;
+    const { result, blocks } = await capture("short/index.html");
+    expect(blocks.map((b) => [b.origin, b.markdown])).toEqual([
+      ["dom", "Mitochondria make most of the cell's ATP."],
+    ]);
+    expect(result.fidelity).toBe("verified");
+    expect(env.ocrCalls.length).toBe(calls);
+  });
+
+  it("captures every same-process frame, srcdoc included, matched by frame id (5-8 review I4)", async () => {
+    const { result, blocks, source } = await capture("frames/index.html");
+    expect(source.meta).toMatchObject({ framesMissing: 0, mediaLost: 0 });
+    expect(blocks.some((b) => b.markdown.includes("Count the carbon atoms"))).toBe(true);
+    expect(blocks.some((b) => b.markdown.includes("Srcdoc sentinel"))).toBe(true);
+    expect(result.fidelity).toBe("verified");
+  });
+
+  it("splits OCR text into blocks and survives an OCR outage as a lost tile (M4, M6)", async () => {
+    const { blocks } = await capture("opaque/index.html");
+    const ocr = blocks.filter((b) => b.origin === "ocr_model");
+    expect(ocr.map((b) => b.markdown)).toEqual([
+      "Quarterly results",
+      "Revenue rose 12 percent on strong demand.",
+    ]);
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+    const failing = createCaptureTool({
+      ...env.services,
+      ocr: {
+        transcribe: async () => {
+          throw new Error("upstream 503");
+        },
+      },
+    });
+    const result = await failing.run(env.context(scope), page);
+    expect(result.fidelity).not.toBe("verified");
   });
 });

@@ -71,22 +71,29 @@ export const folders = pgTable(
   ],
 );
 
-export const sources = pgTable("sources", {
-  id: id(),
-  workspaceId: workspaceRef(),
-  kind: sourceKindEnum("kind").notNull(),
-  url: text("url").notNull(),
-  canonicalUrl: text("canonical_url"),
-  origin: text("origin").notNull(),
-  title: text("title"),
-  faviconAssetId: uuid("favicon_asset_id").references(() => assets.id, { onDelete: "set null" }),
-  capturedAt: tstz("captured_at").notNull().defaultNow(),
-  mhtmlKey: text("mhtml_key"),
-  screenshotKey: text("screenshot_key"),
-  snapshotSha256: text("snapshot_sha256"),
-  meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: createdAt(),
-});
+export const sources = pgTable(
+  "sources",
+  {
+    id: id(),
+    workspaceId: workspaceRef(),
+    kind: sourceKindEnum("kind").notNull(),
+    url: text("url").notNull(),
+    canonicalUrl: text("canonical_url"),
+    origin: text("origin").notNull(),
+    title: text("title"),
+    faviconAssetId: uuid("favicon_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    capturedAt: tstz("captured_at").notNull().defaultNow(),
+    mhtmlKey: text("mhtml_key"),
+    screenshotKey: text("screenshot_key"),
+    snapshotSha256: text("snapshot_sha256"),
+    meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // stageQuality and findSource look sources up by their note on every capture step.
+    index("sources_note_idx").on(t.workspaceId, sql`(${t.meta}->>'noteId')`),
+  ],
+);
 
 export const notes = pgTable(
   "notes",

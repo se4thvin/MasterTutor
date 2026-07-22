@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import type { CDPSession } from "playwright-core";
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { pageInstallLib } from "./page/lib.ts";
@@ -27,15 +26,4 @@ export function captureLibrarySource(): Promise<string> {
 /** The capture world of the foreground tab; every new context (navigation, frame) re-runs the prelude. */
 export function captureWorlds(session: BrowserSession): Promise<IsolatedWorlds> {
   return session.namedWorlds({ name: CAPTURE_WORLD, prelude: captureLibrarySource });
-}
-
-export async function childFrames(
-  cdp: CDPSession,
-): Promise<{ frameId: string; url: string; name: string | null }[]> {
-  const { frameTree } = await cdp.send("Page.getFrameTree");
-  return (frameTree.childFrames ?? []).map((child) => ({
-    frameId: child.frame.id,
-    url: child.frame.url,
-    name: child.frame.name ?? null,
-  }));
 }

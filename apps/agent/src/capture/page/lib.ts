@@ -190,6 +190,8 @@ export function pageInstallLib(): void {
         const name = attr.localName;
         const value = attr.value;
         if (/^on/i.test(name)) continue;
+        // CSS escapes (`\75 rl(` is `url(`) would hide a reference from every check below.
+        if (value.includes("\\")) continue;
         if (name === "href") {
           if (localRef(value)) out.setAttribute("href", value.trim());
           continue;

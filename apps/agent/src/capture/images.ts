@@ -1,3 +1,4 @@
+import type { AssetMimeType } from "@mastertutor/contracts";
 import sharp from "sharp";
 
 export interface ImageInfo {
@@ -6,15 +7,14 @@ export interface ImageInfo {
   height: number | null;
 }
 
-const FORMAT_MIME: Record<string, string> = {
+/** sharp formats we keep: only the stored-asset allow-list (TIFF, HEIF and the rest are not served). */
+const FORMAT_MIME: Record<string, AssetMimeType> = {
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
   gif: "image/gif",
   avif: "image/avif",
   svg: "image/svg+xml",
-  tiff: "image/tiff",
-  heif: "image/heif",
 };
 
 /** Sniffs the real format from the bytes; headers from the page are never trusted. Never call it on unsanitized SVG. */
@@ -73,6 +73,8 @@ const UNSAFE_MARKUP = [
   /@import|expression\s*\(|-moz-binding|behavior\s*:/i,
   /url\((?!\s*["']?\s*#)/i,
   /\bhref\s*=(?!\s*["']?\s*#)/i,
+  // A CSS escape (`\75 rl(`) decodes to `url(` in the browser: no backslash in any attribute value.
+  /=\s*("[^"]*\\[^"]*"|'[^']*\\[^']*')/,
 ];
 
 /**

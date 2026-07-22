@@ -1,4 +1,4 @@
-import { NoteBlock } from "@mastertutor/contracts";
+import { MAX_BLOCK_CHARS, escapeMarkdownText, unescapeMarkdown } from "@mastertutor/contracts";
 import { normalizeText } from "./text.ts";
 
 export type MarkdownBlockType =
@@ -7,9 +7,6 @@ export interface MarkdownBlock {
   type: MarkdownBlockType;
   markdown: string;
 }
-
-/** One source of truth for the block size limit: the NoteBlock contract. */
-export const MAX_BLOCK_CHARS = NoteBlock.shape.markdown.maxLength ?? 200_000;
 
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const HEADING = /^\s{0,3}#{1,6}\s/;
@@ -135,8 +132,9 @@ export function blockPlainText(block: { type: string; markdown: string }): strin
   if (NO_PLAIN_TEXT.has(block.type)) return "";
   if (block.type === "code")
     return normalizeText(block.markdown.replace(/^\s{0,3}(`{3,}|~{3,}).*$/gm, ""));
-  const text = block.markdown
-    .replace(/<[^>]+>/g, " ")
+  const syntaxFree = block.markdown
+    // Real tags only (`<b>`, `</sub>`, `<br/>`): a bare `<` or `>` in prose is visible text.
+    .replace(/<\/?[A-Za-z][\w:-]*(?:\s[^<>]*)?\/?>/g, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\$\$[\s\S]*?\$\$/g, " ")
@@ -144,8 +142,8 @@ export function blockPlainText(block: { type: string; markdown: string }): strin
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
     .replace(/^\s{0,3}>\s?/gm, "")
     .replace(/^\s*([-*+]|\d{1,9}[.)])\s+/gm, "")
-    .replace(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/gm, " ")
-    .replace(/\\([\\`*_{}[\]()#+\-.!|$])/g, "$1")
+    .replace(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/gm, " ");
+  const text = unescapeMarkdown(syntaxFree)
     .replace(/&(nbsp|amp|lt|gt|quot|#39);/g, (entity) => ENTITIES[entity] ?? entity)
     .replace(/[|*_`~]/g, " ");
   return normalizeText(text);
@@ -190,15 +188,6 @@ export function limitBlockSize<B extends { type: string; markdown: string }>(
     ...block,
     markdown: fenced ? `${open}\n${part}\n${close}` : part,
   }));
-}
-
-/** Escapes text so Markdown renders it literally. */
-export function escapeMarkdownText(text: string): string {
-  return text
-    .replace(/[\\`*_[\]<>]/g, (char) => `\\${char}`)
-    .replace(/^(\s{0,3})([#>+-]|\d{1,9}[.)])(?=\s)/gm, (_m, space: string, mark: string) =>
-      /\d/.test(mark) ? `${space}${mark.slice(0, -1)}\\${mark.slice(-1)}` : `${space}\\${mark}`,
-    );
 }
 
 /** Plain text (paragraphs separated by blank lines) to escaped Markdown paragraphs. */

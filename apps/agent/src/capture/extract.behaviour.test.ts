@@ -121,4 +121,23 @@ describe("pageExtract", () => {
     expect(extract.pageText).toContain("By A. Botanist");
     expect(extract.markdown).toContain("By A. Botanist");
   });
+  it("anchors blocks anywhere in the body, not only inside Defuddle's root (5-8 review I3)", async () => {
+    const { worlds } = await extractDocs();
+    const [footer] = await worlds.call(pageLocateBlocks, [
+      [{ head: "Fixture site footer", tail: "" }],
+    ]);
+    expect(footer?.selector).toMatch(/footer/);
+  });
+
+  it("flags fixed media and counts frames too small to capture (M8, M9)", async () => {
+    await session.page.setContent(`
+      <main><p>Fixed media and a tiny frame sit on this page with enough text to extract.</p>
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="60" height="40" alt="pinned"
+        style="position:fixed;top:0;left:0">
+      <iframe srcdoc="<p>tiny</p>" width="80" height="40"></iframe></main>`);
+    const worlds = await captureWorlds(session);
+    const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    expect(extract.media.find((m) => m.alt === "pinned")?.fixed).toBe(true);
+    expect(extract.smallFrames).toBe(1);
+  });
 });
