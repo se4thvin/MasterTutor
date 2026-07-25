@@ -25,3 +25,18 @@ export function compactNumber(n: number): string {
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
   return String(n);
 }
+
+const UNITS = ["KB", "MB", "GB"] as const;
+
+/** File sizes in binary units: "900 bytes", "2 KB", "1.5 MB" (one decimal from a megabyte up). */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < UNITS.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  const shown = unit === 0 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, "");
+  return `${shown} ${UNITS[unit]}`;
+}

@@ -1,66 +1,33 @@
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { AgentEnv, GarageInitEnv, MigrateEnv, WebEnv, parseEnv } from "@mastertutor/contracts";
 import { beforeAll, describe, expect, it } from "vitest";
+import { composeConfig, type ComposeConfig, type ComposeService } from "./compose-json.ts";
 
-interface Port {
-  target: number;
-  published?: string;
-  protocol?: string;
-  host_ip?: string;
-}
-interface Service {
-  image?: string;
-  environment?: Record<string, string | null>;
-  networks?: Record<string, { ipv4_address?: string } | null>;
-  ports?: Port[];
-  cap_add?: string[];
-  cap_drop?: string[];
-  security_opt?: string[];
-  tmpfs?: string[];
-  restart?: string;
-  sysctls?: Record<string, string>;
-  build?: unknown;
-}
-interface Config {
-  services: Record<string, Service>;
-  networks: Record<string, { internal?: boolean }>;
-}
-
-const root = fileURLToPath(new URL("../..", import.meta.url));
-const load = (files: string[]): Config =>
-  JSON.parse(
-    execFileSync(
-      "docker",
-      [
-        "compose",
-        "--env-file",
-        ".env.test",
-        ...files.flatMap((f) => ["-f", f]),
-        "config",
-        "--format",
-        "json",
-      ],
-      { cwd: root, encoding: "utf8" },
-    ),
-  ) as Config;
-const env = (service: Service) =>
+const load = (files: string[]): ComposeConfig => composeConfig(".env.test", files);
+const env = (service: ComposeService) =>
   Object.fromEntries(
     Object.entries(service.environment ?? {}).filter(
       (entry): entry is [string, string] => entry[1] !== null,
     ),
   );
-const nets = (service: Service) => Object.keys(service.networks ?? {}).sort();
+const nets = (service: ComposeService) => Object.keys(service.networks ?? {}).sort();
 const slots = ["browser-1", "browser-2", "browser-3", "browser-4", "browser-5", "browser-6"];
 
-let base: Config;
-let test: Config;
+let base: ComposeConfig;
+let test: ComposeConfig;
 beforeAll(() => {
   base = load(["compose.yml"]);
   test = load(["compose.yml", "compose.test.yml"]);
 });
 
 describe("compose.yml", () => {
+  it("gives no service a TURN setting (D42)", () => {
+    for (const [name, service] of Object.entries(base.services)) {
+      expect(
+        Object.keys(env(service)).filter((key) => key.startsWith("TURN_")),
+        name,
+      ).toEqual([]);
+    }
+  });
   it("defines the Phase 0 services and six always-on slots", () => {
     expect(Object.keys(base.services).sort()).toEqual(
       ["agent", "garage", "garage-init", "migrate", "postgres", "web", ...slots].sort(),
@@ -93,7 +60,6 @@ describe("compose.yml", () => {
       "NEKO_MEMBER_SECRET",
       "BETTER_AUTH_SECRET",
       "LIVE_COOKIE_SECRET",
-      "TURN_SECRET",
       "VAULT_PUBLIC_KEY",
     ]) {
       expect(agent).not.toContain(key);
@@ -103,7 +69,7 @@ describe("compose.yml", () => {
     for (const slot of slots) {
       for (const key of Object.keys(env(base.services[slot]!))) {
         expect(key, slot).not.toMatch(
-          /^(VAULT_|OPENAI_|S3_|DATABASE_URL|BETTER_AUTH|LIVE_COOKIE|TURN_SECRET)/,
+          /^(VAULT_|OPENAI_|S3_|DATABASE_URL|BETTER_AUTH|LIVE_COOKIE|TURN_)/,
         );
       }
     }
@@ -179,14 +145,24 @@ describe("compose.yml", () => {
 });
 
 describe("compose.test.yml overlay", () => {
-  it("runs one slot behind a loopback-only Traefik", () => {
+  it("runs two slots on static cdp addresses behind a loopback-only Traefik on the app's port", () => {
     const active = Object.keys(test.services).filter((name) => name.startsWith("browser-"));
-    expect(active).toEqual(["browser-1"]);
-    expect(env(test.services.agent!).BROWSER_SLOTS).toBe("browser-1");
+    expect(active).toEqual(["browser-1", "browser-2"]);
+    expect(env(test.services.agent!).BROWSER_SLOTS).toBe("browser-1,browser-2");
+    expect(env(test.services.migrate!).BROWSER_SLOTS).toBe("browser-1,browser-2");
+    for (const [slot, ip] of [
+      ["browser-1", "172.30.231.21"],
+      ["browser-2", "172.30.231.22"],
+    ] as const) {
+      // WebRTC advertises the slot's own cdp address: the e2e runner reaches it from Traefik's namespace.
+      expect(test.services[slot]!.networks!.cdp!.ipv4_address, slot).toBe(ip);
+      expect(env(test.services[slot]!).NEKO_WEBRTC_NAT1TO1, slot).toBe(ip);
+    }
     const traefik = test.services.traefik!;
     expect(traefik.ports?.map((p) => `${p.host_ip}:${p.published}:${p.target}`)).toEqual([
-      "127.0.0.1:18080:80",
+      "127.0.0.1:18080:18080",
     ]);
+    expect(traefik.command).toContain("--entrypoints.web.address=:18080");
     expect(traefik.networks!.cdp!.ipv4_address).toBe("172.30.231.12");
   });
 });

@@ -15,6 +15,15 @@ const THREE_BAN = {
   message: "three may be imported only from components/hero/.",
 };
 const LUCIDE_BAN = { group: ["lucide-react"], message: "Use <Icon> from components/ui/icon.tsx." };
+// P7-14: the fixture API (apps/web/lib/fixtures) is a test double. Runtime web code reaches it only
+// through the entry points gated by __FIXTURE_BUILD__ and WEB_FIXTURE_API, which check:bundle and
+// tests/compose/no-fixture-api.test.ts guard; the allow block below lists them.
+const FIXTURES = "@/lib/fixtures";
+const FIXTURES_BAN = {
+  group: [`${FIXTURES}/*`, "**/fixtures/*"],
+  message:
+    "Runtime web code talks to the real API. The fixture API is for tests, the Playwright suites and the gated entry points only (P7-14).",
+};
 // Spec §3.1: web seals with the public key and never opens a box. Only the integration test that
 // plays the agent may import the opening entry (W9); key-placement.test.ts proves this rule.
 const SEALING_OPEN = "@mastertutor/sealing/open";
@@ -44,10 +53,10 @@ const LAYOUT_FEATURES_STATIC = {
   message: "Load layout-features only with import(), inside <LayoutMotion> (D43 lazy boundary).",
 };
 // Every apps/web no-restricted-imports block replaces the earlier one, so it must carry the D38
-// OpenAI import ban, the D43 boundary, the sealing ban and the server-contracts ban too.
+// OpenAI import ban, the D43 boundary, the sealing, fixtures and server-contracts bans too.
 const webImports = (
   patterns,
-  { paths = MOTION_COMPONENT_BAN, sealingOpen = false, server = false } = {},
+  { paths = MOTION_COMPONENT_BAN, sealingOpen = false, fixtures = true, server = false } = {},
 ) => [
   "error",
   {
@@ -58,6 +67,7 @@ const webImports = (
       OPENAI_IMPORTS,
       ...(sealingOpen ? [] : [SEALING_OPEN_BAN]),
       ...(server ? [] : [SERVER_CONTRACTS_BAN]),
+      ...(fixtures ? [FIXTURES_BAN] : []),
       ...patterns,
     ],
   },
@@ -103,6 +113,7 @@ const ALL_BANNED = [
   "@react-three",
   "@hugeicons",
   SEALING_OPEN,
+  FIXTURES,
 ];
 
 const OPENAI_IMPORTS = {
@@ -203,6 +214,26 @@ export default defineConfig(
     },
   },
   {
+    // P7-14: the fixture API's own module, its gated entry points, tests and the Playwright suites.
+    files: [
+      "apps/web/lib/fixtures/**",
+      "apps/web/app/api/rpc/*/route.ts",
+      "apps/web/app/api/assets/*/route.ts",
+      "apps/web/lib/server/viewer.ts",
+      "apps/web/**/*.test.{ts,tsx}",
+      "apps/web/e2e/**",
+      "apps/web/playwright*.config.ts",
+    ],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], { fixtures: false }),
+      "no-restricted-syntax": dynamicImportBan([
+        ...ALL_BANNED.filter((name) => name !== FIXTURES),
+        "three",
+        "lucide-react",
+      ]),
+    },
+  },
+  {
     // The one static home of domMax; layout-motion.tsx reaches it only through import().
     files: ["apps/web/components/motion/layout-features.ts"],
     rules: {
@@ -218,9 +249,10 @@ export default defineConfig(
       "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
         sealingOpen: true,
         server: true,
+        fixtures: false,
       }),
       "no-restricted-syntax": dynamicImportBan([
-        ...ALL_BANNED.filter((name) => name !== SEALING_OPEN),
+        ...ALL_BANNED.filter((name) => name !== SEALING_OPEN && name !== FIXTURES),
         "three",
         "lucide-react",
       ]),

@@ -111,6 +111,17 @@ export const ApprovalView = z.object({
 });
 export type ApprovalView = z.infer<typeof ApprovalView>;
 
+/**
+ * A download made while a person held control, still waiting for their Keep or Discard (B6 A11).
+ * In the snapshot so a reload during control still offers it: the stream resumes past its event.
+ */
+export const HeldDownloadView = z.object({
+  id: Uuid,
+  filename: z.string().max(255),
+  bytes: z.number().int().nonnegative(),
+});
+export type HeldDownloadView = z.infer<typeof HeldDownloadView>;
+
 export const RunDetail = RunSummary.extend({
   plan: Plan.nullable(),
   allowedOrigins: z.array(Origin),
@@ -118,6 +129,8 @@ export const RunDetail = RunSummary.extend({
   slotName: SlotName.nullable(),
   targetFolderId: Uuid.nullable(),
   pendingApprovals: z.array(ApprovalView),
+  /** Undecided downloads held while a person has control; empty whenever the agent has it. */
+  heldDownloads: z.array(HeldDownloadView),
   lastEventId: z
     .string()
     .regex(/^[0-9]+$/)

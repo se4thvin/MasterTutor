@@ -1,6 +1,7 @@
 import type { HandBackInput, OpenLiveResult, RunRef } from "@mastertutor/contracts";
 import { requestHandBack, requestTakeover, type ControlRequestResult } from "@mastertutor/db";
 import { ORPCError } from "@orpc/server";
+import { RUN_MESSAGES } from "../runs/messages.ts";
 import { LiveAccessError, openLive, type LiveDeps } from "./open-live.ts";
 
 /** What liveRouter's handlers receive after requireViewer; resHeaders comes from ResponseHeadersPlugin. */
@@ -27,7 +28,7 @@ function controlError(result: Extract<ControlRequestResult, { ok: false }>): Err
     case "not_found":
       return new ORPCError("NOT_FOUND", { message: "Run not found" });
     case "finished":
-      return new ORPCError("CONFLICT", { message: "The run has finished" });
+      return new ORPCError("CONFLICT", { message: RUN_MESSAGES.runFinished });
     case "not_controller":
       return new ORPCError("FORBIDDEN", { message: "Another member is in control of this run" });
   }

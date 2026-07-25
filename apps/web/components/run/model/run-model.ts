@@ -53,7 +53,7 @@ interface DownloadItem {
   at: string;
 }
 /** A download made during a takeover, held until the person keeps or discards it at hand-back. */
-interface HeldDownload {
+export interface HeldDownload {
   id: string;
   filename: string;
   bytes: number;
@@ -156,6 +156,14 @@ function pendingFrom(detail: RunDetail): PendingApproval[] {
     .map((a) => ({ id: a.id, request: a.request, at: a.createdAt }));
 }
 
+/**
+ * A finished run holds no slot. The agent releases it just after the terminal status, but the
+ * stream ends at that status, so the release may never reach an open view.
+ */
+function heldSlot(status: RunStatus, slotName: string | null): string | null {
+  return isTerminal(status) ? null : slotName;
+}
+
 export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel {
   const steps = views
     .map((v): StepRow => ({
@@ -185,7 +193,7 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
     controller: detail.controller,
     approvalMode: detail.approvalMode,
     model: detail.model,
-    slotName: detail.slotName,
+    slotName: heldSlot(detail.status, detail.slotName),
     currentUrl: detail.currentUrl,
     usage: detail.usage,
     budget: detail.budget,
@@ -196,7 +204,8 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
     outcomes: [],
     messages: [],
     downloads: [],
-    heldDownloads: [],
+    // From the snapshot: after a reload the stream resumes past their download_pending events (A11).
+    heldDownloads: detail.heldDownloads.map(({ id, filename, bytes }) => ({ id, filename, bytes })),
     errors: [],
     lastControl: null,
     secureFillOrigin: secure,
@@ -213,7 +222,12 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
   const e = record.event;
   switch (e.type) {
     case "status":
-      return { ...m, status: e.status, waitReason: e.waitReason };
+      return {
+        ...m,
+        status: e.status,
+        waitReason: e.waitReason,
+        slotName: heldSlot(e.status, m.slotName),
+      };
     case "step": {
       const row: StepRow = {
         seq: e.seq,
@@ -242,7 +256,7 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
         ...(e.holder === "agent" ? { heldDownloads: [] } : {}),
       };
     case "slot":
-      return { ...m, slotName: e.slotName };
+      return { ...m, slotName: heldSlot(m.status, e.slotName) };
     case "approval_requested":
       return m.approvals.some((a) => a.id === e.approvalId)
         ? m
@@ -329,11 +343,19 @@ export function syncRunModel(model: RunModel, detail: RunDetail): RunModel {
     status: detail.status,
     waitReason: detail.waitReason,
     controller: detail.controller,
-    slotName: detail.slotName,
+    slotName: heldSlot(detail.status, detail.slotName),
     currentUrl: detail.currentUrl ?? model.currentUrl,
     usage: detail.usage,
     budget: detail.budget,
     approvals: pendingFrom(detail),
+    // The re-read is authoritative for what is still held; any newer streamed one is kept too.
+    heldDownloads:
+      detail.controller === "agent"
+        ? []
+        : [
+            ...detail.heldDownloads.map(({ id, filename, bytes }) => ({ id, filename, bytes })),
+            ...model.heldDownloads.filter((d) => !detail.heldDownloads.some((h) => h.id === d.id)),
+          ],
   };
 }
 

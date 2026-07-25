@@ -77,7 +77,7 @@ These close the open questions in `STATE.md`:
 | `garage` | `dxflrs/garage` v2 | S3 objects | `backend` | Internal only |
 | `migrate` | `packages/db` one-shot | Drizzle migrations; `web` and `agent` wait on `service_completed_successfully` | `backend` | — |
 | `docling` | docling-serve, profile `pdf` | High-fidelity PDF → Markdown | `backend` | Internal only |
-| `coturn` | coturn, profile `turn` | TURN relay for UDP-hostile networks | host ports | 3478 UDP/TCP, 5349 TLS |
+| `coturn` | coturn, profile `turn` | TURN relay for UDP-hostile networks | host ports | 3478 UDP/TCP, 5349 TLS (superseded: no TURN in v1, D42) |
 
 **Rules**
 1. `web` and `agent` never call each other. They communicate only through Postgres rows and `NOTIFY`. Payloads carry IDs only (≤ 200 bytes).
@@ -446,7 +446,7 @@ interface LiveView {                                         // apps/agent/src/l
 4. **Media.**
    - Each slot sets `NEKO_WEBRTC_UDPMUX` and `NEKO_WEBRTC_TCPMUX` to `5900N` and `NEKO_WEBRTC_NAT1TO1=<PUBLIC_IP>`. The port is published unremapped on UDP and TCP. The TCP mux covers networks that block UDP.
    - The stream carries audio.
-5. **TURN (profile `turn`).**
+5. **TURN (profile `turn`).** (superseded: no TURN in v1, D42)
    - `coturn` runs with `use-auth-secret`.
    - `web` issues short-lived TURN REST credentials (username `expiry:runId`, HMAC-SHA1 with `TURN_SECRET`, TTL 10 minutes) in the `openLive` response. They are passed to the n.eko client's ICE server configuration.
 6. **Client.**
@@ -770,6 +770,18 @@ Also: n.eko 8080 and CDP 9223 are unreachable from the host and from `edge`.
 
 ## 13. Deployment
 
+> **Superseded in part (D36, D41, D42, D45; Phase 9 amendment).**
+> - There is no coturn and no `turn` profile in v1, and no service has `TURN_SECRET`. `openLive` returns `iceServers: []`.
+> - The single `OPENAI_API_KEY` serves web and agent (D36).
+> - ForwardAuth targets web's static cdp address `.11`. Auth runs before strip.
+> - `mastertutor-cdp` is an external network that the host creates.
+> - Production slots run under the `mastertutor-slot` AppArmor profile. There is no host sysctl and no host firewall change.
+> - Backups are Dokploy's own compose-database and volume backups.
+> - Deploys are manual: auto-deploy is off and there is no webhook.
+> - The real deploy and its inputs are deferred until the zyBooks benchmarks pass (D42).
+>
+> `infra/deploy-runbook.md` is the operative procedure.
+
 - **Dokploy app:** one Compose app from `main` with `COMPOSE_PROFILES=pdf` (add `turn` to enable coturn).
 - **Traefik routing:**
   - `<domain>` → `web:3000`.
@@ -792,9 +804,8 @@ Also: n.eko 8080 and CDP 9223 are unreachable from the host and from `edge`.
 | Service | Secrets |
 |---|---|
 | `agent` | `OPENAI_API_KEY`, `VAULT_PRIVATE_KEY`, `NEKO_ADMIN_SECRET`, `DATABASE_URL` (agent_role), S3 read/write key |
-| `web` | `BETTER_AUTH_SECRET`, `VAULT_PUBLIC_KEY`, `NEKO_MEMBER_SECRET`, `LIVE_COOKIE_SECRET`, `TURN_SECRET`, `DATABASE_URL` (web_role), S3 read-only key, `OPENAI_API_KEY` (the single OpenAI key, D36; web uses it for query embeddings only) |
+| `web` | `BETTER_AUTH_SECRET`, `VAULT_PUBLIC_KEY`, `NEKO_MEMBER_SECRET`, `LIVE_COOKIE_SECRET`, `DATABASE_URL` (web_role), S3 read-only key, `OPENAI_API_KEY` (the single OpenAI key, D36; web uses it for query embeddings only) |
 | `browser-N` | `NEKO_ADMIN_SECRET`, `NEKO_MEMBER_SECRET`, `PUBLIC_IP` |
-| `coturn` | `TURN_SECRET` |
 
 - **CI** (GitHub Actions):
   1. lint, typecheck, ESLint and Stylelint motion rules;
