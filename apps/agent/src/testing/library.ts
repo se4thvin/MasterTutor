@@ -26,6 +26,7 @@ export function fakeLibraryServices(
         return "Quarterly results\n\nRevenue rose 12 percent on strong demand.";
       },
     },
+    filing: { decide: async () => ({ path: ["Inbox"], createLeaf: true }) },
     log: testLog,
     ...overrides,
     storage,
