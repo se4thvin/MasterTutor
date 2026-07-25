@@ -85,6 +85,13 @@ describe("fixture notes", () => {
     expect(items[0]?.snippet).toContain("grad_norm");
   });
 
+  it("returns at most one hit per note, like the live hybrid search", async () => {
+    const { api } = client();
+    const { items } = await api.notes.search({ q: "warmup" });
+    expect(items.length).toBeGreaterThan(0);
+    expect(new Set(items.map((i) => i.noteId)).size).toBe(items.length);
+  });
+
   it("keeps the original on edit and flips fidelity when the last review clears", async () => {
     const { api } = client();
     const detail = await api.notes.get({ noteId: ids.note(1) });

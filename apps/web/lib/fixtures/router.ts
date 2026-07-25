@@ -307,25 +307,16 @@ export const fixtureRouter = os.router({
       for (const record of stateFor(context.ns).notes) {
         if (input.kind !== null && !record.note.sourceKinds.includes(input.kind)) continue;
         const titleMatch = record.note.title.toLowerCase().includes(q);
-        const blockHits = record.blocks.filter((b) => b.markdown.toLowerCase().includes(q));
-        for (const block of blockHits) {
-          hits.push({
-            noteId: record.note.id,
-            blockId: block.id,
-            title: record.note.title,
-            snippet: snippetAround(block.markdown, input.q),
-            score: titleMatch ? 2 : 1,
-          });
-        }
-        if (titleMatch && blockHits.length === 0) {
-          hits.push({
-            noteId: record.note.id,
-            blockId: null,
-            title: record.note.title,
-            snippet: record.note.lede ?? "",
-            score: 2,
-          });
-        }
+        const block = record.blocks.find((b) => b.markdown.toLowerCase().includes(q));
+        if (!block && !titleMatch) continue;
+        // One hit per note, like the live hybrid search: its first matching block, else the lede.
+        hits.push({
+          noteId: record.note.id,
+          blockId: block?.id ?? null,
+          title: record.note.title,
+          snippet: block ? snippetAround(block.markdown, input.q) : (record.note.lede ?? ""),
+          score: (titleMatch ? 1 : 0) + (block ? 1 : 0),
+        });
       }
       return { items: hits.sort((a, b) => b.score - a.score).slice(0, input.limit) };
     }),
