@@ -396,16 +396,40 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     }
   }
 
-  // Defuddle drops the H1 that repeats the page title; it is page text, so the note keeps it.
+  // Defuddle drops the H1 that repeats the page title; that heading is page text, so the note
+  // keeps it. Only that H1: rendered text only, outside page chrome, matching the title.
   if (!scoped && engine === "defuddle") {
     const squash = (value: string) => value.replace(/\s+/g, " ").trim();
-    const heading = [...document.querySelectorAll("h1")].find(
-      (h1) => lib.visible(h1) && squash(h1.textContent ?? "") !== "",
-    );
-    const text = heading ? squash(heading.textContent ?? "") : "";
-    if (text && !markdown.includes(text)) {
-      const escaped = text.replace(/[\\`*_[\]<>]/g, (char) => `\\${char}`);
-      markdown = `# ${escaped}\n\n${markdown}`;
+    const fold = (value: string) => squash(value).toLocaleLowerCase();
+    const titles = new Set([result?.title ?? "", document.title].map(fold).filter(Boolean));
+    const inChrome = (el: Element) => {
+      for (let at: Element | null = el; at; at = at.parentElement)
+        if (lib.isChrome(at)) return true;
+      return false;
+    };
+    const renderedText = (el: Element) => {
+      const parts: string[] = [];
+      lib.walkRendered(
+        el,
+        null,
+        (_node, text) => parts.push(text),
+        () => parts.push(" "),
+      );
+      return squash(parts.join(""));
+    };
+    for (const h1 of document.querySelectorAll("h1")) {
+      if (!lib.visible(h1) || inChrome(h1)) continue;
+      const text = renderedText(h1);
+      if (!text || !titles.has(fold(text))) continue;
+      // Compared with the unescaped Markdown, so `_`, `*` or `[` in a title never add it twice.
+      const unescaped = markdown.replace(/\\([\\`*_{}[\]()#+\-.!|$<>~])/g, "$1");
+      if (!unescaped.includes(text)) {
+        // Mirrors escapeMarkdownText in @mastertutor/contracts (markdown.ts), the source of truth;
+        // the capture world cannot import it.
+        const escaped = text.replace(/[\\`*_[\]<>]/g, (char) => `\\${char}`);
+        markdown = `# ${escaped}\n\n${markdown}`;
+      }
+      break;
     }
   }
   const tidy = (parts: string[]) =>

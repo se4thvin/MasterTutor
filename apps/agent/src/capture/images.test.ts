@@ -17,6 +17,9 @@ const UNSAFE = [
   // CSS escapes decode to url( in the browser (5-8 review I5): no backslash in attribute values.
   '<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:\\75 rl(https://evil.test/a)"/></svg>',
   '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="\\75 rl(https://evil.test/a)"/></svg>',
+  // image-set() with a string URL fetches without any url( (re-review).
+  '<svg xmlns="http://www.w3.org/2000/svg"><rect style="mask-image:image-set(&quot;https://evil.test/a&quot; 1x)"/></svg>',
+  '<svg xmlns="http://www.w3.org/2000/svg"><rect style="mask-image:-webkit-image-set(\'//evil.test/a\' 1x)"/></svg>',
 ];
 
 describe("isSafeSvg", () => {

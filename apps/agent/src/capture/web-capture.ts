@@ -10,7 +10,7 @@ import { containsSecretText } from "../browser/masking.ts";
 import { captureMaskedRegion } from "../browser/region-capture.ts";
 import type { LibraryServices } from "../library.ts";
 import { sha256Hex } from "../notes/hash.ts";
-import { NoteWriteError, screenValue, type BlockDraft } from "../notes/note-writer.ts";
+import { NoteWriteError, screenText, screenValue, type BlockDraft } from "../notes/note-writer.ts";
 import { ToolError, type ToolContext } from "../tools/types.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
 import {
@@ -239,6 +239,7 @@ async function captureDocument(
       workspaceId: ctx.workspaceId,
       assets: services.assets,
       secrets: ctx.mask,
+      ocrCheck: (png) => services.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step }),
       fetch: (url) => fetchInBrowser({ session: ctx.session, frameId, signal: ctx.signal }, url),
       sanitizeSvg: (text) => worlds.call(pageSanitizeSvg, [text], frameId),
       shoot:
@@ -299,8 +300,9 @@ async function captureDocument(
     framesMissing: 0,
     framesSkipped: extract.smallFrames,
   };
-  const outOfProcess =
-    extract.frames.length > 0 ? (await ctx.session.frameCoverage()).outOfProcess : new Map();
+  const outOfProcess = (await ctx.session.frameCoverage()).outOfProcess;
+  /** Child frames this document has accounted for: captured, or counted missing. */
+  const seen = new Set<string>();
   let next = 0;
   for (const item of planned) {
     if (item.kind === "block") {
@@ -309,6 +311,7 @@ async function captureDocument(
       continue;
     }
     const childId = frameIds[item.index] ?? null;
+    if (childId) seen.add(childId);
     // Decision 10: an out-of-process frame cannot host this world; it is left out of coverage.
     if (childId && outOfProcess.has(childId)) continue;
     if (!childId || depth + 1 > MAX_FRAME_DEPTH) {
@@ -340,7 +343,54 @@ async function captureDocument(
     doc.framesMissing += child.framesMissing;
     doc.framesSkipped += child.framesSkipped;
   }
+  // Every other same-process child frame, from CDP: placeholders Defuddle dropped, small frames.
+  // Each is read; one that shows text the note does not hold counts missing (re-review N2).
+  for (const childId of await childFrameIds(worlds, frameId)) {
+    if (seen.has(childId) || outOfProcess.has(childId)) continue;
+    if (await showsUnreadText(ctx, worlds, childId, outOfProcess, depth + 1)) doc.framesMissing++;
+  }
   return doc;
+}
+
+async function childFrameIds(worlds: IsolatedWorlds, frameId: string): Promise<string[]> {
+  interface Tree {
+    frame: { id: string };
+    childFrames?: Tree[];
+  }
+  const { frameTree } = (await worlds.cdp.send("Page.getFrameTree")) as unknown as {
+    frameTree: Tree;
+  };
+  const find = (tree: Tree): Tree | null =>
+    tree.frame.id === frameId ? tree : ((tree.childFrames ?? []).map(find).find(Boolean) ?? null);
+  return (find(frameTree)?.childFrames ?? []).map((child) => child.frame.id);
+}
+
+/**
+ * True when a frame the note does not hold renders text (in itself or its own frames), or cannot
+ * be read at all. Its text is screened like any other: a vault secret refuses the capture.
+ */
+async function showsUnreadText(
+  ctx: ToolContext,
+  worlds: IsolatedWorlds,
+  frameId: string,
+  outOfProcess: ReadonlyMap<string, unknown>,
+  depth: number,
+): Promise<boolean> {
+  if (depth > MAX_FRAME_DEPTH) return true;
+  let extract: PageExtract;
+  try {
+    extract = await extractIn(worlds, frameId, { scope: "element", selector: "body" });
+  } catch (error) {
+    if (error instanceof ToolError || ctx.signal.aborted) throw error;
+    return true;
+  }
+  screenValue(ctx.mask, [extract.pageText, extract.sourceText]);
+  if (tokens(extract.sourceText).length > 0) return true;
+  for (const childId of await childFrameIds(worlds, frameId)) {
+    if (outOfProcess.has(childId)) continue;
+    if (await showsUnreadText(ctx, worlds, childId, outOfProcess, depth + 1)) return true;
+  }
+  return false;
 }
 
 /** Spec §7.7 for pages without usable DOM text: masked viewport tiles, each transcribed by OCR. */
@@ -370,6 +420,22 @@ async function opaqueBlocks(
       withheld++;
       continue;
     }
+    // Transcribed and screened before the tile is stored: canvas text is invisible to the AX gate.
+    let text: string | null;
+    try {
+      text = await services.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step });
+    } catch (error) {
+      if (ctx.signal.aborted) throw error;
+      // A transient model error loses this tile's text, not the capture (M6).
+      services.log.warn({ errName: (error as Error).name }, "OCR failed for a page region");
+      text = null;
+    }
+    if (text !== null) screenText(ctx.mask, text);
+    // Unread pixels are never stored while the run holds secrets (re-review I1).
+    if (text === null && ctx.mask.hasSecrets()) {
+      withheld++;
+      continue;
+    }
     const asset = await services.assets.put(
       ctx.workspaceId,
       { bytes: png, mime: "image/png", width: clip.width, height: clip.height, sourceUrl: null },
@@ -391,13 +457,7 @@ async function opaqueBlocks(
       anchor,
       verified: true,
     });
-    let text: string;
-    try {
-      text = await services.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step });
-    } catch (error) {
-      if (ctx.signal.aborted) throw error;
-      // A transient model error loses this tile's text, not the capture (M6).
-      services.log.warn({ errName: (error as Error).name }, "OCR failed for a page region");
+    if (text === null) {
       lost++;
       continue;
     }

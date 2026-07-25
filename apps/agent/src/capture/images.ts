@@ -71,6 +71,8 @@ const UNSAFE_MARKUP = [
   /<!DOCTYPE|<!ENTITY/i,
   /[\s/"']on[a-z]+\s*=/i,
   /@import|expression\s*\(|-moz-binding|behavior\s*:/i,
+  // image-set() and src() fetch a string URL without any url( (re-review).
+  /image-set\s*\(|\bsrc\s*\(/i,
   /url\((?!\s*["']?\s*#)/i,
   /\bhref\s*=(?!\s*["']?\s*#)/i,
   // A CSS escape (`\75 rl(`) decodes to `url(` in the browser: no backslash in any attribute value.

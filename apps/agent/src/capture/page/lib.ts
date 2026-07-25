@@ -198,7 +198,9 @@ export function pageInstallLib(): void {
         }
         if (name === "style") {
           if (
-            !/@import|expression\s*\(|javascript:|behavior\s*:|-moz-binding/i.test(value) &&
+            !/@import|expression\s*\(|javascript:|behavior\s*:|-moz-binding|image-set\s*\(|\bsrc\s*\(/i.test(
+              value,
+            ) &&
             onlyLocalUrls(value)
           )
             out.setAttribute("style", value);
