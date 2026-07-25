@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Scoped frames</title>
+  </head>
+  <body>
+    <main>
+      <article>
+        <h1>Scoped frames</h1>
+        <section id="target">
+          <p>
+            Glycolysis splits one glucose molecule into two pyruvate molecules in the cytoplasm and
+            nets two ATP for the cell.
+          </p>
+          <ul>
+            <li>It needs no oxygen.</li>
+            <li>It feeds the Krebs cycle when oxygen is present.</li>
+          </ul>
+        </section>
+        <section id="withframe">
+          <p>The worksheet below asks for the net ATP of each stage of cellular respiration.</p>
+          <iframe srcdoc="<p>Inner frame sentinel words</p>" width="80" height="40"></iframe>
+        </section>
+      </article>
+    </main>
+    <aside>
+      <iframe srcdoc="<p>Unrelated sidebar frame text</p>" width="300" height="200"></iframe>
+    </aside>
+  </body>
+</html>
