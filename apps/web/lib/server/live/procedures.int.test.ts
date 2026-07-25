@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { decodeNotify } from "@mastertutor/contracts";
-import { createDb, type DbHandle } from "@mastertutor/db";
+import { createDb, runs, type DbHandle } from "@mastertutor/db";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -11,6 +11,7 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from "@mastertutor/db/testing";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { LiveDeps } from "./open-live.ts";
 import { createLiveHandlers } from "./procedures.ts";
@@ -65,6 +66,9 @@ describe("live handlers on liveRouter", () => {
       iceServers: [],
     });
     expect(context.resHeaders.getSetCookie()).toHaveLength(2);
+    // Recorded, so the agent can close this person's live view when they sign out.
+    const [row] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+    expect(row?.liveViewerId).toBe(member.userId);
   });
 
   it("openLive refuses to run without ResponseHeadersPlugin", async () => {

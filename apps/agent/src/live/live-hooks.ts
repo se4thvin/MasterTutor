@@ -178,6 +178,8 @@ export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
           );
           return false;
         }
+        // The live view is still connecting: ask again shortly, never in a tight loop.
+        await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
       }
     }
   }
@@ -236,13 +238,14 @@ export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
       // A run cancelled during a takeover still seals what the user enrolled (before Browser.close).
       await finishEnrolment(slot.runId);
       leases.delete(slot.runId);
+      // S12, first: a released run must not leave the user with X input until the container
+      // restarts, however long the downloads below take to settle.
+      if (slot.slotReleased) await seatAgent(slot.slotName, slot.runId, "neko_release_failed");
       // Deny downloads again even though the slot restarts (the next lease's gate denies too).
       await withTimeout(deps.downloads.userControl(slot.runId, false), nekoTimeoutMs).catch(() =>
         deps.log.warn({ runId: slot.runId, errorCode: "downloads_off_failed" }, "downloads"),
       );
       await deps.downloads.detach(slot.runId).catch(() => undefined);
-      // S12: a released run must not leave the user with X input until the container restarts.
-      if (slot.slotReleased) await seatAgent(slot.slotName, slot.runId, "neko_release_failed");
     },
   };
 }

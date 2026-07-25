@@ -166,14 +166,14 @@ describe("takeover through B1's lock with the n.eko live view (spec §10.3, §12
     await waitForRun(agent, runId, (run) => run.status === "completed", "completed");
   });
 
-  it("ignores input from a connected viewer who is not host while a takeover is pending", async () => {
+  it("ignores input from a connected viewer who is not host (as before a takeover is given)", async () => {
     closeLiveViews();
     const name = scenario("pending", [readInteractive, clickNotes, typeLong, done]);
     const runId = await createRun(agent, `[scenario:${name}] ${SITE}/interactive.html`);
     await typingStarted(runId);
     const slot = (await slotOf(agent, runId))!;
     const { socket } = await openViewer(slot);
-    // The person clicked "Take over" but the agent has not given control yet: n.eko still has the
+    // Until the agent gives control (a requested takeover not yet given included), n.eko has the
     // agent as host, so whatever the live view sends must not reach X.
     expect(await hostOf(slot)).toBe("agent");
     const before = await pointer(slot);

@@ -1,6 +1,6 @@
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { Uuid } from "@mastertutor/contracts";
+import { MAX_USER_DOWNLOAD_BYTES, MAX_USER_DOWNLOADS_PER_RUN, Uuid } from "@mastertutor/contracts";
 import type { Browser, CDPSession } from "playwright-core";
 import type { Log } from "../runtime/types.ts";
 
@@ -58,7 +58,11 @@ export interface FinishedDownload {
   approvedBy: string | null;
 }
 
-const DEFAULT_USER_LIMITS: UserDownloadLimits = { maxBytes: 100 * 1024 * 1024, maxCount: 20 };
+/** The contracts' caps (one source); B6 passes what is left of the run's count. */
+const DEFAULT_USER_LIMITS: UserDownloadLimits = {
+  maxBytes: MAX_USER_DOWNLOAD_BYTES,
+  maxCount: MAX_USER_DOWNLOADS_PER_RUN,
+};
 
 /**
  * Downloads are denied by default (spec §9): Chromium cancels every download before saving
@@ -123,23 +127,17 @@ export class DownloadGate {
   }
 
   /**
-   * The ids of the downloads that were let through. The run's folder may briefly hold other
-   * (unapproved) files until the sweep removes them: B6 files only these ids, never the folder.
-   */
-  approvedDownloads(): string[] {
-    return [...this.#approved];
-  }
-
-  /**
    * A person takes (`true`) or hands back (`false`) control through the live view. This gate is
    * the only code that sets the browser's download behaviour. While on, every download the person
    * starts completes into the run's folder (B6 stores it), within `limits`; the agent cannot act
    * meanwhile. Off: downloads are denied again and the agent gate resumes (its open allowances end);
    * rejects when the deny cannot be restored (the caller must fail closed).
-   * The person's files are never swept; `userDownloads()` names them.
+   * The person's files are never swept; `onFinished` reports each one. `maxCount` counts the
+   * downloads started from this call on (B6 passes what the run has left across its leases).
    */
   async userControl(on: boolean, limits?: Partial<UserDownloadLimits>): Promise<void> {
     if (limits) this.#userLimits = { ...this.#userLimits, ...limits };
+    if (on) this.#userCount = 0;
     for (const allowance of this.#allowances.splice(0)) clearTimeout(allowance.timer);
     this.#user = on;
     await this.#closing;
@@ -168,13 +166,8 @@ export class DownloadGate {
     this.#finished = listener;
   }
 
-  /** The ids of the downloads a person started while holding control (B6 files these). */
-  userDownloads(): string[] {
-    return [...this.#userDownloads];
-  }
-
   /** Lets exactly one approved download through: the next one `match` accepts, within ALLOW_WINDOW_MS. */
-  async allowOnce(match: DownloadMatch, approvedBy: string | null = null): Promise<void> {
+  async allowOnce(match: DownloadMatch, approvedBy: string): Promise<void> {
     if (this.#folder === null || this.#user) return;
     const allowance: Allowance = {
       match,

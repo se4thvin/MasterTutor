@@ -10,6 +10,7 @@ import { createSlotIdleProbe } from "./live/idle-probe.ts";
 import { createLiveHooks, liveControlStore } from "./live/live-hooks.ts";
 import { createNekoAdmin } from "./live/neko-admin.ts";
 import { createNekoLiveView } from "./live/neko-live-view.ts";
+import { startLiveRevocation } from "./live/revocation.ts";
 import { createOpenAIModelClient } from "./llm/client.ts";
 import { createOpenAI } from "./llm/openai.ts";
 import { composeRunHooks } from "./loop/hooks.ts";
@@ -45,13 +46,14 @@ const vault = createVault({
   testMode: env.AGENT_TEST_MODE,
 });
 
+const nekoAdmin = createNekoAdmin({ adminSecret: env.NEKO_ADMIN_SECRET });
 // B6: the n.eko live view and the person's downloads, plugged into B1's control lock (spec §10).
 // B3's passkey enrolment runs while the person holds control (B3 E.8 note 1).
 const liveHooks = createLiveHooks({
   enrolment: vault.enrolment,
   store: liveControlStore(database.db),
   liveView: createNekoLiveView({
-    admin: createNekoAdmin({ adminSecret: env.NEKO_ADMIN_SECRET }),
+    admin: nekoAdmin,
   }),
   idleProbe: createSlotIdleProbe(),
   downloads: createDownloadIngestor({
@@ -102,8 +104,15 @@ const health = await startHealthServer({
     ),
   }),
 });
+// B6: sign-out or removal from the workspace closes that person's open live views.
+const stopLiveRevocation = await startLiveRevocation({
+  db: database,
+  admin: nekoAdmin,
+  log: log.child({ module: "live" }),
+});
 async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, "shutting down");
+  await stopLiveRevocation().catch(() => undefined);
   // Running runs go to sleep with a wake; the supervisor closes the database handle it owns.
   await supervisor.stop();
   await health.close();

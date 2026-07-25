@@ -61,8 +61,15 @@
     {
       "idx": 8,
       "version": "7",
-      "when": 1791346927550,
-      "tag": "0008_block_search",
+      "when": 1791346970300,
+      "tag": "0008_live_revoke",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791347030300,
+      "tag": "0009_block_search",
       "breakpoints": true
     }
   ]
