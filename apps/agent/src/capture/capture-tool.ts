@@ -132,8 +132,8 @@ export async function persistCapture(
   });
 }
 
-/** The writer's and asset store's refusals reach the model as typed tool errors. */
-async function asToolErrors<T>(work: () => Promise<T>): Promise<T> {
+/** The writer's and asset store's refusals as typed tool errors (capture and annotate share it). */
+export async function asToolErrors<T>(work: () => Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (error) {

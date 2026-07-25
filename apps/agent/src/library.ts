@@ -1,5 +1,6 @@
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
+import { createAnnotateTool } from "./capture/annotate-tool.ts";
 import { createCaptureTool } from "./capture/capture-tool.ts";
 import { createOcrModel, type OcrModel } from "./capture/opaque.ts";
 import type { StatelessOpenAI } from "./llm/openai.ts";
@@ -40,5 +41,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 
 /** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through mergeHooks. */
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
-  return { functionTools: [register(createCaptureTool(services))] };
+  return {
+    functionTools: [register(createCaptureTool(services)), register(createAnnotateTool(services))],
+  };
 }
