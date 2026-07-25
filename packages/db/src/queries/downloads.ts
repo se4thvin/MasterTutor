@@ -114,7 +114,7 @@ export async function recordPendingDownload(
     )
     .for("update");
   if (!run) return false;
-  await tx.insert(downloads).values({ ...input, pending: true });
+  await tx.insert(downloads).values({ ...input, pending: true, byUser: true });
   return true;
 }
 
@@ -195,27 +195,37 @@ export async function fileKeptDownload(
   return { assetId };
 }
 
-/** Every held download of the run, gone (lease end, crash recovery): their ids, for the files. */
+const DISCARDED = { pending: false, discardedAt: sql`now()` } as const;
+
+/**
+ * Every held download of the run discarded (lease end, crash recovery): their ids, for the files.
+ * Discarded rows stay as markers so they still count toward the person's cap.
+ */
 export async function discardPendingDownloads(tx: DbTx, runId: string): Promise<string[]> {
   const rows = await tx
-    .delete(downloads)
+    .update(downloads)
+    .set(DISCARDED)
     .where(and(eq(downloads.runId, runId), eq(downloads.pending, true)))
     .returning({ id: downloads.id });
   return rows.map((row) => row.id);
 }
 
-/** A pending download nobody kept: gone (its local file is the caller's to delete). */
+/** A pending download nobody kept, discarded (its local file is the caller's to delete). */
 export async function discardDownload(tx: DbTx, runId: string, id: string): Promise<void> {
   await tx
-    .delete(downloads)
+    .update(downloads)
+    .set(DISCARDED)
     .where(and(eq(downloads.id, id), eq(downloads.runId, runId), eq(downloads.pending, true)));
 }
 
-/** Downloads the run has kept or still holds, across all its leases (the per-run count cap). */
-export async function countRunDownloads(db: Database, runId: string): Promise<number> {
+/**
+ * The person's own downloads in this run, across all its leases, kept, held or discarded (the
+ * per-run count cap): approved agent downloads do not count, and a discard frees nothing.
+ */
+export async function countUserDownloads(db: Database, runId: string): Promise<number> {
   const [row] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(downloads)
-    .where(eq(downloads.runId, runId));
+    .where(and(eq(downloads.runId, runId), eq(downloads.byUser, true)));
   return row?.count ?? 0;
 }

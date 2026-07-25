@@ -194,5 +194,9 @@ export const downloads = pgTable("downloads", {
    */
   pending: boolean("pending").notNull().default(false),
   keptAt: tstz("kept_at"),
+  /** Made by the person in control (not an approved agent download): counts toward their cap. */
+  byUser: boolean("by_user").notNull().default(false),
+  /** Not kept: the row stays (never an asset) so a discard does not free quota within the run. */
+  discardedAt: tstz("discarded_at"),
   createdAt: createdAt(),
 });

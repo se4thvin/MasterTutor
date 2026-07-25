@@ -9,7 +9,7 @@ import {
   type RunEvent,
 } from "@mastertutor/contracts";
 import {
-  countRunDownloads,
+  countUserDownloads,
   discardDownload,
   discardPendingDownloads,
   emitRunEvent,
@@ -371,8 +371,8 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
               },
         ).catch(failed(runId, "download_cap_notice_failed"));
       entry.userMode = true;
-      // The count is per run: downloads it kept or holds from earlier leases are used up.
-      const used = await countRunDownloads(deps.db, runId);
+      // The count is per run: the person's downloads from earlier leases, even discarded ones, are used up.
+      const used = await countUserDownloads(deps.db, runId);
       await gate.userControl(true, { maxBytes, maxCount: Math.max(0, maxCount - used), onCapped });
     },
     async detach(runId) {
