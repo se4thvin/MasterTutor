@@ -1,5 +1,4 @@
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { containsSecret, type MaskSources } from "../browser/masking.ts";
@@ -18,9 +17,12 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
     const langPath = path.dirname(
       require.resolve("@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz"),
     );
+    // Worker and core load from the installed package (tesseract.js's Node defaults) and the model
+    // from the bundled @tesseract.js-data file: never a CDN. No cache either, so a model file
+    // planted in a shared temp directory is never read instead of the bundled one.
     const created = await createWorker("eng", 1, {
       langPath,
-      cachePath: os.tmpdir(),
+      cacheMethod: "none",
       gzip: true,
       logger: () => undefined,
     });
