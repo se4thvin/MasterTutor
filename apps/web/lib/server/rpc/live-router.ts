@@ -5,6 +5,7 @@ import { getLiveDeps } from "../live/deps.ts";
 import type { LiveDeps } from "../live/open-live.ts";
 import { createLiveHandlers } from "../live/procedures.ts";
 import { getSealer, type Sealer } from "../vault/sealer.ts";
+import { createAssetProcedures } from "./assets.ts";
 import { liveOs as os } from "./live-os.ts";
 import { createRunProcedures } from "./runs.ts";
 import { createSettingsProcedures } from "./settings.ts";
@@ -18,7 +19,7 @@ interface LiveRouterDeps {
 }
 
 /**
- * Procedures whose backend is not on this branch yet: notes.*, folders.* and assets.url (P3, B2),
+ * Procedures whose backend is not on this branch yet: notes.* and folders.* (P3, B2),
  * benchmarks.* (T18). Nothing else may use this; router-parity.int.test.ts lists each exclusion by
  * the branch that removes it.
  */
@@ -64,7 +65,7 @@ export function createLiveRouter(deps: LiveRouterDeps) {
     },
     vault: vault.vault,
     settings,
-    assets: { url: os.assets.url.handler(notWired) },
+    assets: createAssetProcedures({ db: deps.db }),
     benchmarks: {
       list: os.benchmarks.list.handler(notWired),
       create: os.benchmarks.create.handler(notWired),
