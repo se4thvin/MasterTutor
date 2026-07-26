@@ -1,16 +1,21 @@
 import { readFile } from "node:fs/promises";
+import { unzipSync } from "fflate";
 import { ids } from "../lib/fixtures/ids.ts";
 import { expect, test } from "./helpers/test.ts";
 
-test("exports the note as faithful Obsidian Markdown", async ({ page }) => {
+test("exports the note as a zip of faithful Obsidian Markdown and its assets", async ({ page }) => {
   await page.goto(`/notes/${ids.note(1)}`);
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export .md", exact: true }).click();
+  await page.getByRole("button", { name: "Export", exact: true }).click();
   const file = await download;
-  expect(file.suggestedFilename()).toBe("Learning-rate warmup, explained.md");
+  // Decision 18: the download is a zip, and its name says so.
+  expect(file.suggestedFilename()).toBe("Learning-rate warmup, explained.zip");
 
-  const path = await file.path();
-  const md = await readFile(path, "utf8");
+  const zip = unzipSync(new Uint8Array(await readFile(await file.path())));
+  const entry = zip["Learning-rate warmup, explained.md"];
+  expect(entry).toBeDefined();
+  const md = new TextDecoder().decode(entry);
+  expect(Object.keys(zip).some((name) => /^assets\/[0-9a-f]{64}\.svg$/.test(name))).toBe(true);
   // Front-matter with provenance.
   expect(md.startsWith('---\ntitle: "Learning-rate warmup, explained"\n')).toBe(true);
   expect(md).toContain(`note_id: ${ids.note(1)}`);
@@ -26,7 +31,7 @@ test("exports the note as faithful Obsidian Markdown", async ({ page }) => {
   // Review and agent notes as Obsidian callouts; assets referenced, never inlined.
   expect(md).toContain("> [!warning] Needs review");
   expect(md).toContain("> [!note] Agent's note");
-  expect(md).toContain(`(assets/${ids.asset(2)})`);
+  expect(md).toMatch(/\(assets\/[0-9a-f]{64}\.svg\)/);
   expect(md).not.toMatch(/data:image|<script/i);
   expect(md.endsWith("\n")).toBe(true);
 });

@@ -12,3 +12,4 @@ export * from "./queries/downloads.ts";
 export * from "./queries/folders.ts";
 export * from "./queries/keyset.ts";
 export * from "./queries/search.ts";
+export * from "./queries/note-detail.ts";
