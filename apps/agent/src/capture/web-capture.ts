@@ -25,7 +25,7 @@ import { pageExtract } from "./page/extract.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import type { PageExtract } from "./page/types.ts";
-import { pixelsAreClean } from "./local-ocr.ts";
+import { pixelsAreClean } from "../browser/local-ocr.ts";
 import { preparePage } from "./prepare.ts";
 import { registerClosedShadowRoots } from "./shadow.ts";
 import { takeSnapshot, type Snapshot } from "./snapshot.ts";
