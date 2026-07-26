@@ -82,3 +82,30 @@ describe("screenPixels (agent-loop screenshots, I-1)", () => {
     await expect(pending).rejects.toThrow("killed");
   });
 });
+
+describe("one-time codes in pixels (ruling)", () => {
+  const codes = (code: string): MaskSources => ({
+    nodeIds: () => [],
+    hasSecrets: () => false,
+    redact: (text) => text,
+    hasOneTimeCodes: () => true,
+    isOneTimeCode: (token) => token === code,
+  });
+  it("finds a filled code as a whole token, and nothing inside a longer number", async () => {
+    const hit = await screenPixels(
+      ocr,
+      codes("482913"),
+      await image("Your code is 482913."),
+      signal,
+    );
+    expect(hit.kind).toBe("hit");
+    expect(
+      await screenPixels(ocr, codes("482913"), await image("Order 4829137 shipped"), signal),
+    ).toEqual({
+      kind: "clean",
+    });
+    expect(await pixelsAreClean(ocr, codes("482913"), await image("code 482913"), signal)).toBe(
+      false,
+    );
+  }, 60_000);
+});

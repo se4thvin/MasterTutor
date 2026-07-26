@@ -96,13 +96,21 @@ export function sharedLocalOcr(): LocalOcr {
  * and find no secret; a hit or an OCR failure withholds them (A-M1, A-M2). The run's signal
  * cancels the wait at once (the kill switch never waits for a long read).
  */
+/** True while the run has anything the pixel screens look for: secrets, or filled one-time codes. */
+const screens = (secrets: MaskSources) =>
+  secrets.hasSecrets() || (secrets.hasOneTimeCodes?.() ?? false);
+
+/** A filled one-time code shows as an exact whole token (edge punctuation aside). */
+const isCode = (secrets: MaskSources, word: string) =>
+  secrets.isOneTimeCode?.(word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")) ?? false;
+
 export async function pixelsAreClean(
   ocr: Pick<LocalOcr, "text">,
   secrets: MaskSources,
   png: Uint8Array,
   signal: AbortSignal,
 ): Promise<boolean> {
-  if (!secrets.hasSecrets()) return true;
+  if (!screens(secrets)) return true;
   let text: string;
   try {
     text = await abortable(ocr.text(png), signal);
@@ -110,7 +118,7 @@ export async function pixelsAreClean(
     signal.throwIfAborted();
     return false;
   }
-  return !containsSecret(secrets, text);
+  return !containsSecret(secrets, text) && !text.split(/\s+/).some((word) => isCode(secrets, word));
 }
 
 export type PixelScreen = { kind: "clean" } | { kind: "hit"; boxes: Box[] } | { kind: "failed" };
@@ -130,7 +138,7 @@ export async function screenPixels(
   png: Uint8Array,
   signal: AbortSignal,
 ): Promise<PixelScreen> {
-  if (!secrets.hasSecrets()) return { kind: "clean" };
+  if (!screens(secrets)) return { kind: "clean" };
   let lines: OcrLine[];
   try {
     lines = await abortable(ocr.words(png), signal);
@@ -143,6 +151,7 @@ export async function screenPixels(
     containsSecret(secrets, words.map((word) => word.text).join(" ")) ||
     containsSecret(secrets, words.map((word) => word.text).join(""));
   for (const { words } of lines) {
+    for (const word of words) if (isCode(secrets, word.text)) boxes.push(word.box);
     // The shortest window ending at each word: growing backwards from `end` finds the words
     // that hold the secret and no neighbours ("pw" before a password stays readable).
     let from = 0;
