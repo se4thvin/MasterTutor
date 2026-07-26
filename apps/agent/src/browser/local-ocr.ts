@@ -23,10 +23,36 @@ interface TesseractBlock {
   paragraphs: Array<{ lines: Array<{ words: TesseractWord[] }> }>;
 }
 
-/** One tesseract worker per process, created on first use; recognitions run one at a time. */
+/** Waits after a failed worker start before trying again; doubles up to the cap. */
+const START_BACKOFF_MS = { first: 1_000, max: 60_000 };
+
+/**
+ * One tesseract worker, created on first use; recognitions run one at a time. A start that fails
+ * is retried with bounded backoff: until one succeeds every read fails, so callers withhold the
+ * pixels (fail closed), and the process never stays without OCR for good.
+ */
 export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
   let worker: Promise<Worker> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
+  let backoff = START_BACKOFF_MS.first;
+  let retryAt = 0;
+  const ready = (): Promise<Worker> => {
+    if (worker) return worker;
+    if (Date.now() < retryAt) return Promise.reject(new Error("OCR worker failed to start"));
+    const started = start();
+    worker = started;
+    started.then(
+      () => {
+        backoff = START_BACKOFF_MS.first;
+      },
+      () => {
+        worker = undefined;
+        retryAt = Date.now() + backoff;
+        backoff = Math.min(backoff * 2, START_BACKOFF_MS.max);
+      },
+    );
+    return started;
+  };
   const start = async () => {
     const require = createRequire(import.meta.url);
     const langPath = path.dirname(
@@ -47,10 +73,7 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
     return created;
   };
   const serial = <T>(work: (ready: Worker) => Promise<T>): Promise<T> => {
-    const run = queue.then(async () => {
-      worker ??= start();
-      return work(await worker);
-    });
+    const run = queue.then(async () => work(await ready()));
     queue = run.catch(() => undefined);
     return run;
   };
@@ -77,14 +100,16 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
         );
       }),
     async close() {
-      if (worker) await (await worker).terminate();
+      const current = worker;
+      worker = undefined;
+      if (current) await (await current.catch(() => null))?.terminate();
     },
   };
 }
 
 let shared: (LocalOcr & { close(): Promise<void> }) | undefined;
 
-/** The one OCR worker of this process: the agent loop, capture and the canary all use it. */
+/** The one OCR worker of this process: the agent loop and capture both use it. */
 export function sharedLocalOcr(): LocalOcr {
   shared ??= createLocalOcr();
   return shared;
