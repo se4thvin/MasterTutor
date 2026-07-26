@@ -134,6 +134,7 @@ export const fixtureRouter = os.router({
         waitReason: null,
         controller: "agent",
         approvalMode: input.approvalMode,
+        toolProfile: input.toolProfile,
         model: MODELS.agentPrimary,
         noteId: null,
         usage: EMPTY_USAGE,

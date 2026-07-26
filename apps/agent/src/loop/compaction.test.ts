@@ -31,6 +31,7 @@ async function deps() {
     caller,
     model: MODELS.agentPrimary,
     instructions: "i",
+    toolProfile: "browser_use" as const,
     signal: new AbortController().signal,
   };
 }
