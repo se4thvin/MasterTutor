@@ -2,13 +2,22 @@ import type { Locator, Page } from "@playwright/test";
 import { movingAnimations } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, isWide, test } from "./helpers/test.ts";
 
+/**
+ * A click that lands before React hydrates is dropped (the menu never opens). The app marks the
+ * end of hydration; every interaction after a navigation waits for it (as search.spec does).
+ */
+async function gotoReady(page: Page, url: string) {
+  await page.goto(url);
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+}
+
 async function openTree(page: Page) {
   if (!isWide(page)) await page.getByRole("button", { name: "Folders" }).click();
   return page.getByRole("tree", { name: "Folders" });
 }
 
 test("tree shows nested folders, navigates, and supports arrow keys", async ({ page }) => {
-  await page.goto("/library");
+  await gotoReady(page, "/library");
   const tree = await openTree(page);
   await tree.getByRole("treeitem", { name: "Machine learning" }).click();
   await expect(page).toHaveURL(/folder=00000000-0000-4000-8000-000001000001/);
@@ -23,7 +32,7 @@ test("tree shows nested folders, navigates, and supports arrow keys", async ({ p
 });
 
 test("creates, renames and deletes a folder with a safe default", async ({ page }) => {
-  await page.goto("/library");
+  await gotoReady(page, "/library");
   await page.getByRole("button", { name: "Folder actions" }).click();
   await page.getByRole("menuitem", { name: "New folder" }).click();
   await page.getByLabel("Folder name").fill("Reading list");
@@ -47,7 +56,7 @@ test("creates, renames and deletes a folder with a safe default", async ({ page 
 });
 
 test("refuses a duplicate name with a field error", async ({ page }) => {
-  await page.goto("/library");
+  await gotoReady(page, "/library");
   await page.getByRole("button", { name: "Folder actions" }).click();
   await page.getByRole("menuitem", { name: "New folder" }).click();
   await page.getByLabel("Folder name").fill("databases");
@@ -66,7 +75,7 @@ test("a folder cannot be dropped into its own subfolder; a legal drop moves it (
   page.on("request", (request) => {
     if (request.url().includes("/api/rpc/folders/move")) moves.push(request.url());
   });
-  await page.goto("/library");
+  await gotoReady(page, "/library");
   const tree = page.getByRole("tree", { name: "Folders" });
   const item = (name: string) => tree.getByRole("treeitem", { name });
   await item("Machine learning").focus();
@@ -90,7 +99,7 @@ test("a folder cannot be dropped into its own subfolder; a legal drop moves it (
 });
 
 test("tree items report their set size and position", async ({ page }) => {
-  await page.goto("/library");
+  await gotoReady(page, "/library");
   const tree = await openTree(page);
   // Top level: All notes, Unfiled, Machine learning, Databases, Coursework.
   const ml = tree.getByRole("treeitem", { name: "Machine learning" });
@@ -115,7 +124,7 @@ test("Move folder to… is a keyboard path that offers only legal destinations",
     if (r.url().includes("/api/rpc/folders/move")) moves.push(r.url());
   });
   // Machine learning: its own subfolders are not destinations (a cycle).
-  await page.goto("/library?folder=00000000-0000-4000-8000-000001000001");
+  await gotoReady(page, "/library?folder=00000000-0000-4000-8000-000001000001");
   await page.getByRole("button", { name: "Folder actions" }).click();
   await page.getByRole("menuitem", { name: "Move folder to…" }).click();
   const ml = page.getByRole("dialog", { name: "Move folder to…" });
@@ -125,7 +134,7 @@ test("Move folder to… is a keyboard path that offers only legal destinations",
   await page.keyboard.press("Escape");
 
   // Papers lives in Machine learning; move it under Databases.
-  await page.goto("/library?folder=00000000-0000-4000-8000-000001000004");
+  await gotoReady(page, "/library?folder=00000000-0000-4000-8000-000001000004");
   await page.getByRole("button", { name: "Folder actions" }).click();
   await page.getByRole("menuitem", { name: "Move folder to…" }).click();
   const sheet = page.getByRole("dialog", { name: "Move folder to…" });
@@ -141,7 +150,7 @@ test("dropping a folder on its current parent sends nothing", async ({ page }) =
   page.on("request", (r) => {
     if (r.url().includes("/api/rpc/folders/move")) moves.push(r.url());
   });
-  await page.goto("/library");
+  await gotoReady(page, "/library");
   const tree = page.getByRole("tree", { name: "Folders" });
   await tree.getByRole("treeitem", { name: "Machine learning" }).focus();
   await page.keyboard.press("ArrowRight");
@@ -170,7 +179,7 @@ async function dragInto(page: Page, target: Locator) {
 test.describe("folder rows float and lift their lid (D43 FolderFloat)", () => {
   test("hovering a folder row floats its glyph", async ({ page }) => {
     test.skip(!isWide(page), "the sidebar tree is hoverable only on wide layouts");
-    await page.goto("/library");
+    await gotoReady(page, "/library");
     const row = page
       .getByRole("tree", { name: "Folders" })
       .getByRole("treeitem", { name: "Databases" });
@@ -182,7 +191,7 @@ test.describe("folder rows float and lift their lid (D43 FolderFloat)", () => {
     page,
   }) => {
     test.skip(!isWide(page), "drag targets in the sidebar tree are wide-only");
-    await page.goto("/library?folder=00000000-0000-4000-8000-000001000002");
+    await gotoReady(page, "/library?folder=00000000-0000-4000-8000-000001000002");
     const card = page.locator('[data-qa="note-card"]').first();
     const row = page
       .getByRole("tree", { name: "Folders" })
@@ -202,7 +211,7 @@ test.describe("folder rows float and lift their lid (D43 FolderFloat)", () => {
   test("under reduced motion the lid still lifts but nothing moves", async ({ page }) => {
     test.skip(!isWide(page), "drag targets in the sidebar tree are wide-only");
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.goto("/library?folder=00000000-0000-4000-8000-000001000002");
+    await gotoReady(page, "/library?folder=00000000-0000-4000-8000-000001000002");
     const row = page
       .getByRole("tree", { name: "Folders" })
       .getByRole("treeitem", { name: "Databases" });
@@ -218,7 +227,7 @@ test.describe("folder rows float and lift their lid (D43 FolderFloat)", () => {
   });
 
   test("the tree stays clean with folder marks at every width", async ({ page }) => {
-    await page.goto("/library");
+    await gotoReady(page, "/library");
     await openTree(page);
     await expectCleanScreen(page);
   });
@@ -226,7 +235,7 @@ test.describe("folder rows float and lift their lid (D43 FolderFloat)", () => {
     page,
   }) => {
     test.skip(!isWide(page), "drag targets in the sidebar tree are wide-only");
-    await page.goto("/library?folder=00000000-0000-4000-8000-000001000002");
+    await gotoReady(page, "/library?folder=00000000-0000-4000-8000-000001000002");
     const row = page
       .getByRole("tree", { name: "Folders" })
       .getByRole("treeitem", { name: "Unfiled" });

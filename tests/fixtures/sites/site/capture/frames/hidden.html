@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hidden frame</title>
+  </head>
+  <body>
+    <main>
+      <article>
+        <h1>Hidden frame</h1>
+        <p>
+          Oxidative phosphorylation makes most of the cell's ATP as protons flow back through ATP
+          synthase across the inner mitochondrial membrane.
+        </p>
+        <!-- visibility:hidden keeps the inner document rendered (its text is readable) while the
+             owner is not visible: only the owner check keeps it from counting (re-review m1). -->
+        <iframe
+          style="visibility: hidden"
+          srcdoc="<p>Hidden frame sentinel text</p>"
+          width="300"
+          height="200"
+        ></iframe>
+      </article>
+    </main>
+  </body>
+</html>

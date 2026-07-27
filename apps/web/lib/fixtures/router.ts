@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   EMPTY_USAGE,
   MODELS,
@@ -10,8 +11,8 @@ import {
   type RunSummary,
   type VaultAuditView,
 } from "@mastertutor/contracts";
+import { buildNoteArchive, noteAssetIds } from "@mastertutor/contracts/export";
 import { ORPCError, implement } from "@orpc/server";
-import { buildNoteMarkdown } from "../export/note-markdown.ts";
 import { canCreateFolder, canMoveFolder, descendantIds, folderPath } from "../folders/tree.ts";
 import { requireViewer } from "../server/rpc/require-viewer.ts";
 import { RUN_MESSAGES } from "../server/runs/messages.ts";
@@ -285,16 +286,27 @@ export const fixtureRouter = os.router({
       state.notes = state.notes.filter((r) => r.note.id !== input.noteId);
       return { ok: true as const };
     }),
-    export: os.notes.export.handler(({ input, context }) => {
+    export: os.notes.export.handler(async ({ input, context }) => {
       const state = stateFor(context.ns);
       const record = findNote(state, input.noteId);
       const path = record.note.folderId ? folderPath(state.folders, record.note.folderId) : [];
-      const markdown = buildNoteMarkdown(
-        { note: record.note, blocks: record.blocks, sources: record.sources },
-        path.map((f) => f.name),
-      );
+      const detail = { note: record.note, blocks: record.blocks, sources: record.sources };
+      // The same zip the live route serves (decision 18), with the fixture figures as its assets.
+      const files = noteAssetIds(detail).flatMap((id) => {
+        const uri = FIXTURE_ASSETS.get(id);
+        if (!uri) return [];
+        const bytes = new TextEncoder().encode(decodeURIComponent(uri.slice(uri.indexOf(",") + 1)));
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const open = async () => new Blob([bytes]).stream();
+        return [{ id, sha256, mime: "image/svg+xml", bytes: bytes.byteLength, open }];
+      });
+      const archive = await buildNoteArchive({
+        detail,
+        folderPath: path.map((f) => f.name),
+        assets: files,
+      });
       return {
-        downloadUrl: `data:text/markdown;charset=utf-8,${encodeURIComponent(markdown)}`,
+        downloadUrl: `data:application/zip;base64,${Buffer.from(archive.bytes).toString("base64")}`,
         expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
       };
     }),
@@ -310,25 +322,16 @@ export const fixtureRouter = os.router({
       for (const record of stateFor(context.ns).notes) {
         if (input.kind !== null && !record.note.sourceKinds.includes(input.kind)) continue;
         const titleMatch = record.note.title.toLowerCase().includes(q);
-        const blockHits = record.blocks.filter((b) => b.markdown.toLowerCase().includes(q));
-        for (const block of blockHits) {
-          hits.push({
-            noteId: record.note.id,
-            blockId: block.id,
-            title: record.note.title,
-            snippet: snippetAround(block.markdown, input.q),
-            score: titleMatch ? 2 : 1,
-          });
-        }
-        if (titleMatch && blockHits.length === 0) {
-          hits.push({
-            noteId: record.note.id,
-            blockId: null,
-            title: record.note.title,
-            snippet: record.note.lede ?? "",
-            score: 2,
-          });
-        }
+        const block = record.blocks.find((b) => b.markdown.toLowerCase().includes(q));
+        if (!block && !titleMatch) continue;
+        // One hit per note, like the live hybrid search: its first matching block, else the lede.
+        hits.push({
+          noteId: record.note.id,
+          blockId: block?.id ?? null,
+          title: record.note.title,
+          snippet: block ? snippetAround(block.markdown, input.q) : (record.note.lede ?? ""),
+          score: (titleMatch ? 1 : 0) + (block ? 1 : 0),
+        });
       }
       return { items: hits.sort((a, b) => b.score - a.score).slice(0, input.limit) };
     }),

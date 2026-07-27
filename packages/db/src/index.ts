@@ -9,4 +9,7 @@ export * from "./queries/events.ts";
 export * from "./queries/control.ts";
 export * from "./queries/live.ts";
 export * from "./queries/downloads.ts";
+export * from "./queries/folders.ts";
 export * from "./queries/keyset.ts";
+export * from "./queries/search.ts";
+export * from "./queries/note-detail.ts";

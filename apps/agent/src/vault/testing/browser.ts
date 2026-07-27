@@ -8,6 +8,8 @@ import {
   type ResolvedTarget,
   type ToolContext,
 } from "../runtime.ts";
+import { NO_MASK_SOURCES, type MaskSources } from "../../browser/masking.ts";
+import { StepCollector } from "../../loop/step-collector.ts";
 import { startChromium } from "./chromium.ts";
 
 const silent = createLogger({ service: "vault-test", level: "silent" });
@@ -126,6 +128,7 @@ export function toolContext(input: {
   session: BrowserSession;
   approval?: CallApproval | null;
   signal?: AbortSignal;
+  mask?: MaskSources;
 }): ToolContext & { waits: string[]; handOvers: string[] } {
   const waits: string[] = [];
   const handOvers: string[] = [];
@@ -142,6 +145,9 @@ export function toolContext(input: {
     requestHandOver: (reason) => {
       handOvers.push(reason);
     },
+    step: new StepCollector(),
+    mask: input.mask ?? NO_MASK_SOURCES,
+    slotName: "browser-1",
     waits,
     handOvers,
   };
