@@ -15,7 +15,7 @@ import { approvalModeEnum, benchmarkOutcomeEnum } from "./enums.ts";
 import { runs } from "./runs.ts";
 import { workspaces } from "./workspace.ts";
 
-/** A repeatable acceptance task, e.g. "zyBooks readings 1-5 participation activities". */
+/** A repeatable acceptance task, e.g. "complete the participation activities in readings 1-5 of a course site". */
 export const benchmarks = pgTable(
   "benchmarks",
   {
