@@ -8,7 +8,9 @@ export interface WatchSummary {
   stalled: boolean;
   humanWait: WaitReason | null;
   spendCapHit: boolean;
+  /** Checks the run stopped on; auto-approved ones are not failures (I4). */
   safetyChecks: string[];
+  autoApprovedSafetyChecks: string[];
   takeovers: number;
 }
 export interface FailureSignals {

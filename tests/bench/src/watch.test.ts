@@ -79,11 +79,42 @@ describe("watcher decisions", () => {
   });
 
   it("never approves a safety check: deny for fixtures, a person for zyBooks (D44)", () => {
-    const f = apply(initialWatchState(0), safety("malicious_instructions"), 1, fixtures);
+    // A check stops the run only once the run waits on it for a person.
+    const waiting = status("waiting", "approval");
+    let f = apply(initialWatchState(0), safety("malicious_instructions"), 1, fixtures);
+    expect(f.commands.filter((c) => c.type !== "log")).toEqual([]);
+    f = apply(f.state, waiting, 2, fixtures);
     expect(f.commands).toContainEqual({ type: "deny_approval", approvalId: A1 });
-    const z = apply(initialWatchState(0), safety("malicious_instructions"), 1, zybooks);
+    let z = apply(initialWatchState(0), safety("malicious_instructions"), 1, zybooks);
+    z = apply(z.state, waiting, 2, zybooks);
     expect(z.commands.filter((c) => c.type !== "log")).toEqual([]);
     expect(z.state.safetyChecks).toEqual(["malicious_instructions"]);
+  });
+
+  it("logs a check the bypass policy approved as auto_approved, never as a stop (I4)", () => {
+    const resolved = rec({
+      type: "approval_resolved",
+      approvalId: A1,
+      status: "approved",
+      decidedBy: "bypass",
+    });
+    for (const policy of [zybooks, fixtures]) {
+      const requested = apply(initialWatchState(0), safety("irrelevant_domain"), 1, policy);
+      const after = apply(requested.state, resolved, 1, policy);
+      expect([...requested.commands, ...after.commands].filter((c) => c.type !== "log")).toEqual(
+        [],
+      );
+      expect(after.state.safetyChecks).toEqual([]);
+      expect(after.state.autoApprovedSafetyChecks).toEqual(["irrelevant_domain"]);
+      expect(after.commands).toContainEqual({
+        type: "log",
+        line: "safety check irrelevant_domain auto_approved (decided_by=bypass)",
+      });
+      // A later wait for something else does not turn it into a stop.
+      expect(
+        apply(after.state, status("waiting", "takeover"), 2, policy).state.safetyChecks,
+      ).toEqual([]);
+    }
   });
 
   it("treats an approval wait as a human wait with the timeout (X12)", () => {

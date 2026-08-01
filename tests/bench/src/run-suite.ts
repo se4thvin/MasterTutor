@@ -335,6 +335,7 @@ export async function runBenchmark(
       humanWait: state.humanWait,
       spendCapHit: state.spendCapHit || (after?.spendCapHit ?? false),
       safetyChecks: state.safetyChecks,
+      autoApprovedSafetyChecks: state.autoApprovedSafetyChecks,
       takeovers: graded.takeovers,
     };
     const failure =
@@ -511,6 +512,7 @@ export function runBaseline(
         humanWait: null,
         spendCapHit: base.spendCapHit,
         safetyChecks: [],
+        autoApprovedSafetyChecks: [],
         takeovers: 0,
       },
     };

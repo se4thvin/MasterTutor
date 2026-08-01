@@ -36,6 +36,7 @@ const result: BenchmarkResult = {
     humanWait: null,
     spendCapHit: false,
     safetyChecks: [],
+    autoApprovedSafetyChecks: ["irrelevant_domain"],
     takeovers: 0,
   },
   failure: {
@@ -99,6 +100,7 @@ describe("report rendering", () => {
       "1.5: 1/2 complete",
       "77777777-7777-4777-8777-777777777777",
       "BREACH: new origin approved in bypass: https://elsewhere.example",
+      "Safety checks auto_approved (decided_by=bypass/policy): irrelevant_domain",
       "--continue-after-review orchestration/benchmarks/2026-10-06-zybooks-1/record.md",
     ])
       expect(md).toContain(text);
