@@ -108,3 +108,19 @@ describe("the bench ledger (I1, I2)", () => {
     expect(() => opened[0]!.entries()).toThrow(/ledger/);
   });
 });
+
+describe("cancelled invocations", () => {
+  it("keep their last checkpointed spend, block nothing, and still count as a zyBooks run", () => {
+    const ledger = open(dir());
+    const id = ledger.start("zybooks", "x");
+    ledger.checkpoint(id, 3);
+    ledger.cancel(id);
+    expect(ledger.entries()[0]).toMatchObject({ status: "cancelled", usd: 3 });
+    expect(totalUsd(ledger.entries(), "zybooks")).toBe(3);
+    expect(() => assertMayStart(ledger.entries(), "fixtures", null)).not.toThrow();
+    expect(() => assertMayStart(ledger.entries(), "zybooks", null)).toThrow(
+      /continue-after-review/,
+    );
+    expect(() => ledger.cancel(id)).toThrow(/not running/);
+  });
+});

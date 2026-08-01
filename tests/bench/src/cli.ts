@@ -353,18 +353,74 @@ export async function recordedRun(
   command: string,
   run: (spend: SpendBook) => Promise<SuiteRunResult>,
   write: (result: SuiteRunResult) => string,
+  interrupt?: Interrupt,
 ): Promise<{ result: SuiteRunResult; path: string }> {
   assertMayStart(ledger.entries(), suite, continues);
   const priorUsd = totalUsd(ledger.entries(), suite);
   const id = ledger.start(suite, command);
-  const result = await run({ priorUsd, checkpoint: (usd) => ledger.checkpoint(id, usd) });
-  const path = write(result);
-  ledger.end(id, Math.max(0, result.spentAfterUsd - result.spentBeforeUsd), path);
-  return { result, path };
+  const runIds: string[] = [];
+  const stop = interrupt ? cancelOnSignal(interrupt, ledger, id, runIds) : () => undefined;
+  try {
+    const result = await run({
+      priorUsd,
+      checkpoint: (usd) => ledger.checkpoint(id, usd),
+      runStarted: (runId) => void runIds.push(runId),
+    });
+    const path = write(result);
+    ledger.end(id, Math.max(0, result.spentAfterUsd - result.spentBeforeUsd), path);
+    return { result, path };
+  } finally {
+    stop();
+  }
+}
+
+export interface Interrupt {
+  api: BenchApi;
+  log(line: string): void;
+  exit(code: number): void;
+}
+
+/**
+ * SIGINT/SIGTERM: cancel every run this invocation started through the person-facing runs.cancel,
+ * mark the ledger entry cancelled (its last checkpointed spend stays), release the lock, exit 130.
+ * Returns the function that removes the handlers.
+ */
+function cancelOnSignal(
+  interrupt: Interrupt,
+  ledger: Ledger,
+  entryId: string,
+  runIds: readonly string[],
+): () => void {
+  let handling = false;
+  const handler = (signal: NodeJS.Signals) => {
+    if (handling) return;
+    handling = true;
+    interrupt.log(`${signal}: cancelling ${runIds.length} run(s)`);
+    void (async () => {
+      for (const runId of runIds)
+        // An already-finished run refuses the cancel; that is fine.
+        await interrupt.api.runs
+          .cancel({ runId })
+          .catch((error: unknown) => interrupt.log(`cancel ${runId}: ${(error as Error).message}`));
+      ledger.cancel(entryId);
+      ledger.close();
+      interrupt.exit(130);
+    })();
+  };
+  process.on("SIGINT", handler);
+  process.on("SIGTERM", handler);
+  return () => {
+    process.off("SIGINT", handler);
+    process.off("SIGTERM", handler);
+  };
 }
 
 /** --mock runs are harness tests on llm-mock (D47): no real spend, so no ledger. */
-const NO_SPEND: SpendBook = { priorUsd: 0, checkpoint: () => undefined };
+const NO_SPEND: SpendBook = {
+  priorUsd: 0,
+  checkpoint: () => undefined,
+  runStarted: () => undefined,
+};
 
 async function main(argv: string[]): Promise<void> {
   assertNoSiteCredentialsInEnv(process.env);
@@ -454,6 +510,7 @@ async function main(argv: string[]): Promise<void> {
         options.command,
         run,
         (r) => writeRecord(r),
+        { api, log, exit: (code) => process.exit(code) },
       ));
     } finally {
       ledger.close();
