@@ -95,14 +95,29 @@ describe("sections_complete", () => {
     ]);
     expect(evaluate(baselineCriterion(criterion), null, verify).outcome).toBe("failed");
   });
-  it("taints a verify run that interacts with a graded page (P10a-24)", () => {
-    expect(verifyTainted(criterion, verifyAll)).toBe(false);
-    expect(verifyTainted(criterion, traceOf([observe(s1), click, readPage(s1, page(2, 2))]))).toBe(
+  it("taints a grading run on any mutating action anywhere, except signing in (P10a-24, I3)", () => {
+    const signin = "https://learn.example/signin";
+    const work = "https://learn.example/book/chapter/1/section/1/activities";
+    const type = computer({ type: "type", text: "42" });
+    const key = computer({ type: "keypress", keys: ["ENTER"] });
+    expect(verifyTainted(verifyAll, signin)).toBe(false);
+    expect(verifyTainted(traceOf([observe(signin), click, type, key, observe(s1)]), signin)).toBe(
+      false,
+    );
+    // Work done on a page that is not graded still taints: the fixtures' two-page layout.
+    for (const act of [click, type, key])
+      expect(
+        verifyTainted(traceOf([observe(work), act, observe(s1), readPage(s1, page(2, 2))]), signin),
+      ).toBe(true);
+    expect(verifyTainted(traceOf([observe(s1), click, readPage(s1, page(2, 2))]), signin)).toBe(
       true,
     );
-    expect(
-      verifyTainted(criterion, traceOf([observe("https://learn.example/signin"), click])),
-    ).toBe(false);
+    // Without a declared sign-in page, nothing may be clicked at all.
+    expect(verifyTainted(traceOf([observe(signin), click]), null)).toBe(true);
+    // Scrolls and reads are not mutating.
+    expect(verifyTainted(traceOf([observe(work), scroll, readPage(s1, page(2, 2))]), null)).toBe(
+      false,
+    );
   });
 });
 

@@ -23,7 +23,11 @@ const spec = (over: Partial<BenchmarkSpec> = {}): BenchmarkSpec => ({
   toolProfile: "computer_use",
   approvalMode: "auto_within_allowlist",
   criterion: { kind: "page_text", url: BOOK, mustMatch: ["3 of 3"] },
-  verify: { task: "Read the book page", budget: { maxSteps: 20, maxUsd: 1, maxActiveMinutes: 5 } },
+  verify: {
+    task: "Read the book page",
+    budget: { maxSteps: 20, maxUsd: 1, maxActiveMinutes: 5 },
+    signInUrl: "http://bench.fixtures.test/signin",
+  },
   baselineMustPass: true,
   freshLogin: true,
   signInCheck: null,
@@ -71,6 +75,7 @@ function fake(
     sessionSaved?: boolean;
     verifyText?: string;
     verifyActs?: boolean;
+    verifyWorksElsewhere?: boolean;
     records?: RecordSummary[];
   } = {},
 ) {
@@ -128,6 +133,7 @@ function fake(
     },
   };
   const verify = traceOf([
+    ...(over.verifyWorksElsewhere ? [observe(`${BOOK}/activities`), click] : []),
     observe(BOOK),
     ...(over.verifyActs ? [click] : []),
     readPage(BOOK, over.verifyText ?? "3 of 3"),
@@ -305,6 +311,12 @@ describe("grading, modes and selection", () => {
 
   it("grades error when the verify run acted on a graded page (P10a-24)", async () => {
     const { deps } = fake({ verifyActs: true });
+    const result = await runSuite(suite(spec({ baselineMustPass: false })), options(), deps);
+    expect(result.results[0]).toMatchObject({ outcome: "error" });
+  });
+
+  it("grades error when the verify run did the work on a page that is not graded (I3)", async () => {
+    const { deps } = fake({ verifyWorksElsewhere: true });
     const result = await runSuite(suite(spec({ baselineMustPass: false })), options(), deps);
     expect(result.results[0]).toMatchObject({ outcome: "error" });
   });
