@@ -53,7 +53,6 @@ const options = (over: Partial<SuiteRunOptions> = {}): SuiteRunOptions => ({
   bypassAcknowledged: false,
   maxTotalUsd: 10,
   maxRunUsd: 1,
-  spendSince: "2026-10-06",
   once: false,
   retries: 0,
   continues: null,
@@ -72,6 +71,7 @@ const options = (over: Partial<SuiteRunOptions> = {}): SuiteRunOptions => ({
 function fake(
   over: {
     spent?: number;
+    runUsd?: number;
     sessionSaved?: boolean;
     verifyText?: string;
     verifyActs?: boolean;
@@ -106,6 +106,7 @@ function fake(
       }),
       cancel: vi.fn(),
       decideApproval: vi.fn(),
+      get: vi.fn(async () => ({ usage: { usd: over.runUsd ?? 0 } })),
     },
     vault: {
       list: vi.fn(async () => ({
@@ -122,14 +123,6 @@ function fake(
         calls.push("forget");
         return { ok: true };
       }),
-    },
-    settings: {
-      usage: vi.fn(async () => ({
-        perDay: [{ day: "2026-10-06", runs: 1, usd: over.spent ?? 0, steps: 1 }],
-        perRun: [],
-        stepLatencyMs: { p50: null, p95: null },
-        openaiErrorRate: null,
-      })),
     },
   };
   const verify = traceOf([
@@ -152,6 +145,8 @@ function fake(
       id.startsWith("verify") ? verify : main,
     ),
     reset: vi.fn(async () => undefined),
+    // The durable ledger's total before this invocation (I2); the stack's usage API is never read.
+    spend: { priorUsd: over.spent ?? 0, checkpoint: vi.fn() },
     watch: vi.fn(async () => ({
       ...initialWatchState(0),
       status: "completed" as const,
@@ -243,6 +238,31 @@ describe("fresh login and spend (P10b-4, X10)", () => {
       expect.objectContaining({ budget: { maxSteps: 20, maxUsd: 0.5, maxActiveMinutes: 5 } }),
     );
     expect(api.benchmarks.start).not.toHaveBeenCalled();
+    expect(result.stopped).toBe("spend_cap");
+  });
+
+  it("checkpoints this invocation's spend into the ledger from its own runs (I2)", async () => {
+    const { deps } = fake({ spent: 1, runUsd: 0.2 });
+    const result = await runSuite(suite(spec()), options(), deps);
+    expect(result.spentBeforeUsd).toBe(1);
+    expect(result.spentAfterUsd).toBeCloseTo(1.6);
+    expect(deps.spend.checkpoint).toHaveBeenLastCalledWith(expect.closeTo(0.6));
+  });
+
+  it("the watcher's cap check counts the ledger plus this invocation's runs (I2)", async () => {
+    const { deps } = fake({ spent: 9.9, runUsd: 0.2 });
+    const seen: boolean[] = [];
+    deps.watch = vi.fn(async (watchDeps) => {
+      seen.push(await watchDeps.spendCapReached!());
+      return {
+        ...initialWatchState(0),
+        status: "completed" as const,
+        done: true,
+        spendCapHit: true,
+      };
+    });
+    const result = await runSuite(suite(spec()), options({ maxTotalUsd: 10, maxRunUsd: 1 }), deps);
+    expect(seen).toEqual([true]);
     expect(result.stopped).toBe("spend_cap");
   });
 

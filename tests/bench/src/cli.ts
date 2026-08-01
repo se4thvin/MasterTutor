@@ -37,7 +37,15 @@ import {
   type RecordSummary,
   type SuiteRunResult,
 } from "./report.ts";
-import { runBaseline, runSuite, type RunnerDeps, type SuiteRunOptions } from "./run-suite.ts";
+import {
+  runBaseline,
+  runSuite,
+  selectBenchmarks,
+  type RunnerDeps,
+  type SpendBook,
+  type SuiteRunOptions,
+} from "./run-suite.ts";
+import { assertMayStart, openLedger, totalUsd, type Ledger } from "./ledger.ts";
 import { ensureFixtureVaultItem, fixturesSuite } from "./suites/fixtures.ts";
 import { zybooksSuite } from "./suites/zybooks.ts";
 import {
@@ -72,7 +80,9 @@ export const SUITE_DEFAULTS = {
   SuiteId,
   { maxTotalUsd: number; maxRunUsd: number } & Pick<WatchPolicy, "onBudget" | "onSafetyCheck">
 >;
+/** Hard caps (D46, review I2): no flag or env variable raises them. */
 const ZYBOOKS_CAP_USD = 500;
+const ZYBOOKS_RUN_CAP_USD = 50;
 const SUITES: Record<SuiteId, () => SuiteDefinition> = {
   fixtures: fixturesSuite,
   zybooks: zybooksSuite,
@@ -82,7 +92,8 @@ export type CliCommand =
   | { kind: "init"; stack: StackName }
   | { kind: "watch"; runId: string }
   | { kind: "vault-check"; suite: SuiteId }
-  | { kind: "run" | "baseline"; suite: SuiteId; options: Omit<SuiteRunOptions, "spendSince"> };
+  | { kind: "resolve"; id: string }
+  | { kind: "run" | "baseline"; suite: SuiteId; options: SuiteRunOptions };
 
 const money = (flag: string) =>
   z.coerce
@@ -134,10 +145,11 @@ export function parseCli(
   if (extra.length > 0) throw new UsageError(`unexpected arguments: ${extra.join(" ")}`);
   if (command === "init") return { kind: "init", stack: oneOf(STACKS, "--stack", values.stack) };
   if (command === "watch") return { kind: "watch", runId: parsed(Uuid, arg) };
+  if (command === "resolve") return { kind: "resolve", id: parsed(Uuid, arg) };
   const suite = oneOf(SUITE_IDS, "--suite", values.suite);
   if (command === "vault-check") return { kind: "vault-check", suite };
   if (command !== "run" && command !== "baseline")
-    throw new UsageError("usage: pnpm bench <init|run|baseline|vault-check|watch> …");
+    throw new UsageError("usage: pnpm bench <init|run|baseline|vault-check|watch|resolve> …");
 
   const defaults = SUITE_DEFAULTS[suite];
   if (values.mock && suite === "zybooks")
@@ -164,6 +176,8 @@ export function parseCli(
     values["max-run-usd"] === undefined
       ? defaults.maxRunUsd
       : parsed(money("--max-run-usd"), values["max-run-usd"]);
+  if (suite === "zybooks" && maxRunUsd > ZYBOOKS_RUN_CAP_USD)
+    throw new UsageError(`--max-run-usd: a zyBooks run is capped at $${ZYBOOKS_RUN_CAP_USD} (D46)`);
   if (maxRunUsd > maxTotalUsd) throw new UsageError("--max-run-usd cannot exceed --max-total-usd");
   const retries = parsed(z.coerce.number().int().min(0).max(5), values.retries);
   const humanTimeoutMs = parsed(z.coerce.number().positive(), values["human-timeout-min"]) * 60_000;
@@ -286,7 +300,6 @@ async function init(stack: StackName): Promise<void> {
     BENCH_BASE_URL: existing?.BENCH_BASE_URL ?? "http://localhost:18080",
     BENCH_EMAIL: existing?.BENCH_EMAIL ?? "bench-owner@local.test",
     BENCH_PASSWORD: existing?.BENCH_PASSWORD ?? randomBytes(24).toString("base64url"),
-    BENCH_SPEND_SINCE: existing?.BENCH_SPEND_SINCE ?? today(),
   };
   // The real Better Auth flow (D47): sign up once, sign in after.
   await authCookie(
@@ -327,10 +340,46 @@ function requirements(suite: SuiteDefinition): VaultRequirement[] {
   return [...seen.values()];
 }
 
+/**
+ * One invocation inside the durable ledger (I1, I2): refused while an earlier run is still marked
+ * running or (zyBooks) without the reviewed continuation; the intent is written before any run
+ * starts, spend is checkpointed during it, and the entry closes only after its record is written.
+ * If `run` throws or the process dies, the entry stays running until `pnpm bench resolve <id>`.
+ */
+export async function recordedRun(
+  ledger: Ledger,
+  suite: SuiteId,
+  continues: string | null,
+  command: string,
+  run: (spend: SpendBook) => Promise<SuiteRunResult>,
+  write: (result: SuiteRunResult) => string,
+): Promise<{ result: SuiteRunResult; path: string }> {
+  assertMayStart(ledger.entries(), suite, continues);
+  const priorUsd = totalUsd(ledger.entries(), suite);
+  const id = ledger.start(suite, command);
+  const result = await run({ priorUsd, checkpoint: (usd) => ledger.checkpoint(id, usd) });
+  const path = write(result);
+  ledger.end(id, Math.max(0, result.spentAfterUsd - result.spentBeforeUsd), path);
+  return { result, path };
+}
+
+/** --mock runs are harness tests on llm-mock (D47): no real spend, so no ledger. */
+const NO_SPEND: SpendBook = { priorUsd: 0, checkpoint: () => undefined };
+
 async function main(argv: string[]): Promise<void> {
   assertNoSiteCredentialsInEnv(process.env);
   const cmd = parseCli(argv, (suite) => listRecords(suite));
   if (cmd.kind === "init") return init(cmd.stack);
+  if (cmd.kind === "resolve") {
+    const ledger = openLedger();
+    try {
+      ledger.resolve(cmd.id);
+    } finally {
+      ledger.close();
+    }
+    log(`bench run ${cmd.id} marked resolved; its recorded spend still counts toward the cap.`);
+    return;
+  }
   const env = readBenchEnv();
   const cookie = await authCookie(
     env.BENCH_BASE_URL,
@@ -368,7 +417,7 @@ async function main(argv: string[]): Promise<void> {
   // D47: the prod-like stack runs only after its preflight; a stack that is not prod-like is refused.
   if (suite.stack === "local") await assertProdMode(STACK_COMPOSE.local);
   const compose = STACK_COMPOSE[suite.stack];
-  const deps: RunnerDeps = {
+  const deps = (spend: SpendBook): RunnerDeps => ({
     api,
     baseUrl: env.BENCH_BASE_URL,
     cookie,
@@ -377,18 +426,39 @@ async function main(argv: string[]): Promise<void> {
     today,
     records: () => listRecords(suite.id),
     compose,
+    spend,
     loadTrace: loadRunTrace,
     reset: async (command) => {
       const [c, ...a] = compose;
       await exec(c!, [...a, ...command]);
     },
-  };
-  const options: SuiteRunOptions = { ...cmd.options, spendSince: env.BENCH_SPEND_SINCE };
-  const result =
+  });
+  const options = cmd.options;
+  selectBenchmarks(suite, options); // usage mistakes fail before the ledger records anything
+  const run = (spend: SpendBook) =>
     cmd.kind === "run"
-      ? await runSuite(suite, options, deps)
-      : await runBaseline(suite, options, deps);
-  const path = writeRecord(result);
+      ? runSuite(suite, options, deps(spend))
+      : runBaseline(suite, options, deps(spend));
+  let result: SuiteRunResult;
+  let path: string;
+  if (options.mock) {
+    result = await run(NO_SPEND);
+    path = writeRecord(result);
+  } else {
+    const ledger = openLedger();
+    try {
+      ({ result, path } = await recordedRun(
+        ledger,
+        suite.id,
+        options.continues,
+        options.command,
+        run,
+        (r) => writeRecord(r),
+      ));
+    } finally {
+      ledger.close();
+    }
+  }
   log(`record: ${path}`);
   if (result.mode === "once")
     log(

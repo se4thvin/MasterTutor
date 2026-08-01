@@ -45,9 +45,3 @@ export function createApi(baseUrl: string, cookie: string): BenchApi {
   });
   return createORPCClient(link);
 }
-
-/** Spend from the product's own usage API (Task 0's usageReport: runs.usage by day, live while running). */
-export async function spentUsd(api: BenchApi, since: string, today: string): Promise<number> {
-  const report = await api.settings.usage({ from: since, to: today });
-  return report.perDay.reduce((sum, day) => sum + day.usd, 0);
-}

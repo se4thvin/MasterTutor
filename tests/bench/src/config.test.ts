@@ -53,7 +53,6 @@ describe("bench config", () => {
       BENCH_BASE_URL: "http://localhost:18080",
       BENCH_EMAIL: "bench-owner@local.test",
       BENCH_PASSWORD: "p".repeat(24),
-      BENCH_SPEND_SINCE: "2026-10-06",
     };
     writeBenchEnv(path, env);
     expect(statSync(path).mode & 0o777).toBe(0o600);

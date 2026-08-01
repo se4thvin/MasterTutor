@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type { Budget, ToolProfile } from "@mastertutor/contracts";
-import { spentUsd } from "./app-client.ts";
 import { suggestFailureClass, type WatchSummary } from "./classify.ts";
 import { baselineCriterion, evaluate, verifyTainted, type Verdict } from "./criteria.ts";
 import { bypassNewOrigins, type RunTrace } from "./evidence.ts";
@@ -66,7 +65,6 @@ export interface SuiteRunOptions {
   maxTotalUsd: number;
   /** Per-run budget: caps Budget.maxUsd of every run the harness creates (D47). */
   maxRunUsd: number;
-  spendSince: string;
   /** D46: exactly one benchmark attempt, then stop for review. */
   once: boolean;
   retries: number;
@@ -78,7 +76,16 @@ export interface SuiteRunOptions {
   command: string;
 }
 
+/** The durable ledger's view for one invocation (I2): spend never comes from the stack's database. */
+export interface SpendBook {
+  /** This suite's spend recorded before this invocation, crashed runs included. */
+  priorUsd: number;
+  /** Records this invocation's spend so far. */
+  checkpoint(usd: number): void;
+}
+
 export interface RunnerDeps extends WatchDeps {
+  spend: SpendBook;
   compose: readonly string[];
   loadTrace(compose: readonly string[], runId: string): Promise<RunTrace>;
   reset(command: readonly string[]): Promise<void>;
@@ -172,8 +179,16 @@ export function selectBenchmarks(
 }
 
 function spendGuard(deps: RunnerDeps, options: SuiteRunOptions) {
-  const spent = () => spentUsd(deps.api, options.spendSince, deps.today());
+  const runIds: string[] = [];
+  /** The ledger total plus every run this invocation started, checkpointed each time (I2). */
+  const spent = async () => {
+    const usage = await Promise.all(runIds.map((runId) => deps.api.runs.get({ runId })));
+    const current = usage.reduce((sum, run) => sum + run.usage.usd, 0);
+    deps.spend.checkpoint(current);
+    return deps.spend.priorUsd + current;
+  };
   return {
+    track: (runId: string) => void runIds.push(runId),
     spent,
     remaining: async () => options.maxTotalUsd - (await spent()),
     /** Worst-case refusal for a main run, whose budget is stored on the benchmark: it must fit whole (X10). */
@@ -215,6 +230,7 @@ async function verifyRun(
     approvalMode: "auto_within_allowlist",
     toolProfile: "browser_use",
   });
+  guard.track(run.id);
   deps.log(`verify run ${run.id} (${spec.key})`);
   const state = await watched(deps, guard, run.id, options.policy);
   return {
@@ -313,6 +329,7 @@ export async function runBenchmark(
       withScenario(spec.task, options.mock ? (spec.mockScenarios?.main ?? null) : null),
     );
     const started = await deps.api.benchmarks.start({ benchmarkId });
+    guard.track(started.runId);
     deps.log(`started ${name}: run ${started.runId}`);
     const state = await watched(deps, guard, started.runId, options.policy);
     let after: Awaited<ReturnType<typeof verifyRun>> | null = null;

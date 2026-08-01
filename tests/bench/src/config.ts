@@ -1,5 +1,5 @@
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-import { IsoDate, parseEnv } from "@mastertutor/contracts";
+import { parseEnv } from "@mastertutor/contracts";
 import { z } from "zod";
 import { STACKS, type StackName } from "./types.ts";
 
@@ -45,8 +45,6 @@ export const BenchEnv = z.object({
   BENCH_BASE_URL: z.url(),
   BENCH_EMAIL: z.email(),
   BENCH_PASSWORD: z.string().min(16),
-  /** The total spend cap counts usage from this day on (D46). */
-  BENCH_SPEND_SINCE: IsoDate,
 });
 export type BenchEnv = z.infer<typeof BenchEnv>;
 
