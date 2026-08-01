@@ -50,6 +50,7 @@ import {
   type VaultRequirement,
 } from "./types.ts";
 import { vaultStatus } from "./vault-check.ts";
+import { assertProdMode } from "./prod-check.ts";
 import type { BenchApi } from "./app-client.ts";
 import { watchRun, type WatchPolicy } from "./watch.ts";
 
@@ -364,12 +365,8 @@ async function main(argv: string[]): Promise<void> {
       `fixture vault item: ${await ensureFixtureVaultItem(api, readFileSync(".env.test", "utf8"))}`,
     );
   }
-  // D47: the prod-like stack runs only after its preflight. Task 22A replaces this line with
-  // `await assertProdMode(STACK_COMPOSE.local);` (tests/bench/src/prod-check.ts), so until then it refuses.
-  if (suite.stack === "local")
-    throw new UsageError(
-      "the D47 prod-mode preflight is not wired yet (Task 22A); refusing the local stack",
-    );
+  // D47: the prod-like stack runs only after its preflight; a stack that is not prod-like is refused.
+  if (suite.stack === "local") await assertProdMode(STACK_COMPOSE.local);
   const compose = STACK_COMPOSE[suite.stack];
   const deps: RunnerDeps = {
     api,
