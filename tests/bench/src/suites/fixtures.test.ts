@@ -59,3 +59,13 @@ describe("fixtures suite", () => {
     await expect(ensureFixtureVaultItem(api, "")).rejects.toThrow(/BENCH_FIXTURE_USER/);
   });
 });
+
+describe("the committed .env.test (T1 seam)", () => {
+  it("defines the dummy fixture login, so bench-fixtures can start", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { parseEnv } = await import("node:util");
+    const env = parseEnv(readFileSync(new URL("../../../../.env.test", import.meta.url), "utf8"));
+    expect(env.BENCH_FIXTURE_USER).toBeTruthy();
+    expect(env.BENCH_FIXTURE_PASSWORD).toBeTruthy();
+  });
+});
