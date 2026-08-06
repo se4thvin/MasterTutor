@@ -411,3 +411,36 @@ describe("SIGINT/SIGTERM during a recorded run", () => {
     },
   );
 });
+
+describe("init on a CI slot (D48)", () => {
+  it("takes the slot's base URL and the app's origin as flags", () => {
+    expect(
+      parseCli(
+        [
+          "init",
+          "--stack",
+          "test",
+          "--base-url",
+          "http://localhost:20080",
+          "--origin",
+          "http://localhost:18080",
+        ],
+        () => [],
+      ),
+    ).toEqual({
+      kind: "init",
+      stack: "test",
+      baseUrl: "http://localhost:20080",
+      origin: "http://localhost:18080",
+    });
+    expect(parseCli(["init", "--stack", "local"], () => [])).toEqual({
+      kind: "init",
+      stack: "local",
+      baseUrl: null,
+      origin: null,
+    });
+    expect(() => parseCli(["init", "--stack", "test", "--base-url", "nope"], () => [])).toThrow(
+      UsageError,
+    );
+  });
+});
