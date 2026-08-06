@@ -3,13 +3,14 @@ import { createDb, ensureWorkspaceMember, type DbHandle } from "@mastertutor/db"
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { createRouterClient } from "@orpc/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createBenchmarkProcedures } from "../rpc/benchmarks.ts";
+import { createBenchmarkProcedures, mapBenchmarkError } from "../rpc/benchmarks.ts";
 import type { Viewer } from "../viewer.ts";
 import {
   BenchmarkNameTaken,
   BenchmarkNotFound,
   BenchmarkRunNotFinished,
   createBenchmark,
+  type CreateRunFn,
   gradeBenchmarkRun,
   listBenchmarkRuns,
   listBenchmarks,
@@ -90,11 +91,10 @@ describe("benchmarks service", () => {
 
   it("leaves no attempt behind when the run cannot be created", async () => {
     const view = await createBenchmark(web.db, workspaceId, input("start-fails"));
-    await expect(
-      startBenchmark(web.db, scope(), view.id, async () => {
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
+    const failing: CreateRunFn = async () => {
+      throw new Error("boom");
+    };
+    await expect(startBenchmark(web.db, scope(), view.id, failing)).rejects.toThrow("boom");
     const [row] =
       await owner.sql`select count(*)::int as n from benchmark_runs where benchmark_id = ${view.id}`;
     expect(row?.n).toBe(0);
@@ -202,5 +202,8 @@ describe("benchmarks service", () => {
       api.benchmarks.start({ benchmarkId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect((await api.benchmarks.runs({ benchmarkId: view.id })).items).toHaveLength(1);
+    // Anything that is not a benchmark error passes through unchanged (a 500 without detail).
+    const other = new Error("db down");
+    expect(() => mapBenchmarkError(other)).toThrow(other);
   });
 });
