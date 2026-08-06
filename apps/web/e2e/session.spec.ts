@@ -99,7 +99,7 @@ test("a vault value saved after the session ended returns to sign-in", async ({
 test.describe("signed out", () => {
   test.use({ signedOut: true });
 
-  test("sign-in ignores a next that would leave the app", async ({ page }) => {
+  test("sign-in ignores a next that would leave the app", async ({ page, baseURL }) => {
     await page.route("**/api/auth/sign-in/email", (route) =>
       route.fulfill({
         status: 200,
@@ -111,7 +111,7 @@ test.describe("signed out", () => {
     await page.getByLabel("Email").fill("sam@example.test");
     await page.getByLabel("Password").fill("correct-horse-battery");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/localhost:3100\/library$/);
+    await expect(page).toHaveURL(`${baseURL}/library`);
   });
 
   test("the API refuses a signed-out caller with a typed UNAUTHORIZED error", async ({
