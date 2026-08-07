@@ -10,6 +10,8 @@ take_stack_lock                    # no-op on the CI host (it holds ~/mt-ci/.run
 trap 'stop_stack --profile e2e --profile bench' EXIT
 # llm-mock, fixtures and vault-fixtures are in profile e2e; bench-fixtures is in profile bench (T1).
 "${DC[@]}" --profile e2e --profile bench up -d --build --wait --wait-timeout 600
+# The stack above is new, so an account file from an earlier run names a user it never had.
+rm -f .env.bench-account
 # On a CI slot the app is reached on the slot's TEST_HTTP_PORT, but its origin stays PUBLIC_URL (D48).
 env_test() { grep -E "^$1=" .env.test | cut -d= -f2 || true; }
 PORT="${TEST_HTTP_PORT:-$(env_test TEST_HTTP_PORT)}"
