@@ -31,7 +31,8 @@ export default defineConfig({
   testIgnore: ["stack/**"],
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 1 : 0,
+  // No retries anywhere (D48): a test that passes only on retry is a failure to fix, not to hide.
+  retries: 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: { baseURL, locale: "en-US", timezoneId: "UTC", trace: "retain-on-failure" },
   projects: QA_VIEWPORTS.map((vp) => ({

@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -188,5 +190,64 @@ describe("stack slots (scripts/remote-test/slots.sh, D48)", () => {
     expect(read("../apps/web/playwright.config.ts")).toContain('process.env["WEB_UI_PORT"]');
     for (const name of names.filter((n) => n.startsWith("BEHAVIOUR_")))
       expect(read("../tests/behaviour/constants.ts"), name).toContain(name);
+  });
+});
+
+describe("slot allocation while other runs clean up (runner race, bench:mock exit 123)", () => {
+  // A fake docker: `network ls` lists three networks, but another run's cleanup removed `gone`
+  // before `inspect`, which then exits 1 ("network not found") for it.
+  // `aaa` is a leftover in slot 0's block. STUB_LS_FAIL makes listing itself fail (no daemon).
+  const DOCKER = `#!/usr/bin/env bash
+case "$1 $2" in
+  "network ls") [[ -n "\${STUB_LS_FAIL:-}" ]] && exit 1; printf 'aaa\\ngone\\nccc\\n' ;;
+  "network inspect")
+    case "\${@: -1}" in
+      aaa) echo "10.213.3.0/24 " ;;
+      ccc) echo "172.30.231.0/24 " ;;
+      *) echo "Error: No such network: \${@: -1}" >&2; exit 1 ;;
+    esac ;;
+  *) exit 3 ;;
+esac
+`;
+  const SS = "#!/usr/bin/env bash\necho 'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:*'\n";
+
+  function allocate(env: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "mt-slots-"));
+    for (const [name, body] of [
+      ["docker", DOCKER],
+      ["ss", SS],
+    ] as const) {
+      writeFileSync(join(dir, name), body);
+      chmodSync(join(dir, name), 0o755);
+    }
+    // As run-on-host.sh runs it: errexit, nounset and pipefail on.
+    return spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail; source scripts/remote-test/slots.sh; acquire_slot 3 "${dir}"; echo "slot $SLOT"`,
+      ],
+      {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, ...env },
+      },
+    );
+  }
+
+  it("ignores a network that vanished mid-inspect and still skips a real leftover", () => {
+    const result = allocate();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("slot 1");
+    expect(result.stderr).toContain("skipping stack slot 0: network 10.213.3.0/24");
+  });
+
+  it("fails rather than allocate blind when the networks cannot be listed", () => {
+    expect(allocate({ STUB_LS_FAIL: "1" }).status).not.toBe(0);
+  });
+
+  it("checks the host only after taking the seat, so check and allocation are one step", () => {
+    const body = /^acquire_slot\(\) \{[\s\S]*?^\}/m.exec(read("./remote-test/slots.sh"))?.[0] ?? "";
+    expect(body.indexOf("host_subnets")).toBeGreaterThan(body.indexOf("flock -n"));
   });
 });
