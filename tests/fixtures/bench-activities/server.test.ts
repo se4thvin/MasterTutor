@@ -70,3 +70,26 @@ describe("bench-activities fixture", () => {
       expect(isLoopback(no)).toBe(false);
   });
 });
+
+describe("consent overlay layout (coordinate scenarios)", () => {
+  it("puts Accept where the computer_use scenarios click, whatever the viewport height", async () => {
+    const html = await (await fetch(`${server.url}/signin`)).text();
+    const bar = /<div style="([^"]*)">\s*<p/.exec(html)![1]!;
+    // A bar anchored to the bottom moves with the slot's content height (713px, not 800).
+    expect(bar).toMatch(/(?:^|;)top:0(?:;|$)/);
+    expect(bar).not.toMatch(/bottom:/);
+    const accept =
+      /style="left:(\d+)px;top:(\d+)px;width:(\d+)px"\s*onclick="document\.cookie='consent=1/.exec(
+        html,
+      )!;
+    const centre = { x: Number(accept[1]) + Number(accept[3]) / 2, y: Number(accept[2]) + 44 / 2 };
+    const { SCENARIOS } = await import("../../llm-mock/src/scenarios/index.ts");
+    for (const name of ["bench-activities-computer_use", "bench-verify-computer_use"]) {
+      const first = SCENARIOS.find((s) => s.name === name)!.turns[0]!.outputs![0]!;
+      expect(first, name).toMatchObject({
+        type: "computer",
+        actions: [{ type: "click", ...centre }],
+      });
+    }
+  });
+});
