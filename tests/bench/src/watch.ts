@@ -70,8 +70,11 @@ export function initialWatchState(now: number): WatchState {
 }
 
 /** Any waiting status is a human wait (X12): the policy decides its own approvals at once. */
+/** A run parked as sleeping (the worker freed its slot while it waited) is still waiting for a person. */
+const humanStatus = (status: RunStatus) => status === "waiting" || status === "sleeping";
+
 function humanClock(s: WatchState, now: number, previous: number | null): number | null {
-  if (s.userControl || s.status !== "waiting") return null;
+  if (s.userControl || !humanStatus(s.status)) return null;
   return previous ?? now;
 }
 
@@ -95,8 +98,13 @@ export function onRecord(
       s.status = event.status;
       s.waitReason = event.waitReason;
       s.lastProgressAt = now;
-      s.humanWait = event.status === "waiting" ? event.waitReason : null;
-      s.humanSince = humanClock(s, now, state.status === "waiting" ? state.humanSince : null);
+      s.humanWait =
+        event.status === "waiting"
+          ? event.waitReason
+          : event.status === "sleeping"
+            ? state.humanWait
+            : null;
+      s.humanSince = humanClock(s, now, humanStatus(state.status) ? state.humanSince : null);
       if (s.humanWait)
         commands.push({ type: "log", line: `NEEDS HUMAN (${s.humanWait}): ${event.reason ?? ""}` });
       if (s.humanWait === "approval") {
