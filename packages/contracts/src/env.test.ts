@@ -41,6 +41,13 @@ describe("parseEnv", () => {
     expect(env.LOG_LEVEL).toBe("info");
   });
 
+  it("accepts an optional DOCLING_URL for the agent", () => {
+    expect(
+      parseEnv(AgentEnv, { ...agentSource, DOCLING_URL: "http://docling:5001" }).DOCLING_URL,
+    ).toBe("http://docling:5001");
+    expect(parseEnv(AgentEnv, { ...agentSource, DOCLING_URL: "" }).DOCLING_URL).toBeUndefined();
+  });
+
   it("parses boolean flags", () => {
     expect(parseEnv(AgentEnv, { ...agentSource, AGENT_TEST_MODE: "1" }).AGENT_TEST_MODE).toBe(true);
     expect(() => parseEnv(AgentEnv, { ...agentSource, AGENT_TEST_MODE: "yes" })).toThrow(EnvError);

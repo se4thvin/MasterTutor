@@ -27,4 +27,13 @@ if ! grep -Eq '^scan-test-code: scanned [1-9][0-9]* files, 0 offenders$' <<<"$of
 fi
 docker run --rm --label mastertutor.ci=1 --entrypoint sh "$IMAGE" -c "test -f /app/apps/agent/src/main.ts" \
   || { echo "agent image lost its entry point" >&2; exit 1; }
-echo "ok - agent image carries no test code"
+# The PDF worker runs in the image's own layout: node --permission roots, the native canvas binary.
+docker run --rm --label mastertutor.ci=1 --entrypoint node \
+  -v "$PWD/tests/fixtures/sites/site/pdf/paper.pdf:/paper.pdf:ro" "$IMAGE" --input-type=module -e "
+    const { readFileSync } = await import('node:fs');
+    const { analyzePdf } = await import('/app/apps/agent/src/pdf/pdf-worker.ts');
+    const bytes = new Uint8Array(readFileSync('/paper.pdf'));
+    const out = await analyzePdf(bytes, { render: 'auto', scale: 2 }, new AbortController().signal);
+    process.exit(out.pages.length === 3 && out.renders.length === 3 ? 0 : 1);" \
+  || { echo "agent image cannot run the PDF worker" >&2; exit 1; }
+echo "ok - agent image carries no test code and runs the PDF worker"

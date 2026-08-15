@@ -164,8 +164,9 @@ is the production gate.
 
 ## 11. Recorded deviations from spec §3.1 and §13
 
-- docling runs on its own internal `pdf` network (B5 decision 17). Until B5 merges, the `pdf`
-  profile has no service and `compose.prod.yml` does not yet pin `DOCLING_URL`.
+- docling runs on its own internal `pdf` network, shared only with the agent (B5 decision 17;
+  spec §3.1 says `backend`). It has no route to Postgres, Garage or the internet, runs read-only
+  with no capabilities, and `compose.prod.yml` pins the agent's `DOCLING_URL=http://docling:5001`.
 - No coturn (D42).
 - ForwardAuth runs by `.11`, before strip (D41, B6 §7).
 - web is not on `dokploy-network`; its router lives in `compose.prod.yml` (review I2).

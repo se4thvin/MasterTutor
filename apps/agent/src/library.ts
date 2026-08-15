@@ -10,7 +10,7 @@ import { createAssetStore, type AssetStore } from "./notes/assets.ts";
 import { createEmbedder } from "./notes/embedder.ts";
 import { createFilingModel, fileRunNote, type FilingModel } from "./notes/filing.ts";
 import { NoteWriter } from "./notes/note-writer.ts";
-import type { DoclingClient } from "./pdf/docling.ts";
+import { createDoclingClient, type DoclingClient } from "./pdf/docling.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
 
@@ -18,6 +18,8 @@ export interface LibraryDeps {
   db: Database;
   storage: Storage;
   openai: StatelessOpenAI;
+  /** docling-serve on the internal `pdf` network (profile `pdf`); null keeps the pdf.js path. */
+  doclingUrl?: string | null;
   log: Log;
 }
 
@@ -45,7 +47,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     ocr: createOcrModel(deps.openai),
     localOcr: createLocalOcr(),
     filing: createFilingModel(deps.openai),
-    docling: null,
+    docling: deps.doclingUrl ? createDoclingClient(deps.doclingUrl) : null,
     log: deps.log,
   };
 }

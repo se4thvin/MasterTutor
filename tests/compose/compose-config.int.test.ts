@@ -2,7 +2,8 @@ import { AgentEnv, GarageInitEnv, MigrateEnv, WebEnv, parseEnv } from "@mastertu
 import { beforeAll, describe, expect, it } from "vitest";
 import { composeConfig, type ComposeConfig, type ComposeService } from "./compose-json.ts";
 
-const load = (files: string[]): ComposeConfig => composeConfig(".env.test", files);
+const load = (files: string[], profiles: string[] = []): ComposeConfig =>
+  composeConfig(".env.test", files, { profiles });
 const env = (service: ComposeService) =>
   Object.fromEntries(
     Object.entries(service.environment ?? {}).filter(
@@ -99,10 +100,32 @@ describe("compose.yml", () => {
     expect(nets(base.services.postgres!)).toEqual(["backend"]);
     expect(nets(base.services.garage!)).toEqual(["backend"]);
     expect(nets(base.services.web!)).toEqual(["backend", "cdp", "edge"]);
-    expect(nets(base.services.agent!)).toEqual(["backend", "cdp"]);
+    expect(nets(base.services.agent!)).toEqual(["backend", "cdp", "pdf"]);
     expect(base.services.agent!.networks!.cdp!.ipv4_address).toBe("172.30.231.10");
     expect(base.services.web!.networks!.cdp!.ipv4_address).toBe("172.30.231.11");
     expect(base.services.agent!.cap_drop).toEqual(["ALL"]);
+  });
+
+  it("isolates docling on its own internal network (S4)", () => {
+    const pdf = load(["compose.yml"], ["pdf"]);
+    const docling = pdf.services.docling!;
+    expect(nets(docling)).toEqual(["pdf"]);
+    expect(pdf.networks.pdf?.internal).toBe(true);
+    for (const name of ["postgres", "garage", "garage-init", "migrate", "web", ...slots])
+      expect(nets(pdf.services[name]!), name).not.toContain("pdf");
+    expect(docling.read_only).toBe(true);
+    expect(docling.cap_drop).toEqual(["ALL"]);
+    expect(docling.security_opt).toContain("no-new-privileges:true");
+    expect(docling.ports ?? []).toEqual([]);
+    expect(Number(docling.mem_limit)).toBeGreaterThan(0);
+    expect(Number(docling.pids_limit)).toBeGreaterThan(0);
+    expect(env(docling)).toMatchObject({
+      DOCLING_SERVE_ENABLE_UI: "false",
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "false",
+      DOCLING_SERVE_MAX_FILE_SIZE: String(100 * 1024 * 1024),
+    });
+    expect(Object.keys(env(pdf.services.agent!))).toContain("DOCLING_URL");
+    expect(base.services.docling).toBeUndefined();
   });
 
   it("lets agent, web and Traefik reach n.eko on every slot", () => {
