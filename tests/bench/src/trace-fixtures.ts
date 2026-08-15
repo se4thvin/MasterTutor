@@ -1,7 +1,10 @@
-import type { ComputerAction, ReadPageResult } from "@mastertutor/contracts";
-import { describeCall } from "../../../apps/agent/src/llm/items.ts";
-import type { ActionEffect } from "../../../apps/agent/src/tools/action-effect.ts";
-import { wrapUntrusted } from "../../../apps/agent/src/tools/untrusted.ts";
+import {
+  summarizeComputerActions,
+  wrapUntrusted,
+  type ActionEffect,
+  type ComputerAction,
+  type ReadPageResult,
+} from "@mastertutor/contracts";
 import { parseTrace, type RunTrace, type TraceApproval } from "./evidence.ts";
 
 export interface StepRow {
@@ -32,7 +35,9 @@ export const batch = (actions: ComputerAction[], effects: ActionEffect[] | null)
   caption: null,
   screenshotKey: null,
   action: {
-    ...describeCall({ kind: "computer", callId: "c", actions, safetyChecks: [], invalid: null }, 1),
+    tool: "computer",
+    summary: summarizeComputerActions(actions),
+    point: null,
     callId: "c",
   },
   result: {
@@ -65,7 +70,9 @@ const fn = (name: "read_page" | "fill_credential", output: string): StepRow => (
   caption: null,
   screenshotKey: null,
   action: {
-    ...describeCall({ kind: "function", callId: "f", name, args: {}, invalid: null }, 1),
+    tool: name,
+    summary: name.replace("_", " "),
+    point: null,
     callId: "f",
   },
   result: { kind: "function", output },

@@ -908,6 +908,7 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     expect(await executor.run([click({ x: 80, y: 20 })], signal, gated)).toEqual({
       executed: 1,
       notes: [],
+      effects: ["input"],
       handOver: null,
     });
     expect(await text(s, "#count")).toBe("1");

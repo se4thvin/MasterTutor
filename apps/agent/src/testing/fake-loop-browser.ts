@@ -4,13 +4,13 @@ import {
   type ComputerAction,
   type FunctionToolName,
   type ScrollPosition,
+  type ActionEffect,
 } from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { CollectedStorage } from "../browser/storage-state.ts";
 import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
-import type { ActionEffect } from "../tools/action-effect.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
 import type { CallApproval } from "../tools/types.ts";
