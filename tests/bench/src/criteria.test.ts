@@ -6,7 +6,7 @@ import {
   sameDocument,
   verifyTainted,
 } from "./criteria.ts";
-import { computer, fill, observe, readPage, traceOf } from "./trace-fixtures.ts";
+import { addressBar, batch, computer, fill, observe, readPage, traceOf } from "./trace-fixtures.ts";
 import type { Criterion } from "./types.ts";
 
 const click = computer({ type: "click", x: 5, y: 5, button: "left" });
@@ -177,5 +177,49 @@ describe("finalOutcome and sameDocument", () => {
   it("ignores query, hash and trailing slash", () => {
     expect(sameDocument("https://a.b/x/?q=1#h", "https://a.b/x")).toBe(true);
     expect(sameDocument("https://a.b/x", "https://a.b/y")).toBe(false);
+  });
+});
+
+describe("a zyBooks-style read-only grading run (N2)", () => {
+  const origin = "https://learn.example";
+  const signin = `${origin}/signin`;
+  const sections = [1, 2, 3].map((n) => `${origin}/book/chapter/1/section/${n}`);
+  const criterion: Criterion = {
+    kind: "sections_complete",
+    sections: sections.map((url, i) => ({ reading: 1, title: `1.${i + 1}`, url })),
+    activityPattern: "PARTICIPATION ACTIVITY",
+    completedPattern: "Activity completed",
+    requireInteraction: false,
+  };
+  const done = "PARTICIPATION ACTIVITY Activity completed";
+  const signIn = [observe(signin), click, fill(null), fill(null), click];
+
+  it("signs in, opens every section through the address bar, reads it, and is not tainted", () => {
+    const visits = sections.flatMap((url) => [addressBar(url), observe(url), readPage(url, done)]);
+    const verify = traceOf([...signIn, ...visits]);
+    expect(verifyTainted(verify, signin)).toBe(false);
+    expect(evaluate(criterion, null, verify).outcome).toBe("passed");
+  });
+  it("is tainted by typing into a page field on a section", () => {
+    const typed = computer({ type: "type", text: "42" });
+    const verify = traceOf([
+      ...signIn,
+      addressBar(sections[0]!),
+      observe(sections[0]!),
+      typed,
+      readPage(sections[0]!, done),
+    ]);
+    expect(verifyTainted(verify, signin)).toBe(true);
+  });
+  it("is tainted by a click hidden in a batch (N1)", () => {
+    const hidden = batch(
+      [
+        { type: "move", x: 1, y: 1 },
+        { type: "click", x: 5, y: 5, button: "left" },
+      ],
+      ["passive", "input"],
+    );
+    const verify = traceOf([...signIn, addressBar(sections[0]!), observe(sections[0]!), hidden]);
+    expect(verifyTainted(verify, signin)).toBe(true);
   });
 });

@@ -13,6 +13,7 @@ import {
 } from "@mastertutor/contracts";
 import { z } from "zod";
 import { CallResult } from "../../../apps/agent/src/loop/call-result.ts";
+import type { ActionEffect } from "../../../apps/agent/src/tools/action-effect.ts";
 import { unwrapUntrusted } from "../../../apps/agent/src/tools/untrusted.ts";
 
 const run = promisify(execFile);
@@ -60,7 +61,7 @@ export interface TraceStep {
   screenshotKey: string | null;
   caption: string | null;
   tool: ToolName | null;
-  /** A click, double click, drag, keypress or typing (P10b-7); scroll, move, wait and screenshot are not. */
+  /** Any action in the step reached the page (P10b-7, N1); navigation, scroll, move, wait and screenshot do not (N2). */
   interaction: boolean;
   readPage: ReadPageResult | null;
   credentialError: string | null;
@@ -78,6 +79,45 @@ export interface RunTrace {
 /** The first words of describeCall's summary for the actions that change a page. */
 const INTERACTION = /^(?:click|double click|drag|press|type) /;
 
+/**
+ * What each action of a computer step did. Rows that recorded no effects (older rows, calls that
+ * never ran) fall back to the summary, strictly: a batch ("(+n more)") may hide a click (N1).
+ */
+function effectsOf(summary: string, result: unknown): ActionEffect[] {
+  const parsed = CallResult.safeParse(result);
+  if (parsed.success && parsed.data.kind === "computer" && parsed.data.effects)
+    return parsed.data.effects;
+  return [INTERACTION.test(summary) || / \(\+\d+ more\)$/.test(summary) ? "input" : "passive"];
+}
+
+/**
+ * Which computer steps changed a page (P10b-7, I3, N1, N2): any input in the step; navigation
+ * (back, forward, reload) is not. CTRL+L, the URL and ENTER count as navigation only when the
+ * sequence ends in the ENTER that landed on the typed URL, within or across steps; a sequence
+ * that is broken off or never lands is input.
+ */
+function interactions(steps: readonly { done: boolean; effects: ActionEffect[] }[]): boolean[] {
+  const result = steps.map(() => false);
+  let pending: number[] = [];
+  const flush = () => {
+    for (const index of pending) result[index] = true;
+    pending = [];
+  };
+  steps.forEach((step, index) => {
+    if (!step.done) return;
+    for (const effect of step.effects) {
+      if (effect === "address_bar") pending.push(index);
+      else if (effect === "address_bar_landed") pending = [];
+      else {
+        flush();
+        if (effect === "input") result[index] = true;
+      }
+    }
+  });
+  flush();
+  return result;
+}
+
 export function traceSql(runId: string): string {
   const id = Uuid.parse(runId);
   return `select json_build_object(
@@ -85,7 +125,7 @@ export function traceSql(runId: string): string {
   'steps', coalesce((select json_agg(json_build_object(
       'seq', s.seq, 'phase', s.phase, 'state', s.state, 'url', s.url, 'caption', s.caption,
       'screenshotKey', s.screenshot_key, 'action', s.action,
-      'result', case when s.phase = 'act' and s.action->>'tool' in ('read_page', 'fill_credential') then s.result end
+      'result', case when s.phase = 'act' and s.action->>'tool' in ('read_page', 'fill_credential', 'computer') then s.result end
     ) order by s.seq) from run_steps s where s.run_id = r.id), '[]'::json),
   'approvals', coalesce((select json_agg(json_build_object(
       'kind', a.kind, 'status', a.status, 'decidedBy', a.decided_by, 'origin', a.request->>'origin',
@@ -130,7 +170,12 @@ export function parseTrace(runId: string, json: unknown): RunTrace {
     url: null,
     screenshotKey: null,
   };
-  const steps = raw.data.steps.map((step): TraceStep => {
+  const computer = raw.data.steps.map((step) => ({
+    done: step.phase === "act" && step.state === "done" && step.action?.tool === "computer",
+    effects: step.action?.tool === "computer" ? effectsOf(step.action.summary, step.result) : [],
+  }));
+  const changed = interactions(computer);
+  const steps = raw.data.steps.map((step, index): TraceStep => {
     if (step.phase === "observe" && step.url !== null)
       seen = { url: step.url, screenshotKey: step.screenshotKey };
     const act = step.phase === "act";
@@ -144,7 +189,7 @@ export function parseTrace(runId: string, json: unknown): RunTrace {
       screenshotKey: act ? (step.screenshotKey ?? seen.screenshotKey) : step.screenshotKey,
       caption: step.caption,
       tool,
-      interaction: done && tool === "computer" && INTERACTION.test(step.action?.summary ?? ""),
+      interaction: changed[index]!,
       readPage: done && tool === "read_page" ? readPageOf(step.seq, step.result) : null,
       credentialError: done && tool === "fill_credential" ? credentialErrorOf(step.result) : null,
     };

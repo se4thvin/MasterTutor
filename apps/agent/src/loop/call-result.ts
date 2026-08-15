@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ActionEffect } from "../tools/action-effect.ts";
 import type { PendingCall } from "../llm/items.ts";
 
 /** What the executor did for one model call; stored on the act step and turned into its output. */
@@ -9,6 +10,8 @@ export const CallResult = z.discriminatedUnion("kind", [
     acknowledged: z.array(
       z.object({ id: z.string(), code: z.string().nullable(), message: z.string().nullable() }),
     ),
+    /** One per executed action; absent on rows from before it was recorded and on calls not run. */
+    effects: z.array(ActionEffect).optional(),
   }),
   z.object({ kind: z.literal("function"), output: z.string() }),
 ]);

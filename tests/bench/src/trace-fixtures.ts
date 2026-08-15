@@ -1,5 +1,6 @@
 import type { ComputerAction, ReadPageResult } from "@mastertutor/contracts";
 import { describeCall } from "../../../apps/agent/src/llm/items.ts";
+import type { ActionEffect } from "../../../apps/agent/src/tools/action-effect.ts";
 import { wrapUntrusted } from "../../../apps/agent/src/tools/untrusted.ts";
 import { parseTrace, type RunTrace, type TraceApproval } from "./evidence.ts";
 
@@ -23,21 +24,40 @@ export const observe = (url: string): StepRow => ({
   action: null,
   result: { url, title: "t", domHash: "h" },
 });
-export const computer = (action: ComputerAction): StepRow => ({
+/** A computer call as the executor stores it: the batch's summary plus one effect per action. */
+export const batch = (actions: ComputerAction[], effects: ActionEffect[] | null): StepRow => ({
   phase: "act",
   state: "done",
   url: null,
   caption: null,
   screenshotKey: null,
   action: {
-    ...describeCall(
-      { kind: "computer", callId: "c", actions: [action], safetyChecks: [], invalid: null },
-      1,
-    ),
+    ...describeCall({ kind: "computer", callId: "c", actions, safetyChecks: [], invalid: null }, 1),
     callId: "c",
   },
-  result: { kind: "computer", notes: [], acknowledged: [] },
+  result: {
+    kind: "computer",
+    notes: [],
+    acknowledged: [],
+    ...(effects === null ? {} : { effects }),
+  },
 });
+const PAGE_INPUT = new Set(["click", "double_click", "drag", "keypress", "type"]);
+/** One action reaching the page (or not), as the executor records it. */
+export const computer = (action: ComputerAction): StepRow =>
+  batch([action], [PAGE_INPUT.has(action.type) ? "input" : "passive"]);
+/** A row stored before effects were recorded: only the summary is known. */
+export const legacyComputer = (actions: ComputerAction[]): StepRow => batch(actions, null);
+/** CTRL+L, the URL, ENTER: the executor's address bar; landed when ENTER opened that URL. */
+export const addressBar = (url: string, landed = true): StepRow =>
+  batch(
+    [
+      { type: "keypress", keys: ["CTRL", "L"] },
+      { type: "type", text: url },
+      { type: "keypress", keys: ["ENTER"] },
+    ],
+    ["address_bar", "address_bar", landed ? "address_bar_landed" : "address_bar"],
+  );
 const fn = (name: "read_page" | "fill_credential", output: string): StepRow => ({
   phase: "act",
   state: "done",
