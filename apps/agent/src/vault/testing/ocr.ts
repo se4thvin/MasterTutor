@@ -1,4 +1,4 @@
-import { createLocalOcr } from "../../capture/local-ocr.ts";
+import { createLocalOcr } from "../../browser/local-ocr.ts";
 
 export interface Ocr {
   text(png: Buffer): Promise<string>;

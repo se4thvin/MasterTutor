@@ -287,13 +287,12 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       hasSecrets: () => true,
       redact: (text: string) => text.replaceAll("hunter2-canary", "[secret]"),
     };
+    const crashed = async (): Promise<never> => {
+      throw new Error("tesseract crashed");
+    };
     for (const localOcr of [
-      { text: async () => "Password: hunter2-canary" },
-      {
-        text: async (): Promise<string> => {
-          throw new Error("tesseract crashed");
-        },
-      },
+      { text: async () => "Password: hunter2-canary", words: async () => [] },
+      { text: crashed, words: crashed },
     ]) {
       const scope = await seedRun(env.db.db);
       await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
@@ -321,13 +320,12 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       hasSecrets: () => true,
       redact: (text: string) => text.replaceAll("hunter2-canary", "[secret]"),
     };
+    const crashed = async (): Promise<never> => {
+      throw new Error("tesseract crashed");
+    };
     for (const localOcr of [
-      { text: async () => "hunter2-canary" },
-      {
-        text: async (): Promise<string> => {
-          throw new Error("tesseract crashed");
-        },
-      },
+      { text: async () => "hunter2-canary", words: async () => [] },
+      { text: crashed, words: crashed },
     ]) {
       const scope = await seedRun(env.db.db);
       await env.session.goto(`${FIXTURES}/capture/article/index.html`, signal);
@@ -343,5 +341,17 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
         "png:withheld",
       );
     }
+    // Control: the same page and vault with a clean local read keeps page.png.
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/article/index.html`, signal);
+    const ctx = env.context(scope, vault);
+    const clean = { text: async () => "", words: async () => [] };
+    const result = await createCaptureTool({ ...env.services, localOcr: clean }).run(ctx, page);
+    await env.commit(ctx);
+    const [source] = await env.db.db
+      .select()
+      .from(sources)
+      .where(sql`${sources.meta}->>'noteId' = ${result.noteId}`);
+    expect(source?.screenshotKey).toMatch(/page\.png$/);
   });
 });
