@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nested frame</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      #art {
+        width: 400px;
+        height: 200px;
+        background: #2a6;
+      }
+      #outer {
+        position: absolute;
+        left: 600px;
+        top: 20px;
+        width: 340px;
+        height: 200px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="art"></div>
+    <iframe id="outer" src="/capture/nest-inner.html" title="Same-site wrapper"></iframe>
+  </body>
+</html>

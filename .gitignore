@@ -20,3 +20,4 @@ apps/web/e2e/.out/
 .env.bench-account
 orchestration/benchmarks/.raw/
 tests/bench/.out/
+orchestration/runs/*/artifacts/shots/

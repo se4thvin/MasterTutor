@@ -1,3 +1,4 @@
+import { REVIEW_REASON } from "@mastertutor/contracts";
 import type { BlockOrigin, NoteBlock, SourceView } from "@mastertutor/contracts";
 import type { BadgeTone, IconName } from "@/lib/ui/vocabulary.ts";
 import { formatTimestamp } from "./format.ts";
@@ -12,17 +13,6 @@ const ORIGIN_LABEL: Record<BlockOrigin, string> = {
   ocr_model: "Read from an image",
   model: "Written by the agent",
   user: "Written by you",
-};
-
-/** Why an unverified block needs a look, by where its text came from (one source: reader and export). */
-export const REVIEW_REASON: Record<BlockOrigin, string> = {
-  ocr_model: "Read from an image by the model.",
-  asr: "Transcribed from the audio by the model.",
-  dom: "Not yet matched to the page text.",
-  pdf: "Not yet matched to the PDF's text.",
-  captions: "From the uploader's captions, not yet checked against the audio.",
-  model: "Written by the agent.",
-  user: "Written by you and not yet checked.",
 };
 
 const STATUS: Record<ProvenanceStatus, { label: string; icon: IconName; tone: BadgeTone }> = {

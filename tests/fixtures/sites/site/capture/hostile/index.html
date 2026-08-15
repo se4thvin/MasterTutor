@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hostile assets</title>
+  </head>
+  <body>
+    <p>Images that point at internal addresses.</p>
+    <img
+      id="meta"
+      src="http://169.254.169.254/latest/meta-data/"
+      alt="metadata"
+      width="60"
+      height="40"
+    />
+    <img
+      id="garage"
+      src="http://garage:3900/mastertutor/x.png"
+      alt="garage"
+      width="60"
+      height="40"
+    />
+    <img id="local" src="http://127.0.0.1:3000/x.png" alt="loopback" width="60" height="40" />
+  </body>
+</html>

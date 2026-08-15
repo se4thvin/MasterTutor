@@ -12,7 +12,7 @@ test("an expired session returns to sign-in and comes back to the same page", as
   await expect(page.locator('[data-qa="note-card"]').first()).toBeVisible();
   // The session ends while the app is open (another tab signed out, or it expired).
   await context.addCookies([
-    { name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL ?? "http://localhost:3100" },
+    { name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL ?? "http://127.0.0.1:3100" },
   ]);
   const nav = page.getByRole("navigation").getByRole("link", { name: "Vault" }).first();
   if (await nav.isVisible()) await nav.click();
@@ -39,7 +39,7 @@ async function expireSession(page: Page, baseURL: string | undefined) {
   await page
     .context()
     .addCookies([
-      { name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL ?? "http://localhost:3100" },
+      { name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL ?? "http://127.0.0.1:3100" },
     ]);
 }
 

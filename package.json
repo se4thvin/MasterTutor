@@ -7,7 +7,7 @@
     "node": ">=24.4"
   },
   "scripts": {
-    "lint": "eslint . && stylelint \"apps/web/**/*.css\"",
+    "lint": "eslint . && stylelint \"apps/web/**/*.css\" --ignore-path .gitignore",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
@@ -28,7 +28,9 @@
     "prod:smoke": "node tests/smoke/prod-smoke.ts",
     "bench": "node tests/bench/src/cli.ts",
     "bench:mock": "bash scripts/remote-test.sh bench-mock",
-    "bench:real-fixtures": "bash scripts/bench-real-fixtures.sh"
+    "bench:real-fixtures": "bash scripts/bench-real-fixtures.sh",
+    "qa:shoot": "bash scripts/qa/shoot.sh",
+    "qa:findings": "node apps/web/e2e/stack/qa/findings-cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

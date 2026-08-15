@@ -94,13 +94,19 @@ afterAll(async () => {
 describe("TOTP", () => {
   it("generates the current code server-side and the site accepts it", async () => {
     await tb.page.goto(`${login}/totp`);
+    const deps = env.deps({ resolveRef: refs.resolve });
     expect(
-      await fillCredential(env.deps({ resolveRef: refs.resolve }), ctx(), {
+      await fillCredential(deps, ctx(), {
         alias: "site",
         field: "totp",
         target: await refs.ref("#totp"),
       }),
     ).toEqual({ ok: true });
+    // Ruling: the filled code stays registered with the local pixel screen for the run.
+    const typed = await tb.page.inputValue("#totp");
+    const mask = deps.fingerprints.forRun(ctx().runId);
+    expect(mask.hasOneTimeCodes?.()).toBe(true);
+    expect(mask.isOneTimeCode?.(typed)).toBe(true);
     await tb.page.click("#submit");
     await expect.poll(status).toBe("TOTP accepted");
   });

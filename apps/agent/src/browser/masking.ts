@@ -27,6 +27,13 @@ export interface MaskSources {
    * while it shows that document. Optional: no fills, no frames.
    */
   filledFrames?(): readonly FilledFrame[];
+  /**
+   * One-time codes (OTP, TOTP) the vault filled this run, for the local pixel screen only: matched
+   * as exact whole tokens, never by the text redactor (short codes would match ordinary text).
+   * Optional: no codes filled.
+   */
+  hasOneTimeCodes?(): boolean;
+  isOneTimeCode?(token: string): boolean;
 }
 
 /** A frame's document the vault filled into: CDP frame id plus that document's loaderId. */
@@ -93,7 +100,7 @@ export function secretFieldBoxesScript(_arg: null, h: PageHelpers): Box[] {
   return boxes;
 }
 
-function quadToBox(quad: readonly number[]): Box {
+export function quadToBox(quad: readonly number[]): Box {
   const xs = [quad[0] ?? 0, quad[2] ?? 0, quad[4] ?? 0, quad[6] ?? 0];
   const ys = [quad[1] ?? 0, quad[3] ?? 0, quad[5] ?? 0, quad[7] ?? 0];
   const x = Math.min(...xs);
@@ -121,7 +128,7 @@ const NODE_STATE_SCRIPT = `function () {
 const GONE_DOCUMENT = /does not belong to the document/i;
 
 /** True only when the node is provably not on screen; any doubt (other target, error, visible) is false. */
-async function provablyNotShown(cdp: CDPSession, backendNodeId: number): Promise<boolean> {
+export async function provablyNotShown(cdp: CDPSession, backendNodeId: number): Promise<boolean> {
   try {
     await cdp.send("DOM.describeNode", { backendNodeId });
     let resolved;
