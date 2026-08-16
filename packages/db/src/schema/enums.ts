@@ -14,6 +14,7 @@ import {
   SOURCE_KINDS,
   STEP_PHASES,
   STEP_STATES,
+  TOOL_PROFILES,
   VAULT_AUDIT_ACTIONS,
   VAULT_SECRET_FIELDS,
   WAIT_REASONS,
@@ -38,3 +39,4 @@ export const vaultSecretFieldEnum = pgEnum("vault_secret_field", VAULT_SECRET_FI
 export const vaultAuditActionEnum = pgEnum("vault_audit_action", VAULT_AUDIT_ACTIONS);
 export const slotStateEnum = pgEnum("slot_state", SLOT_STATES);
 export const benchmarkOutcomeEnum = pgEnum("benchmark_outcome", BENCHMARK_OUTCOMES);
+export const toolProfileEnum = pgEnum("tool_profile", TOOL_PROFILES);

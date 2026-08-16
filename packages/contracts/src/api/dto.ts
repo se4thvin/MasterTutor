@@ -14,6 +14,7 @@ import {
   SourceKind,
   StepPhase,
   StepState,
+  ToolProfile,
   TypedSecretField,
   VaultAuditAction,
   VaultSecretField,
@@ -71,6 +72,7 @@ export const CreateRunInput = z
     budget: Budget.optional(),
     targetFolderId: Uuid.nullable().default(null),
     approvalMode: ApprovalMode.default("ask"),
+    toolProfile: ToolProfile.default("browser_use"),
     bypassAcknowledged: BypassAcknowledged,
   })
   .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED);
@@ -89,6 +91,7 @@ export const RunSummary = z.object({
   waitReason: WaitReason.nullable(),
   controller: Controller,
   approvalMode: ApprovalMode,
+  toolProfile: ToolProfile,
   model: z.string(),
   noteId: Uuid.nullable(),
   usage: Usage,
@@ -122,6 +125,19 @@ export const HeldDownloadView = z.object({
 });
 export type HeldDownloadView = z.infer<typeof HeldDownloadView>;
 
+/**
+ * A download stored with the run (an approved agent download, or one the person kept at
+ * hand-back): what download_ready announced, in the snapshot so a reload lists it again.
+ */
+export const StoredDownloadView = z.object({
+  id: Uuid,
+  assetId: Uuid,
+  filename: z.string().max(255),
+  bytes: z.number().int().nonnegative(),
+  at: IsoDateTime,
+});
+export type StoredDownloadView = z.infer<typeof StoredDownloadView>;
+
 export const RunDetail = RunSummary.extend({
   plan: Plan.nullable(),
   allowedOrigins: z.array(Origin),
@@ -131,6 +147,8 @@ export const RunDetail = RunSummary.extend({
   pendingApprovals: z.array(ApprovalView),
   /** Undecided downloads held while a person has control; empty whenever the agent has it. */
   heldDownloads: z.array(HeldDownloadView),
+  /** Stored downloads, oldest first; never a held or discarded one. */
+  downloads: z.array(StoredDownloadView),
   lastEventId: z
     .string()
     .regex(/^[0-9]+$/)
@@ -411,6 +429,7 @@ export const BenchmarkView = z.object({
   task: z.string(),
   allowedOrigins: z.array(Origin),
   approvalMode: ApprovalMode,
+  toolProfile: ToolProfile,
   budget: Budget,
   successCriteria: z.string(),
   createdAt: IsoDateTime,
@@ -423,6 +442,7 @@ export const CreateBenchmarkInput = z
     allowedOrigins: z.array(OriginInput).min(1).max(50),
     approvalMode: ApprovalMode.default("auto_within_allowlist"),
     bypassAcknowledged: BypassAcknowledged,
+    toolProfile: ToolProfile.default("browser_use"),
     budget: Budget.optional(),
     successCriteria: z.string().trim().min(1).max(4_000),
   })
@@ -447,6 +467,7 @@ export const BenchmarkRunView = z.object({
   inputTokens: Count,
   outputTokens: Count,
   durationMs: Count.nullable(),
+  takeovers: Count,
   failureNotes: z.string().nullable(),
   gradedBy: z.string().nullable(),
   startedAt: IsoDateTime,

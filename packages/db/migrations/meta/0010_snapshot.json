@@ -1,5 +1,5 @@
 {
-  "id": "8eed906d-5624-4c8a-bb70-0cea6b520185",
+  "id": "695ff753-3c34-49de-93ed-c16bead6b7ca",
   "prevId": "97f6024d-fb07-46ca-a37a-5e265c2cdcea",
   "version": "7",
   "dialect": "postgresql",
@@ -879,16 +879,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "search": {
-          "name": "search",
-          "type": "tsvector",
-          "primaryKey": false,
-          "notNull": false,
-          "generated": {
-            "as": "to_tsvector('english'::regconfig, \"markdown\")",
-            "type": "stored"
-          }
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -912,21 +902,6 @@
           "isUnique": false,
           "concurrently": false,
           "method": "hnsw",
-          "with": {}
-        },
-        "note_blocks_search_idx": {
-          "name": "note_blocks_search_idx",
-          "columns": [
-            {
-              "expression": "search",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "gin",
           "with": {}
         }
       },
@@ -1255,29 +1230,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "sources_note_idx": {
-          "name": "sources_note_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "(\"meta\"->>'noteId')",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "sources_workspace_id_workspaces_id_fk": {
           "name": "sources_workspace_id_workspaces_id_fk",
@@ -1953,6 +1906,14 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'ask'"
+        },
+        "tool_profile": {
+          "name": "tool_profile",
+          "type": "tool_profile",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'browser_use'"
         },
         "model": {
           "name": "model",
@@ -2780,6 +2741,13 @@
           "notNull": true,
           "default": 0
         },
+        "takeovers": {
+          "name": "takeovers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "duration_ms": {
           "name": "duration_ms",
           "type": "bigint",
@@ -2926,6 +2894,14 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'auto_within_allowlist'"
+        },
+        "tool_profile": {
+          "name": "tool_profile",
+          "type": "tool_profile",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'browser_use'"
         },
         "budget": {
           "name": "budget",
@@ -3144,6 +3120,14 @@
         "done",
         "skipped",
         "aborted"
+      ]
+    },
+    "public.tool_profile": {
+      "name": "tool_profile",
+      "schema": "public",
+      "values": [
+        "browser_use",
+        "computer_use"
       ]
     },
     "public.vault_audit_action": {

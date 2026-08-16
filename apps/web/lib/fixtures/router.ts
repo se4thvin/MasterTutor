@@ -134,6 +134,7 @@ export const fixtureRouter = os.router({
         waitReason: null,
         controller: "agent",
         approvalMode: input.approvalMode,
+        toolProfile: input.toolProfile,
         model: MODELS.agentPrimary,
         noteId: null,
         usage: EMPTY_USAGE,
@@ -169,6 +170,7 @@ export const fixtureRouter = os.router({
         targetFolderId: scope?.targetFolderId ?? null,
         pendingApprovals: [],
         heldDownloads: [],
+        downloads: [],
         lastEventId: null,
       };
     }),
@@ -284,7 +286,7 @@ export const fixtureRouter = os.router({
       state.notes = state.notes.filter((r) => r.note.id !== input.noteId);
       return { ok: true as const };
     }),
-    export: os.notes.export.handler(({ input, context }) => {
+    export: os.notes.export.handler(async ({ input, context }) => {
       const state = stateFor(context.ns);
       const record = findNote(state, input.noteId);
       const path = record.note.folderId ? folderPath(state.folders, record.note.folderId) : [];
@@ -295,9 +297,10 @@ export const fixtureRouter = os.router({
         if (!uri) return [];
         const bytes = new TextEncoder().encode(decodeURIComponent(uri.slice(uri.indexOf(",") + 1)));
         const sha256 = createHash("sha256").update(bytes).digest("hex");
-        return [{ id, sha256, mime: "image/svg+xml", bytes }];
+        const open = async () => new Blob([bytes]).stream();
+        return [{ id, sha256, mime: "image/svg+xml", bytes: bytes.byteLength, open }];
       });
-      const archive = buildNoteArchive({
+      const archive = await buildNoteArchive({
         detail,
         folderPath: path.map((f) => f.name),
         assets: files,

@@ -606,6 +606,7 @@ function runs(): RunSummary[] {
     waitReason: null,
     controller: "agent",
     approvalMode: "ask",
+    toolProfile: "browser_use",
     model: MODELS.agentPrimary,
     noteId,
     usage: { ...EMPTY_USAGE, steps, usd },

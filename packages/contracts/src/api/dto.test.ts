@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_BUDGET, EMPTY_USAGE } from "../budget.ts";
 import { MAX_USER_DOWNLOADS_PER_RUN } from "../constants.ts";
 import {
+  BenchmarkRunView,
+  BenchmarkView,
   CreateBenchmarkInput,
   CreateRunInput,
   CreateVaultItemInput,
@@ -9,6 +12,8 @@ import {
   HeldDownloadView,
   ListNotesInput,
   RunDetail,
+  StoredDownloadView,
+  RunSummary,
   SetSecretInput,
   SettingsView,
   SubmitOtpInput,
@@ -185,5 +190,128 @@ describe("RunDetail.heldDownloads (B6 A11 reload gap)", () => {
     expect(HeldDownloadView.safeParse({ id: "../x", filename: "a.pdf", bytes: 1 }).success).toBe(
       false,
     );
+  });
+});
+
+describe("tool profiles and takeovers (Phase 10, P10a-3/5)", () => {
+  const run = { goal: "g", allowedOrigins: ["https://a.example"] };
+  const bench = { ...run, name: "B", task: "T", successCriteria: "S" };
+  const at = "2026-10-06T10:00:00.000Z";
+  const summary = {
+    id: runId,
+    goal: "g",
+    status: "queued",
+    waitReason: null,
+    controller: "agent",
+    approvalMode: "ask",
+    toolProfile: "browser_use",
+    model: "m",
+    noteId: null,
+    usage: EMPTY_USAGE,
+    budget: DEFAULT_BUDGET,
+    createdAt: at,
+    finishedAt: null,
+  };
+  const benchmarkView = {
+    id: runId,
+    name: "B",
+    task: "T",
+    allowedOrigins: ["https://a.example"],
+    approvalMode: "auto_within_allowlist",
+    toolProfile: "computer_use",
+    budget: DEFAULT_BUDGET,
+    successCriteria: "S",
+    createdAt: at,
+  };
+  const benchmarkRun = {
+    id: runId,
+    benchmarkId: runId,
+    runId,
+    outcome: "pending",
+    steps: 0,
+    usd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    durationMs: null,
+    takeovers: 0,
+    failureNotes: null,
+    gradedBy: null,
+    startedAt: at,
+    finishedAt: null,
+  };
+  const without = (value: Record<string, unknown>, key: string) =>
+    Object.fromEntries(Object.entries(value).filter(([k]) => k !== key));
+
+  it("defaults runs and benchmarks to browser_use", () => {
+    expect(CreateRunInput.parse(run).toolProfile).toBe("browser_use");
+    expect(CreateBenchmarkInput.parse(bench).toolProfile).toBe("browser_use");
+  });
+  it("rejects unknown profiles", () => {
+    expect(CreateRunInput.safeParse({ ...run, toolProfile: "exec" }).success).toBe(false);
+    expect(CreateBenchmarkInput.safeParse({ ...bench, toolProfile: "exec" }).success).toBe(false);
+  });
+  it("keeps the bypass refine on both inputs when a profile is set (D44)", () => {
+    expect(
+      CreateRunInput.safeParse({ ...run, toolProfile: "computer_use", approvalMode: "bypass" })
+        .success,
+    ).toBe(false);
+    expect(
+      CreateRunInput.parse({
+        ...run,
+        toolProfile: "computer_use",
+        approvalMode: "bypass",
+        bypassAcknowledged: true,
+      }).toolProfile,
+    ).toBe("computer_use");
+    expect(
+      CreateBenchmarkInput.safeParse({
+        ...bench,
+        toolProfile: "computer_use",
+        approvalMode: "bypass",
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateBenchmarkInput.parse({
+        ...bench,
+        toolProfile: "computer_use",
+        approvalMode: "bypass",
+        bypassAcknowledged: true,
+      }).approvalMode,
+    ).toBe("bypass");
+  });
+  it("requires toolProfile on run and benchmark views, and takeovers on benchmark runs", () => {
+    expect(RunSummary.safeParse(summary).success).toBe(true);
+    expect(RunSummary.safeParse(without(summary, "toolProfile")).success).toBe(false);
+    expect(BenchmarkView.safeParse(benchmarkView).success).toBe(true);
+    expect(BenchmarkView.safeParse(without(benchmarkView, "toolProfile")).success).toBe(false);
+    expect(BenchmarkRunView.safeParse(benchmarkRun).success).toBe(true);
+    expect(BenchmarkRunView.safeParse(without(benchmarkRun, "takeovers")).success).toBe(false);
+  });
+});
+
+describe("RunDetail.downloads (reload of a finished run)", () => {
+  it("carries each stored download as id, asset, filename, size and time, and nothing else", () => {
+    expect(Object.keys(RunDetail.shape)).toContain("downloads");
+    const stored = {
+      id: runId,
+      assetId: runId,
+      filename: "week-2 report.pdf",
+      bytes: 2_048,
+      at: "2026-10-07T10:00:00.000Z",
+    };
+    expect(StoredDownloadView.parse({ ...stored, approvedBy: "u-1", sha256: "x" })).toEqual(stored);
+  });
+
+  it("refuses an over-long name, a negative size and a download with no stored file", () => {
+    const ok = {
+      id: runId,
+      assetId: runId,
+      filename: "a.pdf",
+      bytes: 1,
+      at: "2026-10-07T10:00:00.000Z",
+    };
+    expect(StoredDownloadView.safeParse({ ...ok, filename: "x".repeat(256) }).success).toBe(false);
+    expect(StoredDownloadView.safeParse({ ...ok, bytes: -1 }).success).toBe(false);
+    expect(StoredDownloadView.safeParse({ ...ok, assetId: null }).success).toBe(false);
   });
 });

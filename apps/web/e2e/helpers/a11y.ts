@@ -2,10 +2,9 @@ import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 
 /**
- * Moderate and minor axe impacts are intentionally not gated (spec §12 allows zero serious/critical);
- * they are advisory and would make the gate noisy.
+ * Serious and critical WCAG A/AA violations (spec §12: zero allowed). Moderate and minor impacts
+ * are intentionally not gated: they are advisory and would make the gate noisy.
  */
-/** Serious and critical WCAG A/AA violations (spec §12: zero allowed). */
 export async function seriousA11yViolations(page: Page): Promise<string[]> {
   const result = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])

@@ -194,6 +194,28 @@ test.describe("Run view states", () => {
     await expect(page.locator("h1")).toHaveText("Evilgoal here");
   });
 
+  test("a reload of a finished run still lists its downloads (snapshot)", async ({ page }) => {
+    test.skip(page.viewportSize()?.width !== 1440, "behaviour check runs once");
+    await gotoRun(page, {
+      detail: recordedDetail({
+        status: "completed",
+        slotName: null,
+        downloads: [
+          {
+            id: "00000000-0000-4000-8000-000005000031",
+            assetId: "00000000-0000-4000-8000-000005000032",
+            filename: "week-2-slides.pdf",
+            bytes: 2_048,
+            at: "2026-10-07T10:00:00.000Z",
+          },
+        ],
+      }),
+    });
+    // The stream resumes after the snapshot, so only the snapshot can bring the download back.
+    await page.reload();
+    await expect(page.getByText("Downloaded week-2-slides.pdf").first()).toBeVisible();
+  });
+
   test("an ask run shows no bypass badge", async ({ page }) => {
     await gotoRun(page);
     await expect(page.getByRole("note", { name: "Bypass mode" })).toHaveCount(0);

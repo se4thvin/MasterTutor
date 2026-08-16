@@ -34,6 +34,7 @@ const DETAIL = {
   waitReason: null,
   controller: "agent",
   approvalMode: "ask",
+  toolProfile: "browser_use",
   model: MODELS.agentPrimary,
   noteId: null,
   usage: {
@@ -59,6 +60,7 @@ const DETAIL = {
   targetFolderId: null,
   pendingApprovals: [],
   heldDownloads: [],
+  downloads: [],
   lastEventId: "12",
 };
 

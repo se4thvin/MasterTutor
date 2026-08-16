@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { assets, downloads, runs } from "../schema/index.ts";
 import { lockRunRow } from "./events.ts";
@@ -161,6 +161,37 @@ export async function heldDownloads(
       ),
     )
     .orderBy(asc(downloads.createdAt), asc(downloads.id));
+}
+
+/**
+ * The run's stored downloads, for the run snapshot: filed (an asset, not pending), never
+ * discarded, and only for a run in this workspace. Oldest first, as the stream announced them.
+ */
+export async function storedDownloads(
+  db: Database,
+  input: { runId: string; workspaceId: string },
+): Promise<Array<{ id: string; assetId: string; filename: string; bytes: number; at: Date }>> {
+  const rows = await db
+    .select({
+      id: downloads.id,
+      assetId: downloads.assetId,
+      filename: downloads.filename,
+      bytes: downloads.bytes,
+      at: downloads.createdAt,
+    })
+    .from(downloads)
+    .innerJoin(runs, eq(runs.id, downloads.runId))
+    .where(
+      and(
+        eq(downloads.runId, input.runId),
+        eq(runs.workspaceId, input.workspaceId),
+        eq(downloads.pending, false),
+        isNull(downloads.discardedAt),
+        isNotNull(downloads.assetId),
+      ),
+    )
+    .orderBy(asc(downloads.createdAt), asc(downloads.id));
+  return rows.flatMap((row) => (row.assetId ? [{ ...row, assetId: row.assetId }] : []));
 }
 
 /** Marks the listed pending downloads of this run as kept (the person's hand-back decision). */
