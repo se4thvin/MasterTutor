@@ -76,8 +76,13 @@ slot_conflict() {
 }
 
 # The host's Docker network subnets and listening TCP ports, for slot_conflict.
+# One inspect per network: a concurrent run may remove a network between ls and inspect, and a
+# network that is gone holds no subnet.
 host_subnets() {
-  docker network ls -q | xargs -r docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+  local id
+  for id in $(docker network ls -q); do
+    docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$id" 2>/dev/null || true
+  done
 }
 host_ports() { ss -ltnH | awk '{ sub(/.*:/, "", $4); print $4 }'; }
 
