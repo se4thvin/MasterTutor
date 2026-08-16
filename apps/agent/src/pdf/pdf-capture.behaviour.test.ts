@@ -5,12 +5,17 @@ import { createCaptureTool } from "../capture/capture-tool.ts";
 import { FIXTURES } from "../testing/browser-harness.ts";
 import { type CaptureEnv, startCaptureEnv } from "../testing/capture-env.ts";
 import { seedRun } from "../testing/notes.ts";
+import { startTestPdfWorker } from "../testing/pdf-worker.ts";
 
 let env: CaptureEnv;
+let worker: Awaited<ReturnType<typeof startTestPdfWorker>>;
 beforeAll(async () => {
   env = await startCaptureEnv();
+  worker = await startTestPdfWorker();
+  env.services.pdf = worker.client;
 }, 300_000);
 afterAll(async () => {
+  await worker?.close();
   await env?.stop();
 });
 
@@ -40,6 +45,8 @@ describe("capture tool on a PDF in the slot's viewer", () => {
       engine: "pdfjs",
       pages: 3,
       pdfAssetId: expect.any(String),
+      originalWithheld: null,
+      mediaLost: 0,
     });
   }, 120_000);
 });

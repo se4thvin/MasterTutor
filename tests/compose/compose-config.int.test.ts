@@ -31,7 +31,16 @@ describe("compose.yml", () => {
   });
   it("defines the Phase 0 services and six always-on slots", () => {
     expect(Object.keys(base.services).sort()).toEqual(
-      ["agent", "garage", "garage-init", "migrate", "postgres", "web", ...slots].sort(),
+      [
+        "agent",
+        "garage",
+        "garage-init",
+        "migrate",
+        "pdf-worker",
+        "postgres",
+        "web",
+        ...slots,
+      ].sort(),
     );
   });
 
@@ -104,6 +113,24 @@ describe("compose.yml", () => {
     expect(base.services.agent!.networks!.cdp!.ipv4_address).toBe("172.30.231.10");
     expect(base.services.web!.networks!.cdp!.ipv4_address).toBe("172.30.231.11");
     expect(base.services.agent!.cap_drop).toEqual(["ALL"]);
+  });
+
+  it("parses PDFs only in pdf-worker: no secrets, no egress, read-only, non-root, bounded (B5 I-1)", () => {
+    const worker = base.services["pdf-worker"]!;
+    expect(nets(worker)).toEqual(["pdf"]);
+    expect(base.networks.pdf?.internal).toBe(true);
+    expect(worker.environment ?? {}).toEqual({});
+    expect(worker.read_only).toBe(true);
+    expect(worker.user).toBe("1000:1000");
+    expect(worker.cap_drop).toEqual(["ALL"]);
+    expect(worker.security_opt).toContain("no-new-privileges:true");
+    expect(worker.tmpfs?.some((mount) => mount.startsWith("/tmp"))).toBe(true);
+    expect(worker.ports ?? []).toEqual([]);
+    expect(worker.volumes ?? []).toEqual([]);
+    expect(Number(worker.mem_limit)).toBeGreaterThan(0);
+    expect(Number(worker.cpus)).toBeGreaterThan(0);
+    expect(Number(worker.pids_limit)).toBeGreaterThan(0);
+    expect(env(base.services.agent!).PDF_WORKER_URL).toBe("http://pdf-worker:5002");
   });
 
   it("isolates docling on its own internal network (S4)", () => {

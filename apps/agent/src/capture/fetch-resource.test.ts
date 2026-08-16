@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decodeDataUrl, fetchInBrowser, sameSite } from "./fetch-resource.ts";
+import {
+  decodeDataUrl,
+  FETCH_TIMEOUT_MS,
+  fetchInBrowser,
+  fetchTimeoutMs,
+  MAX_FETCH_TIMEOUT_MS,
+  sameSite,
+} from "./fetch-resource.ts";
 
 function fakeSession(body: Uint8Array, options: { status?: number; allowed?: boolean } = {}) {
   const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -99,5 +106,64 @@ describe("decodeDataUrl", () => {
     );
     expect(decodeDataUrl("data:image/png;base64,AQID", 2)).toBeNull();
     expect(decodeDataUrl("https://x.test")).toBeNull();
+  });
+});
+
+describe("fetchInBrowser timeout (B5 review: large PDFs)", () => {
+  /** One 1-byte read that arrives after `delayMs`; `length` is the declared Content-Length. */
+  function slowSession(delayMs: number, length: string | null) {
+    const cdp = {
+      async send(method: string) {
+        if (method === "Network.loadNetworkResource")
+          return {
+            resource: {
+              success: true,
+              httpStatusCode: 200,
+              stream: "s1",
+              headers: length ? { "Content-Length": length } : {},
+            },
+          };
+        if (method === "IO.read")
+          return new Promise((done) =>
+            setTimeout(() => done({ data: "AQ==", base64Encoded: true, eof: true }), delayMs),
+          );
+        return {};
+      },
+    };
+    return {
+      cdp: async () => cdp,
+      allowsFetch: async () => true,
+      page: { url: () => "https://www.example.com/" },
+    } as never;
+  }
+
+  it("scales with size, bounded", () => {
+    expect(fetchTimeoutMs(0)).toBe(FETCH_TIMEOUT_MS);
+    expect(fetchTimeoutMs(100 * 1024 * 1024)).toBe(FETCH_TIMEOUT_MS + 100_000);
+    expect(fetchTimeoutMs(10 * 1024 ** 3)).toBe(MAX_FETCH_TIMEOUT_MS);
+  });
+  it("gives a large declared download more than 30 s, and still stops a stalled one", async () => {
+    vi.useFakeTimers();
+    try {
+      const big = fetchInBrowser(
+        ctx(slowSession(60_000, String(80 * 1024 * 1024))),
+        "https://x.test/a.pdf",
+        100 * 1024 * 1024,
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect((await big)?.bytes).toEqual(new Uint8Array([1]));
+      const stalled = fetchInBrowser(
+        ctx(slowSession(60_000, null)),
+        "https://x.test/b.pdf",
+        100 * 1024 * 1024,
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await stalled).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("refuses a declared size over the cap before reading", async () => {
+    expect(await fetchInBrowser(ctx(slowSession(0, "999")), "https://x.test/c.pdf", 10)).toBeNull();
   });
 });

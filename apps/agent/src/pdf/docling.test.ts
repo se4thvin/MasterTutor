@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { DoclingDocument, doclingBlocks } from "./docling.ts";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import {
+  checkedBlocks,
+  createDoclingClient,
+  DoclingDocument,
+  DoclingRejected,
+  doclingBlocks,
+  MAX_DOCLING_BLOCKS,
+  MAX_DOCLING_CROPS_PER_PAGE,
+  type DoclingBlock,
+} from "./docling.ts";
 
 const prov = (page: number, t = 700) => [
   { page_no: page, bbox: { l: 72, t, r: 300, b: t - 20, coord_origin: "BOTTOMLEFT" } },
@@ -86,5 +97,46 @@ describe("doclingBlocks", () => {
     ]);
     expect(blocks[0]!.bbox).toEqual({ x: 72, y: 92, width: 228, height: 20 });
     expect(blocks.find((b) => b.type === "figure")!.markdown).toBe("Figure 1. Chloroplast.");
+  });
+});
+
+describe("docling answers are bounded (B5 review I-6)", () => {
+  const block = (page: number, crop: boolean): DoclingBlock => ({
+    type: crop ? "figure" : "paragraph",
+    markdown: "x",
+    page,
+    bbox: { x: 0, y: 0, width: 1, height: 1 },
+    crop,
+  });
+  it("refuses too many blocks or crops on one page", () => {
+    expect(checkedBlocks([block(1, true), block(1, false)])).toHaveLength(2);
+    expect(() =>
+      checkedBlocks(Array.from({ length: MAX_DOCLING_BLOCKS + 1 }, () => block(1, false))),
+    ).toThrow(DoclingRejected);
+    expect(() =>
+      checkedBlocks(Array.from({ length: MAX_DOCLING_CROPS_PER_PAGE + 1 }, () => block(2, true))),
+    ).toThrow(DoclingRejected);
+  });
+  it("rejects an answer that is off-schema", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          status: "success",
+          document: { json_content: { body: { children: "x" } } },
+        }),
+      );
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    try {
+      const client = createDoclingClient(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      );
+      await expect(
+        client.convert(new Uint8Array([1]), "a.pdf", new AbortController().signal),
+      ).rejects.toBeInstanceOf(DoclingRejected);
+    } finally {
+      server.close();
+    }
   });
 });
