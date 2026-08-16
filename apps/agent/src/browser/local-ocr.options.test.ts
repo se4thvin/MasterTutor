@@ -49,6 +49,7 @@ describe("one worker per process, and a failed start is retried (13-14 review)",
       storage: {} as never,
       openai: {} as never,
       log: { child: () => ({}) } as never,
+      pdfWorkerUrl: "http://pdf-worker:5002",
     });
     expect(services.localOcr).toBe(sharedLocalOcr());
   });
