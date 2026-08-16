@@ -16,6 +16,8 @@ export interface ChildLimits {
   maxPixels: number;
   maxImagePixels: number;
   maxPageItems: number;
+  maxDocumentItems: number;
+  maxRenderBytes: number;
   maxTextChars: number;
 }
 export type ChildRequest = AnalyzeOptions & ChildLimits;
@@ -61,17 +63,18 @@ export const ChildResult = z.discriminatedUnion("ok", [
 ]);
 export type ChildResult = z.infer<typeof ChildResult>;
 
-export function encodeChildRequest(request: ChildRequest, pdf: Uint8Array): Buffer {
+/** The header frame (length + JSON); the PDF bytes follow it on stdin unchanged, never copied. */
+export function childRequestHeader(request: ChildRequest): Buffer {
   const header = Buffer.from(JSON.stringify(request), "utf8");
   const length = Buffer.alloc(4);
   length.writeUInt32BE(header.length, 0);
-  return Buffer.concat([length, header, Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength)]);
+  return Buffer.concat([length, header]);
 }
 
 export function decodeChildRequest(buffer: Buffer): { request: ChildRequest; pdf: Uint8Array } {
   const length = buffer.readUInt32BE(0);
   return {
     request: JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as ChildRequest,
-    pdf: new Uint8Array(buffer.subarray(4 + length)),
+    pdf: buffer.subarray(4 + length),
   };
 }

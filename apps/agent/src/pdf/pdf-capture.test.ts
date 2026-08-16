@@ -8,6 +8,7 @@ import type { AssetInput, AssetStore } from "../notes/assets.ts";
 import { startTestPdfWorker } from "../testing/pdf-worker.ts";
 import { testLog } from "../testing/tool-context.ts";
 import { buildPdfCapture, type PdfCaptureDeps } from "./pdf-capture.ts";
+import { MAX_PDF_BLOCKS } from "./protocol.ts";
 
 const fixture = async () =>
   new Uint8Array(
@@ -309,6 +310,7 @@ describe("buildPdfCapture verification cost (I-3)", () => {
         pages: [{ page: 1, width: 612, height: 792, hasImages: false, hasText: true }],
         reference: words.join(" "),
         blocks,
+        truncated: false,
         renders: [],
       }),
     };
@@ -321,5 +323,36 @@ describe("buildPdfCapture verification cost (I-3)", () => {
     );
     expect(performance.now() - started).toBeLessThan(3_000);
     expect(capture.blocks.every((b) => b.verified)).toBe(true);
+  });
+});
+
+describe("buildPdfCapture with a huge pdf.js layout (re-review N-1)", () => {
+  it("groups 100k blocks on one page in one pass, keeps MAX_PDF_BLOCKS and marks the note partial", async () => {
+    const blocks = Array.from({ length: 100_000 }, (_, i) => ({
+      type: "heading" as const,
+      markdown: `# h${i}`,
+      page: 1,
+      bbox: { x: 0, y: i, width: 10, height: 1 },
+    }));
+    const pdf = {
+      analyze: async () => ({
+        title: "Huge",
+        pages: [{ page: 1, width: 612, height: 792, hasImages: false, hasText: true }],
+        reference: blocks.map((b) => b.markdown.slice(2)).join(" "),
+        blocks,
+        truncated: true,
+        renders: [],
+      }),
+    };
+    const started = performance.now();
+    const capture = await buildPdfCapture(
+      deps({ pdf }),
+      ctx(),
+      await blankPdf(),
+      "https://x.test/h.pdf",
+    );
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(capture.blocks).toHaveLength(MAX_PDF_BLOCKS);
+    expect(capture).toMatchObject({ blocksTruncated: true, mediaLost: 1 });
   });
 });

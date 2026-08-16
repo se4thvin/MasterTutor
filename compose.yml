@@ -218,6 +218,7 @@ services:
     restart: unless-stopped
     command: ["node", "apps/agent/src/pdf/worker/server.ts"]
     user: "1000:1000"
+    # A crash, an OOM kill or an exit restarts it; a hung child is killed per PDF at 120 s.
     read_only: true
     tmpfs:
       - /tmp:size=64m
@@ -225,7 +226,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 2g
+    # Two PDFs at once fit (PDF_MEMORY_BUDGET_BYTES, asserted in tests/compose).
+    mem_limit: 4g
     cpus: 2
     pids_limit: 128
     healthcheck:
@@ -340,7 +342,7 @@ networks:
       config:
         - subnet: ${CDP_SUBNET_PREFIX:-172.30.231}.0/24
           ip_range: ${CDP_SUBNET_PREFIX:-172.30.231}.128/25
-  # agent ↔ docling only (profile pdf).
+  # The agent and the PDF parsers only: pdf-worker always, docling under profile `pdf`.
   pdf:
     internal: true
 

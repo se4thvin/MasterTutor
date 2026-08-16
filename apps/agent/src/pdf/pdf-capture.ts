@@ -18,7 +18,7 @@ import {
   type PdfBlock,
   type PdfRender,
 } from "./pdf-worker.ts";
-import { MAX_PDF_BYTES, type AnalyzeOptions } from "./protocol.ts";
+import { MAX_PDF_BLOCKS, MAX_PDF_BYTES, type AnalyzeOptions } from "./protocol.ts";
 
 export interface PdfCaptureDeps {
   assets: AssetStore;
@@ -43,6 +43,8 @@ export interface PdfCapture {
   pdfAssetId: string | null;
   /** Why the original is not stored (shown on the note), or null when it is. */
   originalWithheld: "too_large" | "unscreened" | null;
+  /** The document laid out into more than MAX_PDF_BLOCKS blocks; the note holds the first ones. */
+  blocksTruncated: boolean;
   pages: number;
   /** Page images and page text (scanned, outlined, OCR'd empty, skipped by docling) the note does not hold. */
   mediaLost: number;
@@ -234,9 +236,13 @@ export async function buildPdfCapture(
     }
   }
   if (engine === "pdfjs") {
+    // One pass, pushed in place (re-review N-1), over at most MAX_PDF_BLOCKS blocks.
     const laid = new Map<number, PdfBlock[]>();
-    for (const block of analysis.blocks)
-      laid.set(block.page, [...(laid.get(block.page) ?? []), block]);
+    for (const block of analysis.blocks.slice(0, MAX_PDF_BLOCKS)) {
+      const onPage = laid.get(block.page);
+      if (onPage) onPage.push(block);
+      else laid.set(block.page, [block]);
+    }
     for (const page of pages) {
       ctx.signal.throwIfAborted();
       for (const block of laid.get(page.page) ?? [])
@@ -296,6 +302,10 @@ export async function buildPdfCapture(
   const pixelsScreened =
     rendersWithheld === 0 &&
     (!ctx.mask.hasSecrets() || imagePages.every((page) => pageRender(page) !== undefined));
+  // Text past the block cap is not in the note: it counts as missing, so the note is partial.
+  const blocksTruncated =
+    engine === "pdfjs" && (analysis.truncated || analysis.blocks.length > MAX_PDF_BLOCKS);
+  if (blocksTruncated) mediaLost++;
   const capturedText = blocks
     .filter((b) => b.origin !== "ocr_model")
     .map((b) => blockPlainText(b))
@@ -312,6 +322,7 @@ export async function buildPdfCapture(
       : { pdfAssetId: null, originalWithheld: "unscreened" as const }),
     pages: pages.length,
     mediaLost,
+    blocksTruncated,
   };
 }
 

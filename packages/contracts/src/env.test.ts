@@ -49,6 +49,23 @@ describe("parseEnv", () => {
     expect(parseEnv(AgentEnv, { ...agentSource, DOCLING_URL: "" }).DOCLING_URL).toBeUndefined();
   });
 
+  it("accepts only http(s) service URLs for the PDF services (B5 re-review N-7)", () => {
+    for (const bad of [
+      "file:///etc/passwd",
+      "ftp://pdf-worker/",
+      "javascript:alert(1)",
+      "pdf-worker:5002",
+    ]) {
+      expect(() => parseEnv(AgentEnv, { ...agentSource, PDF_WORKER_URL: bad }), bad).toThrow(
+        EnvError,
+      );
+      expect(() => parseEnv(AgentEnv, { ...agentSource, DOCLING_URL: bad }), bad).toThrow(EnvError);
+    }
+    expect(() => parseEnv(AgentEnv, { ...agentSource, PDF_WORKER_URL: undefined })).toThrow(
+      EnvError,
+    );
+  });
+
   it("parses boolean flags", () => {
     expect(parseEnv(AgentEnv, { ...agentSource, AGENT_TEST_MODE: "1" }).AGENT_TEST_MODE).toBe(true);
     expect(() => parseEnv(AgentEnv, { ...agentSource, AGENT_TEST_MODE: "yes" })).toThrow(EnvError);

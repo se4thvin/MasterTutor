@@ -10,7 +10,10 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import {
   decodeRequest,
+  MAX_IMAGE_PIXELS,
+  MAX_PDF_BLOCKS,
   MAX_PDF_BYTES,
+  MAX_RENDER_PIXELS,
   MAX_RESULT_BYTES,
   WORKER_TIMEOUT_MS,
   type AnalyzeOptions,
@@ -18,13 +21,31 @@ import {
 } from "../protocol.ts";
 import { pdfBlocks, pdfReferenceText } from "./layout.ts";
 import { createLimiter, LimiterFull } from "./limiter.ts";
-import { runInSandbox, SandboxFailed } from "./sandbox.ts";
+import { CHILD_HEAP_MB, MAX_CHILD_OUTPUT_BYTES, runInSandbox, SandboxFailed } from "./sandbox.ts";
 
 export const PDF_WORKER_PORT = 5002;
 /** Concurrent PDFs per container (I-2); a few more may wait, the rest are told the worker is busy. */
 export const PDF_WORKER_CONCURRENCY = 2;
 const QUEUE = 4;
 const MAX_BODY_BYTES = MAX_PDF_BYTES + 64 * 1024;
+const MiB = 1024 * 1024;
+
+/**
+ * The most one PDF holds in this container at once (re-review N-2), so PDF_WORKER_CONCURRENCY of
+ * them fit compose's mem_limit (asserted in tests/compose): the body (held once, read only after a
+ * slot is free); the child's heap plus its native memory (pdf.js's copy of the bytes, one decoded
+ * image, one render canvas); the child's output as chunks, string and parsed objects; the answer.
+ */
+export const PDF_MEMORY_BUDGET_BYTES =
+  MAX_BODY_BYTES +
+  CHILD_HEAP_MB * MiB +
+  2 * MAX_PDF_BYTES +
+  4 * MAX_IMAGE_PIXELS +
+  4 * MAX_RENDER_PIXELS +
+  3 * MAX_CHILD_OUTPUT_BYTES +
+  MAX_RESULT_BYTES;
+/** The server itself: Node, its code and the queue's sockets. */
+export const PDF_WORKER_BASE_BYTES = 256 * MiB;
 
 /** One PDF: parsed in the sandbox, then laid out into blocks. */
 export async function analyzeDocument(
@@ -41,12 +62,15 @@ export async function analyzeDocument(
     throw error;
   }
   if (!child.ok) return child;
+  const blocks = pdfBlocks(child.pages);
   return {
     ok: true,
     title: child.title,
     pages: child.pages.map(({ items, ...page }) => ({ ...page, hasText: items.length > 0 })),
     reference: pdfReferenceText(child.pages),
-    blocks: pdfBlocks(child.pages).map(({ type, markdown, page, bbox }) => ({
+    // re-review N-1: at most MAX_PDF_BLOCKS go back; the agent marks the note partial past it.
+    truncated: blocks.length > MAX_PDF_BLOCKS,
+    blocks: blocks.slice(0, MAX_PDF_BLOCKS).map(({ type, markdown, page, bbox }) => ({
       type,
       markdown,
       page,
@@ -88,12 +112,13 @@ export function createPdfWorkerServer(
     const gone = new AbortController();
     response.once("close", () => gone.abort());
     try {
-      const body = await readBody(request);
-      if (!body) return send(413, { ok: false, error: "too_large" });
-      const decoded = decodeRequest(body);
-      if (!decoded) return send(400, { ok: false, error: "parse_failed" });
+      // The slot first, then the body: a waiting request holds a socket, not 100 MiB (N-2).
       const free = await limiter.acquire(gone.signal);
       try {
+        const body = await readBody(request);
+        if (!body) return send(413, { ok: false, error: "too_large" });
+        const decoded = decodeRequest(body);
+        if (!decoded) return send(400, { ok: false, error: "parse_failed" });
         send(
           200,
           await analyzeDocument(decoded.options, decoded.pdf, gone.signal, options.timeoutMs),

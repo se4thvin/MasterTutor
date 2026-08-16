@@ -23,6 +23,7 @@ const IMAGE_OPS = new Set([
 async function readPages(doc: PDFDocumentProxy, limits: ChildRequest): Promise<PdfPageText[]> {
   const pages: PdfPageText[] = [];
   let chars = 0;
+  let total = 0;
   for (let n = 1; n <= doc.numPages; n++) {
     const page = await doc.getPage(n);
     const viewport = page.getViewport({ scale: 1 });
@@ -43,7 +44,13 @@ async function readPages(doc: PDFDocumentProxy, limits: ChildRequest): Promise<P
       ];
     });
     chars += items.reduce((sum, item) => sum + item.str.length, 0);
-    if (items.length > limits.maxPageItems || chars > limits.maxTextChars) throw new TooLarge();
+    total += items.length;
+    if (
+      items.length > limits.maxPageItems ||
+      total > limits.maxDocumentItems ||
+      chars > limits.maxTextChars
+    )
+      throw new TooLarge();
     pages.push({
       page: n,
       width: viewport.width,
@@ -113,13 +120,14 @@ export async function analyze(request: ChildRequest, bytes: Uint8Array): Promise
           ]
         : request.render.map((page) => ({ page, scale: request.scale }));
     const renders: { page: number; scale: number; png: string }[] = [];
+    let renderBytes = 0;
     for (const { page, scale } of wanted.slice(0, request.maxRenders)) {
       if (page < 1 || page > doc.numPages) continue;
-      renders.push({
-        page,
-        scale,
-        png: (await renderPage(doc, page, scale, request.maxPixels)).toString("base64"),
-      });
+      const png = await renderPage(doc, page, scale, request.maxPixels);
+      // Past the byte budget a page goes without a render (the agent counts it missing, N-7).
+      if (renderBytes + png.length > request.maxRenderBytes) continue;
+      renderBytes += png.length;
+      renders.push({ page, scale, png: png.toString("base64") });
     }
     return { ok: true, title: await titleOf(doc), pages, renders };
   } catch (error) {

@@ -168,9 +168,14 @@ is the production gate.
   spec §3.1 says `backend`). It has no route to Postgres, Garage or the internet, runs read-only
   with no capabilities, and `compose.prod.yml` pins the agent's `DOCLING_URL=http://docling:5001`.
 - PDFs are parsed only in `pdf-worker` (B5 review I-1), a container from the node-runtime image on
-  the same `pdf` network: no env, no egress, read-only root, uid 1000, 2 GB / 2 CPUs / 128 pids,
-  two PDFs at a time, each in a `node --permission` child that is killed at 120 s. The agent sends
-  bytes and reads back schema-checked JSON capped at 192 MiB.
+  the same `pdf` network: no env, no egress, read-only root, uid 1000, 4 GB (two PDFs at once fit
+  its memory budget) / 2 CPUs / 128 pids, restarted when it exits. Each PDF runs in a
+  `node --permission` child that is killed at 120 s. The agent sends bytes and reads back
+  schema-checked JSON capped at 128 MiB, at most 20,000 blocks (past that the note is partial and
+  records `blocksTruncated`).
+- `internal: true` networks block DNS forwarding only on Docker Engine ≥ 26.0.0 (or 25.0.5;
+  CVE-2024-29018). The host must run such a version, or pdf-worker and docling could leak PDF
+  content through DNS. The CI host runs 29.2.1.
 - PDFs up to 100 MiB are captured, but the original file is stored only up to the 25 MiB asset
   limit; the source records `originalWithheld: "too_large"` (or `"unscreened"` when a page image
   was withheld by the secret screen). Revisit when object reads stream (preflight S8).

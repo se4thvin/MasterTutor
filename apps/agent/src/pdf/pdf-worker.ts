@@ -32,6 +32,8 @@ export interface PdfAnalysis {
   /** Every pdf.js text item, in order (spec §7.6). */
   reference: string;
   blocks: PdfBlock[];
+  /** More blocks than MAX_PDF_BLOCKS were laid out; only the first ones are here. */
+  truncated: boolean;
   renders: PdfRender[];
 }
 
@@ -58,9 +60,12 @@ const REQUEST_TIMEOUT_MS = 3 * WORKER_TIMEOUT_MS + 10_000;
  * with the shared schema before anything reads it. `baseUrl` is the internal service address from
  * env, never a page URL.
  */
-export function createPdfWorkerClient(baseUrl: string): PdfAnalyzer {
+export function createPdfWorkerClient(
+  baseUrl: string,
+  options: { timeoutMs?: number } = {},
+): PdfAnalyzer {
   return {
-    async analyze(bytes, options, signal) {
+    async analyze(bytes, request, signal) {
       signal.throwIfAborted();
       if (bytes.byteLength > MAX_PDF_BYTES) throw new PdfWorkerError("too_large");
       let text: string;
@@ -68,8 +73,11 @@ export function createPdfWorkerClient(baseUrl: string): PdfAnalyzer {
         const response = await fetch(new URL("/analyze", baseUrl), {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
-          body: new Uint8Array(encodeRequest(options, bytes)),
-          signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+          body: new Uint8Array(encodeRequest(request, bytes)),
+          signal: AbortSignal.any([
+            signal,
+            AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS),
+          ]),
         });
         text = await readCappedText(response.body, MAX_RESULT_BYTES);
       } catch (error) {
@@ -93,6 +101,7 @@ export function createPdfWorkerClient(baseUrl: string): PdfAnalyzer {
         pages: answer.pages,
         reference: answer.reference,
         blocks: answer.blocks,
+        truncated: answer.truncated,
         renders: answer.renders.map((r) => ({
           page: r.page,
           scale: r.scale,
