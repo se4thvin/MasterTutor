@@ -70,7 +70,7 @@ export function ControlsSection() {
         <TextField
           label="Alias"
           hint="Lowercase letters, numbers, dash or underscore."
-          placeholder="zybooks"
+          placeholder="course-site"
         />
         <TextField
           label="Website"

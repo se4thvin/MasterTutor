@@ -150,8 +150,9 @@ export async function checkProductionEnv(envFile: string): Promise<string[]> {
     }
   }
   problems.push(...prodModeProblems(config));
-  // B5's docling (profile pdf) is not merged yet: once compose.prod.yml pins DOCLING_URL, add
-  // `agent.DOCLING_URL: must be set` here (Task 14 Step 11, deferred with Task 12's docling pin).
+  if (!config.services.agent?.environment?.DOCLING_URL) {
+    problems.push("agent.DOCLING_URL: must be set (docling, D42)");
+  }
   return problems;
 }
 

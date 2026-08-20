@@ -8,6 +8,7 @@ export const TEST_ONLY_SERVICES = [
   "llm-mock",
   "fixtures",
   "vault-fixtures",
+  "bench-fixtures",
   "greenmail",
   "e2e",
 ] as const;

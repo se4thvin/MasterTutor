@@ -28,6 +28,12 @@ export function fakeLibraryServices(
     },
     localOcr: { text: async () => "", words: async () => [] },
     filing: { decide: async () => ({ path: ["Inbox"], createLeaf: true }) },
+    docling: null,
+    pdf: {
+      analyze: async () => {
+        throw new Error("this test has no pdf worker (testing/pdf-worker.ts starts one)");
+      },
+    },
     log: testLog,
     ...overrides,
     storage,
