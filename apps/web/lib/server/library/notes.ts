@@ -13,6 +13,7 @@ import {
   KeysetCursorInvalid,
   NOTE_BLOCK_COLUMNS,
   keysetBefore,
+  deleteNoteWithMedia,
   keysetCursor,
   loadNoteDetail,
   msOf,
@@ -103,7 +104,8 @@ export async function getNote(
 /**
  * A person's edit (spec §7): the first edit keeps the captured text in original_markdown. The
  * block's vector described the old text, so it is dropped; full-text search follows the edit at
- * once (generated column) and the agent never re-embeds user text.
+ * once (generated column). If the note's run is still active, the agent's embedding backfill may
+ * embed the edited text later (as it does any block without a vector), so search stays semantic.
  */
 export async function updateBlock(
   db: Database,
@@ -116,7 +118,8 @@ export async function updateBlock(
       .from(noteBlocks)
       .innerJoin(notes, eq(notes.id, noteBlocks.noteId))
       .where(and(eq(noteBlocks.id, input.blockId), eq(notes.workspaceId, workspaceId)))
-      .for("update", { of: noteBlocks });
+      // The note row first, then its blocks: the one lock order of every library write.
+      .for("update", { of: notes });
     if (!found) throw missingBlock();
     const [row] = await tx
       .update(noteBlocks)
@@ -159,12 +162,9 @@ export async function markVerified(
   });
 }
 
-/** Deletes the note and its blocks; sources, assets and downloads stay until deleted themselves (spec §4). */
+/** Deletes the note with its blocks, sources and the assets only it used (deleteNoteWithMedia). */
 export async function deleteNote(db: Database, workspaceId: string, input: NoteRef): Promise<Ok> {
-  const removed = await db
-    .delete(notes)
-    .where(and(eq(notes.id, input.noteId), eq(notes.workspaceId, workspaceId)))
-    .returning({ id: notes.id });
-  if (removed.length === 0) throw new ServiceError("not_found", "Note not found");
+  const deleted = await db.transaction((tx) => deleteNoteWithMedia(tx, workspaceId, input.noteId));
+  if (!deleted) throw new ServiceError("not_found", "Note not found");
   return { ok: true };
 }

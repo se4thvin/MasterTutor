@@ -1,5 +1,12 @@
 import { apiContract, type ApiContract } from "@mastertutor/contracts";
-import { approvals, createDb, ensureWorkspaceMember, type DbHandle } from "@mastertutor/db";
+import {
+  approvals,
+  createDb,
+  ensureWorkspaceMember,
+  noteBlocks,
+  notes,
+  type DbHandle,
+} from "@mastertutor/db";
 import { seedRun, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import type { ContractRouterClient } from "@orpc/contract";
 import { createRouterClient } from "@orpc/server";
@@ -15,8 +22,8 @@ type Api = ContractRouterClient<ApiContract>;
 interface World {
   session(): Api;
   anonymous(): Api;
-  /** Procedures this router does not serve yet; their probes and cases are skipped on it. */
-  deferred: ReadonlySet<string>;
+  /** Procedures this router does not serve (the fixture's benchmarks.* writes); skipped on it. */
+  deferred?: ReadonlySet<string>;
   /** A folder to target: the API where it is wired, a direct insert until then. */
   folder(name: string): Promise<string>;
   /** A pending approval no one has decided yet. */
@@ -27,8 +34,6 @@ const MISSING = "00000000-0000-4000-8000-00000000dead";
 // The .env.test dummy public key (Phase 0), as vault.int.test.ts uses. It protects nothing.
 const TEST_PUBLIC = "y5DgMx35MF/R/d3MSLtIufXczYHJAqVtEIEMLY/Qf3M=";
 
-/** Live procedures still answering NOT_IMPLEMENTED: none since Task 0C bound the library. */
-const LIVE_DEFERRED: ReadonlySet<string> = new Set();
 /**
  * The fixture router's benchmarks.* writes stay a test double (NOT_IMPLEMENTED): fe never drives
  * them, and the live behaviour is pinned by benchmarks/service.int.test.ts (T18).
@@ -152,7 +157,6 @@ const worlds: ReadonlyArray<readonly [string, World]> = [
       session: () =>
         createRouterClient(liveRouter, { context: { viewer, resHeaders: new Headers() } }),
       anonymous: () => createRouterClient(liveRouter, { context: { viewer: null } }),
-      deferred: LIVE_DEFERRED,
       folder: async (name) =>
         (await createRouterClient(liveRouter, { context: { viewer } }).folders.create({ name })).id,
       pendingApproval: async () => {
@@ -189,6 +193,24 @@ beforeAll(async () => {
   web = createDb(tdb.webUrl, { max: 4 });
   await owner.sql`insert into "user" (id, name, email) values (${viewer.id}, ${viewer.name}, ${viewer.email})`;
   ({ workspaceId } = await ensureWorkspaceMember(web.db, viewer.id));
+  const [warmup] = await owner.db
+    .insert(notes)
+    .values({ workspaceId, title: "Learning-rate warmup" })
+    .returning({ id: notes.id });
+  await owner.db.insert(noteBlocks).values(
+    [
+      "Linear warmup ramps the rate",
+      "Warmup avoids early divergence",
+      "Cosine warmup schedules",
+    ].map((markdown, i) => ({
+      noteId: warmup!.id,
+      position: `a${i}`,
+      type: "paragraph" as const,
+      markdown,
+      origin: "dom" as const,
+      verified: true,
+    })),
+  );
   liveRouter = createLiveRouter({
     db: () => web,
     sealer: () => createSealer(TEST_PUBLIC),
@@ -210,11 +232,10 @@ it("probes every procedure", () => {
     Object.keys(procedures).map((name) => `${group}/${name}`),
   );
   expect(EVERY_CALL.map(([path]) => path).sort()).toEqual(all.sort());
-  for (const path of LIVE_DEFERRED) expect(all, path).toContain(path);
 });
 
 describe.each(worlds)("the API contract on %s (P7-14)", (_name, world) => {
-  const served = (path: string) => !world.deferred.has(path);
+  const served = (path: string) => !world.deferred?.has(path);
 
   it("rejects every procedure without a session as UNAUTHORIZED", async () => {
     const api = world.anonymous();
@@ -354,7 +375,9 @@ describe.each(worlds)("the API contract on %s (P7-14)", (_name, world) => {
 
   // One hit per note is B2's hybridSearch rule; the fixture search agrees.
   it("returns at most one search hit per note", async () => {
-    const { items } = await world.session().notes.search({ q: "the" });
+    // Both worlds hold a note with several blocks matching "warmup" (live: seeded below).
+    const { items } = await world.session().notes.search({ q: "warmup" });
+    expect(items.length).toBeGreaterThan(0);
     expect(new Set(items.map((i) => i.noteId)).size).toBe(items.length);
   });
 });
@@ -363,7 +386,7 @@ describe("liveRouter is fully wired (P7-2, X1)", () => {
   it("never answers NOT_IMPLEMENTED", async () => {
     const api = live().session();
     const unwired: string[] = [];
-    for (const [path, input] of EVERY_CALL.filter(([path]) => !LIVE_DEFERRED.has(path)))
+    for (const [path, input] of EVERY_CALL)
       if ((await outcome(call(api, path)(input()))) === "NOT_IMPLEMENTED") unwired.push(path);
     expect(unwired).toEqual([]);
   });
