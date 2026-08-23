@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import type { CDPSession } from "playwright-core";
+import { foldConfusables } from "./confusables.ts";
 import { SECRET_REDACTION, type MaskSources } from "./runtime.ts";
 
 const MAX_NODES_PER_RUN = 200;
@@ -27,6 +28,12 @@ export interface SecretFingerprints {
   forRun(runId: string): MaskSources;
   forgetRun(runId: string): void;
 }
+
+/**
+ * Shortest folded secret the pixel screens match up to OCR confusables: folding drops separators
+ * and merges characters, so a short one (a PIN) would match ordinary numbers on the page.
+ */
+const MIN_FOLDED = 6;
 
 /** 1–3 digit secrets match almost every number on a page: they are masked by box only. */
 /** How many rounds of URL decoding a token gets: enough for a URL wrapped in a redirect twice. */
@@ -79,6 +86,8 @@ interface RunEntry {
   bareWindows: Map<number, Set<number>>;
   /** Keyed digests of one-time codes filled this run, for the local pixel screen (ruling). */
   codes: Set<string>;
+  /** Folded length → keyed digests of folded secrets, for OCR'd text (QA-099). */
+  folded: Map<number, Set<string>>;
   unwatch: Map<CDPSession, () => void>;
 }
 
@@ -111,6 +120,7 @@ export function createSecretFingerprints(): SecretFingerprints {
         windows: new Map(),
         bareWindows: new Map(),
         codes: new Set(),
+        folded: new Map(),
         unwatch: new Map(),
       };
       runs.set(runId, found);
@@ -147,7 +157,15 @@ export function createSecretFingerprints(): SecretFingerprints {
     windows.set(parts.length, lengths);
   };
 
+  const foldedDigest = (folded: string) => digest(`ocr${JOIN}${folded}`);
+
   const register = (run: RunEntry, secret: string) => {
+    const folded = foldConfusables(secret);
+    if (folded.length >= MIN_FOLDED) {
+      const digests = run.folded.get(folded.length) ?? new Set<string>();
+      digests.add(foldedDigest(folded));
+      run.folded.set(folded.length, digests);
+    }
     const words = secret.match(WORD) ?? [];
     if (words.length > 0) return add(run, run.windows, words);
     const tokens = secret.match(TOKEN) ?? [];
@@ -180,6 +198,15 @@ export function createSecretFingerprints(): SecretFingerprints {
     if (spans.length === 0 && run.bareWindows.size > 0)
       find(run, run.bareWindows, [...text.matchAll(TOKEN)], spans);
     return spans.length > 0;
+  };
+
+  /** True when folded `text` holds a registered secret's folded form anywhere. */
+  const inOcrText = (run: RunEntry, text: string): boolean => {
+    const folded = foldConfusables(text);
+    for (const [length, digests] of run.folded)
+      for (let i = 0; i + length <= folded.length; i++)
+        if (digests.has(foldedDigest(folded.slice(i, i + length)))) return true;
+    return false;
   };
 
   const redact = (run: RunEntry, text: string): string => {
@@ -238,6 +265,10 @@ export function createSecretFingerprints(): SecretFingerprints {
       redact: (text) => {
         const run = runs.get(runId);
         return run && run.digests.size > 0 ? redact(run, text) : text;
+      },
+      inOcrText: (text) => {
+        const run = runs.get(runId);
+        return run !== undefined && run.folded.size > 0 && inOcrText(run, text);
       },
     }),
     forgetRun(runId) {

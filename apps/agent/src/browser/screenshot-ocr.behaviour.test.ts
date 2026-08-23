@@ -28,12 +28,12 @@ afterAll(async () => {
 });
 
 /** A canvas that renders the secret and the username: no DOM text screen can see either. */
-async function canvasPage(lines: string[]) {
+async function canvasPage(lines: string[], px = 44) {
   await session.page.setContent(`<canvas id="c" width="1000" height="300"></canvas>
     <script>
       const ctx = document.getElementById("c").getContext("2d");
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, 300);
-      ctx.fillStyle = "#000"; ctx.font = "44px sans-serif";
+      ctx.fillStyle = "#000"; ctx.font = "${px}px sans-serif";
       ${JSON.stringify(lines)}.forEach((line, i) => ctx.fillText(line, 30, 80 + i * 90));
     </script>`);
 }
@@ -47,6 +47,15 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     expect(seen).not.toContain("MARMOT");
     expect(seen).toContain(USER);
     expect(seen).toMatch(/Password/);
+  }, 120_000);
+
+  it("finds a secret drawn at UI text size, 14 px (QA-098)", async () => {
+    // Read at 1× this misreads ("Xke#mQa2svL"); the screen reads a 2× copy.
+    const small = "Xk9#mQ2$vL";
+    const sources: MaskSources = { ...vault, redact: (text) => text.replaceAll(small, "[secret]") };
+    await canvasPage([`Password ${small}`, `Signed in as ${USER}`], 14);
+    const shot = await captureModelScreenshot(session, sources, signal, sharedLocalOcr());
+    expect(shot.masked > 0 || shot.dropped).toBe(true);
   }, 120_000);
 
   it("withholds the screenshot when local OCR fails, and says why", async () => {

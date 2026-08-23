@@ -109,3 +109,35 @@ describe("one-time codes in pixels (ruling)", () => {
     );
   }, 60_000);
 });
+
+describe("confusable OCR reads (QA-099)", () => {
+  // The vault's matcher folds O/0, l/1, B/8…; the screens must ask it, not only the exact redactor.
+  const folding: MaskSources = {
+    nodeIds: () => [],
+    hasSecrets: () => true,
+    redact: (text) => text.replaceAll("hunter2Ol1", "[secret]"),
+    // A stand-in for the vault's folded match: separators ignored, O/0 and l/1 alike.
+    inOcrText: (text) =>
+      /hunter2011/i.test(
+        text
+          .replace(/[^A-Za-z0-9]/g, "")
+          .replace(/[Oo]/g, "0")
+          .replace(/[lI]/g, "1"),
+      ),
+  };
+  const box = (x: number) => ({ x, y: 0, width: 40, height: 12 });
+  const read = (words: string[]) => ({
+    text: async () => words.join(" "),
+    words: async () => [{ words: words.map((text, i) => ({ text, box: box(i * 50) })) }],
+  });
+  it("withholds and masks a secret OCR misread as confusable characters", async () => {
+    const misread = read(["Password", "hunter2011", "user", "alice"]);
+    expect(await pixelsAreClean(misread, folding, new Uint8Array([1]), signal)).toBe(false);
+    const hit = await screenPixels(misread, folding, new Uint8Array([1]), signal);
+    expect(hit).toEqual({ kind: "hit", boxes: [box(50)] });
+    const clean = read(["Password", "hidden", "user", "alice"]);
+    expect(await screenPixels(clean, folding, new Uint8Array([1]), signal)).toEqual({
+      kind: "clean",
+    });
+  });
+});

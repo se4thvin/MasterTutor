@@ -10,7 +10,13 @@ import {
   type Box,
   type MaskSources,
 } from "./masking.ts";
-import { screenPixels, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
+import {
+  screenPixels,
+  screensPixels,
+  sharedLocalOcr,
+  type LocalOcr,
+  type PixelScreen,
+} from "./local-ocr.ts";
 import type { BrowserSession, Layout } from "./session.ts";
 
 export interface ModelScreenshot {
@@ -109,16 +115,47 @@ async function screened(
   ocr: LocalOcr,
   signal: AbortSignal,
 ): Promise<ModelScreenshot | null> {
-  const first = await screenPixels(ocr, sources, shot.png, signal);
+  const first = await screenUpscaled(ocr, sources, shot, shot.png, signal);
   if (first.kind === "clean") return shot;
   if (first.kind === "failed") return null;
   const png = await drawMasks(shot.png, first.boxes.map(pad), {
     width: shot.width,
     height: shot.height,
   });
-  const again = await screenPixels(ocr, sources, png, signal);
+  const again = await screenUpscaled(ocr, sources, shot, png, signal);
   if (again.kind !== "clean") return null;
   return { ...shot, png, masked: shot.masked + first.boxes.length };
+}
+
+/**
+ * UI text is 11–14 px, where tesseract misses most of what it reads at 2× (QA-098): the screen
+ * reads a 2× copy and maps its boxes back to the image.
+ */
+const OCR_UPSCALE = 2;
+
+async function screenUpscaled(
+  ocr: LocalOcr,
+  sources: MaskSources,
+  size: { width: number; height: number },
+  png: Buffer,
+  signal: AbortSignal,
+): Promise<PixelScreen> {
+  if (!screensPixels(sources)) return { kind: "clean" };
+  const large = await sharp(png)
+    .resize(size.width * OCR_UPSCALE, size.height * OCR_UPSCALE, { kernel: "lanczos3" })
+    .png()
+    .toBuffer();
+  const read = await screenPixels(ocr, sources, large, signal);
+  if (read.kind !== "hit") return read;
+  return {
+    kind: "hit",
+    boxes: read.boxes.map((box) => ({
+      x: box.x / OCR_UPSCALE,
+      y: box.y / OCR_UPSCALE,
+      width: box.width / OCR_UPSCALE,
+      height: box.height / OCR_UPSCALE,
+    })),
+  };
 }
 
 /** OCR boxes hug the glyphs: a little margin so no antialiased edge stays readable. */
