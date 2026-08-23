@@ -235,19 +235,22 @@ describe("storeMedia", () => {
       hasSecrets: () => true,
       redact: (text: string) => text.replaceAll("hunter2", "[secret]"),
     };
-    for (const localOcr of [
-      { text: async () => "pw hunter2" },
-      {
-        text: async (): Promise<string> => {
-          throw new Error("tesseract crashed");
-        },
+    for (const read of [
+      async () => "pw hunter2",
+      async (): Promise<string> => {
+        throw new Error("tesseract crashed");
       },
     ]) {
+      let reads = 0;
+      const localOcr = { text: async () => ((reads += 1), read()) };
       const { ctx, assets, shots } = await context({ secrets, localOcr });
       const report = await storeMedia(ctx, [canvas]);
       expect(assets.puts).toEqual([]);
       expect(report.stored.get(0)).toEqual({ assetId: null, screenshotAssetId: null });
-      expect(shots).toHaveLength(1); // the element shot was taken, then withheld unscreened
+      expect(report.withheld).toBe(1);
+      // The shot shows the same canvas: it is withheld without a second shot or OCR (QA-080).
+      expect(shots).toEqual([]);
+      expect(reads).toBe(1);
     }
     const read: number[] = [];
     const clean = await context({
@@ -262,5 +265,22 @@ describe("storeMedia", () => {
     const plain = await context({ localOcr: { text: async () => ((called = true), "") } });
     await storeMedia(plain.ctx, [canvas]);
     expect(called).toBe(false);
+  });
+  it("screens every element shot on a secret run, not only canvas ones (QA-100)", async () => {
+    const secrets = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text.replaceAll("hunter2", "[secret]"),
+    };
+    const figure = { ...base, index: 0, kind: "img" as const, figure: true };
+    const leaking = await context({ secrets, localOcr: { text: async () => "pw hunter2" } });
+    const report = await storeMedia(leaking.ctx, [figure]);
+    expect(leaking.shots).toHaveLength(1);
+    expect(leaking.assets.puts).toEqual([]);
+    expect(report).toMatchObject({ withheld: 1, lost: 1 });
+    const clean = await context({ secrets, localOcr: { text: async () => "Diagram" } });
+    expect((await storeMedia(clean.ctx, [figure])).stored.get(0)?.screenshotAssetId).toEqual(
+      expect.any(String),
+    );
   });
 });
