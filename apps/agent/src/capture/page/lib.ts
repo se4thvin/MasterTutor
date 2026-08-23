@@ -180,6 +180,9 @@ export function pageInstallLib(): void {
     (value.match(/url\([^)]*\)/gi) ?? []).every((url) =>
       /^url\(\s*["']?#[A-Za-z_][\w.:-]*["']?\s*\)$/i.test(url),
     );
+  // image-set() and src() fetch a string URL without any url( (re-review).
+  const unsafeCss =
+    /@import|expression\s*\(|javascript:|behavior\s*:|-moz-binding|image-set\s*\(|\bsrc\s*\(/i;
   const sanitizeSvg = (input: Element): string | null => {
     if (input.namespaceURI !== SVG_NS || input.localName !== "svg") return null;
     const doc = document.implementation.createDocument(SVG_NS, "svg", null);
@@ -197,17 +200,12 @@ export function pageInstallLib(): void {
           continue;
         }
         if (name === "style") {
-          if (
-            !/@import|expression\s*\(|javascript:|behavior\s*:|-moz-binding|image-set\s*\(|\bsrc\s*\(/i.test(
-              value,
-            ) &&
-            onlyLocalUrls(value)
-          )
-            out.setAttribute("style", value);
+          if (!unsafeCss.test(value) && onlyLocalUrls(value)) out.setAttribute("style", value);
           continue;
         }
         if (!SVG_ATTRS.has(name) || attr.prefix === "xmlns") continue;
-        if (/url\(/i.test(value) && !onlyLocalUrls(value)) continue;
+        // Presentation attributes (mask, fill, clip-path…) are CSS values like style (QA-079).
+        if (unsafeCss.test(value) || !onlyLocalUrls(value)) continue;
         if (/javascript:|vbscript:|data:/i.test(value.replace(/[\s\0]/g, ""))) continue;
         out.setAttribute(name, value);
       }

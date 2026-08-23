@@ -43,13 +43,33 @@ export async function deleteNoteWithMedia(
       ...ownSources.flatMap((s) => (s.favicon ? [s.favicon] : [])),
     ]),
   ];
+  await deleteUnusedAssets(
+    db,
+    workspaceId,
+    candidates,
+    ownSources.flatMap((s) => [s.mhtml, s.screenshot].filter((k): k is string => k !== null)),
+  );
+  return true;
+}
+
+/**
+ * Deletes the `candidates` assets nothing in the workspace still uses (a block's asset or inline
+ * `asset:` link, a favicon, a run's download) and queues their objects, plus `extraKeys`, on
+ * object_deletions for the agent's sweep. Runs in the caller's transaction.
+ */
+export async function deleteUnusedAssets(
+  db: DbLike,
+  workspaceId: string,
+  candidates: readonly string[],
+  extraKeys: readonly string[] = [],
+): Promise<void> {
   const unused = candidates.length
     ? await db
         .delete(assets)
         .where(
           and(
             eq(assets.workspaceId, workspaceId),
-            inArray(assets.id, candidates),
+            inArray(assets.id, [...candidates]),
             sql`not exists (select 1 from ${noteBlocks} b join ${notes} n on n.id = b.note_id
                   where n.workspace_id = ${workspaceId}
                     and (b.asset_id = ${assets.id} or position('asset:' || ${assets.id}::text in b.markdown) > 0))`,
@@ -59,14 +79,10 @@ export async function deleteNoteWithMedia(
         )
         .returning({ key: assets.key })
     : [];
-  const keys = [
-    ...unused.map((a) => a.key),
-    ...ownSources.flatMap((s) => [s.mhtml, s.screenshot].filter((k): k is string => k !== null)),
-  ];
+  const keys = [...unused.map((a) => a.key), ...extraKeys];
   if (keys.length > 0)
     await db
       .insert(objectDeletions)
       .values(keys.map((key) => ({ key })))
       .onConflictDoNothing();
-  return true;
 }
