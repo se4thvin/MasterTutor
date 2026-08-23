@@ -12,7 +12,9 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { StepCollector } from "../loop/step-collector.ts";
 import { fakeLibraryServices } from "../testing/library.ts";
-import { commitStep, seedRun, testWrite } from "../testing/notes.ts";
+import { libraryHooks } from "../library.ts";
+import type { RunSnapshot } from "../loop/run-state.ts";
+import { commitStep, seedRun, testLogger, testWrite } from "../testing/notes.ts";
 import { fileRunNote, type FilingModel } from "./filing.ts";
 
 let tdb: TestDatabase;
@@ -156,6 +158,29 @@ describe("fileRunNote", () => {
       .where(eq(notes.id, noteId));
     expect(note?.folderId).toBeNull();
     expect(await filed(scope.runId)).toEqual([]);
+  });
+
+  it("gives the completion hook's filing call the run's signal: a kill interrupts it (QA-082)", async () => {
+    const { scope } = await runNote();
+    const controller = new AbortController();
+    const hooks = libraryHooks(
+      services({
+        decide: (_input, { signal }) =>
+          new Promise((_resolve, reject) => {
+            if (!signal) return reject(new Error("no signal"));
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            controller.abort(new Error("killed"));
+          }),
+      }),
+    );
+    await expect(
+      hooks.onComplete!({
+        run: { id: scope.runId, workspaceId: scope.workspaceId } as RunSnapshot,
+        log: testLogger,
+        step: new StepCollector(),
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("killed");
   });
 
   it("leaves the note unfiled when the model fails, and respects user moves", async () => {

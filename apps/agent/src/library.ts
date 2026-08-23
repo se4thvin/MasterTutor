@@ -62,10 +62,12 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
   return {
     functionTools: [register(createCaptureTool(services)), register(createAnnotateTool(services))],
-    async onComplete({ run, log, step }) {
+    async onComplete({ run, log, step, signal }) {
       try {
-        await fileRunNote(services, { runId: run.id, workspaceId: run.workspaceId }, step);
+        await fileRunNote(services, { runId: run.id, workspaceId: run.workspaceId }, step, signal);
       } catch (error) {
+        // A kill ends the step like any other interruption; anything else leaves the note unfiled.
+        if (signal.aborted) throw error;
         log.warn(
           { runId: run.id, errName: (error as Error).name },
           "filing failed; note left unfiled",
