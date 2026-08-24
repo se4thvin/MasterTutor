@@ -181,6 +181,11 @@ describe("compose.yml", () => {
     });
     expect(Object.keys(env(pdf.services.agent!))).toContain("DOCLING_URL");
     expect(base.services.docling).toBeUndefined();
+    // The agent falls back to pdf.js: an unhealthy docling must never hold it back (QA-108).
+    expect(pdf.services.agent!.depends_on?.docling).toMatchObject({
+      condition: "service_started",
+      required: false,
+    });
   });
 
   it("lets agent, web and Traefik reach n.eko on every slot", () => {

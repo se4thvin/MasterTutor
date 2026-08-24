@@ -40,6 +40,7 @@ export interface ComposeService {
   cpus?: string | number;
   pids_limit?: number;
   logging?: { driver?: string; options?: Record<string, string> };
+  depends_on?: Record<string, { condition: string; required?: boolean }>;
 }
 export interface ComposeNetwork {
   name?: string;
