@@ -46,7 +46,9 @@ scripts/remote-test.sh qa --down                 # always: the QA stack holds th
 
 Visual baselines run in the fixture `ui` suite on the host (`e2e/visual.spec.ts`, skipped elsewhere).
 A missing baseline fails; write new ones only on purpose, then review every PNG before committing:
-`scripts/remote-test.sh ui e2e/visual.spec.ts --update-snapshots=missing`.
+`scripts/remote-test.sh ui e2e/visual.spec.ts --update-snapshots=missing` (or `=changed`, `-u`).
+With `--update-snapshots` or `-u`, the run copies back only the `*.spec.ts-snapshots/*.png` files it
+wrote or changed, names each one, and fetches them into this worktree. Nothing is committed.
 
 To open the QA stack in a browser on the Mac: `ssh -N -L 18080:127.0.0.1:18080 coursebite-build`,
 then go to `http://localhost:18080`. Hold `/tmp/mt-behaviour.lock` while a local browser drives it.
