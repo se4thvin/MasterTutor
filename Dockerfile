@@ -25,11 +25,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 # fakes) and testing.ts entries. scripts/check-agent-image.sh proves it.
 RUN find apps/agent packages -path '*/node_modules' -prune -o \
       \( -name '*.test.ts' -o -name testing -o -name testing.ts \) -print0 | xargs -0 rm -rf
-# OCR assets Node never loads (QA-093, ~45 MB): tesseract.js reads an LSTM core as .js + .wasm
-# (the .wasm.js inlines it for browsers; the non-LSTM cores serve OEMs we never ask for) and the
-# 4.0.0_best_int model (4.0.0 is the legacy one). scripts/check-agent-image.sh proves it.
-RUN find node_modules/.pnpm -path '*/node_modules/tesseract.js-core/tesseract-core*' \
-      ! -name 'tesseract-core*-lstm.js' ! -name 'tesseract-core*-lstm.wasm' -delete \
+# OCR assets Node never loads (QA-093, ~35 MB): in Node, tesseract.js-core reads each core as
+# .js + .wasm (the .wasm.js copies inline the wasm for browsers), and the model is the
+# 4.0.0_best_int one (4.0.0 is the legacy model). scripts/check-agent-image.sh proves it.
+RUN find node_modules/.pnpm -path '*/node_modules/tesseract.js-core/*.wasm.js' -delete \
  && find node_modules/.pnpm -path '*/node_modules/@tesseract.js-data/eng/4.0.0' -prune \
       -exec rm -rf {} +
 

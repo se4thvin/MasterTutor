@@ -38,12 +38,10 @@ docker run --rm --label mastertutor.ci=1 --entrypoint node --read-only --tmpfs /
     const out = await analyzeDocument({ render: 'auto', scale: 2 }, pdf, new AbortController().signal);
     process.exit(out.ok && out.pages.length === 3 && out.renders.length === 3 && out.blocks.length > 0 ? 0 : 1);" \
   || { echo "agent image cannot run the pdf-worker pipeline" >&2; exit 1; }
-# Only the OCR assets Node loads ship (QA-093): the LSTM cores read as .js + .wasm (never the
-# browser-only .wasm.js or the legacy cores) and the 4.0.0_best_int model; the worker still starts
-# offline from them.
+# Only the OCR assets Node loads ship (QA-093): no browser-only .wasm.js core copies and no
+# legacy 4.0.0 model; the worker still starts offline from what is left.
 extra="$(docker run --rm --label mastertutor.ci=1 --entrypoint sh "$IMAGE" -c "
-    find /app/node_modules/.pnpm -path '*/node_modules/tesseract.js-core/*' -name 'tesseract-core*' \
-      ! -name 'tesseract-core*-lstm.js' ! -name 'tesseract-core*-lstm.wasm'
+    find /app/node_modules/.pnpm -path '*/node_modules/tesseract.js-core/*.wasm.js'
     find /app/node_modules/.pnpm -path '*/node_modules/@tesseract.js-data/eng/4.0.0'")"
 if [[ -n "$extra" ]]; then
   echo "agent image ships unused OCR assets:" >&2
