@@ -1,15 +1,21 @@
 import { createRequire } from "node:module";
 import path from "node:path";
+import sharp from "sharp";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { abortable } from "../runtime/abortable.ts";
 import { containsSecret, type Box, type MaskSources } from "./masking.ts";
 
 /** One OCR'd line: its words in reading order, each with its box in image pixels. */
 export interface OcrLine {
-  words: Array<{ text: string; box: Box }>;
+  /** `confidence` is tesseract's 0–100 (absent from fakes: read as sure). */
+  words: Array<{ text: string; box: Box; confidence?: number }>;
 }
 
-/** Self-hosted OCR (tesseract, offline English model): reads pixels without sending them anywhere. */
+/**
+ * Self-hosted OCR (tesseract, offline English model): reads pixels without sending them anywhere.
+ * `words` is the agent loop's screenshot screen and always runs before queued `text` reads
+ * (capture images, PDF pages, page.png tiles), so a step never waits behind a long capture (QA-092).
+ */
 export interface LocalOcr {
   text(png: Uint8Array): Promise<string>;
   words(png: Uint8Array): Promise<OcrLine[]>;
@@ -17,6 +23,7 @@ export interface LocalOcr {
 
 interface TesseractWord {
   text: string;
+  confidence: number;
   bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 interface TesseractBlock {
@@ -33,7 +40,6 @@ const START_BACKOFF_MS = { first: 1_000, max: 60_000 };
  */
 export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
   let worker: Promise<Worker> | undefined;
-  let queue: Promise<unknown> = Promise.resolve();
   let backoff = START_BACKOFF_MS.first;
   let retryAt = 0;
   const ready = (): Promise<Worker> => {
@@ -72,11 +78,22 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
     await created.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
     return created;
   };
-  const serial = <T>(work: (ready: Worker) => Promise<T>): Promise<T> => {
-    const run = queue.then(async () => work(await ready()));
-    queue = run.catch(() => undefined);
-    return run;
+  // One recognition at a time; loop screens (`first`) are taken before any queued capture read.
+  const first: Array<() => void> = [];
+  const later: Array<() => void> = [];
+  let busy = false;
+  const next = () => {
+    const job = first.shift() ?? later.shift();
+    busy = job !== undefined;
+    job?.();
   };
+  const serial = <T>(work: (ready: Worker) => Promise<T>, urgent = false): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      (urgent ? first : later).push(() => {
+        ready().then(work).then(resolve, reject).finally(next);
+      });
+      if (!busy) next();
+    });
   return {
     text: (png) => serial(async (ready) => (await ready.recognize(Buffer.from(png))).data.text),
     words: (png) =>
@@ -88,6 +105,7 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
             paragraph.lines.map((line) => ({
               words: line.words.map((word) => ({
                 text: word.text,
+                confidence: word.confidence,
                 box: {
                   x: word.bbox.x0,
                   y: word.bbox.y0,
@@ -98,7 +116,7 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
             })),
           ),
         );
-      }),
+      }, true),
     async close() {
       const current = worker;
       worker = undefined;
@@ -150,6 +168,41 @@ export async function pixelsAreClean(
   );
 }
 
+/** page.png tiles: about two viewports each, overlapping so no line of text is cut in two. */
+const TILE = { height: 1_600, overlap: 120 };
+
+/**
+ * pixelsAreClean over a tall image read in overlapping tiles (QA-092): each tile is its own queued
+ * read, so a loop screenshot screen waits for one tile at most, never the whole page.
+ */
+export async function tallPixelsAreClean(
+  ocr: Pick<LocalOcr, "text">,
+  secrets: MaskSources,
+  png: Uint8Array,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!screensPixels(secrets)) return true;
+  let height: number;
+  let width: number;
+  try {
+    const meta = await sharp(png).metadata();
+    height = meta.height ?? 0;
+    width = meta.width ?? 0;
+  } catch {
+    return false;
+  }
+  if (height <= TILE.height) return pixelsAreClean(ocr, secrets, png, signal);
+  for (let top = 0; top < height; top += TILE.height - TILE.overlap) {
+    const tile = await sharp(png)
+      .extract({ left: 0, top, width, height: Math.min(TILE.height, height - top) })
+      .png()
+      .toBuffer();
+    if (!(await pixelsAreClean(ocr, secrets, new Uint8Array(tile), signal))) return false;
+    if (top + TILE.height >= height) break;
+  }
+  return true;
+}
+
 export type PixelScreen = { kind: "clean" } | { kind: "hit"; boxes: Box[] } | { kind: "failed" };
 
 /** Longest run of OCR words one secret is matched across (a secret OCR split into pieces). */
@@ -175,6 +228,11 @@ export async function screenPixels(
     signal.throwIfAborted();
     return { kind: "failed" };
   }
+  return screenLines(secrets, lines);
+}
+
+/** Where registered secrets show in lines already read (screenPixels without the read). */
+export function screenLines(secrets: MaskSources, lines: readonly OcrLine[]): PixelScreen {
   const boxes: Box[] = [];
   const exact = (words: OcrLine["words"]) =>
     containsSecret(secrets, words.map((word) => word.text).join(" ")) ||

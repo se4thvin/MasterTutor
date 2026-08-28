@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import { afterAll, describe, expect, it } from "vitest";
 import type { MaskSources } from "../browser/masking.ts";
-import { createLocalOcr, pixelsAreClean, screenPixels } from "./local-ocr.ts";
+import { createLocalOcr, pixelsAreClean, screenPixels, tallPixelsAreClean } from "./local-ocr.ts";
 
 const ocr = createLocalOcr();
 afterAll(() => ocr.close());
@@ -140,4 +140,38 @@ describe("confusable OCR reads (QA-099)", () => {
       kind: "clean",
     });
   });
+});
+
+describe("a long page.png read never holds up a loop screen (QA-092)", () => {
+  it("runs the loop's screen between page.png tiles, not after the whole page", async () => {
+    const lines = Array.from(
+      { length: 240 },
+      (_, i) =>
+        `<text x="20" y="${40 + i * 40}" font-family="sans-serif" font-size="22" fill="#000">Line ${i} of a long article about the citric acid cycle and its carriers</text>`,
+    ).join("");
+    const tall = new Uint8Array(
+      await sharp(
+        Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="9640"><rect width="1280" height="9640" fill="#fff"/>${lines}</svg>`,
+        ),
+      )
+        .png()
+        .toBuffer(),
+    );
+    const small = await image("pw MARMOT4CANARY");
+    const started = performance.now();
+    let pageDone = 0;
+    const page = tallPixelsAreClean(ocr, secrets("NOT-ON-THE-PAGE"), tall, signal).then(
+      (clean) => ((pageDone = performance.now()), clean),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const asked = performance.now();
+    const hit = await screenPixels(ocr, secrets("MARMOT4CANARY"), small, signal);
+    const screened = performance.now();
+    expect(await page).toBe(true);
+    expect(hit.kind).toBe("hit");
+    expect(screened).toBeLessThan(pageDone);
+    // At most one tile ahead of it: far less than the whole page's read.
+    expect(screened - asked).toBeLessThan((pageDone - started) / 2);
+  }, 180_000);
 });
