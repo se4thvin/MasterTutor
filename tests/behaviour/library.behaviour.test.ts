@@ -73,4 +73,25 @@ describe("the library on a live run", () => {
     expect(blocks.some((b) => b.origin === "ocr_model")).toBe(true);
     expect(agent.mock.requests.some((r) => r.body.text?.format?.name === "ocr_text")).toBe(true);
   }, 240_000);
+
+  it("captions a video through the registered video tool (B4)", async () => {
+    const captions: MockTurn = {
+      outputs: [{ type: "function", name: "video", args: { op: "captions", range: null } }],
+    };
+    agent.mock.setScenarios([{ name: "lib-video", turns: [captions, done] }]);
+    const runId = await createRun(agent, `[scenario:lib-video] Watch ${SITE}/youtube/watch.html`);
+    const run = await waitForRun(
+      agent,
+      runId,
+      (r) => r.status === "completed",
+      "run completed",
+      180_000,
+    );
+    const blocks = await agent.owner.db
+      .select()
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, run.noteId!));
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.every((b) => b.type === "transcript" && b.origin === "captions")).toBe(true);
+  }, 240_000);
 });
