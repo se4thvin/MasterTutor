@@ -166,7 +166,7 @@ describe("video tool (B4 done-when: the YouTube fixture produces a chaptered not
     const before = new Set(env.storage.objects.keys());
     const tool = createVideoTool({
       ...env.services,
-      localOcr: { text: async () => "Password: hunter2-canary" },
+      localOcr: { text: async () => "Password: hunter2-canary", words: async () => [] },
     });
     expect(await op(scope, { op: "keyframes", range: null }, tool, vault)).toMatchObject({
       kept: 0,
