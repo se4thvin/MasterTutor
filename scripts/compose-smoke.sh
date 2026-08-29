@@ -11,8 +11,12 @@ cd "$(dirname "$0")/.."
 
 # shellcheck source=lib/test-stack.sh
 source scripts/lib/test-stack.sh
-PORT="$(grep -E '^TEST_HTTP_PORT=' .env.test | cut -d= -f2)"
+env_test() { grep -E "^$1=" .env.test | cut -d= -f2; }
+# The shell's values win, as in Compose: the CI host gives each run its own TEST_HTTP_PORT
+# (scripts/remote-test/slots.sh) while the app's origin (PUBLIC_URL) stays the same.
+PORT="${TEST_HTTP_PORT:-$(env_test TEST_HTTP_PORT)}"
 BASE="http://localhost:${PORT:-18080}"
+ORIGIN="${PUBLIC_URL:-$(env_test PUBLIC_URL)}"
 
 take_stack_lock
 trap stop_stack EXIT
@@ -21,7 +25,7 @@ pass() { echo "ok - $*"; }
 psql_value() { "${DC[@]}" exec -T postgres psql -U owner -d mastertutor -tAc "$1"; }
 signup() {
   curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/sign-up/email" \
-    -H 'Content-Type: application/json' -H "Origin: $BASE" \
+    -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
     -d "{\"email\":\"$1\",\"password\":\"correct-horse-battery-staple\",\"name\":\"Smoke\"}"
 }
 

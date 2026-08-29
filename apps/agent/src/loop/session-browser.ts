@@ -12,7 +12,7 @@ import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import type { MaskSources } from "../browser/masking.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash } from "../browser/phash.ts";
-import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
+import { captureModelScreenshot, WITHHELD, withheldScreenshot } from "../browser/screenshot.ts";
 import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
@@ -119,7 +119,7 @@ export async function observeOnOnePage(
         origin: toOrigin(now),
         title: "",
         domHash: "",
-        screenshot: await withheldScreenshot(observation.screenshot),
+        screenshot: await withheldScreenshot(observation.screenshot, WITHHELD.navigating),
         // A black frame says nothing about the page: a random hash keeps loop detection from
         // treating consecutive withheld frames as the same screen (M8).
         phash: randomBytes(8).readBigUInt64BE(),

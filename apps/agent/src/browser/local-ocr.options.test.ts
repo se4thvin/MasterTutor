@@ -15,7 +15,7 @@ vi.mock("tesseract.js", () => ({
   }),
 }));
 
-const { createLocalOcr } = await import("./local-ocr.ts");
+const { createLocalOcr } = await import("../browser/local-ocr.ts");
 
 describe("local OCR loads only bundled files (never a CDN, never a shared cache)", () => {
   it("reads the English model from the bundled package and caches nothing", async () => {

@@ -317,7 +317,11 @@ export class RunLoop {
   }
 
   #pageHeader(obs: Observation): string {
-    return `Current page: ${wrapUntrusted(obs.origin, `${obs.title}\n${obs.url}`)}`;
+    const header = `Current page: ${wrapUntrusted(obs.origin, `${obs.title}\n${obs.url}`)}`;
+    // A black frame alone would look like a blank page: the model is told it was withheld (I-1).
+    return obs.screenshot.withheld
+      ? `${header}\nScreenshot withheld: ${obs.screenshot.withheld}.`
+      : header;
   }
 
   #callById(callId: string): PendingCall | undefined {
@@ -393,7 +397,7 @@ export class RunLoop {
       url: obs.url,
       screenshotKey: key,
       screenshot: obs.screenshot.png,
-      caption: obs.screenshot.dropped ? "Screenshot withheld: a secret field moved" : null,
+      caption: obs.screenshot.withheld ? `Screenshot withheld: ${obs.screenshot.withheld}` : null,
       result: unchanged
         ? { unchanged: true }
         : { url: obs.url, title: obs.title.slice(0, 300), domHash: obs.domHash },

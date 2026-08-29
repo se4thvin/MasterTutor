@@ -26,7 +26,7 @@ export function fakeLibraryServices(
         return "Quarterly results\n\nRevenue rose 12 percent on strong demand.";
       },
     },
-    localOcr: { text: async () => "" },
+    localOcr: { text: async () => "", words: async () => [] },
     filing: { decide: async () => ({ path: ["Inbox"], createLeaf: true }) },
     transcriber: {
       transcribe: async () => [{ start: 0, end: 3, text: "Welcome to the lecture.", speaker: "A" }],
