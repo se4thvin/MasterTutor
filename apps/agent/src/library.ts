@@ -12,6 +12,7 @@ import { createFilingModel, fileRunNote, type FilingModel } from "./notes/filing
 import { NoteWriter } from "./notes/note-writer.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
+import { isTimedtextUrl } from "./video/captions.ts";
 
 export interface LibraryDeps {
   db: Database;
@@ -50,6 +51,8 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
   return {
     functionTools: [register(createCaptureTool(services)), register(createAnnotateTool(services))],
+    // Caption tracks the player fetched stay readable for the video tool (preflight Q5).
+    responseLog: isTimedtextUrl,
     async onComplete({ run, log, step }) {
       try {
         await fileRunNote(services, { runId: run.id, workspaceId: run.workspaceId }, step);
