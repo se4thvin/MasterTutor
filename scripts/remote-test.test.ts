@@ -108,6 +108,18 @@ describe("remote test runner (D45, X4, D48)", () => {
 });
 
 describe("stack slots (scripts/remote-test/slots.sh, D48)", () => {
+  it("lists host subnets even when another run removes a network mid-scan", () => {
+    // A fake docker: `ls` names two networks, the second is gone by the time it is inspected.
+    const docker = `docker() { case "$1 $2" in
+      "network ls") printf 'n1\\nn2\\n' ;;
+      "network inspect") [[ "\${@: -1}" == n1 ]] && echo "10.9.0.0/24 " || { echo "network \${@: -1} not found" >&2; return 1; } ;;
+    esac; }`;
+    expect(slots(`${docker}; set -o pipefail; host_subnets`)).toEqual({
+      out: "10.9.0.0/24",
+      status: 0,
+    });
+  });
+
   const slotIds = Array.from({ length: 32 }, (_, slot) => slot);
   const env = slotIds.map(slotEnv);
 
