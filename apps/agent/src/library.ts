@@ -13,6 +13,7 @@ import { NoteWriter } from "./notes/note-writer.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
 import { isTimedtextUrl } from "./video/captions.ts";
+import { createTranscriber, type Transcriber } from "./video/transcriber.ts";
 
 export interface LibraryDeps {
   db: Database;
@@ -31,6 +32,8 @@ export interface LibraryServices {
   /** Self-hosted OCR that screens pixels for vault secrets before storage or OpenAI (A-M1). */
   localOcr: LocalOcr;
   filing: FilingModel;
+  /** Video audio → diarized text through the single OpenAI factory (D38). */
+  transcriber: Transcriber;
   log: Log;
 }
 
@@ -43,6 +46,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     ocr: createOcrModel(deps.openai),
     localOcr: createLocalOcr(),
     filing: createFilingModel(deps.openai),
+    transcriber: createTranscriber(deps.openai),
     log: deps.log,
   };
 }
