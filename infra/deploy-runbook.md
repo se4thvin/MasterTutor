@@ -137,7 +137,7 @@ mt-drill-<random> … down -v`. This confirms the format matches the drill. If D
   and json-file log rotation (10 MB × 3). Slots 4 GB / 2 CPUs / 4096 pids each (24 GB, 12 CPUs
   for six), agent 4 GB / 2, web 2 GB / 2, postgres 2 GB / 2, garage 1 GB / 1, migrate 1 GB / 1,
   garage-init 512 MB / 0.5.
-- Images are tagged `:prod` (`mastertutor/{web,node-runtime,browser-slot}:prod`), never the CI
+- Images are tagged `:prod` (`mastertutor/{web,node-runtime,agent,browser-slot}:prod`), never the CI
   `:local` tags that test runs on this host rebuild.
 
 - **After any Dokploy or Traefik update** (a Dokploy upgrade, or any tenant's change to

@@ -106,7 +106,8 @@ services:
       traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.permanent: "true"
 
   agent:
-    <<: *node-runtime-prod
+    <<: *logging
+    image: mastertutor/agent:prod
     # Run loop, screencast encoding and extractors.
     mem_limit: 4g
     cpus: 2
