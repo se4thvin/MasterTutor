@@ -116,7 +116,7 @@ describe("compose.yml", () => {
     expect(nets(base.services.postgres!)).toEqual(["backend"]);
     expect(nets(base.services.garage!)).toEqual(["backend"]);
     expect(nets(base.services.web!)).toEqual(["backend", "cdp", "edge"]);
-    expect(nets(base.services.agent!)).toEqual(["backend", "cdp", "pdf"]);
+    expect(nets(base.services.agent!)).toEqual(["audio", "backend", "cdp", "pdf"]);
     expect(base.services.agent!.networks!.cdp!.ipv4_address).toBe("172.30.231.10");
     expect(base.services.web!.networks!.cdp!.ipv4_address).toBe("172.30.231.11");
     expect(base.services.agent!.cap_drop).toEqual(["ALL"]);
@@ -242,7 +242,7 @@ describe("compose.yml", () => {
       const service = base.services[slot]!;
       const port = String(59001 + index);
       expect(service.image).toBe("mastertutor/browser-slot:local");
-      expect(nets(service)).toEqual(["cdp", "egress"]);
+      expect(nets(service)).toEqual(["cdp", "egress", "pulse"]);
       expect(service.cap_add).toEqual(["NET_ADMIN"]);
       expect(service.restart).toBe("always");
       expect(service.sysctls).toEqual({

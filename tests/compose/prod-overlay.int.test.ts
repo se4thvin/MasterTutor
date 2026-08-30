@@ -321,6 +321,7 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
     expect(pdf.networks.pdf).toMatchObject({ internal: true });
     expect(pdf.networks.pdf?.external).toBeFalsy();
     expect(Object.keys(pdf.services.agent!.networks ?? {}).sort()).toEqual([
+      "audio",
       "backend",
       "cdp",
       "pdf",
