@@ -2,15 +2,30 @@ import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import type { LibraryServices } from "../library.ts";
 import { writeContext } from "../notes/note-writer.ts";
 import { ToolError, type ToolContext } from "../tools/types.ts";
-import { pageVideoReveal } from "./page/player.ts";
+import { pageVideoReveal, pageVideoState, pageYoutubeData } from "./page/player.ts";
 
 export interface VideoContext {
   worlds: IsolatedWorlds;
   noteId: string;
   sourceId: string;
   url: string;
-  duration: number;
+  /** The content's length in seconds, or null when unknown (never an ad's length, B4 review I8). */
+  duration: number | null;
+  /** An ad is in the player right now. */
+  ad: boolean;
   meta: Record<string, unknown>;
+}
+
+/** YouTube's own length for the content first; the player's only when no ad is showing. */
+async function contentDuration(
+  worlds: IsolatedWorlds,
+): Promise<{ duration: number | null; ad: boolean }> {
+  const [data, state] = await Promise.all([
+    worlds.call(pageYoutubeData, []),
+    worlds.call(pageVideoState, []),
+  ]);
+  const player = !state.ad && Number.isFinite(state.duration) && state.duration > 0;
+  return { duration: data.lengthSeconds ?? (player ? state.duration : null), ad: state.ad };
 }
 
 /** Shared by every video op: the run's note and one `youtube` source per watched URL. */
@@ -23,6 +38,7 @@ export async function openVideoContext(
   ctx.session.guard.assertAgent(ctx.signal);
   const revealed = await worlds.call(pageVideoReveal, []);
   if (!revealed.found) throw new ToolError("no_video", "There is no video on this page");
+  const { duration, ad } = await contentDuration(worlds);
   const w = writeContext(ctx);
   const page = ctx.session.page;
   const title = (await page.title()) || page.url();
@@ -40,7 +56,8 @@ export async function openVideoContext(
       noteId,
       sourceId: existing.sourceId,
       url,
-      duration: revealed.duration,
+      duration,
+      ad,
       meta: existing.meta,
     };
   const canonical = await page
@@ -58,7 +75,7 @@ export async function openVideoContext(
     mhtmlKey: null,
     screenshotKey: null,
     snapshotSha256: null,
-    meta: { duration: revealed.duration },
+    meta: duration === null ? {} : { duration },
   });
-  return { worlds, noteId, sourceId, url, duration: revealed.duration, meta: {} };
+  return { worlds, noteId, sourceId, url, duration, ad, meta: {} };
 }
