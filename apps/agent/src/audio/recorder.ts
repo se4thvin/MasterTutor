@@ -1,11 +1,7 @@
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
-/** One chunk per transcription request (10 minutes, ~19 MB of 16 kHz mono WAV). */
-export const CHUNK_SECONDS = 600;
-const SAMPLE_RATE = 16_000;
-export const BYTES_PER_SECOND = SAMPLE_RATE * 2;
+import { BYTES_PER_SECOND, SAMPLE_RATE, wavHeader } from "./protocol.ts";
 
 export interface AudioRecording {
   /** Resolves when the first PCM arrives (a fresh stream can take seconds); rejects if parec ends first. */
@@ -13,42 +9,22 @@ export interface AudioRecording {
   /** When the first PCM arrived (ms since the epoch): chunk times count from here. */
   readonly startedAt: number;
   onChunk(callback: (file: string, index: number) => void): void;
+  /** Stops parec and writes the remainder; throws when recording or writing a chunk failed. */
   stop(): Promise<void>;
 }
 
-/** A canonical 44-byte PCM WAV header: 16 kHz, mono, 16-bit little-endian. */
-function wavHeader(dataBytes: number): Buffer {
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0, "ascii");
-  header.writeUInt32LE(36 + dataBytes, 4);
-  header.write("WAVEfmt ", 8, "ascii");
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(SAMPLE_RATE, 24);
-  header.writeUInt32LE(BYTES_PER_SECOND, 28);
-  header.writeUInt16LE(2, 32);
-  header.writeUInt16LE(16, 34);
-  header.write("data", 36, "ascii");
-  header.writeUInt32LE(dataBytes, 40);
-  return header;
-}
-
 /**
- * parec pulls the slot's output monitor over Pulse TCP as raw PCM; full chunks are written as WAV
- * files as they complete, the remainder on stop. The child gets the slot address and PATH only,
- * never the agent's environment (its secrets).
+ * parec pulls a slot's output monitor over Pulse TCP as raw PCM; full chunks are written as WAV
+ * files as they complete, the remainder on stop. The child gets PATH only. Runs in the
+ * audio-capture service, never in the agent (B4 review I7).
  */
-export function startAudioRecording(options: {
+export function startRecording(options: {
   server: string;
   dir: string;
+  chunkSeconds: number;
   parecPath?: string;
-  chunkSeconds?: number;
 }): AudioRecording {
-  const chunkBytes = Math.max(
-    2,
-    Math.floor((options.chunkSeconds ?? CHUNK_SECONDS) * SAMPLE_RATE) * 2,
-  );
+  const chunkBytes = Math.max(2, Math.floor(options.chunkSeconds * SAMPLE_RATE) * 2);
   const child = spawn(
     options.parecPath ?? "parec",
     [
@@ -74,6 +50,9 @@ export function startAudioRecording(options: {
       resolve({ code: signal === "SIGTERM" ? 0 : code, error: null }),
     );
   });
+  // No pid: the spawn failed (a kill then would signal our own process group).
+  const running = () =>
+    child.pid !== undefined && child.exitCode === null && child.signalCode === null;
   let startedAt = Date.now();
   let markReady: () => void = () => undefined;
   const ready = new Promise<void>((resolve, reject) => {
@@ -86,14 +65,24 @@ export function startAudioRecording(options: {
   let pending: Buffer[] = [];
   let pendingBytes = 0;
   let index = 0;
+  // Chunk writes run in order; the first failure is kept (never an unhandled rejection, I5), stops
+  // the recording and is what stop() throws.
   let written: Promise<void> = Promise.resolve();
+  let writeError: Error | null = null;
   const flush = (data: Buffer) => {
+    if (writeError) return;
     const file = join(options.dir, `chunk-${String(index).padStart(3, "0")}.wav`);
     const chunkIndex = index++;
-    written = written.then(async () => {
-      await writeFile(file, Buffer.concat([wavHeader(data.byteLength), data]));
-      for (const callback of callbacks) callback(file, chunkIndex);
-    });
+    written = written
+      .then(async () => {
+        if (writeError) return;
+        await writeFile(file, Buffer.concat([wavHeader(data.byteLength), data]));
+        for (const callback of callbacks) callback(file, chunkIndex);
+      })
+      .catch((error: unknown) => {
+        writeError ??= error instanceof Error ? error : new Error(String(error));
+        if (running()) child.kill("SIGTERM");
+      });
   };
   child.stdout.on("data", (data: Buffer) => {
     if (!flowing) {
@@ -121,23 +110,23 @@ export function startAudioRecording(options: {
       callbacks.push(callback);
     },
     async stop() {
-      // No pid: the spawn failed (a kill then would signal our own process group).
-      const running = () =>
-        child.pid !== undefined && child.exitCode === null && child.signalCode === null;
       if (running()) child.kill("SIGTERM");
       const timer = setTimeout(() => {
         if (running()) child.kill("SIGKILL");
       }, 10_000);
       const { code, error } = await exited;
       clearTimeout(timer);
+      // A kill mid-sample can leave an odd byte: keep whole samples only.
+      const tail = Buffer.concat(pending);
+      if (tail.byteLength >= 2) flush(tail.subarray(0, tail.byteLength - (tail.byteLength % 2)));
+      pending = [];
+      pendingBytes = 0;
+      await written;
+      if (writeError) throw new Error(`audio chunk could not be written: ${writeError.message}`);
       if (error || code !== 0)
         throw new Error(
           `audio recording failed (${error ? "not started" : `exit ${code}`}): ${stderr.trim().split("\n").at(-1) ?? ""}`,
         );
-      if (pendingBytes > 0) flush(Buffer.concat(pending));
-      pending = [];
-      pendingBytes = 0;
-      await written;
     },
   };
 }

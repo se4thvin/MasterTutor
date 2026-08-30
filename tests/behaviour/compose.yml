@@ -1,7 +1,8 @@
 # Agent-behaviour test stack (spec §12): two real slots plus static fixtures. Test-only.
 # The slots publish CDP on 127.0.0.1 so a host-side Vitest process can drive them, and accept
 # CDP from any source (CDP_ALLOWED_IP=0.0.0.0/0). Production never does either (Phase 0 compose.yml).
-# The slot entrypoint passes CDP_ALLOWED_IP to iptables unvalidated, so a CIDR must stay accepted.
+# The slot entrypoint accepts an address or a CIDR for CDP_ALLOWED_IP (validated), so this stays valid.
+# PulseAudio is admitted from audio-capture's static address only, as in production (B4 review I7).
 # n.eko (8080) and the idle probe (9224) are published on 127.0.0.1 too, for the B6 live-view tests (F9);
 # the same allow-all rule as CDP applies (F12).
 # The defaults are the laptop's fixed ports, subnet and image. On the shared CI host each run gets its
@@ -30,6 +31,7 @@ x-slot-env: &slot-env
   NEKO_ADMIN_SECRET: behaviour-admin-secret-0123456789abcdef
   NEKO_MEMBER_SECRET: behaviour-member-secret-0123456789abcde
   CDP_ALLOWED_IP: 0.0.0.0/0
+  PULSE_ALLOWED_IP: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.13
   NEKO_ALLOWED_IPS: 0.0.0.0/0
   SLOT_EGRESS_ALLOW_CIDRS: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.0/24
 
@@ -69,8 +71,40 @@ services:
       - 127.0.0.1:${BEHAVIOUR_NEKO_PORT_2:-18092}:8080
       - 127.0.0.1:${BEHAVIOUR_IDLE_PORT_2:-18192}:9224
 
+  # The service that records slot audio (production's hardening); the real-parec transcribe test
+  # drives it on its loopback port.
+  audio-capture:
+    image: ${BEHAVIOUR_AUDIO_IMAGE:-mastertutor/audio-capture:local}
+    build:
+      context: ../..
+      target: audio-capture
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5003/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - 127.0.0.1:${BEHAVIOUR_AUDIO_PORT:-19300}:5003
+    networks:
+      behaviour:
+        ipv4_address: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.13
+
 networks:
   behaviour:
     ipam:
       config:
         - subnet: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.0/24
+          # Static addresses (audio-capture's) sit below the dynamic range.
+          ip_range: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.128/25

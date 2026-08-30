@@ -184,7 +184,7 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
                   "Captions exist; use op captions instead",
                 );
               const result = await transcribeVideo(
-                { transcriber: services.transcriber },
+                { transcriber: services.transcriber, capture: services.audioCapture },
                 ctx,
                 video.worlds,
                 range,

@@ -269,10 +269,8 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
       expect(service.image, name).toMatch(/^mastertutor\/[a-z-]+:prod$/);
       expect(ciImages.has(service.image), name).toBe(false);
     }
-    const runtime = ["migrate", "garage-init"].map((n) => config.services[n]!.image);
+    const runtime = ["migrate", "agent", "garage-init"].map((n) => config.services[n]!.image);
     expect(new Set(runtime).size).toBe(1);
-    // The agent's own image: node-runtime plus parec (B4 transcription).
-    expect(config.services.agent!.image).toBe("mastertutor/agent:prod");
   });
 
   it("bounds every service's memory, CPU, processes and logs on the shared host (review I5)", () => {
@@ -297,6 +295,22 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
     expect(Object.keys(worker.networks ?? {})).toEqual(["pdf"]);
     expect(worker.environment ?? {}).toEqual({});
     expect(worker.read_only).toBe(true);
+  });
+
+  it("records slot audio only in audio-capture: no env, read-only, on cdp, the slots' only Pulse peer (B4 I7)", () => {
+    const capture = config.services["audio-capture"]!;
+    expect(capture.image).toBe("mastertutor/audio-capture:prod");
+    expect(capture.environment ?? {}).toEqual({});
+    expect(capture.read_only).toBe(true);
+    expect(capture.user).toBe("1000:1000");
+    expect(capture.cap_drop).toEqual(["ALL"]);
+    expect(Object.keys(capture.networks ?? {})).toEqual(["cdp"]);
+    const address = capture.networks!.cdp!.ipv4_address;
+    for (const slot of slots)
+      expect(env(config.services[slot]).PULSE_ALLOWED_IP, slot).toBe(address);
+    expect(address).not.toBe(config.services.agent!.networks!.cdp!.ipv4_address);
+    expect(env(config.services.agent).AUDIO_CAPTURE_URL).toBe("http://audio-capture:5003");
+    expect(prodModeProblems(config)).toEqual([]);
   });
 
   it("runs docling under the pdf profile on its own network, wired to the agent (P9-32, D42)", () => {

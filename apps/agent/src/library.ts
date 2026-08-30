@@ -15,6 +15,7 @@ import { createPdfWorkerClient, type PdfAnalyzer } from "./pdf/pdf-worker.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
 import { isTimedtextUrl } from "./video/captions.ts";
+import { type AudioCapture, createAudioCaptureClient } from "./video/audio-capture.ts";
 import { createTranscriber, type Transcriber } from "./video/transcriber.ts";
 import { createVideoTool } from "./video/video-tool.ts";
 
@@ -26,6 +27,8 @@ export interface LibraryDeps {
   doclingUrl?: string | null;
   /** The pdf-worker service (internal `pdf` network): PDFs are parsed there, never here. */
   pdfWorkerUrl: string;
+  /** The audio-capture service (on `cdp`): slot audio is recorded there, never here. */
+  audioCaptureUrl: string;
   log: Log;
 }
 
@@ -41,6 +44,8 @@ export interface LibraryServices {
   filing: FilingModel;
   /** Video audio → diarized text through the single OpenAI factory (D38). */
   transcriber: Transcriber;
+  /** The audio-capture service (B4 review I7). */
+  audioCapture: AudioCapture;
   /** docling-serve (profile `pdf`), or null for the pdf.js path. */
   docling: DoclingClient | null;
   /** The pdf-worker service (B5 review I-1). */
@@ -58,6 +63,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     localOcr: sharedLocalOcr(),
     filing: createFilingModel(deps.openai),
     transcriber: createTranscriber(deps.openai),
+    audioCapture: createAudioCaptureClient(deps.audioCaptureUrl),
     docling: deps.doclingUrl ? createDoclingClient(deps.doclingUrl) : null,
     pdf: createPdfWorkerClient(deps.pdfWorkerUrl),
     log: deps.log,

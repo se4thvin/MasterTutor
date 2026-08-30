@@ -59,6 +59,8 @@ export const AgentEnv = z.object({
   DOCLING_URL: z.url({ protocol: /^https?$/ }).optional(),
   /** The pdf-worker service on the internal `pdf` network: the only place PDFs are parsed (B5 I-1). */
   PDF_WORKER_URL: z.url({ protocol: /^https?$/ }),
+  /** The audio-capture service on `cdp`: the only place a slot's audio is recorded (B4 review I7). */
+  AUDIO_CAPTURE_URL: z.url({ protocol: /^https?$/ }),
   VAULT_PRIVATE_KEY: Base64Key32,
   NEKO_ADMIN_SECRET: Secret,
   ...S3Access,
