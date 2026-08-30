@@ -203,7 +203,14 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
     approvals: pendingFrom(detail),
     outcomes: [],
     messages: [],
-    downloads: [],
+    // From the snapshot: a reload resumes the stream past their download_ready events.
+    downloads: detail.downloads.map(({ id, assetId, filename, bytes, at }) => ({
+      id,
+      assetId,
+      filename,
+      bytes,
+      at,
+    })),
     // From the snapshot: after a reload the stream resumes past their download_pending events (A11).
     heldDownloads: detail.heldDownloads.map(({ id, filename, bytes }) => ({ id, filename, bytes })),
     errors: [],
@@ -301,6 +308,9 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
             ],
           };
     case "download_ready":
+      // Replayed after the snapshot already listed it: listed once.
+      if (m.downloads.some((d) => d.id === e.downloadId))
+        return { ...m, heldDownloads: m.heldDownloads.filter((d) => d.id !== e.downloadId) };
       return {
         ...m,
         heldDownloads: m.heldDownloads.filter((d) => d.id !== e.downloadId),
