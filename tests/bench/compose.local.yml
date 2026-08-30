@@ -1,0 +1,73 @@
+# D47 local-host override: compose.yml + compose.prod.yml on this Mac, with no Dokploy (one heavy stack, D46).
+# Only what a laptop lacks changes:
+#   - Domain and TLS: DOMAIN=localhost, TRAEFIK_ENTRYPOINT=web and TRAEFIK_TLS=false come from .env.bench.
+#     PUBLIC_URL=http://localhost:18080 (Better Auth issues plain cookies for an http baseURL).
+#   - Ingress: a loopback Traefik (docker provider, like Dokploy's) on edge and on cdp at .12, so
+#     compose.prod.yml's web and /live labels are exercised as written. web's certresolver and its
+#     http->https redirect router are reset: locally the main router already listens on `web`.
+#   - Networks: Dokploy's external mastertutor-cdp becomes a local one.
+#   - Docker Desktop has no AppArmor profile, so slots keep seccomp (and Chromium's own sandbox) only.
+#   - Media ports stay on loopback (PUBLIC_IP=127.0.0.1).
+# Never add test services or test env here. tests/compose/prod-overlay.int.test.ts checks prod mode.
+services:
+  traefik:
+    image: traefik:v3.7.13
+    command:
+      - --entrypoints.web.address=:80
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --ping=true
+      - --log.level=WARN
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "127.0.0.1:18080:80"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      # cdp is internal, so the published port needs a second, routable network (as in compose.test.yml).
+      edge: {}
+      cdp:
+        ipv4_address: 172.30.231.12
+
+  web:
+    labels:
+      traefik.http.routers.mastertutor-web.tls.certresolver: !reset null
+      traefik.http.routers.mastertutor-web-http.rule: !reset null
+      traefik.http.routers.mastertutor-web-http.entrypoints: !reset null
+      traefik.http.routers.mastertutor-web-http.middlewares: !reset null
+      traefik.http.routers.mastertutor-web-http.service: !reset null
+
+  browser-1:
+    security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    ports: !override ["127.0.0.1:59001:59001/udp", "127.0.0.1:59001:59001/tcp"]
+  browser-2:
+    security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    ports: !override ["127.0.0.1:59002:59002/udp", "127.0.0.1:59002:59002/tcp"]
+  browser-3:
+    security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    ports: !override ["127.0.0.1:59003:59003/udp", "127.0.0.1:59003:59003/tcp"]
+  browser-4:
+    security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    ports: !override ["127.0.0.1:59004:59004/udp", "127.0.0.1:59004:59004/tcp"]
+  browser-5:
+    security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    ports: !override ["127.0.0.1:59005:59005/udp", "127.0.0.1:59005:59005/tcp"]
+  browser-6:
+    security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    ports: !override ["127.0.0.1:59006:59006/udp", "127.0.0.1:59006:59006/tcp"]
+
+networks:
+  cdp: !override
+    name: mastertutor-cdp
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.231.0/24
+          ip_range: 172.30.231.128/25

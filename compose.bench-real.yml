@@ -1,0 +1,11 @@
+# Real-model fixture benchmark on the test stack: the agent and web call OpenAI, not llm-mock.
+# OPENAI_API_KEY_REAL comes from scripts/bench-real-fixtures.sh and is never echoed. Mac only (§3.5).
+services:
+  agent:
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY_REAL:?run via scripts/bench-real-fixtures.sh}
+      OPENAI_BASE_URL: ""
+  web:
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY_REAL:?run via scripts/bench-real-fixtures.sh}
+      OPENAI_BASE_URL: ""

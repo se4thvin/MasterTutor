@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -32,6 +33,24 @@ const vars = (text: string) =>
   Object.fromEntries(text.split("\n").map((line) => line.split("=") as [string, string]));
 const slotEnv = (slot: number) => vars(slots(`slot_networks ${slot} && slot_ports ${slot}`).out);
 const overlaps = (a: string, b: string) => slots(`cidr_overlaps ${a} ${b}`).status === 0;
+
+/**
+ * slots.sh and snapshot.sh run only on the Linux CI host, which has flock and bash 4+ (`exec {fd}>`).
+ * A stock Mac has neither, so the cases that execute them run where those exist (the host, Linux
+ * CI) and are skipped on a laptop; the static checks run everywhere.
+ */
+const hostShell =
+  spawnSync("bash", ["-c", "command -v flock >/dev/null && ((BASH_VERSINFO[0] >= 4))"]).status ===
+  0;
+
+describe("host-only script cases", () => {
+  it.runIf(process.env["MT_CI_RUN_ID"] !== undefined)(
+    "run on the CI host, never silently skipped there",
+    () => {
+      expect(hostShell).toBe(true);
+    },
+  );
+});
 
 describe("remote test runner (D45, X4, D48)", () => {
   it("offers the full-stack suites beside the Vitest, image and fixture UI suites", () => {
@@ -242,19 +261,93 @@ esac
     );
   }
 
-  it("ignores a network that vanished mid-inspect and still skips a real leftover", () => {
-    const result = allocate();
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("slot 1");
-    expect(result.stderr).toContain("skipping stack slot 0: network 10.213.3.0/24");
-  });
+  it.runIf(hostShell)(
+    "ignores a network that vanished mid-inspect and still skips a real leftover",
+    () => {
+      const result = allocate();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("slot 1");
+      expect(result.stderr).toContain("skipping stack slot 0: network 10.213.3.0/24");
+    },
+  );
 
-  it("fails rather than allocate blind when the networks cannot be listed", () => {
+  it.runIf(hostShell)("fails rather than allocate blind when the networks cannot be listed", () => {
     expect(allocate({ STUB_LS_FAIL: "1" }).status).not.toBe(0);
   });
 
   it("checks the host only after taking the seat, so check and allocation are one step", () => {
     const body = /^acquire_slot\(\) \{[\s\S]*?^\}/m.exec(read("./remote-test/slots.sh"))?.[0] ?? "";
     expect(body.indexOf("host_subnets")).toBeGreaterThan(body.indexOf("flock -n"));
+  });
+});
+
+describe("per-run snapshots of one worktree's sync (remote-test/snapshot.sh)", () => {
+  /** Runs snapshot.sh functions in a scratch tree: base/ is the synced worktree. */
+  function snapshot(script: string) {
+    const dir = mkdtempSync(join(tmpdir(), "mt-snap-"));
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail; source "$1/scripts/remote-test/snapshot.sh"; cd "$2"; ${script}`,
+        "bash",
+        fileURLToPath(cwd),
+        dir,
+      ],
+      { encoding: "utf8" },
+    );
+    return { ...result, dir };
+  }
+  const SETUP = `mkdir -p base/src base/node_modules/x base/apps/web/test-results base/apps/web/.next
+    echo v1 >base/src/a.ts; echo dep >base/node_modules/x/i.js; echo old >base/apps/web/test-results/r
+    echo built >base/apps/web/.next/b`;
+
+  it.runIf(hostShell)("copies the sources, never node_modules, build output or old results", () => {
+    const { status, stdout, stderr, dir } = snapshot(`${SETUP}
+      take_snapshot "$PWD/base" "$PWD/run/src" "$PWD/sync.lock"
+      find run/src -type f | sort`);
+    expect(status, stderr).toBe(0);
+    expect(stdout.trim()).toBe("run/src/src/a.ts");
+    expect(readFileSync(join(dir, "run/src/src/a.ts"), "utf8")).toBe("v1\n");
+  });
+
+  it.runIf(hostShell)("keeps the run's files when a later sync rewrites the worktree", () => {
+    const { status, stdout, stderr } = snapshot(`${SETUP}
+      take_snapshot "$PWD/base" "$PWD/run/src" "$PWD/sync.lock"
+      echo v2 >base/src/a.ts; echo new >base/src/b.ts
+      cat run/src/src/a.ts; ls run/src/src; ls -A run/src | tr '\\n' ' '`);
+    expect(status, stderr).toBe(0);
+    expect(stdout.split("\n")).toEqual(["v1", "a.ts", "apps src "]);
+  });
+
+  it.runIf(hostShell)("waits for a sync in progress, so it never copies a half-synced tree", () => {
+    // A sync holds the lock and finishes writing after 500 ms; the snapshot must see its end.
+    const { status, stdout, stderr } = snapshot(`${SETUP}
+      flock sync.lock bash -c 'sleep 0.5; echo synced >base/src/last.ts' &
+      sleep 0.1
+      take_snapshot "$PWD/base" "$PWD/run/src" "$PWD/sync.lock"
+      cat run/src/src/last.ts`);
+    expect(status, stderr).toBe(0);
+    expect(stdout.trim()).toBe("synced");
+  });
+
+  it.runIf(hostShell)("publishes the run's results back to the synced folder", () => {
+    const { status, stdout, stderr } = snapshot(`${SETUP}
+      mkdir -p run/src/apps/web/test-results run/src/apps/web/e2e/.out
+      echo fresh >run/src/apps/web/test-results/r2; echo out >run/src/apps/web/e2e/.out/o
+      publish_results "$PWD/run/src" "$PWD/base" "$PWD/sync.lock"
+      ls base/apps/web/test-results; cat base/apps/web/e2e/.out/o`);
+    expect(status, stderr).toBe(0);
+    expect(stdout.split("\n")).toEqual(["r2", "out", ""]);
+  });
+
+  it("syncs under the same per-worktree lock the host's snapshots take", () => {
+    expect(client).toContain(
+      '--rsync-path="mkdir -p $remote_dir mt-ci/.sync && flock mt-ci/.sync/$name.lock rsync"',
+    );
+    expect(host).toContain('sync_lock="$HOME/mt-ci/.sync/$(basename "$base").lock"');
+    expect(host).toMatch(
+      /^take_snapshot "\$base" "\$run_dir\/src" "\$sync_lock"\nroot="\$run_dir\/src"$/m,
+    );
   });
 });

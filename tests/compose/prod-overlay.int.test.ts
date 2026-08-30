@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -391,8 +391,7 @@ describe("compose.prod.yml without Dokploy (D47)", () => {
   });
 });
 
-// Task 22A creates tests/bench/compose.local.yml and deletes this .skipIf(...) in its first step.
-describe.skipIf(!existsSync(PROD_LIKE_LOCAL_FILES[2]))("the D47 bench stack", () => {
+describe("the D47 bench stack", () => {
   it("is production mode: AGENT_TEST_MODE=0, no WEB_FIXTURE_API, no llm-mock", () => {
     const bench = composeConfig(".env.test", PROD_LIKE_LOCAL_FILES, {
       env: { DOMAIN: "localhost", TRAEFIK_ENTRYPOINT: "web", TRAEFIK_TLS: "false" },

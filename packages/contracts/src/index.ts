@@ -16,6 +16,8 @@ export * from "./api/dto.ts";
 export * from "./api/contract.ts";
 export * from "./vault.ts";
 export * from "./run-stream.ts";
+export * from "./step-result.ts";
+export * from "./untrusted.ts";
 export * from "./folder-rules.ts";
 export * from "./fidelity.ts";
 export * from "./markdown.ts";

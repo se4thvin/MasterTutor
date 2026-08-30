@@ -3,13 +3,13 @@ import {
   toOrigin,
   type FunctionToolName,
   type ToolProfile,
+  wrapUntrusted,
 } from "@mastertutor/contracts";
 import { NO_MASK_SOURCES, redactDeep, type MaskSources } from "../browser/masking.ts";
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import type { ApprovalRequest } from "@mastertutor/contracts";
 import { ToolError, type ApprovalContext, type RegisteredTool, type ToolContext } from "./types.ts";
-import { wrapUntrusted } from "./untrusted.ts";
 
 export interface ToolRun {
   output: string;
