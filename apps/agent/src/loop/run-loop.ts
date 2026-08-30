@@ -1035,7 +1035,9 @@ export class RunLoop {
       };
       await store.commit({ steps: [{ seq, phase: "act", state: "started", action }] });
       // One collector per call: a function tool's note writes join this act's commit (B2 seam F2).
-      const step = new StepCollector();
+      const step = new StepCollector({
+        usdLeft: this.#run.budget.maxUsd - this.#run.usage.usd,
+      });
       let executed: Executed;
       try {
         executed = await this.#execute(call, signal, step);
