@@ -5,6 +5,7 @@ import {
   type Controller,
   type Plan,
   type RunStatus,
+  type ToolProfile,
   type Usage,
   type WaitReason,
 } from "@mastertutor/contracts";
@@ -18,6 +19,7 @@ export interface RunSnapshot {
   goal: string;
   model: string;
   approvalMode: ApprovalMode;
+  toolProfile: ToolProfile;
   budget: Budget;
   usage: Usage;
   allowedOrigins: string[];
@@ -32,6 +34,7 @@ export function snapshotOf(row: RunRecord): RunSnapshot {
     goal: row.goal,
     model: row.model,
     approvalMode: row.approvalMode,
+    toolProfile: row.toolProfile,
     budget: row.budget,
     usage: row.usage,
     allowedOrigins: [...row.allowedOrigins],

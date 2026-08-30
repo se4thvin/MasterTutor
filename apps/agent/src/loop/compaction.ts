@@ -1,4 +1,4 @@
-import { CompactionSummary } from "@mastertutor/contracts";
+import { CompactionSummary, type ToolProfile } from "@mastertutor/contracts";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { CallResult, ModelCaller } from "../llm/caller.ts";
 import { userMessage } from "../llm/items.ts";
@@ -13,6 +13,7 @@ export interface CompactionDeps {
   caller: Pick<ModelCaller, "call">;
   model: string;
   instructions: string;
+  toolProfile: ToolProfile;
   signal: AbortSignal;
 }
 
@@ -42,7 +43,13 @@ function parseSummary(output: readonly unknown[]): CompactionSummary {
 
 async function summarize(deps: CompactionDeps, input: ResponseInputItem[]): Promise<Compacted> {
   const call = await deps.caller.call(
-    { model: deps.model, instructions: deps.instructions, input, format: "compaction_summary" },
+    {
+      model: deps.model,
+      instructions: deps.instructions,
+      toolProfile: deps.toolProfile,
+      input,
+      format: "compaction_summary",
+    },
     deps.signal,
   );
   return { summary: parseSummary(call.reply.output), call, input };

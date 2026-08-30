@@ -32,7 +32,7 @@ import { UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL } from "../tools/computer
 import type { CallApproval } from "../tools/types.ts";
 import { wrapUntrusted } from "../tools/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
-import { AGENT_INSTRUCTIONS, NUDGE, goalText } from "../llm/instructions.ts";
+import { NUDGE, agentInstructions, goalText } from "../llm/instructions.ts";
 import {
   callSignature,
   computerCallOutput,
@@ -521,7 +521,8 @@ export class RunLoop {
     const compactionDeps = {
       caller: guarded,
       model: this.#run.model,
-      instructions: AGENT_INSTRUCTIONS,
+      instructions: agentInstructions(this.#run.toolProfile),
+      toolProfile: this.#run.toolProfile,
       signal,
     };
     /** Starts a fresh context from a summary; this turn's outputs were answered inside the compaction. */
@@ -550,7 +551,8 @@ export class RunLoop {
     let input: ResponseInputItem[] = [];
     const request = () => ({
       model: this.#run.model,
-      instructions: AGENT_INSTRUCTIONS,
+      instructions: agentInstructions(this.#run.toolProfile),
+      toolProfile: this.#run.toolProfile,
       input,
       format: "agent_turn" as const,
     });
