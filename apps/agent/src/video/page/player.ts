@@ -141,6 +141,8 @@ export function pageYoutubeData(): {
   initialDataScript: string | null;
   description: string | null;
   lengthSeconds: number | null;
+  /** The video the inline player response describes: after SPA navigation, not the one on screen. */
+  videoId: string | null;
 } {
   const script = [...document.scripts].find((s) => (s.textContent ?? "").includes("ytInitialData"));
   const text = script?.textContent ?? null;
@@ -151,9 +153,11 @@ export function pageYoutubeData(): {
     (s.textContent ?? "").includes("ytInitialPlayerResponse"),
   );
   const length = /"lengthSeconds"\s*:\s*"?(\d{1,6})"?/.exec(player?.textContent ?? "");
+  const id = /"videoId"\s*:\s*"([\w-]{1,32})"/.exec(player?.textContent ?? "");
   return {
     initialDataScript: text && text.length <= 5_000_000 ? text : null,
     description: description ? description.innerText.slice(0, 20_000) : null,
     lengthSeconds: length?.[1] && Number(length[1]) > 0 ? Number(length[1]) : null,
+    videoId: id?.[1] ?? null,
   };
 }
