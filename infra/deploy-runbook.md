@@ -164,10 +164,40 @@ is the production gate.
 
 ## 11. Recorded deviations from spec §3.1 and §13
 
-- docling runs on its own internal `pdf` network (B5 decision 17). Until B5 merges, the `pdf`
-  profile has no service and `compose.prod.yml` does not yet pin `DOCLING_URL`.
+- docling runs on its own internal `pdf` network, shared only with the agent (B5 decision 17;
+  spec §3.1 says `backend`). It has no route to Postgres, Garage or the internet, runs read-only
+  with no capabilities, and `compose.prod.yml` pins the agent's `DOCLING_URL=http://docling:5001`.
+- PDFs are parsed only in `pdf-worker` (B5 review I-1), a container from the node-runtime image on
+  the same `pdf` network: no env, no egress, read-only root, uid 1000, 4 GB (two PDFs at once fit
+  its memory budget) / 2 CPUs / 128 pids, restarted when it exits. Each PDF runs in a
+  `node --permission` child that is killed at 120 s. The agent sends bytes and reads back
+  schema-checked JSON capped at 128 MiB, at most 20,000 blocks (past that the note is partial and
+  records `blocksTruncated`).
+- `internal: true` networks block DNS forwarding only on Docker Engine ≥ 26.0.0 (or 25.0.5;
+  CVE-2024-29018). The host must run such a version, or pdf-worker and docling could leak PDF
+  content through DNS. The CI host runs 29.2.1.
+- PDFs up to 100 MiB are captured, but the original file is stored only up to the 25 MiB asset
+  limit; the source records `originalWithheld: "too_large"` (or `"unscreened"` when a page image
+  was withheld by the secret screen). Revisit when object reads stream (preflight S8).
 - No coturn (D42).
 - ForwardAuth runs by `.11`, before strip (D41, B6 §7).
 - web is not on `dokploy-network`; its router lives in `compose.prod.yml` (review I2).
 - Dokploy backups replace a custom dump schedule (D41).
 - No host firewall or sysctl changes (D41, D45).
+
+## 12. Third-party images and licences
+
+Every third-party image is free and open source (CLAUDE.md cost rule). The one that runs untrusted
+input with model weights is pinned by digest, the digest verified offline on the CI host:
+
+- `quay.io/docling-project/docling-serve-cpu:v1.36.0@sha256:225c8586e20d5d0fc6811a9e0e044fa602bcc4393f00389009bad42d6787b58f`
+  - Code: docling-serve 1.36.0, docling-slim 2.132.0, docling-core 2.99.0, docling-parse 7.22.1,
+    docling-ibm-models 4.0.3, docling-jobkit 3.8.1: MIT. EasyOCR 1.7.2 and RapidOCR 3.9.2:
+    Apache-2.0. PyTorch: BSD-3-Clause.
+  - Model weights baked into the image (`DOCLING_SERVE_ARTIFACTS_PATH`): docling-layout-heron and
+    its ONNX export (Apache-2.0), docling-models / TableFormer (CDLA-Permissive-2.0),
+    DocumentFigureClassifier v2.5 (MIT), EasyOCR detection and recognition weights (Apache-2.0),
+    RapidOCR PP-OCR models (Apache-2.0, from PaddleOCR).
+  - To update: pull the new tag on the CI host, read its digest, rerun the offline check
+    (`--network none --read-only`, convert the fixture), then change compose.yml and
+    `apps/agent/src/pdf/both-paths.int.test.ts` together.

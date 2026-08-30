@@ -291,8 +291,33 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
     }
   });
 
-  // Deferred until B5 (docling, profile pdf) merges: "runs docling under the pdf profile on its own
-  // network, wired to the agent (P9-32, D42)" with DOCLING_URL pinned to http://docling:5001.
+  it("runs pdf-worker from the production image with no env, on the pdf network only (B5 I-1)", () => {
+    const worker = config.services["pdf-worker"]!;
+    expect(worker.image).toBe("mastertutor/node-runtime:prod");
+    expect(Object.keys(worker.networks ?? {})).toEqual(["pdf"]);
+    expect(worker.environment ?? {}).toEqual({});
+    expect(worker.read_only).toBe(true);
+  });
+
+  it("runs docling under the pdf profile on its own network, wired to the agent (P9-32, D42)", () => {
+    const pdf = prod({}, ["pdf"]);
+    const docling = pdf.services.docling!;
+    expect(Object.keys(docling.networks ?? {})).toEqual(["pdf"]);
+    expect(pdf.networks.pdf).toMatchObject({ internal: true });
+    expect(pdf.networks.pdf?.external).toBeFalsy();
+    expect(Object.keys(pdf.services.agent!.networks ?? {}).sort()).toEqual([
+      "backend",
+      "cdp",
+      "pdf",
+    ]);
+    expect(env(pdf.services.agent).DOCLING_URL).toBe("http://docling:5001");
+    expect(docling.ports ?? []).toEqual([]);
+    expect(Number(docling.mem_limit)).toBeGreaterThan(0);
+    expect(Number(docling.cpus)).toBeGreaterThan(0);
+    expect(docling.pids_limit).toBeGreaterThan(0);
+    expect(docling.logging).toMatchObject({ driver: "json-file" });
+    expect(prodModeProblems(pdf)).toEqual([]);
+  });
 });
 
 // D47: compose.prod.yml must also run on the Mac with no Dokploy, through one local override.

@@ -115,6 +115,16 @@ services:
     environment:
       AGENT_TEST_MODE: "0"
       OPENAI_BASE_URL: ""
+      # Production always runs profile pdf (COMPOSE_PROFILES=pdf, scripts/deploy/check-env.ts).
+      DOCLING_URL: http://docling:5001
+
+  # Bounds and hardening are in compose.yml; production adds the image tag and log limits.
+  pdf-worker:
+    <<: *node-runtime-prod
+
+  # Bounds and hardening are in compose.yml; production adds the shared host's log limits.
+  docling:
+    <<: *logging
 
   browser-1:
     <<: *slot-prod

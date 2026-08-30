@@ -31,6 +31,12 @@ export function fakeLibraryServices(
     transcriber: {
       transcribe: async () => [{ start: 0, end: 3, text: "Welcome to the lecture.", speaker: "A" }],
     },
+    docling: null,
+    pdf: {
+      analyze: async () => {
+        throw new Error("this test has no pdf worker (testing/pdf-worker.ts starts one)");
+      },
+    },
     log: testLog,
     ...overrides,
     storage,
