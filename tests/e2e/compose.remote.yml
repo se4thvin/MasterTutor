@@ -90,6 +90,10 @@ networks:
     labels: *ci-labels
   pdf:
     labels: *ci-labels
+  pulse:
+    labels: *ci-labels
+  audio:
+    labels: *ci-labels
 
 volumes:
   pgdata:

@@ -22,7 +22,7 @@ x-slot: &slot
   # The downloads volume on a host folder, so a test (the agent's side) sees what the slot saved.
   volumes:
     - ${BEHAVIOUR_DOWNLOADS:-/tmp/mastertutor-behaviour-downloads}:/downloads
-  networks: [behaviour]
+  networks: [behaviour, pulse]
   depends_on:
     fixtures:
       condition: service_started
@@ -31,7 +31,7 @@ x-slot-env: &slot-env
   NEKO_ADMIN_SECRET: behaviour-admin-secret-0123456789abcdef
   NEKO_MEMBER_SECRET: behaviour-member-secret-0123456789abcde
   CDP_ALLOWED_IP: 0.0.0.0/0
-  PULSE_ALLOWED_IP: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.13
+  PULSE_ALLOWED_IP: ${PULSE_SUBNET_PREFIX:-172.30.243}.10
   NEKO_ALLOWED_IPS: 0.0.0.0/0
   SLOT_EGRESS_ALLOW_CIDRS: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.0/24
 
@@ -97,14 +97,23 @@ services:
       retries: 30
     ports:
       - 127.0.0.1:${BEHAVIOUR_AUDIO_PORT:-19300}:5003
+    # As in production: the slots only over `pulse`; `audio` carries the test's loopback port.
     networks:
-      behaviour:
-        ipv4_address: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.13
+      audio: {}
+      pulse:
+        ipv4_address: ${PULSE_SUBNET_PREFIX:-172.30.243}.10
 
 networks:
   behaviour:
     ipam:
       config:
         - subnet: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.0/24
-          # Static addresses (audio-capture's) sit below the dynamic range.
-          ip_range: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.128/25
+  # audio-capture ↔ slots (PulseAudio only), as in production (B4 re-review I7).
+  pulse:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${PULSE_SUBNET_PREFIX:-172.30.243}.0/24
+          ip_range: ${PULSE_SUBNET_PREFIX:-172.30.243}.128/25
+  # Only audio-capture: its published port for the test (an internal network cannot publish).
+  audio: {}

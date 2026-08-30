@@ -57,12 +57,18 @@ export function prodModeProblems(config: ComposeConfig): string[] {
   if (capture && capture.read_only !== true) {
     problems.push("audio-capture.read_only: must be true (B4 I7)");
   }
-  const captureAddress = capture?.networks?.cdp?.ipv4_address;
+  if (capture?.networks && "cdp" in capture.networks) {
+    problems.push("audio-capture.networks: must not join cdp (B4 I7)");
+  }
+  if (config.services.agent?.networks && "pulse" in config.services.agent.networks) {
+    problems.push("agent.networks: must not join pulse (B4 I7)");
+  }
+  const captureAddress = capture?.networks?.pulse?.ipv4_address;
   for (const [name, service] of Object.entries(config.services)) {
     if (!SLOT.test(name)) continue;
     const pulse = service.environment?.PULSE_ALLOWED_IP;
     if (!captureAddress || pulse !== captureAddress) {
-      problems.push(`${name}.PULSE_ALLOWED_IP: must be audio-capture's cdp address only (B4 I7)`);
+      problems.push(`${name}.PULSE_ALLOWED_IP: must be audio-capture's pulse address only (B4 I7)`);
     }
   }
   return problems;
