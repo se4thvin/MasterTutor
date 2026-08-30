@@ -3,7 +3,8 @@
 # the node-runtime stage and runs scripts/scan-test-code.ts inside it: no *.test.ts, no testing/
 # directory, no file that loads a test framework. The scanner's rules are its own, independent of
 # how the Dockerfile prunes. Exits 1 with the offenders. Then the audio-capture image (B4 review
-# I7): no test code, parec present, the service answering under compose's hardening.
+# I7): no test code, parec present, the service answering under compose's hardening, and
+# apps/browser-slot/test/verify-pulse.sh against a real slot.
 # Usage: bash scripts/check-agent-image.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,9 +14,10 @@ IMAGE="${AGENT_IMAGE_TAG:-mastertutor-agent-image-check:local}"
 # The run's own tags (scripts/remote-test.sh removes mastertutor/*:<run> at exit).
 RUN="${MT_CI_RUN_ID:-local}"
 AUDIO_IMAGE="mastertutor/audio-capture:$RUN"
+SLOT_IMAGE="mastertutor/browser-slot:$RUN"
 cleanup() {
   docker image rm -f "$IMAGE" >/dev/null 2>&1 || true
-  if [[ "$RUN" == local ]]; then docker image rm -f "$AUDIO_IMAGE" >/dev/null 2>&1 || true; fi
+  if [[ "$RUN" == local ]]; then docker image rm -f "$AUDIO_IMAGE" "$SLOT_IMAGE" >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT
 
@@ -61,3 +63,5 @@ docker run --rm --label mastertutor.ci=1 --read-only --tmpfs /tmp --user 1000:10
       sleep 0.2
     done; exit 1' || { echo "audio-capture service does not start hardened" >&2; exit 1; }
 echo "ok - audio-capture image carries no test code, has parec and starts hardened"
+docker build --quiet --label mastertutor.ci=1 -t "$SLOT_IMAGE" apps/browser-slot >/dev/null
+SLOT_IMAGE="$SLOT_IMAGE" AUDIO_IMAGE="$AUDIO_IMAGE" bash apps/browser-slot/test/verify-pulse.sh

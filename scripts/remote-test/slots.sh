@@ -34,6 +34,7 @@ slot_ports() {
   echo "BEHAVIOUR_NEKO_PORT_2=$((p + 12))"
   echo "BEHAVIOUR_IDLE_PORT_1=$((p + 21))"
   echo "BEHAVIOUR_IDLE_PORT_2=$((p + 22))"
+  echo "BEHAVIOUR_AUDIO_PORT=$((p + 31))"
   echo "WEB_UI_PORT=$((p + 30))"
   echo "TEST_HTTP_PORT=$((p + 80))"
 }
