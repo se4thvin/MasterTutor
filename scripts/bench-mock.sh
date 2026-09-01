@@ -18,6 +18,33 @@ PORT="${TEST_HTTP_PORT:-$(env_test TEST_HTTP_PORT)}"
 ORIGIN="${PUBLIC_URL:-$(env_test PUBLIC_URL)}"
 pnpm bench init --stack test --base-url "http://localhost:${PORT:-18080}" \
   --origin "${ORIGIN:-http://localhost:18080}"
-pnpm bench run --suite fixtures --mock --track both --max-total-usd 10
-pnpm bench run --suite fixtures --mock --track computer_use \
+pnpm bench run --suite fixtures --mock --only activities --track both --max-total-usd 10
+pnpm bench run --suite fixtures --mock --only activities --track computer_use \
   --approval-mode bypass --acknowledge-bypass --max-total-usd 10
+
+# Section discovery (run 1's shape): a read-only grading run over the library finds readings 1-3 and
+# their sections itself. They mix complete, incomplete, empty and unread sections, so it must not pass,
+# and the record must grade every section with where and why; reading 4 is out of scope.
+set +e
+discovery="$(pnpm bench baseline --suite fixtures --mock --only readings --track browser_use \
+  --max-total-usd 10 2>&1)"
+status=$?
+set -e
+printf '%s\n' "$discovery"
+[[ "$status" == 1 ]] || { echo "discovery: expected exit 1 (mixed completion), got $status" >&2; exit 1; }
+record="$(sed -n 's/.* record: //p' <<<"$discovery" | tail -1)"
+chapter=http://bench.fixtures.test:8080/library/chapter
+expected=(
+  "| 1 | 1.1 Variables | $chapter/1/section/1 | passed | 2/2 activities complete |"
+  "| 1 | 1.2 Types | $chapter/1/section/2 | passed | 1/1 activities complete |"
+  "| 2 | 2.1 Loops | $chapter/2/section/1 | **failed** | 1/2 activities complete |"
+  "| 2 | 2.2 Functions | $chapter/2/section/2 | passed | 2/2 activities complete |"
+  "| 3 | 3.1 Overview | $chapter/3/section/1 | **unknown** | no activity found on the page |"
+  "| 3 | 3.2 Review | $chapter/3/section/2 | **unknown** | never read in the grading run |"
+  "- Outcome: **failed**"
+)
+for line in "${expected[@]}"; do
+  grep -qF -- "$line" "$record" || { echo "discovery: $record lacks: $line" >&2; exit 1; }
+done
+if grep -qF "4.1 Beyond" "$record"; then echo "discovery: graded reading 4, which is out of scope" >&2; exit 1; fi
+echo "discovery: every section graded as expected ($record)"

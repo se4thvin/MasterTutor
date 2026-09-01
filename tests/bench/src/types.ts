@@ -42,7 +42,22 @@ export type Criterion =
       requireInteraction: boolean;
     }
   /** Graded on the MAIN run's trace (P10b-5): the agent itself signed in, from a forgotten session. */
-  | { kind: "signed_in"; origin: string; signInPath: string };
+  | { kind: "signed_in"; origin: string; signInPath: string }
+  /**
+   * The grading run finds the readings and their sections itself (run 1, "full task once"). From
+   * read_page output only: an element whose name matches `readingPattern` (group 1 = the reading
+   * number) starts that reading; links matching `sectionUrlPattern` after it on the same page, or on
+   * the reading's own page (its href), are its sections. Patterns are suite config, never product code.
+   */
+  | {
+      kind: "discovered_readings";
+      readings: readonly number[];
+      readingPattern: string;
+      sectionUrlPattern: string;
+      activityPattern: string;
+      completedPattern: string;
+      requireInteraction: boolean;
+    };
 
 export interface VerifySpec {
   task: string;

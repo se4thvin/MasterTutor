@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  baselineCriterion,
-  evaluate,
-  finalOutcome,
-  sameDocument,
-  verifyTainted,
-} from "./criteria.ts";
+import { baselineCriterion, evaluate, finalOutcome, verifyTainted } from "./criteria.ts";
+import { sameDocument } from "./url.ts";
 import { addressBar, batch, computer, fill, observe, readPage, traceOf } from "./trace-fixtures.ts";
 import type { Criterion } from "./types.ts";
 

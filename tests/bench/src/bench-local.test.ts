@@ -25,3 +25,19 @@ describe("scripts/bench-mock.sh (fresh stack per invocation)", () => {
     expect(drop).toBeLessThan(mock.indexOf("pnpm bench init"));
   });
 });
+
+describe("scripts/bench-mock.sh proves section discovery (run 1's shape)", () => {
+  const mock = readFileSync(new URL("../../../scripts/bench-mock.sh", import.meta.url), "utf8");
+  it("runs the library grading run and checks every section's row, including failed and unknown", () => {
+    expect(mock).toContain("pnpm bench baseline --suite fixtures --mock --only readings");
+    for (const row of [
+      "**failed** | 1/2 activities complete",
+      "**unknown** | no activity found",
+      "**unknown** | never read",
+    ])
+      expect(mock).toContain(row);
+  });
+  it("keeps the activities runs to their own benchmark", () => {
+    expect(mock.match(/pnpm bench run --suite fixtures --mock --only activities/g)).toHaveLength(2);
+  });
+});

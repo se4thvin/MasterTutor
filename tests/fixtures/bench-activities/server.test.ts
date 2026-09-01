@@ -93,3 +93,28 @@ describe("consent overlay layout (coordinate scenarios)", () => {
     }
   });
 });
+
+describe("library: readings with sections and mixed completion (section discovery)", () => {
+  const get = async (path: string, cookie: string) =>
+    (await fetch(`${server.url}${path}`, { headers: { cookie: `${cookie}; consent=1` } })).text();
+  const count = (text: string, pattern: string) => text.split(pattern).length - 1;
+
+  it("lists reading assignments, each reading's sections, and section pages with their activities", async () => {
+    const cookie = await signIn();
+    const index = await get("/library", cookie);
+    for (const n of [1, 2, 3, 4])
+      expect(index).toContain(`<a href="/library/reading/${n}">Reading ${n}</a>`);
+    expect(await get("/library/reading/2", cookie)).toContain(
+      '<a href="/library/chapter/2/section/1">2.1 Loops</a>',
+    );
+    const loops = await get("/library/chapter/2/section/1", cookie);
+    expect([count(loops, "PARTICIPATION ACTIVITY"), count(loops, "Activity completed")]).toEqual([
+      2, 1,
+    ]);
+    const overview = await get("/library/chapter/3/section/1", cookie);
+    expect(count(overview, "PARTICIPATION ACTIVITY")).toBe(0);
+    expect(
+      (await fetch(`${server.url}/library/chapter/9/section/9`, { headers: { cookie } })).status,
+    ).toBe(404);
+  });
+});
