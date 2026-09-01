@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -256,5 +256,51 @@ esac
   it("checks the host only after taking the seat, so check and allocation are one step", () => {
     const body = /^acquire_slot\(\) \{[\s\S]*?^\}/m.exec(read("./remote-test/slots.sh"))?.[0] ?? "";
     expect(body.indexOf("host_subnets")).toBeGreaterThan(body.indexOf("flock -n"));
+  });
+});
+
+describe("what the sync sends", () => {
+  it("sends the three benchmark protocol docs and nothing else from orchestration/ or env files", () => {
+    // The script's own include/exclude arguments (the .gitignore filter aside), run on a planted tree.
+    const block = /rsync -az --delete \\\n([\s\S]*?)--rsync-path/.exec(client)![1]!;
+    const args = [...block.matchAll(/--(include|exclude)=('[^']*'|\S+)/g)].map(
+      ([, kind, pattern]) => `--${kind}=${pattern!.replace(/^'|'$/g, "")}`,
+    );
+    const root = mkdtempSync(join(tmpdir(), "mt-sync-"));
+    const files = [
+      "orchestration/README.md",
+      "orchestration/STATE.md",
+      "orchestration/benchmarks/README.md",
+      "orchestration/benchmarks/2026-10-08-zybooks-01/record.md",
+      "orchestration/briefs/bench-fix.md",
+      "orchestration/briefs/other.md",
+      "orchestration/runs/r/report.md",
+      "apps/a.ts",
+      ".env",
+      ".env.test",
+    ];
+    for (const file of files) {
+      mkdirSync(dirname(join(root, "src", file)), { recursive: true });
+      writeFileSync(join(root, "src", file), "x");
+    }
+    const run = spawnSync("rsync", ["-a", ...args, `${root}/src/`, `${root}/dst/`], {
+      encoding: "utf8",
+    });
+    expect(run.status, run.stderr).toBe(0);
+    const sent = spawnSync("find", [".", "-type", "f"], {
+      cwd: join(root, "dst"),
+      encoding: "utf8",
+    })
+      .stdout.split("\n")
+      .filter(Boolean)
+      .map((f) => f.slice(2))
+      .sort();
+    expect(sent).toEqual([
+      ".env.test",
+      "apps/a.ts",
+      "orchestration/README.md",
+      "orchestration/benchmarks/README.md",
+      "orchestration/briefs/bench-fix.md",
+    ]);
   });
 });
