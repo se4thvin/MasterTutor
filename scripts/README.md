@@ -60,18 +60,27 @@ suite's full log stays in the temp folder it names.
 What happens:
 
 1. The worktree is rsynced to `~/mt-ci/<worktree-name>/`. `.gitignore` is honoured, and
-   `node_modules`, `.git`, `.env*`, `.superpowers`, `orchestration` (except the benchmark protocol docs `orchestration/README.md`, `orchestration/benchmarks/README.md` and `orchestration/briefs/bench-fix.md`, which `tests/bench/src/protocol-docs.test.ts` reads) and `.next` are never sent.
-   `.env.test` (dummy values) and `.env.example` are the only env files that go.
-2. `remote-test/run-on-host.sh` runs the suite in a `node:24-bookworm`-based runner image
+   `node_modules`, `.git`, `.env*`, `.superpowers`, `orchestration` (except the benchmark protocol docs `orchestration/README.md`,
+   `orchestration/benchmarks/README.md` and `orchestration/briefs/bench-fix.md`, which
+   `tests/bench/src/protocol-docs.test.ts` reads) and `.next` are never sent.
+   `.env.test` (dummy values) and `.env.example` are the only env files that go. The sync holds
+   the worktree's lock on the host (`~/mt-ci/.sync/<worktree-name>.lock`), so runs started together
+   from one worktree sync one after another.
+2. The run copies the synced sources, under the same lock, into its own folder
+   (`~/mt-ci/.runs/<project>/src`, `remote-test/snapshot.sh`) and runs, installs and builds there,
+   so a later sync never changes files under a running suite. Result folders are copied back to
+   the synced folder on exit, for the client to fetch.
+3. `remote-test/run-on-host.sh` runs the suite in a `node:24-bookworm`-based runner image
    (`remote-test/runner.Dockerfile`: Docker CLI, pinned pnpm, Playwright Chromium), built once per
    content hash. The runner uses the host network, runs as the host user, mounts the Docker socket
-   and the code at its host path, and keeps the pnpm store in the `mt-pnpm-store` volume. It gets
-   32 CPUs and 64 GB. `pnpm install` takes `.mt-install.lock` in the synced worktree, so suites
-   started together from one worktree install once and share `node_modules`.
-3. `remote-test/testcontainers-ci.ts` is preloaded into Vitest: every Testcontainers container is
+   and `~/mt-ci/.runs` (the runs' snapshots and the pnpm store, `.runs/.pnpm-store`, in one mount so
+   installs hardlink from the store) at their host paths. It gets 32 CPUs and 64 GB. Each run
+   installs its own `node_modules` from that store.
+4. `remote-test/testcontainers-ci.ts` is preloaded into Vitest: every Testcontainers container is
    published on 127.0.0.1 only and labelled. Ryuk is off; the run's own cleanup removes them.
-4. On exit, the run removes only what it created: containers, networks and volumes labelled
-   `mastertutor.ci.run=<project>`, and the Compose project `<project>` (`down -v`).
+5. On exit, the run removes only what it created: containers, networks and volumes labelled
+   `mastertutor.ci.run=<project>`, the Compose project `<project>` (`down -v`), its image tags and
+   its run folder with the snapshot (qa keeps them until `qa --down`).
 
 The host is shared with other people's production apps. Rules for anything added here:
 
@@ -84,8 +93,8 @@ The host is shared with other people's production apps. Rules for anything added
   freed by the kernel when the run exits) that owns the subnets `10.213.<8i>.0/21` and the loopback
   ports `20000+100i` to `+99`. At most `MT_CI_MAX_STACKS` (default 6) run at once; the rest wait.
   A slot whose block is still in use (a crashed run's leftover network or port) is skipped.
-- Each stack builds its images under the tag `<project>` and web-build and ui build `apps/web/.next`
-  in a per-run folder, so concurrent runs never test each other's code.
+- Each stack builds its images under the tag `<project>` from its own snapshot, so concurrent runs
+  never test each other's code.
 - qa keeps `stack.lock` (a directory naming its owner) until `qa --down`, because its stack outlives
   the run and so cannot hold a slot. It uses the reserved block (slot 31) and port 18080. Branches
   from before slots also take `stack.lock` and `behaviour.lock` with the old fixed 172.30.x
@@ -95,8 +104,8 @@ The host is shared with other people's production apps. Rules for anything added
   slot AppArmor profile, no published media ports, the slot's subnets, per-run image tags and a
   per-run copy of Traefik's dynamic config). The AppArmor profile must be loaded.
 
-Kept between runs: each worktree's synced copy with its `node_modules`, the
-`mt-pnpm-store` volume and the `mt-ci-runner:<hash>` image. To remove a worktree's copy:
+Kept between runs: each worktree's synced copy, the
+pnpm store `~/mt-ci/.runs/.pnpm-store` and the `mt-ci-runner:<hash>` image. To remove a worktree's copy:
 `ssh coursebite-build rm -rf mt-ci/<worktree-name>`.
 
 ## Heavy stacks on a laptop
