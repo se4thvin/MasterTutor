@@ -1,3 +1,4 @@
+import type { PerceptualHash } from "../browser/phash.ts";
 import {
   toOrigin,
   type ApprovalRequest,
@@ -37,7 +38,7 @@ export class FakeLoopBrowser implements LoopBrowser {
   title = "Fixture";
   domHash = "d".repeat(64);
   captcha = false;
-  phash = 1n;
+  phash: PerceptualHash = [1];
   png: Buffer = TINY_PNG;
   /** Why this step's screenshot is withheld (a black frame is sent instead), or null. */
   withheld: string | null = null;

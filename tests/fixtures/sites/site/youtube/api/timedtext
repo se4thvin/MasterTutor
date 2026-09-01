@@ -1,0 +1,11 @@
+{"wireMagic":"pb3","events":[
+{"tStartMs":0,"dDurationMs":2500,"segs":[{"utf8":"Welcome to a short tour of photosynthesis."}]},
+{"tStartMs":2500,"dDurationMs":2500,"segs":[{"utf8":"Plants turn light into chemical energy."}]},
+{"tStartMs":5000,"dDurationMs":2500,"segs":[{"utf8":"First come the light reactions"},{"utf8":" in the thylakoid membranes."}]},
+{"tStartMs":7500,"dDurationMs":2500,"segs":[{"utf8":"Water is split and oxygen is released."}]},
+{"tStartMs":9000,"aAppend":1,"segs":[{"utf8":"\n"}]},
+{"tStartMs":10000,"dDurationMs":2500,"segs":[{"utf8":"Next, the Calvin cycle fixes carbon dioxide."}]},
+{"tStartMs":12500,"dDurationMs":2500,"segs":[{"utf8":"It builds sugars using ATP and NADPH."}]},
+{"tStartMs":15000,"dDurationMs":2500,"segs":[{"utf8":"In summary, light energy becomes stored sugar."}]},
+{"tStartMs":17500,"dDurationMs":2500,"segs":[{"utf8":"Thanks for watching."}]}
+]}

@@ -39,6 +39,7 @@ const library = createLibraryServices({
   openai,
   doclingUrl: env.DOCLING_URL ?? null,
   pdfWorkerUrl: env.PDF_WORKER_URL,
+  audioCaptureUrl: env.AUDIO_CAPTURE_URL,
   log: log.child({ module: "library" }),
 });
 const vault = createVault({

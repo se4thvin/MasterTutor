@@ -11,6 +11,12 @@ export class StepCollector implements StepWriter {
   #after: Array<() => Promise<void>> = [];
   #objects: string[] = [];
   #usage: Usage = EMPTY_USAGE;
+  readonly #usdAtStart: number;
+
+  /** `usdLeft`: what the run's budget allowed when the step began (unbounded by default). */
+  constructor(options: { usdLeft?: number } = {}) {
+    this.#usdAtStart = options.usdLeft ?? Number.POSITIVE_INFINITY;
+  }
 
   defer(write: (tx: DbTx) => Promise<void>): void {
     this.#writes.push(write);
@@ -30,6 +36,10 @@ export class StepCollector implements StepWriter {
 
   addUsage(delta: Usage): void {
     this.#usage = addUsage(this.#usage, delta);
+  }
+
+  usdLeft(): number {
+    return this.#usdAtStart - this.#usage.usd;
   }
 
   get usage(): Usage {

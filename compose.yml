@@ -1,8 +1,10 @@
 # MasterTutor: one Compose app (spec §3.1, §13). Local: `pnpm env:init`, then use compose.test.yml.
 name: mastertutor
 
-# Only `migrate` builds this image; agent and garage-init reuse the tag (several services building
-# one tag fails on Docker Desktop with "image already exists"). Always start with `--build`.
+# Only `migrate` builds this image; agent, garage-init and pdf-worker reuse the tag (several
+# services building one tag fails on Docker Desktop with "image already exists"). audio-capture
+# builds its own image on top of it (target `audio-capture`, which adds parec). Always start with
+# `--build`.
 x-node-runtime: &node-runtime
   image: mastertutor/node-runtime:local
   networks:
@@ -19,6 +21,8 @@ x-slot-env: &slot-env
   NEKO_ADMIN_SECRET: ${NEKO_ADMIN_SECRET:?set NEKO_ADMIN_SECRET}
   NEKO_MEMBER_SECRET: ${NEKO_MEMBER_SECRET:?set NEKO_MEMBER_SECRET}
   CDP_ALLOWED_IP: ${CDP_SUBNET_PREFIX:-172.30.231}.10
+  # Only audio-capture records a slot's audio (B4 review I7), over the `pulse` network.
+  PULSE_ALLOWED_IP: ${PULSE_SUBNET_PREFIX:-172.30.233}.10
   NEKO_ALLOWED_IPS: ${CDP_SUBNET_PREFIX:-172.30.231}.10,${CDP_SUBNET_PREFIX:-172.30.231}.11,${CDP_SUBNET_PREFIX:-172.30.231}.12
   SLOT_EGRESS_ALLOW_CIDRS: ${SLOT_EGRESS_ALLOW_CIDRS:-}
 
@@ -43,6 +47,7 @@ x-browser-slot: &browser-slot
   networks:
     cdp: {}
     egress: {}
+    pulse: {}
 
 services:
   postgres:
@@ -174,6 +179,7 @@ services:
       # Set only when COMPOSE_PROFILES includes "pdf"; compose.prod.yml pins it.
       DOCLING_URL: ${DOCLING_URL:-}
       PDF_WORKER_URL: http://pdf-worker:5002
+      AUDIO_CAPTURE_URL: http://audio-capture:5003
       VAULT_PRIVATE_KEY: ${VAULT_PRIVATE_KEY:?set VAULT_PRIVATE_KEY}
       NEKO_ADMIN_SECRET: ${NEKO_ADMIN_SECRET:?set NEKO_ADMIN_SECRET}
       S3_ENDPOINT: http://garage:3900
@@ -209,6 +215,45 @@ services:
       cdp:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.10
       pdf: {}
+      audio: {}
+
+  # Every slot recording happens here, never in the agent (B4 review I7): parec pulls a slot's
+  # PulseAudio over `pulse` (shared with the slots only; they admit port 4713 from this address
+  # alone), and the agent fetches chunks over `audio` (shared with the agent only): it reaches
+  # neither web nor Traefik nor CDP. Finished chunks wait on a tmpfs until the agent reads them
+  # (each deleted once read, all of them on restart). No secrets, read-only root, non-root uid, no
+  # capabilities, its own memory, CPU and process bounds.
+  audio-capture:
+    image: mastertutor/audio-capture:local
+    build:
+      context: .
+      target: audio-capture
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    # One 600 s chunk is 19.2 MB; a chunk waits only until the agent reads it.
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 64
+    healthcheck:
+      <<: *node-health
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5003/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+    networks:
+      audio: {}
+      pulse:
+        ipv4_address: ${PULSE_SUBNET_PREFIX:-172.30.233}.10
 
   # Every PDF is parsed here, never in the agent (B5 review I-1): pdf.js in a `node --permission`
   # child per PDF, two at a time. No secrets, no egress (only the internal `pdf` network, shared
@@ -344,6 +389,16 @@ networks:
           ip_range: ${CDP_SUBNET_PREFIX:-172.30.231}.128/25
   # The agent and the PDF parsers only: pdf-worker always, docling under profile `pdf`.
   pdf:
+    internal: true
+  # audio-capture ↔ slots (PulseAudio only); the agent never joins it (B4 re-review I7).
+  pulse:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${PULSE_SUBNET_PREFIX:-172.30.233}.0/24
+          ip_range: ${PULSE_SUBNET_PREFIX:-172.30.233}.128/25
+  # agent ↔ audio-capture (finished chunks).
+  audio:
     internal: true
 
 volumes:

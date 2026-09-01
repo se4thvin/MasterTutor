@@ -202,6 +202,7 @@ docker run --rm --init --name "$project-runner" \
   -e TESTCONTAINERS_RYUK_DISABLED=true -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
   -e BEHAVIOUR_REMOTE_HOST=1 -e BEHAVIOUR_DOWNLOADS="$run_dir/downloads" \
   -e BEHAVIOUR_SLOT_IMAGE="mastertutor/browser-slot:$project" \
+  -e BEHAVIOUR_AUDIO_IMAGE="mastertutor/audio-capture:$project" \
   "${slot_env[@]}" \
   "$image" bash -c "$command" bash "${suite_args[@]}"
 status=$?

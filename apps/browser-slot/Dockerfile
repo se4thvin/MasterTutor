@@ -14,6 +14,9 @@ RUN set -eux; \
     sed -i 's/Modes "1920x1080_60.00"/Modes "1280x800_30.00" "1920x1080_60.00"/' /etc/neko/xorg.conf; \
     grep -q 'Modeline "1280x800_30.00" 37.90' /etc/neko/xorg.conf
 
+# Keep a pristine copy: the entrypoint regenerates default.pa with the agent-only TCP module each start.
+RUN cp /etc/pulse/default.pa /etc/pulse/default.pa.orig
+
 COPY supervisord/chromium.conf /etc/neko/supervisord/chromium.conf
 COPY policies.json /etc/chromium/policies/managed/policies.json
 COPY --chmod=0755 bin/slot-entrypoint bin/exit-on-chromium bin/slot-health bin/slot-idle-http /usr/local/bin/
