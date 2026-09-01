@@ -22,7 +22,9 @@ export function signInInstruction(signInUrl: string, alias: string): string {
 export function discoveryInstruction(indexUrl: string, readings: readonly number[]): string {
   return (
     `Open ${indexUrl} by typing it in the address bar (CTRL+L, the URL, ENTER) and call read_page with mode ` +
-    `"interactive". Find reading assignments ${readings.join(", ")} there. For each one, open its page by typing ` +
+    `"interactive". Find reading assignments ${readings.join(", ")} there; if they are listed on another page ` +
+    'linked from it, open that page the same way and call read_page with mode "interactive". For each reading, ' +
+    `open its page by typing ` +
     'its link\'s URL in the address bar and call read_page with mode "interactive"; then open each of its sections ' +
     'the same way, scroll to the bottom once, and call read_page with mode "text" and then "interactive". ' +
     "Never click, type or press keys on these pages: use only the address bar. Then finish."
