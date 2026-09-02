@@ -3,6 +3,14 @@ import type { BrowserSession } from "../browser/session.ts";
 import { abortable } from "../runtime/abortable.ts";
 
 export const FETCH_TIMEOUT_MS = 30_000;
+/** A large download gets more time, at an assumed floor of 1 MiB/s, never more than 5 minutes. */
+const MIN_BYTES_PER_MS = (1024 * 1024) / 1000;
+export const MAX_FETCH_TIMEOUT_MS = 300_000;
+
+/** The time a download of `bytes` may take (B5 review: 25–100 MiB PDFs must not time out at 30 s). */
+export function fetchTimeoutMs(bytes: number): number {
+  return Math.min(MAX_FETCH_TIMEOUT_MS, FETCH_TIMEOUT_MS + bytes / MIN_BYTES_PER_MS);
+}
 const READ_CHUNK = 1 << 20;
 
 export interface FetchedResource {
@@ -63,9 +71,20 @@ export async function fetchInBrowser(
     return null;
   }
   if (!(await ctx.session.allowsFetch(parsed.href))) return null;
-  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-  const signal = AbortSignal.any([ctx.signal, timeout]);
   const cdp = await ctx.session.cdp();
+  // The deadline starts at FETCH_TIMEOUT_MS and only grows with the declared or received size.
+  const timeout = new AbortController();
+  const started = Date.now();
+  let allowed = FETCH_TIMEOUT_MS;
+  let timer = setTimeout(() => timeout.abort(), allowed);
+  const extendFor = (bytes: number) => {
+    const next = fetchTimeoutMs(bytes);
+    if (next <= allowed) return;
+    allowed = next;
+    clearTimeout(timer);
+    timer = setTimeout(() => timeout.abort(), Math.max(0, started + allowed - Date.now()));
+  };
+  const signal = AbortSignal.any([ctx.signal, timeout.signal]);
   let handle: string | undefined;
   try {
     const { resource } = await abortable(
@@ -81,6 +100,9 @@ export async function fetchInBrowser(
     );
     handle = resource.stream;
     if (!resource.success || !handle || (resource.httpStatusCode ?? 0) >= 400) return null;
+    const declared = Number(header(resource.headers, "content-length"));
+    if (declared > maxBytes) return null;
+    if (declared > 0) extendFor(declared);
     const chunks: Buffer[] = [];
     let total = 0;
     for (;;) {
@@ -90,6 +112,7 @@ export async function fetchInBrowser(
         : Buffer.from(read.data, "utf8");
       total += chunk.length;
       if (total > maxBytes) return null;
+      extendFor(total + READ_CHUNK);
       chunks.push(chunk);
       if (read.eof) break;
     }
@@ -99,9 +122,10 @@ export async function fetchInBrowser(
     };
   } catch (error) {
     if (ctx.signal.aborted) throw ctx.signal.reason;
-    if (timeout.aborted) return null;
+    if (timeout.signal.aborted) return null;
     throw error;
   } finally {
+    clearTimeout(timer);
     if (handle) await cdp.send("IO.close", { handle }).catch(() => undefined);
   }
 }

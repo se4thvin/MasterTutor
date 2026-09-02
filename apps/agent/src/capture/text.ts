@@ -76,7 +76,24 @@ export function mergeReferences(texts: readonly string[]): string {
   return [...merged].map(([word, n]) => Array(n).fill(word).join(" ")).join(" ");
 }
 
+/**
+ * Block precision against one source, tokenised once (B5 review I-3): scoring many blocks against
+ * a long reference costs each block's own tokens, not the whole source again.
+ */
+export function precisionAgainst(source: string): (blockText: string) => number {
+  const have = counts(tokens(source));
+  return (blockText) => {
+    let total = 0;
+    let matched = 0;
+    for (const [word, n] of counts(tokens(blockText))) {
+      total += n;
+      matched += Math.min(n, have.get(word) ?? 0);
+    }
+    return total === 0 ? 1 : matched / total;
+  };
+}
+
 /** Share of a block's tokens found in the source: 1 means nothing in the block is foreign to the page. */
 export function blockPrecision(blockText: string, source: string): number {
-  return coverageOf(blockText, source).coverage;
+  return precisionAgainst(source)(blockText);
 }

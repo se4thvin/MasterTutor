@@ -19,6 +19,7 @@ const agentSource = {
   S3_ACCESS_KEY_ID: "GK5aa6eb9e4f040236e79864f3",
   S3_SECRET_ACCESS_KEY: "0974bfbf76eb6fb9faf77bf05f5b21d703c85dbd797421167285185ae7ff3568",
   BROWSER_SLOTS: "browser-1, browser-2",
+  PDF_WORKER_URL: "http://pdf-worker:5002",
 };
 
 describe("parseEnv", () => {
@@ -39,6 +40,30 @@ describe("parseEnv", () => {
     expect(env.AGENT_TEST_MODE).toBe(false);
     expect(env.OPENAI_BASE_URL).toBeUndefined();
     expect(env.LOG_LEVEL).toBe("info");
+  });
+
+  it("accepts an optional DOCLING_URL for the agent", () => {
+    expect(
+      parseEnv(AgentEnv, { ...agentSource, DOCLING_URL: "http://docling:5001" }).DOCLING_URL,
+    ).toBe("http://docling:5001");
+    expect(parseEnv(AgentEnv, { ...agentSource, DOCLING_URL: "" }).DOCLING_URL).toBeUndefined();
+  });
+
+  it("accepts only http(s) service URLs for the PDF services (B5 re-review N-7)", () => {
+    for (const bad of [
+      "file:///etc/passwd",
+      "ftp://pdf-worker/",
+      "javascript:alert(1)",
+      "pdf-worker:5002",
+    ]) {
+      expect(() => parseEnv(AgentEnv, { ...agentSource, PDF_WORKER_URL: bad }), bad).toThrow(
+        EnvError,
+      );
+      expect(() => parseEnv(AgentEnv, { ...agentSource, DOCLING_URL: bad }), bad).toThrow(EnvError);
+    }
+    expect(() => parseEnv(AgentEnv, { ...agentSource, PDF_WORKER_URL: undefined })).toThrow(
+      EnvError,
+    );
   });
 
   it("parses boolean flags", () => {
