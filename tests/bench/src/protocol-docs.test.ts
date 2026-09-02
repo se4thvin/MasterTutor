@@ -43,3 +43,16 @@ describe("the protocol matches the harness as built", () => {
     expect(readme).not.toContain("--on-budget");
   });
 });
+
+describe("run 1 is the full task, once (D46 ruling)", () => {
+  const readme = read("orchestration/benchmarks/README.md");
+  it("describes one full-task agent run graded by a discovering read-only run", () => {
+    expect(readme).toContain("full@browser_use");
+    expect(readme).toMatch(/discovers the reading assignments and their sections itself/);
+    expect(readme).toMatch(/`unknown`.*never passes/);
+  });
+  it("names no calibration file or survey step, which grading replaced", () => {
+    expect(readme).not.toMatch(/sections\.json|`survey`|zybooks\/survey/);
+    expect(read("orchestration/README.md")).not.toMatch(/calibration/);
+  });
+});
