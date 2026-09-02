@@ -25,6 +25,7 @@ export async function readPage(
     attrs: READ_PAGE_ATTRS,
     max: MAX_ELEMENTS,
     maxText: MAX_TEXT,
+    offset: args.mode === "interactive" ? args.offset : null,
   });
   const scale = session.lastScale;
   const header = { url: raw.url, title: raw.title.slice(0, 1_000) };
@@ -41,6 +42,8 @@ export async function readPage(
             ? { x: Math.round(element.point.x * scale), y: Math.round(element.point.y * scale) }
             : null,
         })),
+        total: raw.total ?? raw.elements.length,
+        ...(args.offset !== null ? { offset: args.offset } : {}),
       }
     : { ...header, text: raw.text ?? "" };
   const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");

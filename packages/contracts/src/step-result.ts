@@ -5,7 +5,8 @@ import type { ComputerAction } from "./tools.ts";
  * What one executed computer action did, recorded per action (a batch can hide a click behind a
  * move): passive (move, scroll, wait, screenshot), input (reached the page), navigate (back,
  * forward, reload), address_bar (went to the agent's emulated address bar), address_bar_landed
- * (the ENTER that opened exactly the URL typed there). The benchmark grader reads it.
+ * (the ENTER that opened exactly the URL typed there), disclosure (a click that only expanded or
+ * collapsed a disclosure control, with the URL unchanged). The benchmark grader reads it.
  */
 export const ACTION_EFFECTS = [
   "passive",
@@ -13,9 +14,20 @@ export const ACTION_EFFECTS = [
   "navigate",
   "address_bar",
   "address_bar_landed",
+  "disclosure",
 ] as const;
 export const ActionEffect = z.enum(ACTION_EFFECTS);
 export type ActionEffect = z.infer<typeof ActionEffect>;
+
+/**
+ * Where a page-input action landed, for grading per activity: the target's accessible label and the
+ * opening text of its enclosing elements, innermost first. Page text, vault secrets redacted.
+ */
+export const ActionTarget = z.object({
+  label: z.string().max(200),
+  ancestors: z.array(z.string().max(200)).max(8),
+});
+export type ActionTarget = z.infer<typeof ActionTarget>;
 
 /**
  * What the agent did for one model call: stored as an act step's `run_steps.result`, turned into
@@ -30,6 +42,8 @@ export const CallResult = z.discriminatedUnion("kind", [
     ),
     /** One per executed action; absent on rows from before it was recorded and on calls not run. */
     effects: z.array(ActionEffect).optional(),
+    /** Aligned with `effects`: the target of each click, type or key press, else null. */
+    targets: z.array(ActionTarget.nullable()).optional(),
   }),
   z.object({ kind: z.literal("function"), output: z.string() }),
 ]);

@@ -74,7 +74,11 @@ describe("15-minute idle hand-back, with a 1.5 s limit (spec §5.1)", () => {
         name: "idle",
         turns: [
           turn([
-            { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+            {
+              type: "function",
+              name: "read_page",
+              args: { mode: "interactive", sinceHash: null, offset: null },
+            },
           ]),
           turn([{ type: "click_named", name: "Notes" }]),
           turn([{ type: "computer", actions: [{ type: "type", text: "y".repeat(5_000) }] }]),

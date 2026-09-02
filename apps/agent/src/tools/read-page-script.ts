@@ -13,6 +13,8 @@ export interface RawPage {
   url: string;
   title: string;
   elements: RawElement[] | null;
+  /** Interactive mode: how many elements the page listed before the cap. */
+  total: number | null;
   text: string | null;
 }
 
@@ -22,14 +24,21 @@ export interface RawPage {
  * list as globalThis.__mtRefs (isolated world only) so refs resolve later. Read-only.
  */
 export function readPageScript(
-  arg: { mode: "interactive" | "text"; attrs: readonly string[]; max: number; maxText: number },
+  arg: {
+    mode: "interactive" | "text";
+    attrs: readonly string[];
+    max: number;
+    maxText: number;
+    /** Page in document order from this index; null keeps elements in the viewport first. */
+    offset: number | null;
+  },
   h: PageHelpers,
 ): RawPage {
   const clean = (value: string | null | undefined, max: number) =>
     (value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
   if (arg.mode === "text") {
     const text = (document.body?.innerText ?? "").replace(/\n{3,}/g, "\n\n").slice(0, arg.maxText);
-    return { url: location.href, title: document.title, elements: null, text };
+    return { url: location.href, title: document.title, elements: null, total: null, text };
   }
   const SELECTOR =
     'a[href], button, input:not([type="hidden"]), select, textarea, summary, label, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [role="switch"], [role="combobox"], [role="textbox"], [role="slider"], [role="spinbutton"], [role="treeitem"], [onclick], [tabindex]:not([tabindex="-1"]), [contenteditable=""], [contenteditable="true"]';
@@ -149,7 +158,14 @@ export function readPageScript(
       parts.push("checked");
     if ((el as HTMLButtonElement).disabled || el.getAttribute("aria-disabled") === "true")
       parts.push("disabled");
-    if (el.getAttribute("aria-expanded") === "true") parts.push("expanded");
+    // Collapsed content is not rendered, so a reader must know it is there (bench I1).
+    const open =
+      el.tagName === "SUMMARY" && el.parentElement?.tagName === "DETAILS"
+        ? (el.parentElement as HTMLDetailsElement).open
+        : null;
+    const expanded = el.getAttribute("aria-expanded");
+    if (expanded === "true" || open === true) parts.push("expanded");
+    else if (expanded === "false" || open === false) parts.push("collapsed");
     if (el.getAttribute("aria-selected") === "true") parts.push("selected");
     if (el.tagName === "SELECT") {
       const option = (el as HTMLSelectElement).selectedOptions[0];
@@ -276,7 +292,8 @@ export function readPageScript(
     return !(control && listed.get(control)?.point);
   });
   let kept = entries;
-  if (kept.length > arg.max) {
+  if (arg.offset !== null) kept = entries.slice(arg.offset, arg.offset + arg.max);
+  else if (kept.length > arg.max) {
     kept = entries
       .map((entry, index) => ({ entry, index }))
       .sort(
@@ -292,6 +309,7 @@ export function readPageScript(
     url: location.href,
     title: document.title,
     elements: kept.map((entry) => entry.raw),
+    total: entries.length,
     text: null,
   };
 }

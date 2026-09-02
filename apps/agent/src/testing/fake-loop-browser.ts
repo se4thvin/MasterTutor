@@ -136,6 +136,7 @@ export class FakeLoopBrowser implements LoopBrowser {
           executed,
           notes: ["Stopped before an action: it needs approval."],
           effects: effects(executed),
+          targets: effects(executed).map(() => null),
           handOver: null,
         };
       // The executor's own hold at the moment it presses (B1 round 5): allowed, yet not run.
@@ -144,6 +145,7 @@ export class FakeLoopBrowser implements LoopBrowser {
           executed,
           notes: ["Stopped before an action: its target changed."],
           effects: effects(executed),
+          targets: effects(executed).map(() => null),
           handOver: null,
         };
       // The executor's own refusal at the press (its note), as a real executor would return it.
@@ -153,6 +155,7 @@ export class FakeLoopBrowser implements LoopBrowser {
           executed: executed + 1,
           notes: [refusal],
           effects: effects(executed + 1),
+          targets: effects(executed + 1).map(() => null),
           handOver: null,
         };
       // A page the executor cannot act on safely even with approval (B1 breaker fix 2).
@@ -162,6 +165,7 @@ export class FakeLoopBrowser implements LoopBrowser {
           executed: executed + 1,
           notes: ["Nothing was clicked: handed over."],
           effects: effects(executed + 1),
+          targets: effects(executed + 1).map(() => null),
           handOver,
         };
       this.guard?.assertAgent(signal);
@@ -173,7 +177,13 @@ export class FakeLoopBrowser implements LoopBrowser {
     }
     this.computerRuns.push([...actions]);
     await this.computerHook?.(actions, signal);
-    return { executed, notes: [], effects: effects(executed), handOver: null };
+    return {
+      executed,
+      notes: [],
+      effects: effects(executed),
+      targets: effects(executed).map(() => null),
+      handOver: null,
+    };
   }
 
   /** The approval request a function call raises in the approve phase (none by default). */

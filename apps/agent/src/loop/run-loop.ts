@@ -968,6 +968,7 @@ export class RunLoop {
           notes: [...run.notes, ...refusals],
           acknowledged,
           effects: run.effects,
+          targets: run.targets,
         },
         ran: run.executed > 0,
         failed: false,

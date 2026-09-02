@@ -99,6 +99,8 @@ export type ReadPageAttr = z.infer<typeof ReadPageAttr>;
 export const ReadPageArgs = z.object({
   mode: z.enum(["interactive", "text"]),
   sinceHash: Sha256Hex.nullable(),
+  /** Interactive mode: list elements in document order from this index (paging past the cap). */
+  offset: z.number().int().min(0).max(100_000).nullable(),
 });
 export type ReadPageArgs = z.infer<typeof ReadPageArgs>;
 export const ReadPageElement = z.object({
@@ -116,7 +118,14 @@ export const Unchanged = z.object({ unchanged: z.literal(true) });
 const PageHeader = { hash: Sha256Hex, url: z.url(), title: z.string().max(1_000) };
 export const ReadPageResult = z.union([
   Unchanged,
-  z.object({ ...PageHeader, elements: z.array(ReadPageElement).max(2_000) }),
+  z.object({
+    ...PageHeader,
+    elements: z.array(ReadPageElement).max(2_000),
+    /** How many elements the page listed before the cap; more than `elements` means truncated. */
+    total: z.number().int().nonnegative().optional(),
+    /** Set when the call paged: `elements` are the document-order slice from this index. */
+    offset: z.number().int().nonnegative().optional(),
+  }),
   z.object({ ...PageHeader, text: z.string().max(200_000) }),
 ]);
 export type ReadPageResult = z.infer<typeof ReadPageResult>;

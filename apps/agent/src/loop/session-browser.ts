@@ -168,7 +168,7 @@ export class SessionLoopBrowser implements LoopBrowser {
   async #capture(url: string, signal: AbortSignal): Promise<Observation> {
     const session = this.#session;
     const screenshot = await captureModelScreenshot(session, this.#mask, signal);
-    const page = await readPage(session, { mode: "interactive", sinceHash: null });
+    const page = await readPage(session, { mode: "interactive", sinceHash: null, offset: null });
     const state = await (await session.worlds()).evaluate(pageStateScript, null);
     return {
       url,
@@ -220,8 +220,16 @@ export class SessionLoopBrowser implements LoopBrowser {
     return null;
   }
 
-  runComputer(actions: readonly ComputerAction[], signal: AbortSignal, gate: ActionGate) {
-    return this.#executor.run(actions, signal, gate);
+  async runComputer(actions: readonly ComputerAction[], signal: AbortSignal, gate: ActionGate) {
+    const run = await this.#executor.run(actions, signal, gate);
+    // Targets are stored on the act step: a vault secret in their page text is redacted (M13).
+    const redact = (text: string) => this.#mask.redact(text);
+    return {
+      ...run,
+      targets: run.targets.map((t) =>
+        t ? { label: redact(t.label), ancestors: t.ancestors.map(redact) } : null,
+      ),
+    };
   }
 
   functionApproval(name: FunctionToolName, args: unknown, signal: AbortSignal) {
