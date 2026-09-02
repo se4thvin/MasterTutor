@@ -56,3 +56,13 @@ describe("run 1 is the full task, once (D46 ruling)", () => {
     expect(read("orchestration/README.md")).not.toMatch(/calibration/);
   });
 });
+
+describe("the protocol after the bench-zybooks review", () => {
+  const readme = read("orchestration/benchmarks/README.md");
+  it("grades per activity, on complete listings only, and re-grades without spend (I1, I3, I5)", () => {
+    expect(readme).toMatch(/every question answered and every animation step played/);
+    expect(readme).toMatch(/provably complete/);
+    expect(readme).toContain("pnpm bench regrade <record>");
+    expect(readme).toMatch(/spot-checks the replay of every passed section/);
+  });
+});

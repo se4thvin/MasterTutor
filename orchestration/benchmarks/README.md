@@ -52,12 +52,15 @@ activities in reading assignments 1–5, with **no takeover**, on both capabilit
 9. **Grading.**
    - Grades come only from `read_page` tool output recorded by the agent, never from the model's claims: from a separate grading (verify) run for `full` and the readings, or from the single run for `login`.
    - The grading run discovers the reading assignments and their sections itself: from the read_page output, the harness takes each reading's entry and the section links listed under it or on its page (patterns in `tests/bench/src/suites/zybooks.ts`).
-   - The record lists every section: reading, URL, outcome and why. A section passes when one single read_page result shows its completion count at least its activity count, and the main run clicked, typed, dragged or pressed keys on it at least once per activity.
+   - A listing counts only when it is provably complete: read whole (read_page reports `total`; a longer page is read in document-order pages with `offset`) and with no chapter or group still `[collapsed]` (the grading run expands them; a disclosure click is not page input). Otherwise the reading is `unknown`.
+   - Each section is graded on its fullest single read_page result (most activities), split into activity blocks; challenge activities are never counted.
+   - The record lists every section: reading, URL, outcome and why. The account starts complete (D32), so completion alone proves nothing: a section passes only when every participation activity is complete AND the main run's own trace shows every question answered and every animation step played in each activity. Each input is tied to its activity and question by the enclosing text the agent recorded where it landed; one click per activity is not enough.
    - A section the grading run never read, or where no activity was found, is `unknown`; `unknown` never passes. So is a reading it could not find. Any non-passing section keeps the outcome below `passed`.
    - Verify (grading) runs are read-only: they may click, type or press keys only on the sign-in page (`VerifySpec.signInUrl`). Any other page input, including one action hidden in a batch, taints the run (`error`).
    - Opening a URL through the address bar (CTRL+L, the URL, ENTER that lands on that URL) and back, forward and reload are navigation, not input. An address-bar sequence that never lands on its URL counts as input.
    - Any takeover caps the outcome at `partial`.
-   - The orchestrator spot-checks the replay of every passed reading (P10b-7).
+   - The orchestrator spot-checks the replay of every passed section (P10b-7): its inputs' screenshots by key, against the activities they were credited to.
+   - If the discovery or activity patterns missed the live site, run `pnpm bench regrade <record>` (`scripts/bench-local.sh regrade <record>` on the Mac) after correcting them: it grades the finished runs again from their stored traces, with no run and no spend, and appends a `## Regrade` section.
 10. **No GitHub CI e2e (D46).** e2e and `bench-mock` run locally or through `scripts/remote-test.sh`.
 
 ## Budgets
