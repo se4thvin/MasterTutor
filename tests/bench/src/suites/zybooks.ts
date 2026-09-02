@@ -9,16 +9,22 @@ export const ZYBOOKS_BOOK = `${ZYBOOKS_ORIGIN}/zybook/UTDALLASCE2310EE2310AkourF
 const READINGS = [1, 2, 3, 4, 5] as const;
 
 /**
- * How the grader reads readings and sections back from the grading run's read_page output. Not yet
- * checked against the live book (no contact before run 1): a pattern that does not match leaves the
- * sections unknown or failed in the record, with the reason, never passed. The grading run's raw
- * read_page output stays in run_steps, so the patterns can be corrected from it.
+ * How the grader reads readings, sections and activities back from the grading run's read_page output
+ * and ties the main run's inputs to activities and questions. Best guesses, not yet checked against
+ * the live book (no contact before run 1): a pattern that does not match leaves sections unknown or
+ * failed in the record, with the reason, never passed. Both runs' traces stay in run_steps, so after a
+ * miss the patterns are corrected and the run re-graded with `pnpm bench regrade <record>` (no spend).
  */
 export const DISCOVERY = {
   readingPattern: "^\\s*reading(?:\\s+assignment)?\\s*(\\d+)\\b",
   sectionUrlPattern: `^${escapeRegExp(ZYBOOKS_BOOK)}/chapter/\\d+/section/\\d+(?:[/?#].*)?$`,
-  activityPattern: "participation\\s+activity",
+  groupPattern: "^\\s*(?:chapter\\s+)?\\d+[.:\\s]",
+  activityPattern: "participation\\s+activity\\s*(\\d+(?:\\.\\d+)+)",
+  otherActivityPattern: "challenge\\s+activity",
   completedPattern: "activity\\s+completed",
+  questionPattern: "(\\d+)\\)",
+  stepPattern: "\\bstep\\s*(\\d+)\\b",
+  stepControlPattern: "^(?:start|play)\\b",
 } as const;
 
 type Track = "computer_use" | "browser_use";

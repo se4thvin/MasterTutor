@@ -251,9 +251,13 @@ async function freshLogin(spec: BenchmarkSpec, deps: RunnerDeps): Promise<void> 
 }
 
 /** The benchmark's criterion, plus signInCheck on the MAIN trace (P10b-5): both must pass. */
-function grade(spec: BenchmarkSpec, main: RunTrace, verify: RunTrace | null): Verdict {
+export function gradeTraces(
+  spec: BenchmarkSpec,
+  main: RunTrace | null,
+  verify: RunTrace | null,
+): Verdict {
   const verdict = evaluate(spec.criterion, main, verify);
-  if (spec.signInCheck === null) return verdict;
+  if (spec.signInCheck === null || main === null) return verdict;
   const signIn = evaluate(spec.signInCheck, main, null);
   if (signIn.outcome === "passed") return verdict;
   return {
@@ -343,7 +347,7 @@ export async function runBenchmark(
       verifyRunIds.push(after.runId);
     }
     const main = await deps.loadTrace(deps.compose, started.runId);
-    const verdict = grade(spec, main, after?.trace ?? null);
+    const verdict = gradeTraces(spec, main, after?.trace ?? null);
     const tainted = after !== null && verifyTainted(after.trace, spec.verify!.signInUrl);
     const graded = await deps.api.benchmarks.grade({
       benchmarkRunId: started.benchmarkRunId,

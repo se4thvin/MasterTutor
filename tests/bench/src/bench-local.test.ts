@@ -26,18 +26,42 @@ describe("scripts/bench-mock.sh (fresh stack per invocation)", () => {
   });
 });
 
-describe("scripts/bench-mock.sh proves section discovery (run 1's shape)", () => {
+describe("scripts/bench-mock.sh proves run 1's grading on the fixture library", () => {
   const mock = readFileSync(new URL("../../../scripts/bench-mock.sh", import.meta.url), "utf8");
-  it("runs the library grading run and checks every section's row, including failed and unknown", () => {
-    expect(mock).toContain("pnpm bench baseline --suite fixtures --mock --only readings");
+  it("runs the library benchmark (main run, then grading run) and checks every section's row", () => {
+    expect(mock).toContain("pnpm bench run --suite fixtures --mock --only readings");
     for (const row of [
+      "answered 0/1 questions",
       "**failed** | 1/2 activities complete",
       "**unknown** | no activity found",
       "**unknown** | never read",
+      "3.3 Extra",
     ])
       expect(mock).toContain(row);
   });
+  it("re-grades the record from its stored traces and checks the regrade agrees (I5)", () => {
+    expect(mock).toContain('pnpm bench regrade "$record"');
+    expect(mock).toMatch(/sed -n '\/\^## Regrade\/,\$p'/);
+  });
   it("keeps the activities runs to their own benchmark", () => {
     expect(mock.match(/pnpm bench run --suite fixtures --mock --only activities/g)).toHaveLength(2);
+  });
+});
+
+describe("scripts/bench-local.sh regrade (I5)", () => {
+  it("re-grades a record on the bench stack without the vault wait or a run", () => {
+    const local = readFileSync(new URL("../../../scripts/bench-local.sh", import.meta.url), "utf8");
+    expect(local).toMatch(/\n {2}regrade\)\n {4}shift\n {4}pnpm bench regrade "\$@" ;;/);
+  });
+});
+
+describe("scripts/bench-real-fixtures.sh (I4)", () => {
+  it("runs only the activities benchmark with the real model, never the static library", () => {
+    const real = readFileSync(
+      new URL("../../../scripts/bench-real-fixtures.sh", import.meta.url),
+      "utf8",
+    );
+    expect(real).toMatch(/pnpm bench run --suite fixtures --only activities --track both/);
+    expect(real).not.toMatch(/--only readings/);
   });
 });

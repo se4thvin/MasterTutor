@@ -143,6 +143,58 @@ export function evaluate(
   };
 }
 
+/** One participation activity in a section's text (I2): challenge activities end a block, never count. */
+interface ActivityBlock {
+  id: string;
+  complete: boolean;
+  questions: Set<string>;
+  steps: Set<string>;
+}
+
+function activityBlocks(text: string, c: DiscoveredReadingsCriterion): ActivityBlock[] {
+  const headers = [
+    ...[...text.matchAll(new RegExp(c.activityPattern, "giu"))].map((m) => ({
+      at: m.index,
+      id: m[1] ?? null,
+    })),
+    ...[...text.matchAll(new RegExp(c.otherActivityPattern, "giu"))].map((m) => ({
+      at: m.index,
+      id: undefined,
+    })),
+  ].sort((a, b) => a.at - b.at);
+  const blocks: ActivityBlock[] = [];
+  headers.forEach((header, i) => {
+    if (header.id === undefined) return; // a challenge activity
+    const body = text.slice(header.at, headers[i + 1]?.at ?? text.length);
+    const ids = (pattern: string, flags: string) =>
+      new Set([...body.matchAll(new RegExp(pattern, flags))].map((m, k) => m[1] ?? String(k + 1)));
+    blocks.push({
+      id: header.id ?? `#${blocks.length + 1}`,
+      complete: new RegExp(c.completedPattern, "iu").test(body),
+      questions: ids(`(?:^|\\n)[ \\t]*(?:${c.questionPattern})`, "giu"),
+      steps: ids(c.stepPattern, "giu"),
+    });
+  });
+  return blocks;
+}
+
+/** Which activity, and which question in it, an input landed in: from its recorded enclosing text. */
+function placeOf(
+  ancestors: readonly string[],
+  c: DiscoveredReadingsCriterion,
+): { activity: string; question: string | null } | null {
+  const activity = new RegExp(`^\\s*(?:${c.activityPattern})`, "iu");
+  const question = new RegExp(`^\\s*(?:${c.questionPattern})`, "iu");
+  let inQuestion: string | null = null;
+  for (const text of ancestors) {
+    const a = activity.exec(text);
+    if (a) return { activity: a[1] ?? "", question: inQuestion };
+    const q = question.exec(text);
+    if (q && inQuestion === null) inQuestion = q[1] ?? "";
+  }
+  return null;
+}
+
 function evaluateDiscovered(
   criterion: DiscoveredReadingsCriterion,
   main: RunTrace | null,
@@ -150,6 +202,7 @@ function evaluateDiscovered(
 ): Verdict {
   const rows: SectionOutcome[] = [];
   const unvisited: string[] = [];
+  const stepControl = new RegExp(criterion.stepControlPattern, "iu");
   for (const found of discoverReadings(criterion, verify)) {
     if (found.problem !== null) {
       rows.push({
@@ -175,20 +228,20 @@ function evaluateDiscovered(
         grade("unknown", "never read in the grading run");
         continue;
       }
-      // One result at a time, never summed (P10b-8): the best complete one, else the fullest.
-      const counts = results.map((text) => ({
-        activities: count(text, criterion.activityPattern),
-        completed: count(text, criterion.completedPattern),
-      }));
-      const best =
-        counts.find((c) => c.activities > 0 && c.completed >= c.activities) ??
-        counts.reduce((a, b) => (b.activities > a.activities ? b : a));
-      if (best.activities === 0) {
+      // The fullest single read (I2): most activities, then most complete; never merged (P10b-8).
+      const blocks = results
+        .map((text) => activityBlocks(text, criterion))
+        .reduce((a, b) => {
+          const done = (x: ActivityBlock[]) => x.filter((block) => block.complete).length;
+          return b.length > a.length || (b.length === a.length && done(b) > done(a)) ? b : a;
+        });
+      if (blocks.length === 0) {
         grade("unknown", "no activity found on the page");
         continue;
       }
-      const done = `${Math.min(best.completed, best.activities)}/${best.activities} activities complete`;
-      if (best.completed < best.activities) {
+      const complete = blocks.filter((block) => block.complete).length;
+      const done = `${complete}/${blocks.length} activities complete`;
+      if (complete < blocks.length) {
         grade("failed", done);
         continue;
       }
@@ -196,14 +249,48 @@ function evaluateDiscovered(
         grade("passed", done);
         continue;
       }
-      const acts = interactionsOn(main, section.url);
-      if (acts === 0) unvisited.push(section.url);
-      if (acts >= best.activities) grade("passed", `${done}, ${acts} interactions`);
-      else
-        grade(
-          "failed",
-          `${done}, but the main run worked on it ${acts} time(s), needs ${best.activities}`,
+      // I3: the account starts complete, so a pass needs the main run's own work on every question
+      // and every animation step of every activity, tied to them by where each input landed.
+      const inputs = (main?.steps ?? [])
+        .filter((step) => step.url !== null && sameDocument(step.url, section.url))
+        .flatMap((step) => step.actions.filter((a) => a.effect === "input" && a.target !== null))
+        .flatMap((a) => {
+          const place = placeOf(a.target!.ancestors, criterion);
+          return place ? [{ ...place, step: stepControl.test(a.target!.label) }] : [];
+        });
+      if (inputs.length === 0) unvisited.push(section.url);
+      let verdict: [SectionOutcome["outcome"], string] = [
+        "passed",
+        `${done}, every question answered and every animation step played`,
+      ];
+      for (const block of blocks) {
+        const mine = inputs.filter((input) => input.activity === block.id);
+        const answered = new Set(
+          mine.flatMap((input) =>
+            input.question !== null && block.questions.has(input.question) ? [input.question] : [],
+          ),
         );
+        const played = mine.filter((input) => input.step).length;
+        if (block.questions.size + block.steps.size === 0) {
+          verdict = ["unknown", `activity ${block.id}: no question or animation step found`];
+          break;
+        }
+        if (answered.size < block.questions.size) {
+          verdict = [
+            "failed",
+            `${done}, but activity ${block.id}: answered ${answered.size}/${block.questions.size} questions`,
+          ];
+          break;
+        }
+        if (played < block.steps.size) {
+          verdict = [
+            "failed",
+            `${done}, but activity ${block.id}: played ${played}/${block.steps.size} animation steps`,
+          ];
+          break;
+        }
+      }
+      grade(...verdict);
     }
   }
   const passed = rows.filter((r) => r.outcome === "passed").length;
