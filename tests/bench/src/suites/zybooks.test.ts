@@ -56,7 +56,10 @@ describe("zybooks suite", () => {
     for (const b of zybooksSuite().benchmarks.filter((x) => x.verify !== null)) {
       expect(b.verify!.signInUrl).toBe(`${ZYBOOKS_ORIGIN}/signin`);
       expect(b.verify!.task).toMatch(/address bar/);
-      expect(b.verify!.task).toMatch(/Never click, type or press keys/);
+      expect(b.verify!.task).toMatch(/never click, type or press keys/);
+      // I1: it pages past the element cap and expands collapsed groups before trusting a listing.
+      expect(b.verify!.task).toMatch(/offset 0, 400, 800/);
+      expect(b.verify!.task).toMatch(/\[collapsed\].*expand it/);
       expect(b.verify!.task).toContain(ZYBOOKS_BOOK);
     }
   });
