@@ -305,16 +305,37 @@ function evaluateDiscovered(
   };
 }
 
+/** Whether a URL is a page the criterion grades (where a grading run must touch nothing). */
+function gradedPage(criterion: Criterion, url: string): boolean {
+  if (criterion.kind === "page_text") return sameDocument(url, criterion.url);
+  if (criterion.kind === "sections_complete")
+    return criterion.sections.some((s) => sameDocument(url, s.url));
+  if (criterion.kind === "discovered_readings")
+    return new RegExp(criterion.sectionUrlPattern, "u").test(url);
+  return false;
+}
+
 /**
  * A grading (verify) run must only read (P10a-24, I3): any click, type or key press on any page
  * taints it, so it cannot do the work on a page that is not graded. The one exception is the
- * declared sign-in page, which a fresh-login run must fill and submit.
+ * declared sign-in page, which a fresh-login run must fill and submit. An expand click (disclosure)
+ * opens collapsed listings and is harmless there, but on a graded page a toggle could do the work
+ * (a "Show answer" that gives credit), so there it taints too (re-review N1).
  */
-export function verifyTainted(verify: RunTrace, signInUrl: string | null): boolean {
-  return verify.steps.some(
-    (s) =>
-      s.interaction && (signInUrl === null || s.url === null || !sameDocument(s.url, signInUrl)),
-  );
+export function verifyTainted(
+  verify: RunTrace,
+  signInUrl: string | null,
+  criterion: Criterion,
+): boolean {
+  return verify.steps.some((s) => {
+    const signingIn = signInUrl !== null && s.url !== null && sameDocument(s.url, signInUrl);
+    if (s.interaction && !signingIn) return true;
+    return (
+      s.url !== null &&
+      gradedPage(criterion, s.url) &&
+      s.actions.some((a) => a.effect === "disclosure")
+    );
+  });
 }
 
 /** D32 baseline: the pages already show completion; no interaction is expected from a verify run. */

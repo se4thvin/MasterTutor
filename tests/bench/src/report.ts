@@ -219,6 +219,7 @@ export function renderReport(r: SuiteRunResult, reportPath: string): string {
       specs: r.results.map((x) => `${x.key}@${x.toolProfile}`),
       run_ids: r.results.map((x) => x.runId ?? "none"),
       grading_run_ids: r.results.map((x) => x.verifyRunIds.at(-1) ?? "none"),
+      takeovers: r.results.map((x) => String(x.metrics.takeovers)),
     }),
     "",
     `# Benchmark record: ${r.suite}`,

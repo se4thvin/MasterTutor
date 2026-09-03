@@ -3,7 +3,7 @@
 // the stack's database only: no agent run, no model call, no spend. The result is appended to the
 // record; the original grade above it stays as it was.
 import { appendFileSync, readFileSync } from "node:fs";
-import { baselineCriterion, evaluate, verifyTainted } from "./criteria.ts";
+import { baselineCriterion, evaluate, finalOutcome, verifyTainted } from "./criteria.ts";
 import { readFrontmatter, sectionTable } from "./report.ts";
 import { gradeTraces, type RunnerDeps } from "./run-suite.ts";
 import type { SuiteDefinition } from "./types.ts";
@@ -20,15 +20,16 @@ export async function regradeRecord(
   const specs = list(fields["specs"]);
   const runIds = list(fields["run_ids"]);
   const gradingIds = list(fields["grading_run_ids"]);
+  const takeovers = list(fields["takeovers"]);
   if (
     !specs ||
     !runIds ||
     !gradingIds ||
-    specs.length !== runIds.length ||
-    specs.length !== gradingIds.length
+    !takeovers ||
+    [runIds, gradingIds, takeovers].some((l) => l.length !== specs.length)
   )
     throw new Error(
-      `${recordPath} does not list its specs, run_ids and grading_run_ids; it cannot be re-graded`,
+      `${recordPath} does not list its specs, run_ids, grading_run_ids and takeovers; it cannot be re-graded`,
     );
   const lines = [
     "",
@@ -54,9 +55,19 @@ export async function regradeRecord(
       ? evaluate(baselineCriterion(spec.criterion), null, grading)
       : gradeTraces(spec, main, grading);
     const tainted =
-      grading !== null && spec.verify !== null && verifyTainted(grading, spec.verify.signInUrl);
+      grading !== null &&
+      spec.verify !== null &&
+      verifyTainted(grading, spec.verify.signInUrl, spec.criterion);
+    // The same rule as the original grade (re-review N2): a run that needed a takeover never passes.
+    const taken = Number(takeovers[i]);
+    const outcome = tainted ? "error" : finalOutcome(verdict, taken);
+    const why = tainted
+      ? " (the grading run acted on a page other than the sign-in page)"
+      : taken > 0
+        ? ` (${taken} takeover${taken === 1 ? "" : "s"}: a run that needed a takeover never passes)`
+        : "";
     lines.push(
-      `- Outcome: **${tainted ? "error" : verdict.outcome}**${tainted ? " (the grading run acted on a page other than the sign-in page)" : ""}`,
+      `- Outcome: **${outcome}**${why}`,
       `- Runs re-read: main ${baseline ? "none (baseline)" : runId}; grading ${gradingId}`,
       `- Verdict: ${verdict.summary}`,
       ...verdict.unmet.map((u) => `  - unmet: ${u}`),

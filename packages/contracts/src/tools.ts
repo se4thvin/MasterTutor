@@ -96,6 +96,8 @@ export const READ_PAGE_ATTRS = [
 ] as const;
 export const ReadPageAttr = z.enum(READ_PAGE_ATTRS);
 export type ReadPageAttr = z.infer<typeof ReadPageAttr>;
+/** Most elements one interactive read_page result lists; a longer page is read with `offset`. */
+export const READ_PAGE_MAX_ELEMENTS = 400;
 export const ReadPageArgs = z.object({
   mode: z.enum(["interactive", "text"]),
   sinceHash: Sha256Hex.nullable(),
