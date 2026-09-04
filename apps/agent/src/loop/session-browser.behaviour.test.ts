@@ -81,7 +81,7 @@ describe("SessionLoopBrowser", () => {
     await browser.observe(signal);
     const { output } = await browser.runFunction(
       "read_page",
-      { mode: "interactive", sinceHash: null },
+      { mode: "interactive", sinceHash: null, offset: null },
       signal,
       null,
       new StepCollector(),
@@ -295,7 +295,7 @@ describe("SessionLoopBrowser", () => {
     await browser.observe(signal);
     const { output } = await browser.runFunction(
       "read_page",
-      { mode: "interactive", sinceHash: null },
+      { mode: "interactive", sinceHash: null, offset: null },
       signal,
       null,
       new StepCollector(),
@@ -488,7 +488,7 @@ describe("SessionLoopBrowser", () => {
     expect(observed.url).toBe(`${SITE}/record.html?who=${SECRET_REDACTION}`);
     const { output } = await browser.runFunction(
       "read_page",
-      { mode: "text", sinceHash: null },
+      { mode: "text", sinceHash: null, offset: null },
       signal,
       null,
       new StepCollector(),

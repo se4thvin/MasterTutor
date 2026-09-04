@@ -92,7 +92,7 @@ async function connect(runId: string): Promise<{ browser: LoopBrowser; close(): 
 async function refNamed(browser: LoopBrowser, name: string): Promise<string> {
   const { output } = await browser.runFunction(
     "read_page",
-    { mode: "interactive", sinceHash: null },
+    { mode: "interactive", sinceHash: null, offset: null },
     signal,
     null,
     new StepCollector(),
@@ -160,7 +160,11 @@ describe("createVault / vaultHooks", () => {
       // Invalid arguments, other tools and other origins raise nothing (the call is refused anyway).
       expect(await browser.functionApproval("fill_credential", { alias: 3 }, signal)).toBeNull();
       expect(
-        await browser.functionApproval("read_page", { mode: "text", sinceHash: null }, signal),
+        await browser.functionApproval(
+          "read_page",
+          { mode: "text", sinceHash: null, offset: null },
+          signal,
+        ),
       ).toBeNull();
       await browser.navigate(`${fx.origin("lookalike")}/password`, signal);
       expect(await fill("password", await refNamed(browser, "Password"))).toBeNull();

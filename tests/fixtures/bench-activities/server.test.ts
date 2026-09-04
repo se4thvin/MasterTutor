@@ -93,3 +93,43 @@ describe("consent overlay layout (coordinate scenarios)", () => {
     }
   });
 });
+
+describe("library: readings with sections and mixed completion (section discovery)", () => {
+  const get = async (path: string, cookie: string) =>
+    (await fetch(`${server.url}${path}`, { headers: { cookie: `${cookie}; consent=1` } })).text();
+  const count = (text: string, pattern: string) => text.split(pattern).length - 1;
+
+  it("lists reading assignments, each reading's sections, and sections with their activities", async () => {
+    const cookie = await signIn();
+    const index = await get("/library", cookie);
+    for (const n of [1, 2, 3, 4])
+      expect(index).toContain(`<a href="/library/reading/${n}">Reading ${n}</a>`);
+    expect(await get("/library/reading/2", cookie)).toContain(
+      '<a href="/library/chapter/2/section/1">2.1 Loops</a>',
+    );
+    const loops = await get("/library/chapter/2/section/1", cookie);
+    expect([
+      count(loops, "PARTICIPATION ACTIVITY"),
+      count(loops, "CHALLENGE ACTIVITY"),
+      count(loops, "Activity completed"),
+    ]).toEqual([2, 1, 2]);
+    expect(loops).toContain(
+      '<p>1) Does a loop repeat?</p><button type="button">Answer 2.1.1.1</button>',
+    );
+    expect(await get("/library/chapter/1/section/1", cookie)).toContain(
+      '<button type="button">Start 1.1.2</button> <span>Step 1</span> <span>Step 2</span> <button type="button">Play step 1.1.2</button>',
+    );
+    expect(count(await get("/library/chapter/3/section/1", cookie), "PARTICIPATION ACTIVITY")).toBe(
+      0,
+    );
+    expect(
+      (await fetch(`${server.url}/library/chapter/9/section/9`, { headers: { cookie } })).status,
+    ).toBe(404);
+  });
+  it("keeps reading 3's last section inside a collapsed chapter", async () => {
+    const page = await get("/library/reading/3", await signIn());
+    expect(page).toMatch(
+      /<details><summary>Chapter 3 more<\/summary><ul><li><a href="\/library\/chapter\/3\/section\/3">3\.3 Extra<\/a>/,
+    );
+  });
+});

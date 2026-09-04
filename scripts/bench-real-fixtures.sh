@@ -16,4 +16,4 @@ take_stack_lock
 trap 'stop_stack --profile e2e --profile bench' EXIT
 "${DC[@]}" --profile e2e --profile bench up -d --build --wait --wait-timeout 600
 pnpm bench init --stack test
-pnpm bench run --suite fixtures --track both "$@"
+pnpm bench run --suite fixtures --only activities --track both "$@"

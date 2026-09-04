@@ -62,7 +62,9 @@ suite's full log stays in the temp folder it names.
 What happens:
 
 1. The worktree is rsynced to `~/mt-ci/<worktree-name>/`. `.gitignore` is honoured, and
-   `node_modules`, `.git`, `.env*`, `.superpowers`, `orchestration` and `.next` are never sent.
+   `node_modules`, `.git`, `.env*`, `.superpowers`, `orchestration` (except the benchmark protocol docs `orchestration/README.md`,
+   `orchestration/benchmarks/README.md` and `orchestration/briefs/bench-fix.md`, which
+   `tests/bench/src/protocol-docs.test.ts` reads) and `.next` are never sent.
    `.env.test` (dummy values) and `.env.example` are the only env files that go. The sync holds
    the worktree's lock on the host (`~/mt-ci/.sync/<worktree-name>.lock`), so runs started together
    from one worktree sync one after another.

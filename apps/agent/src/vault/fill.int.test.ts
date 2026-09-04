@@ -311,7 +311,7 @@ describe("fill_credential", () => {
     const registry = new ToolRegistry([register(readPageTool)], env.log.logger, mask);
     const { output } = await registry.run(
       "read_page",
-      { mode: "text", sinceHash: null },
+      { mode: "text", sinceHash: null, offset: null },
       {
         runId,
         workspaceId: env.workspaceId,
