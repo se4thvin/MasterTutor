@@ -127,6 +127,8 @@ describe("createVault / vaultHooks", () => {
     const [text, ...rest] = await vault.promptContext(run());
     expect(rest).toEqual([]);
     expect(text).toContain(`zybooks (${zybooks}): username, password, otp`);
+    // Profile-neutral (QA-068): a computer_use run has no read_page and gets the same text.
+    expect(text).not.toContain("read_page");
     for (const absent of ["elsewhere", "My private", "KITE7CANARY3", "MARMOT4CANARY8VELVET"])
       expect(text).not.toContain(absent);
     expect(
