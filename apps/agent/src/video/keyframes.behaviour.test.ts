@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { sharedLocalOcr } from "../browser/local-ocr.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
@@ -19,7 +20,7 @@ async function open(path: string) {
   const worlds = await session.worlds();
   return { worlds, duration: (await worlds.call(pageVideoReveal, [])).duration };
 }
-const ctx = () => ({ session, mask: NO_MASK_SOURCES, signal });
+const ctx = () => ({ session, mask: NO_MASK_SOURCES, signal, ocr: sharedLocalOcr() });
 
 describe("sampleKeyframes", () => {
   it("keeps one frame per slide and restores captions", async () => {
@@ -46,4 +47,10 @@ describe("sampleKeyframes", () => {
       frames: [],
     });
   }, 60_000);
+  it("keeps two same-layout slides that differ only in a bullet (final review I5)", async () => {
+    // Slides 1 and 2 share a template (perceptual distance 0.88); slide 3 differs.
+    const { worlds, duration } = await open("watch-same-layout.html");
+    const result = await sampleKeyframes(ctx(), worlds, { start: 0, end: duration });
+    expect(result.frames.map((f) => f.segmentStart)).toEqual([0, 6, 10]);
+  }, 120_000);
 });
