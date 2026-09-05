@@ -144,3 +144,48 @@ describe("D43 lazy layout-motion boundary", () => {
     ).toEqual([]);
   });
 });
+
+describe("UI library bans reach every package, not only apps/web (QA-019)", () => {
+  it.each([
+    "apps/agent/src/x.ts",
+    "apps/browser-slot/x.ts",
+    "packages/contracts/src/x.ts",
+    "packages/contracts/src/server/x.ts",
+    "packages/db/src/x.ts",
+    "tests/x.ts",
+    "tests/bench/src/x.ts",
+    "scripts/x.ts",
+  ])("bans animation, three and icon libraries in %s", async (file) => {
+    for (const pkg of ["gsap", "framer-motion", "three", "lucide-react", "@hugeicons/react"]) {
+      expect(await rules(`import x from "${pkg}"; export default x;`, file), pkg).toContain(
+        "no-restricted-imports",
+      );
+      expect(await rules(`export const l = () => import("${pkg}");`, file), pkg).toContain(
+        "no-restricted-syntax",
+      );
+    }
+  });
+});
+
+describe("template-literal dynamic imports are banned like string ones (QA-023)", () => {
+  it.each([
+    [WEB, "gsap"],
+    [WEB, "three"],
+    [WEB, "@/lib/fixtures/x"],
+    ["apps/web/lib/server/x.ts", "openai"],
+    ["apps/agent/src/x.ts", "openai/helpers/zod"],
+    ["packages/db/src/x.ts", "gsap"],
+  ])("%s: import(`%s`)", async (file, source) => {
+    expect(await rules("export const l = () => import(`" + source + "`);", file)).toContain(
+      "no-restricted-syntax",
+    );
+    expect(
+      await rules("export const l = (p: string) => import(`" + source + "/${p}`);", file),
+    ).toContain("no-restricted-syntax");
+  });
+  it("still allows a template-literal import of an unbanned module", async () => {
+    expect(
+      await rules("export const l = () => import(`./layout-features.ts`);", MOTION_DIR),
+    ).toEqual([]);
+  });
+});
