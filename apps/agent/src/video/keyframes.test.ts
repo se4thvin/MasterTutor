@@ -18,6 +18,21 @@ describe("KeyframeSampler", () => {
   });
 });
 
+describe("KeyframeSampler with a second check (final review I5)", () => {
+  it("keeps a frame the hash calls the same when the caller says it is not", () => {
+    const s = new KeyframeSampler(3);
+    s.push({ t: 0, hash: [0], png: png(0) });
+    expect(s.candidate([1])).toEqual(png(0));
+    s.push({ t: 2, hash: [1], png: png(1) }, false); // same layout, other text
+    expect(s.candidate([40])).toBeNull();
+    expect(s.finish().map((f) => [f.segmentStart, f.t])).toEqual([
+      [0, 0],
+      [2, 2],
+    ]);
+    expect(s.dropped).toBe(0);
+  });
+});
+
 describe("meanLuminance", () => {
   it("measures luminance", async () => {
     const solid = (background: string) =>

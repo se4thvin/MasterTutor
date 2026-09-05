@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chapterBlocks,
+  chaptersFor,
   chaptersFromDescription,
   chaptersFromInitialData,
   extractInitialData,
@@ -35,6 +36,7 @@ describe("chapters", () => {
         { title: "Next", start: 5 },
       ],
       new Set([0]),
+      true,
     );
     expect(blocks).toEqual([
       expect.objectContaining({
@@ -44,5 +46,34 @@ describe("chapters", () => {
         anchor: expect.objectContaining({ tStart: 5 }),
       }),
     ]);
+  });
+  it("uses ytInitialData chapters only for the video on screen (SPA navigation)", () => {
+    const script = (id: string) =>
+      `var ytInitialData = {"currentVideoEndpoint":{"watchEndpoint":{"videoId":"${id}"}},"c":[{"chapterRenderer":{"title":{"simpleText":"Old intro"},"timeRangeStartMillis":0}},{"chapterRenderer":{"title":{"simpleText":"Old part"},"timeRangeStartMillis":5000}}]};`;
+    const url = "https://www.youtube.com/watch?v=new0000001";
+    expect(
+      chaptersFor({ initialDataScript: script("new0000001"), description: null }, url),
+    ).toMatchObject({
+      bound: true,
+      chapters: [{ title: "Old intro" }, { title: "Old part" }],
+    });
+    // The inline script still describes the previous video: its chapters are not this video's.
+    const stale = chaptersFor({ initialDataScript: script("old0000001"), description: null }, url);
+    expect(stale.bound).toBe(false);
+    // The rendered description is the page as it is now.
+    expect(
+      chaptersFor(
+        { initialDataScript: script("old0000001"), description: "0:00 A\n0:05 B\n0:10 C" },
+        url,
+      ),
+    ).toEqual({
+      bound: true,
+      chapters: [
+        { title: "A", start: 0 },
+        { title: "B", start: 5 },
+        { title: "C", start: 10 },
+      ],
+    });
+    expect(chapterBlocks(stale.chapters, new Set(), false).every((b) => !b.verified)).toBe(true);
   });
 });
