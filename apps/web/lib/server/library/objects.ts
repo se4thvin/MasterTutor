@@ -1,6 +1,7 @@
 import { isAssetMimeType, type SignedUrl, Uuid } from "@mastertutor/contracts";
+import { createLogger } from "@mastertutor/contracts/server";
 import { assets, sources, workspaceMembers, type Database } from "@mastertutor/db";
-import type { Storage } from "@mastertutor/storage";
+import { ObjectNotFound, type Storage } from "@mastertutor/storage";
 import { and, eq } from "drizzle-orm";
 import { ServiceError } from "../service-error.ts";
 
@@ -28,8 +29,42 @@ export interface ObjectDeps {
   viewerId(): Promise<string | null>;
 }
 
-const status = (code: number, cache: string) =>
+const log = createLogger({ service: "web" });
+
+/** A bodyless answer that still carries the object headers. */
+export const objectStatus = (code: number, cache: string) =>
   new Response(null, { status: code, headers: { ...OBJECT_HEADERS, "Cache-Control": cache } });
+
+/**
+ * If-None-Match against one strong ETag, by the weak comparison RFC 9110 §13.1.2 asks for: a list
+ * of tags, `W/` forms and `*` all count (QA-087).
+ */
+export function matchesIfNoneMatch(request: Request, etag: string): boolean {
+  const header = request.headers.get("if-none-match");
+  if (!header) return false;
+  return header
+    .split(",")
+    .map((tag) => tag.trim().replace(/^W\//, ""))
+    .some((tag) => tag === "*" || tag === etag);
+}
+
+/**
+ * The object's bytes, or a hardened status: a key with no object is 404, a store that fails is
+ * 502 (logged), never Next's bare 500 without OBJECT_HEADERS (QA-086).
+ */
+async function objectBody(
+  deps: ObjectDeps,
+  key: string,
+  cache: string,
+): Promise<ReadableStream<Uint8Array> | Response> {
+  try {
+    return await deps.storage.getStream(key);
+  } catch (error) {
+    if (error instanceof ObjectNotFound) return objectStatus(404, cache);
+    log.error({ reason: (error as Error).name }, "object store read failed");
+    return objectStatus(502, cache);
+  }
+}
 
 /** GET /api/assets/:assetId: the asset of the viewer's workspace (membership in the same query). */
 export async function assetResponse(
@@ -37,9 +72,9 @@ export async function assetResponse(
   request: Request,
   assetId: string,
 ): Promise<Response> {
-  if (!Uuid.safeParse(assetId).success) return status(404, ASSET_CACHE);
+  if (!Uuid.safeParse(assetId).success) return objectStatus(404, ASSET_CACHE);
   const userId = await deps.viewerId();
-  if (!userId) return status(401, ASSET_CACHE);
+  if (!userId) return objectStatus(401, ASSET_CACHE);
   const [row] = await deps.db
     .select({ key: assets.key, mime: assets.mime, sha256: assets.sha256, bytes: assets.bytes })
     .from(assets)
@@ -51,14 +86,16 @@ export async function assetResponse(
       ),
     )
     .where(eq(assets.id, assetId));
-  if (!row) return status(404, ASSET_CACHE);
+  if (!row) return objectStatus(404, ASSET_CACHE);
   const etag = `"${row.sha256}"`;
   const common = { ...OBJECT_HEADERS, ETag: etag, "Cache-Control": ASSET_CACHE };
-  if (request.headers.get("if-none-match") === etag)
+  if (matchesIfNoneMatch(request, etag))
     return new Response(null, { status: 304, headers: common });
+  const body = await objectBody(deps, row.key, ASSET_CACHE);
+  if (body instanceof Response) return body;
   // Only the stored-asset allow-list is shown inline; anything else downloads as bytes.
   const inline = isAssetMimeType(row.mime);
-  return new Response(await deps.storage.getStream(row.key), {
+  return new Response(body, {
     headers: {
       ...common,
       "Content-Type": inline ? row.mime : "application/octet-stream",
@@ -76,9 +113,9 @@ export async function snapshotResponse(
   name: string,
 ): Promise<Response> {
   if (!Uuid.safeParse(sourceId).success || (name !== "page.mhtml" && name !== "page.png"))
-    return status(404, OBJECT_CACHE);
+    return objectStatus(404, OBJECT_CACHE);
   const userId = await deps.viewerId();
-  if (!userId) return status(401, OBJECT_CACHE);
+  if (!userId) return objectStatus(401, OBJECT_CACHE);
   const [row] = await deps.db
     .select({ mhtmlKey: sources.mhtmlKey, screenshotKey: sources.screenshotKey })
     .from(sources)
@@ -91,9 +128,11 @@ export async function snapshotResponse(
     )
     .where(eq(sources.id, sourceId));
   const key = name === "page.mhtml" ? row?.mhtmlKey : row?.screenshotKey;
-  if (!key) return status(404, OBJECT_CACHE);
+  if (!key) return objectStatus(404, OBJECT_CACHE);
+  const body = await objectBody(deps, key, OBJECT_CACHE);
+  if (body instanceof Response) return body;
   const png = name === "page.png";
-  return new Response(await deps.storage.getStream(key), {
+  return new Response(body, {
     headers: {
       ...OBJECT_HEADERS,
       "Content-Type": png ? "image/png" : "multipart/related",

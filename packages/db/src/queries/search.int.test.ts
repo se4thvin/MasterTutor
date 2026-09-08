@@ -105,6 +105,31 @@ describe("hybridSearch", () => {
       ).resolves.toBeInstanceOf(Array);
     }
   });
+  it("never shows a vector-only block as a title hit's snippet, whatever its similarity (QA-089)", async () => {
+    const owner = createDb(tdb.ownerUrl);
+    const axis = Array.from({ length: EMBEDDING_DIMENSIONS }, (_, k) => (k === 3 ? 1 : 0));
+    const [note] = await owner.db
+      .insert(notes)
+      .values({ workspaceId: ws, title: "Zebrafish anatomy", lede: "Fins and gills." })
+      .returning({ id: notes.id });
+    await owner.db.insert(noteBlocks).values({
+      noteId: note!.id,
+      position: "a0",
+      type: "paragraph",
+      markdown: "qqzv unrelated text",
+      origin: "dom",
+      embedding: axis,
+    });
+    await owner.close();
+    const hits = await hybridSearch(h.db, {
+      workspaceId: ws,
+      q: "zebrafish",
+      embedding: axis,
+      kind: null,
+      limit: 10,
+    });
+    expect(hits[0]).toMatchObject({ noteId: note!.id, blockId: null, snippet: "Fins and gills." });
+  });
   it("keeps only vector neighbours above the similarity floor (hand-built vectors)", async () => {
     const owner = createDb(tdb.ownerUrl);
     const axis = (i: number) =>

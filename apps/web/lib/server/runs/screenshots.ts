@@ -10,7 +10,7 @@ import {
 } from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
 import { and, eq } from "drizzle-orm";
-import { OBJECT_CACHE, OBJECT_HEADERS } from "../library/objects.ts";
+import { OBJECT_CACHE, OBJECT_HEADERS, matchesIfNoneMatch } from "../library/objects.ts";
 
 export interface ScreenshotDeps {
   db: Database;
@@ -39,7 +39,7 @@ async function serve(
   if (!key || !key.startsWith(objectKeys.stepScreenshotPrefix(runId))) return status(404);
   const etag = `"${createHash("sha256").update(key).digest("hex").slice(0, 32)}"`;
   const common = { ...OBJECT_HEADERS, ETag: etag, "Cache-Control": OBJECT_CACHE };
-  if (request.headers.get("if-none-match") === etag)
+  if (matchesIfNoneMatch(request, etag))
     return new Response(null, { status: 304, headers: common });
   let body: ReadableStream<Uint8Array>;
   try {

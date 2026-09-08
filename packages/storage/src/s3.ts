@@ -40,7 +40,7 @@ export interface Storage {
   /** Streams a local file in without buffering it (downloads up to 200 MiB, spec §10.2.9). */
   putFile(key: string, path: string, options: PutOptions): Promise<void>;
   getBytes(key: string): Promise<Uint8Array>;
-  /** Streams an object, so web never buffers a large PDF per request (preflight S8). */
+  /** Streams an object, so web never buffers a large PDF per request (preflight S8). A missing key rejects with ObjectNotFound. */
   getStream(key: string): Promise<ReadableStream<Uint8Array>>;
   head(key: string): Promise<ObjectHead | null>;
   delete(key: string): Promise<void>;
@@ -50,6 +50,14 @@ export interface Storage {
 
 function assertKey(key: string): void {
   if (!isObjectKey(key)) throw new TypeError("invalid object key");
+}
+
+/** getStream's answer for a key that holds no object, so callers can tell it from an unreachable store. */
+export class ObjectNotFound extends Error {
+  constructor() {
+    super("object not found");
+    this.name = "ObjectNotFound";
+  }
 }
 
 function isNotFound(error: unknown): boolean {
@@ -103,7 +111,11 @@ export function createStorage(config: StorageConfig): Storage {
     },
     async getStream(key) {
       assertKey(key);
-      const response = await client.send(new GetObjectCommand({ Bucket, Key: key }));
+      const response = await client
+        .send(new GetObjectCommand({ Bucket, Key: key }))
+        .catch((error: unknown) => {
+          throw isNotFound(error) ? new ObjectNotFound() : error;
+        });
       if (!response.Body) throw new Error("object has no body");
       return response.Body.transformToWebStream() as ReadableStream<Uint8Array>;
     },

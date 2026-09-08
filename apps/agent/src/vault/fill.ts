@@ -73,15 +73,19 @@ function offsiteDestination(group: readonly GroupBox[], origin: string): string 
   return offsite.size > 0 ? [...offsite].sort().join(", ") : undefined;
 }
 
-/** The page's current answer for `ref`; undefined when the form posts home or the ref is gone. */
+/**
+ * The page's current answer for `ref`: where its form posts off `origin`, undefined when it posts
+ * home or the node is gone, and null when the target resolves to no node at all.
+ */
 async function currentDestination(
   deps: VaultDeps,
   ctx: ApprovalContext,
   ref: string,
   origin: string,
-): Promise<string | undefined> {
+): Promise<string | undefined | null> {
   const resolved = await deps.resolveRef(ctx.session, ref);
-  const target = resolved && (await openTarget(resolved.cdp, resolved.backendNodeId));
+  if (!resolved) return null;
+  const target = await openTarget(resolved.cdp, resolved.backendNodeId);
   if (!target) return undefined;
   try {
     return offsiteDestination(await describeGroup(target), origin);
@@ -113,10 +117,13 @@ export async function fillApproval(
       return undefined;
     },
   );
+  // Nothing focused: the act phase answers no_focused_field at once, so no person is asked to
+  // approve a fill that cannot happen (QA-063). A stale ref keeps its card, as before.
+  if (postsTo === null && args.target === FOCUSED_TARGET) return null;
   // A list too long for a card is never cut (a cut card would hide a destination): no card is
   // raised, and the fill hands the page to a person instead.
-  if (postsTo !== undefined && postsTo.length > MAX_POSTS_TO_CHARS) return null;
-  if (postsTo !== undefined)
+  if (typeof postsTo === "string" && postsTo.length > MAX_POSTS_TO_CHARS) return null;
+  if (typeof postsTo === "string")
     return { kind: "credential_first_use", alias: item.alias, origin: item.origin, postsTo };
   return credentialApproval(deps, url, item);
 }
