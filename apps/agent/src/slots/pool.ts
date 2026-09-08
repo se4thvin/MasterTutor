@@ -2,20 +2,25 @@ import type { Database } from "@mastertutor/db";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
-import { listSlotsInState, markSlotIdle, reclaimExpiredSlots } from "./leases.ts";
+import {
+  listRestartingSlots,
+  markSlotIdle,
+  reclaimExpiredSlots,
+  type RestartingSlot,
+} from "./leases.ts";
 import { cdpBrowserControl, type BrowserControl } from "./lifecycle.ts";
 
 export interface SlotStore {
   markIdle(name: string): Promise<boolean>;
   reclaimExpired(slots: readonly string[]): Promise<string[]>;
-  listRestarting(slots: readonly string[]): Promise<string[]>;
+  listRestarting(slots: readonly string[]): Promise<RestartingSlot[]>;
 }
 
 export function createSlotStore(db: Database): SlotStore {
   return {
     markIdle: (name) => markSlotIdle(db, name),
     reclaimExpired: (slots) => reclaimExpiredSlots(db, slots),
-    listRestarting: (slots) => listSlotsInState(db, slots, "restarting"),
+    listRestarting: (slots) => listRestartingSlots(db, slots),
   };
 }
 
@@ -58,9 +63,13 @@ export class SlotPool {
   }
 
   reset(name: string): Promise<void> {
+    return this.#recycle(name, { neverLeased: false });
+  }
+
+  #recycle(name: string, options: { neverLeased: boolean }): Promise<void> {
     const running = this.#inFlight.get(name);
     if (running) return running;
-    const work = this.#reset(name).finally(() => this.#inFlight.delete(name));
+    const work = this.#reset(name, options).finally(() => this.#inFlight.delete(name));
     this.#inFlight.set(name, work);
     return work;
   }
@@ -71,8 +80,11 @@ export class SlotPool {
   }
 
   /**
-   * Boot and sweep: retire expired leases, then bring every restarting slot back. The sweep passes
-   * `awaitResets: false` so a hung slot restart never holds up the next sweep's work.
+   * Boot and sweep: retire expired leases, then bring every restarting slot back. A slot that was
+   * never leased only waits for its browser to answer: closing it would restart a container
+   * that holds nothing, for no reason. Every other restarting slot (released, or reclaimed from a
+   * dead agent mid-run) is closed and replaced, so no session state outlives its run. The sweep
+   * passes `awaitResets: false` so a hung slot restart never holds up the next sweep's work.
    */
   async reconcile(options: { awaitResets?: boolean } = {}): Promise<void> {
     const reclaimed = await this.#options.store.reclaimExpired(this.#options.slots);
@@ -80,7 +92,9 @@ export class SlotPool {
       this.#options.log.warn({ slots: reclaimed }, "reclaimed slots from expired leases");
     const restarting = await this.#options.store.listRestarting(this.#options.slots);
     const resets = Promise.all(
-      restarting.filter((name) => !this.resetting(name)).map((name) => this.reset(name)),
+      restarting
+        .filter((slot) => !this.resetting(slot.name))
+        .map((slot) => this.#recycle(slot.name, { neverLeased: slot.neverLeased })),
     );
     if (options.awaitResets ?? true) await resets;
     else void resets.catch(() => undefined);
@@ -94,7 +108,7 @@ export class SlotPool {
     }
   }
 
-  async #reset(name: string): Promise<void> {
+  async #reset(name: string, { neverLeased }: { neverLeased: boolean }): Promise<void> {
     const { config, log } = this.#options;
     let previous = this.#known.get(name) ?? null;
     const deadline = Date.now() + config.slotRestartTimeoutMs;
@@ -103,7 +117,7 @@ export class SlotPool {
       const baseUrl = await this.#baseUrl(name);
       const id = baseUrl ? await this.#control.readBrowserId(baseUrl) : null;
       if (baseUrl && id) {
-        if (previous !== null && id !== previous) {
+        if (neverLeased || (previous !== null && id !== previous)) {
           this.#known.set(name, id);
           if (await this.#options.store.markIdle(name)) this.#options.onIdle?.(name);
           return;
