@@ -40,15 +40,17 @@ export interface ResolvedTarget {
 }
 
 /**
- * The main frame's focused element, through open shadow roots. Run in our isolated world, so a page
- * script cannot fake it. A focused frame element, the body or nothing is null: a frame is never
- * entered (main frame only), and the caller's §9 checks run on whatever this returns.
+ * The main frame's focused element, through open shadow roots. It runs in our isolated world, so a
+ * page script cannot replace the getters it reads, but a page script can still move focus at will:
+ * the guarantee is the caller's §9 checks on the resolved node, never this lookup. A focused frame
+ * element, the body or nothing is null: a frame is never entered (main frame only). localName, not
+ * tagName, which is lowercase in XHTML documents.
  */
 const FOCUSED_ELEMENT = `(() => {
   let el = document.activeElement;
   while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
   if (!el || el === document.body || el === document.documentElement) return null;
-  if (el.tagName === "IFRAME" || el.tagName === "FRAME") return null;
+  if (el.localName === "iframe" || el.localName === "frame") return null;
   return el;
 })()`;
 
@@ -56,8 +58,13 @@ async function resolveFocused(session: BrowserSession): Promise<ResolvedTarget |
   const objectId = await (await session.worlds()).evaluateHandle(FOCUSED_ELEMENT);
   if (!objectId) return null;
   const cdp = await session.cdp();
-  const { node } = await cdp.send("DOM.describeNode", { objectId });
-  return { cdp, backendNodeId: node.backendNodeId };
+  try {
+    const { node } = await cdp.send("DOM.describeNode", { objectId });
+    return { cdp, backendNodeId: node.backendNodeId };
+  } finally {
+    // The handle is only a way to the node id: never pin the remote object until navigation.
+    await cdp.send("Runtime.releaseObject", { objectId }).catch(() => undefined);
+  }
 }
 
 /**

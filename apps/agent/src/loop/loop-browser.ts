@@ -1,3 +1,4 @@
+import type { PerceptualHash } from "../browser/phash.ts";
 import type {
   ApprovalRequest,
   ComputerAction,
@@ -23,7 +24,7 @@ export interface Observation {
   origin: string | null;
   domHash: string;
   screenshot: ModelScreenshot;
-  phash: bigint;
+  phash: PerceptualHash;
   captcha: boolean;
   scroll: ScrollPosition;
   videoTime: number | null;

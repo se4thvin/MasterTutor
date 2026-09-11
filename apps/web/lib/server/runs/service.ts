@@ -103,13 +103,17 @@ export async function getRun(db: Database, scope: RunScope, runId: string): Prom
     .where(eq(runEvents.runId, runId));
   const [row] = await db.select().from(runs).where(inScope(scope, runId));
   if (!row) throw missingRun();
-  const pending = await db
-    .select()
-    .from(approvals)
-    .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")))
-    .orderBy(asc(approvals.createdAt));
   const where = { runId, workspaceId: scope.workspaceId };
-  const [held, stored] = await Promise.all([heldDownloads(db, where), storedDownloads(db, where)]);
+  // One parallel round; downloads are held only while a person has control (QA-036).
+  const [pending, held, stored] = await Promise.all([
+    db
+      .select()
+      .from(approvals)
+      .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")))
+      .orderBy(asc(approvals.createdAt)),
+    row.controller === "user" ? heldDownloads(db, where) : [],
+    storedDownloads(db, where),
+  ]);
   return {
     ...runSummaryOf(row),
     plan: row.plan ?? null,

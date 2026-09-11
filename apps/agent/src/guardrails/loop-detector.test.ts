@@ -1,19 +1,24 @@
 import { describe, expect, it } from "vitest";
+import { UNCOMPARABLE_HASH } from "../browser/phash.ts";
 import { LoopDetector } from "./loop-detector.ts";
 
 describe("LoopDetector (spec §5.5)", () => {
   it("trips on the same action on the same screen three times", () => {
     const detector = new LoopDetector();
-    expect(detector.recordAction("click 1,1", 0b1010n)).toBe(false);
-    expect(detector.recordAction("click 1,1", 0b1011n)).toBe(false);
-    expect(detector.recordAction("click 1,1", 0b1010n)).toBe(true);
+    expect(detector.recordAction("click 1,1", [10, 0])).toBe(false);
+    expect(detector.recordAction("click 1,1", [11, 0])).toBe(false);
+    expect(detector.recordAction("click 1,1", [10, 0])).toBe(true);
   });
   it("resets when the action or the screen changes", () => {
     const detector = new LoopDetector();
-    detector.recordAction("a", 0n);
-    detector.recordAction("a", 0n);
-    expect(detector.recordAction("b", 0n)).toBe(false);
-    expect(detector.recordAction("b", 0xffffn)).toBe(false);
+    detector.recordAction("a", [0]);
+    detector.recordAction("a", [0]);
+    expect(detector.recordAction("b", [0])).toBe(false);
+    expect(detector.recordAction("b", [40])).toBe(false);
+  });
+  it("never matches uncomparable (withheld) frames", () => {
+    const detector = new LoopDetector();
+    for (let i = 0; i < 5; i++) expect(detector.recordAction("a", UNCOMPARABLE_HASH)).toBe(false);
   });
   it("trips after 8 observations without URL, DOM or note change", () => {
     const detector = new LoopDetector();

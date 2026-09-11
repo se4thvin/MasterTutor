@@ -1,4 +1,4 @@
-import type { ActionEffect, ComputerAction } from "@mastertutor/contracts";
+import type { ActionEffect, ActionTarget, ComputerAction } from "@mastertutor/contracts";
 import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
@@ -14,6 +14,8 @@ export interface ComputerRun {
   notes: string[];
   /** What each executed action did, in order (one per executed action). */
   effects: ActionEffect[];
+  /** Aligned with `effects`: where each page input landed (label and enclosing text), else null. */
+  targets: (ActionTarget | null)[];
   /** Set when only the user can go on (the run waits for a takeover), with the reason to show. */
   handOver: string | null;
 }
@@ -102,6 +104,8 @@ export class ComputerExecutor {
   #refused = false;
   /** What the action being executed did; handlers that route it elsewhere overwrite it. */
   #effect: ActionEffect = "passive";
+  /** The page element the action being executed went to, when known. */
+  #target: TargetDescription | null = null;
   /** Set when an action found the page beyond what the agent can act on safely. */
   #handOver: string | null = null;
 
@@ -118,6 +122,7 @@ export class ComputerExecutor {
   ): Promise<ComputerRun> {
     const notes: string[] = [];
     const effects: ActionEffect[] = [];
+    const targets: (ActionTarget | null)[] = [];
     let executed = 0;
     this.#handOver = null;
     for (const [index, action] of actions.entries()) {
@@ -132,9 +137,15 @@ export class ComputerExecutor {
       const urlBefore = this.#session.page.url();
       this.#refused = false;
       this.#effect = PAGE_INPUT.has(action.type) ? "input" : "passive";
+      // Typing and keys go to the focused element (a click records its own hit target).
+      this.#target =
+        (action.type === "type" || action.type === "keypress") && !this.omnibox.active
+          ? await focusTarget(this.#session).catch(() => null)
+          : null;
       const note = await this.execute(action, signal, verdict === true ? undefined : verdict);
       executed += 1;
       effects.push(this.#effect);
+      targets.push(this.#effect === "input" ? actionTarget(this.#target) : null);
       if (note) notes.push(note);
       const remaining = actions.length - index - 1;
       if (this.#refused) {
@@ -153,7 +164,7 @@ export class ComputerExecutor {
         break;
       }
     }
-    return { executed, notes, effects, handOver: this.#handOver };
+    return { executed, notes, effects, targets, handOver: this.#handOver };
   }
 
   async toPage(x: number, y: number): Promise<{ x: number; y: number } | null> {
@@ -233,6 +244,8 @@ export class ComputerExecutor {
     for (let waited = 0; waited < NAVIGATION_SETTLE_MS && this.#session.navigationPending();)
       waited += await pause(25, signal).then(() => 25);
     const hit = await hitTest(this.#session, point);
+    this.#target = hit.target;
+    const urlBefore = this.#session.page.url();
     // The page may have changed since the gate classified this click (TOCTOU): if anything
     // differs, nothing is pressed and the model's next click is gated again.
     if (verdict && !sameTarget(verdict.target, markUnguarded(this.#session, hit.target)))
@@ -278,6 +291,8 @@ export class ComputerExecutor {
     }
     if (cancelled) return this.#refuse(TARGET_MOVED_REFUSAL);
     await settle(this.#session, signal);
+    if (hit.target?.disclosure && this.#session.page.url() === urlBefore)
+      this.#effect = "disclosure";
     return null;
   }
 
@@ -537,4 +552,9 @@ function sameDocument(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** What grading needs of a target: its label and the opening text of its enclosing elements. */
+function actionTarget(target: TargetDescription | null): ActionTarget | null {
+  return target ? { label: target.label, ancestors: target.ancestors ?? [] } : null;
 }

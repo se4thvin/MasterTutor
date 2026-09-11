@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { drawMasks, sameBoxes } from "./masking.ts";
-import { hammingDistance, perceptualHash } from "./phash.ts";
+import { PERCEPTUAL_SAME, perceptualDistance, perceptualHash } from "./phash.ts";
 import { closerLookBands } from "./screenshot.ts";
 
 const white = (width: number, height: number) =>
@@ -57,8 +57,8 @@ describe("perceptualHash", () => {
       .png()
       .toBuffer();
     const a = await perceptualHash(striped);
-    expect(hammingDistance(a, await perceptualHash(striped))).toBe(0);
-    expect(hammingDistance(a, await perceptualHash(base))).toBeGreaterThan(10);
+    expect(perceptualDistance(a, await perceptualHash(striped))).toBe(0);
+    expect(perceptualDistance(a, await perceptualHash(base))).toBeGreaterThan(2 * PERCEPTUAL_SAME);
   });
 });
 

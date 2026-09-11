@@ -14,6 +14,10 @@ import { createDoclingClient, type DoclingClient } from "./pdf/docling.ts";
 import { createPdfWorkerClient, type PdfAnalyzer } from "./pdf/pdf-worker.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
+import { isTimedtextUrl } from "./video/captions.ts";
+import { type AudioCapture, createAudioCaptureClient } from "./video/audio-capture.ts";
+import { createTranscriber, type Transcriber } from "./video/transcriber.ts";
+import { createVideoTool } from "./video/video-tool.ts";
 
 export interface LibraryDeps {
   db: Database;
@@ -23,6 +27,8 @@ export interface LibraryDeps {
   doclingUrl?: string | null;
   /** The pdf-worker service (internal `pdf` network): PDFs are parsed there, never here. */
   pdfWorkerUrl: string;
+  /** The audio-capture service (on `cdp`): slot audio is recorded there, never here. */
+  audioCaptureUrl: string;
   log: Log;
 }
 
@@ -36,6 +42,10 @@ export interface LibraryServices {
   /** Self-hosted OCR that screens pixels for vault secrets before storage or OpenAI (A-M1). */
   localOcr: LocalOcr;
   filing: FilingModel;
+  /** Video audio → diarized text through the single OpenAI factory (D38). */
+  transcriber: Transcriber;
+  /** The audio-capture service (B4 review I7). */
+  audioCapture: AudioCapture;
   /** docling-serve (profile `pdf`), or null for the pdf.js path. */
   docling: DoclingClient | null;
   /** The pdf-worker service (B5 review I-1). */
@@ -52,6 +62,8 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     ocr: createOcrModel(deps.openai),
     localOcr: sharedLocalOcr(),
     filing: createFilingModel(deps.openai),
+    transcriber: createTranscriber(deps.openai),
+    audioCapture: createAudioCaptureClient(deps.audioCaptureUrl),
     docling: deps.doclingUrl ? createDoclingClient(deps.doclingUrl) : null,
     pdf: createPdfWorkerClient(deps.pdfWorkerUrl),
     log: deps.log,
@@ -61,7 +73,13 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 /** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through composeRunHooks. */
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
   return {
-    functionTools: [register(createCaptureTool(services)), register(createAnnotateTool(services))],
+    functionTools: [
+      register(createCaptureTool(services)),
+      register(createAnnotateTool(services)),
+      register(createVideoTool(services)),
+    ],
+    // Caption tracks the player fetched stay readable for the video tool (preflight Q5).
+    responseLog: isTimedtextUrl,
     async onComplete({ run, log, step, signal }) {
       try {
         await fileRunNote(services, { runId: run.id, workspaceId: run.workspaceId }, step, signal);

@@ -15,8 +15,18 @@ tester.run("no-raw-motion", plugin.rules["no-raw-motion"], {
     "const t = { duration: durations.micro / 1000 }",
     "const s = { name: 'x', delay: someValue }",
     "<Toast duration={durations.toast} />",
+    // Inline styles: motion variables and `none` are tokens (QA-020).
+    '<div style={{ transitionDuration: "var(--motion-dur-micro)", transition: "none" }} />',
+    "<div style={{ animationTimingFunction: `var(--motion-ease-out)` }} />",
+    "const t = { transition: { duration: durations.micro } }",
+    "<m.div transition={transitions.spring} />",
   ],
   invalid: [
+    { code: '<div style={{ transitionDuration: "200ms" }} />', errors: 1 },
+    { code: "<div style={{ animationDelay: 100, animationDuration: '1s' }} />", errors: 2 },
+    { code: '<div style={{ transition: "opacity 200ms ease" }} />', errors: 1 },
+    { code: "const s = { animation: 'spin 1s linear infinite' }", errors: 1 },
+    { code: "const s = { transitionTimingFunction: 'step-end' }", errors: 1 },
     { code: "animate(x, 1, { stiffness: 400, damping: 30 })", errors: 2 },
     { code: "const t = { duration: 0.2, ease: [0.16, 1, 0.3, 1] }", errors: 2 },
     { code: "el.animate(k, { easing: 'linear' })", errors: 1 },

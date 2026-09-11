@@ -6,10 +6,19 @@
 #   4. execs n.eko's supervisord.
 set -euo pipefail
 
-for name in SLOT_NAME NEKO_ADMIN_SECRET NEKO_MEMBER_SECRET CDP_ALLOWED_IP NEKO_ALLOWED_IPS; do
+for name in SLOT_NAME NEKO_ADMIN_SECRET NEKO_MEMBER_SECRET CDP_ALLOWED_IP PULSE_ALLOWED_IP NEKO_ALLOWED_IPS; do
   if [[ -z "${!name:-}" ]]; then echo "slot-entrypoint: $name is required" >&2; exit 64; fi
 done
 if [[ ! "$SLOT_NAME" =~ ^browser-[1-9][0-9]?$ ]]; then echo "slot-entrypoint: invalid SLOT_NAME" >&2; exit 64; fi
+# Each one IPv4 address or CIDR: they feed iptables and PulseAudio's auth-ip-acl (the behaviour
+# stack uses 0.0.0.0/0 for CDP on purpose, so a CIDR must stay accepted). CDP is the agent's; the
+# Pulse port is the audio-capture service's alone (B4 review I7).
+for name in CDP_ALLOWED_IP PULSE_ALLOWED_IP; do
+  if [[ ! "${!name}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[12][0-9]|3[0-2]))?$ ]]; then
+    echo "slot-entrypoint: invalid $name" >&2
+    exit 64
+  fi
+done
 if (( ${#NEKO_ADMIN_SECRET} < 32 || ${#NEKO_MEMBER_SECRET} < 32 )); then
   echo "slot-entrypoint: n.eko secrets must be at least 32 characters" >&2; exit 64
 fi
@@ -71,15 +80,17 @@ if ! ipv6_disabled; then
 fi
 
 # Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223),
-# the X idle probe (9224) and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
+# the X idle probe (9224) from the agent, PulseAudio (4713) from audio-capture, and the WebRTC mux
+# port when configured.
 iptables -F INPUT
 iptables -F OUTPUT
 iptables -P INPUT DROP
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-for port in 9223 9224 4713; do
+for port in 9223 9224; do
   iptables -A INPUT -p tcp --dport "$port" -s "$CDP_ALLOWED_IP" -j ACCEPT
 done
+iptables -A INPUT -p tcp --dport 4713 -s "$PULSE_ALLOWED_IP" -j ACCEPT
 IFS=',' read -r -a neko_ips <<< "$NEKO_ALLOWED_IPS"
 for ip in "${neko_ips[@]}"; do iptables -A INPUT -p tcp --dport 8080 -s "$ip" -j ACCEPT; done
 if [[ -n "${NEKO_WEBRTC_UDPMUX:-}" ]]; then iptables -A INPUT -p udp --dport "$NEKO_WEBRTC_UDPMUX" -j ACCEPT; fi
@@ -108,5 +119,10 @@ rm -rf /home/neko/Downloads /home/neko/.pki /home/neko/.cache /home/neko/.config
 find /tmp -mindepth 1 -maxdepth 1 ! -name chromium-profile -exec rm -rf {} +
 chown neko:neko /tmp/chromium-profile /downloads
 chmod 700 /tmp/chromium-profile
+
+# PulseAudio TCP for the audio-capture service (spec §8 transcribe). Module loading is disallowed
+# at runtime, so the module goes into default.pa before supervisord starts PulseAudio. The ACL is
+# the same address or CIDR the iptables rule admits (validated above).
+{ cat /etc/pulse/default.pa.orig; echo "load-module module-native-protocol-tcp port=4713 listen=0.0.0.0 auth-ip-acl=${PULSE_ALLOWED_IP}"; } > /etc/pulse/default.pa
 
 exec "$@"

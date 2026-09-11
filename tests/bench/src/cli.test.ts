@@ -444,3 +444,13 @@ describe("init on a CI slot (D48)", () => {
     );
   });
 });
+
+describe("bench regrade (I5)", () => {
+  it("takes one record path and nothing else", () => {
+    expect(parseCli(["regrade", "orchestration/benchmarks/x/record.md"], () => [])).toEqual({
+      kind: "regrade",
+      path: "orchestration/benchmarks/x/record.md",
+    });
+    expect(() => parseCli(["regrade"], () => [])).toThrow(UsageError);
+  });
+});

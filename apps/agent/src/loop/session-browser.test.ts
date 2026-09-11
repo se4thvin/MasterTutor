@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TINY_PNG } from "../testing/fake-loop-browser.ts";
+import { perceptualDistance } from "../browser/phash.ts";
 import type { Observation } from "./loop-browser.ts";
 import { observeOnOnePage } from "./session-browser.ts";
 
@@ -9,7 +10,7 @@ const capture = (url: string, png = TINY_PNG): Observation => ({
   origin: new URL(url).origin,
   domHash: `hash-${url}`,
   screenshot: { png, width: 1, height: 1, scale: 1, masked: 0, dropped: false, withheld: null },
-  phash: 7n,
+  phash: [7],
   captcha: false,
   scroll: { x: 0, y: 0 },
   videoTime: null,
@@ -67,6 +68,6 @@ describe("observeOnOnePage (review M7)", () => {
     const first = await observeOnOnePage(a.readUrl, a.capture);
     const second = await observeOnOnePage(b.readUrl, b.capture);
     expect(first.screenshot.dropped && second.screenshot.dropped).toBe(true);
-    expect(first.phash).not.toBe(second.phash);
+    expect(perceptualDistance(first.phash, second.phash)).toBe(Number.POSITIVE_INFINITY);
   });
 });

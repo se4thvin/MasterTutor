@@ -41,6 +41,11 @@ export interface StepWriter {
   ownObject(key: string): void;
   /** OCR, filing, embedding and transcription spend (preflight F16). */
   addUsage(delta: Usage): void;
+  /**
+   * USD the run's budget still allows, after this step's own spend: a tool that spends as it goes
+   * (transcription) checks it before each spend, since the loop checks the budget only between steps.
+   */
+  usdLeft(): number;
 }
 
 export interface ToolContext {

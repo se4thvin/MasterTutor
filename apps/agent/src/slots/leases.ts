@@ -1,4 +1,4 @@
-import type { LeasePriority, SlotState } from "@mastertutor/contracts";
+import type { LeasePriority } from "@mastertutor/contracts";
 import { browserSlots, runs, type Database } from "@mastertutor/db";
 import { and, asc, count, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Tx } from "../runtime/types.ts";
@@ -81,7 +81,13 @@ export async function reclaimExpiredSlots(
   return db.transaction(async (tx) => {
     const reclaimed = await tx
       .update(browserSlots)
-      .set({ state: "restarting", runId: null, leaseOwner: null, leaseExpiresAt: null })
+      .set({
+        state: "restarting",
+        runId: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        restartedAt: sql`now()`,
+      })
       .where(
         and(
           eq(browserSlots.state, "leased"),
@@ -107,15 +113,27 @@ export async function markSlotIdle(db: Database, name: string): Promise<boolean>
   return rows.length === 1;
 }
 
-export async function listSlotsInState(
+export interface RestartingSlot {
+  name: string;
+  /**
+   * True while the row is still as BROWSER_SLOTS seeding left it (restarted_at is null): its
+   * container has never been leased, so it holds no previous run's state. Every way out of a
+   * lease (release, reclaim) stamps restarted_at, and a slot is leasable only after markSlotIdle
+   * stamps it too.
+   */
+  neverLeased: boolean;
+}
+
+export async function listRestartingSlots(
   db: Database,
   slots: readonly string[],
-  state: SlotState,
-): Promise<string[]> {
-  const rows = await db
-    .select({ name: browserSlots.name })
+): Promise<RestartingSlot[]> {
+  return db
+    .select({
+      name: browserSlots.name,
+      neverLeased: sql<boolean>`${browserSlots.restartedAt} is null`,
+    })
     .from(browserSlots)
-    .where(and(eq(browserSlots.state, state), inArray(browserSlots.name, [...slots])))
+    .where(and(eq(browserSlots.state, "restarting"), inArray(browserSlots.name, [...slots])))
     .orderBy(asc(browserSlots.name));
-  return rows.map((row) => row.name);
 }
