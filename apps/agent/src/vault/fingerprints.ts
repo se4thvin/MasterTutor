@@ -34,6 +34,9 @@ export interface SecretFingerprints {
  * and merges characters, so a short one (a PIN) would match ordinary numbers on the page.
  */
 const MIN_FOLDED = 6;
+/** A run of letters and digits as OCR shows it (`|` is a misread l or 1). */
+const OCR_RUN = /^[\p{L}\p{N}|]+$/u;
+const OCR_RUNS = /[\p{L}\p{N}|]+/gu;
 
 /** 1–3 digit secrets match almost every number on a page: they are masked by box only. */
 /** How many rounds of URL decoding a token gets: enough for a URL wrapped in a redirect twice. */
@@ -86,8 +89,12 @@ interface RunEntry {
   bareWindows: Map<number, Set<number>>;
   /** Keyed digests of one-time codes filled this run, for the local pixel screen (ruling). */
   codes: Set<string>;
-  /** Folded length → keyed digests of folded secrets, for OCR'd text (QA-099). */
-  folded: Map<number, Set<string>>;
+  /**
+   * Folded length → keyed digests of folded secrets, for OCR'd text (QA-099). `tight` secrets have
+   * no separators and match inside one run of letters and digits; `spaced` ones (with separators
+   * of their own) match inside one whitespace-free token, separators dropped.
+   */
+  folded: { tight: Map<number, Set<string>>; spaced: Map<number, Set<string>> };
   unwatch: Map<CDPSession, () => void>;
 }
 
@@ -120,7 +127,7 @@ export function createSecretFingerprints(): SecretFingerprints {
         windows: new Map(),
         bareWindows: new Map(),
         codes: new Set(),
-        folded: new Map(),
+        folded: { tight: new Map(), spaced: new Map() },
         unwatch: new Map(),
       };
       runs.set(runId, found);
@@ -162,9 +169,10 @@ export function createSecretFingerprints(): SecretFingerprints {
   const register = (run: RunEntry, secret: string) => {
     const folded = foldConfusables(secret);
     if (folded.length >= MIN_FOLDED) {
-      const digests = run.folded.get(folded.length) ?? new Set<string>();
+      const byLength = OCR_RUN.test(secret.trim()) ? run.folded.tight : run.folded.spaced;
+      const digests = byLength.get(folded.length) ?? new Set<string>();
       digests.add(foldedDigest(folded));
-      run.folded.set(folded.length, digests);
+      byLength.set(folded.length, digests);
     }
     const words = secret.match(WORD) ?? [];
     if (words.length > 0) return add(run, run.windows, words);
@@ -200,13 +208,26 @@ export function createSecretFingerprints(): SecretFingerprints {
     return spans.length > 0;
   };
 
-  /** True when folded `text` holds a registered secret's folded form anywhere. */
+  /**
+   * True when OCR'd `text` holds a registered secret's folded form: inside one run of letters and
+   * digits, or inside one token for a secret with separators of its own. Never across separators
+   * the secret lacks (review: PIN 199005 must not match the date 1990-05-12).
+   */
   const inOcrText = (run: RunEntry, text: string): boolean => {
-    const folded = foldConfusables(text);
-    for (const [length, digests] of run.folded)
-      for (let i = 0; i + length <= folded.length; i++)
-        if (digests.has(foldedDigest(folded.slice(i, i + length)))) return true;
-    return false;
+    const holds = (byLength: Map<number, Set<string>>, pieces: Iterable<string>) => {
+      if (byLength.size === 0) return false;
+      for (const piece of pieces) {
+        const folded = foldConfusables(piece);
+        for (const [length, digests] of byLength)
+          for (let i = 0; i + length <= folded.length; i++)
+            if (digests.has(foldedDigest(folded.slice(i, i + length)))) return true;
+      }
+      return false;
+    };
+    return (
+      holds(run.folded.tight, text.match(OCR_RUNS) ?? []) ||
+      holds(run.folded.spaced, text.match(TOKEN) ?? [])
+    );
   };
 
   const redact = (run: RunEntry, text: string): string => {
@@ -268,7 +289,7 @@ export function createSecretFingerprints(): SecretFingerprints {
       },
       inOcrText: (text) => {
         const run = runs.get(runId);
-        return run !== undefined && run.folded.size > 0 && inOcrText(run, text);
+        return run !== undefined && inOcrText(run, text);
       },
     }),
     forgetRun(runId) {
