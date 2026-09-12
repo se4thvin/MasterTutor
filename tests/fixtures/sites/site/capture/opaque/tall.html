@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tall canvas report</title>
+    <style>
+      body {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Five viewports of canvas: more than the three OCR tiles a capture reads. -->
+    <canvas id="c" width="1200" height="4000"></canvas>
+    <script>
+      const ctx = document.getElementById("c").getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, 1200, 4000);
+      ctx.fillStyle = "#111";
+      ctx.font = "48px sans-serif";
+      for (let i = 0; i < 5; i++) ctx.fillText(`Section ${i + 1} results`, 80, 140 + i * 800);
+    </script>
+  </body>
+</html>

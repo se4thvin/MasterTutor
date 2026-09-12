@@ -2,7 +2,7 @@ import { MODELS, VIEWPORT } from "@mastertutor/contracts";
 import sharp from "sharp";
 import { z } from "zod";
 import type { StatelessOpenAI } from "../llm/openai.ts";
-import { usageDelta } from "../llm/pricing.ts";
+import { ocrTileUsage, usageDelta } from "../llm/pricing.ts";
 import type { StepWriter } from "../tools/types.ts";
 
 export interface OcrModel {
@@ -38,6 +38,14 @@ export async function ocrTiles(png: Uint8Array): Promise<Uint8Array[]> {
   return tiles;
 }
 
+/** The run's budget cannot cover another OCR call; the region's text is lost, not the capture. */
+export class OcrBudgetExhausted extends Error {
+  constructor() {
+    super("the run's budget cannot cover more OCR");
+    this.name = "OcrBudgetExhausted";
+  }
+}
+
 /** Opaque content (spec §7.7) through the single stateless factory (D38; preflight D1). */
 export function createOcrModel(openai: Pick<StatelessOpenAI, "responses">): OcrModel {
   return {
@@ -45,6 +53,8 @@ export function createOcrModel(openai: Pick<StatelessOpenAI, "responses">): OcrM
       const parts: string[] = [];
       for (const tile of await ocrTiles(png)) {
         signal.throwIfAborted();
+        // Checked before each call, as transcription does: the loop checks only between steps.
+        if (step.usdLeft() < ocrTileUsage().usd) throw new OcrBudgetExhausted();
         const reply = await openai.responses.parse(
           {
             model: MODELS.agentPrimary,

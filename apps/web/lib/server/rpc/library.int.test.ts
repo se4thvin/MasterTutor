@@ -216,13 +216,18 @@ describe("library binding on the live router (Task 0C)", () => {
   it("marks a block verified and recomputes fidelity with the shared rule", async () => {
     const full = await seedNote(workspaceId, { title: "Full", coverage: 1 });
     await owner.db.update(notes).set({ fidelity: "needs_review" }).where(eq(notes.id, full.noteId));
-    expect((await client().notes.markVerified({ blockId: full.unverified })).verified).toBe(true);
+    expect(await client().notes.markVerified({ blockId: full.unverified })).toMatchObject({
+      block: { verified: true },
+      fidelity: "verified",
+    });
     expect((await client().notes.get({ noteId: full.noteId })).note.fidelity).toBe("verified");
     const thin = await seedNote(workspaceId, { title: "Thin", coverage: 0.5 });
     await client().notes.markVerified({ blockId: thin.unverified });
     expect((await client().notes.get({ noteId: thin.noteId })).note.fidelity).toBe("partial");
     const lost = await seedNote(workspaceId, { title: "Lost media", coverage: 1, mediaLost: 1 });
-    await client().notes.markVerified({ blockId: lost.unverified });
+    expect((await client().notes.markVerified({ blockId: lost.unverified })).fidelity).toBe(
+      "partial",
+    );
     expect((await client().notes.get({ noteId: lost.noteId })).note.fidelity).toBe("partial");
   });
 
