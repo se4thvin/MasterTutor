@@ -5,6 +5,7 @@ import {
   type BlockType,
 } from "@mastertutor/contracts";
 import { deleteUnusedAssets } from "@mastertutor/db";
+import sharp from "sharp";
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import { PageScriptError } from "../browser/isolated-world.ts";
 import { containsSecretText } from "../browser/masking.ts";
@@ -26,7 +27,7 @@ import { pageExtract } from "./page/extract.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import type { PageExtract } from "./page/types.ts";
-import { pixelsAreClean, tallPixelsAreClean } from "../browser/local-ocr.ts";
+import { screenPixels, tallPixelsAreClean } from "../browser/local-ocr.ts";
 import { preparePage } from "./prepare.ts";
 import { registerClosedShadowRoots } from "./shadow.ts";
 import { takeSnapshot, type Snapshot } from "./snapshot.ts";
@@ -445,6 +446,54 @@ async function screenedSnapshot(
   };
 }
 
+/** Context screened above and below an opaque tile, so a line its edge cuts is read whole (I2). */
+const TILE_SCREEN_MARGIN = 120;
+
+/**
+ * One opaque-page tile, or null when it is withheld. Pixels reach OpenAI only after the full local
+ * screen (1×, plus 2× where needed) passes over the tile and TILE_SCREEN_MARGIN around it: a secret
+ * line cut by the tile edge is screened whole, not as two halves tesseract cannot read (review I2).
+ */
+async function screenedTile(
+  services: LibraryServices,
+  ctx: ToolContext,
+  clip: { x: number; y: number; width: number; height: number },
+  pageHeight: number,
+): Promise<Uint8Array | null> {
+  const top = Math.max(0, clip.y - TILE_SCREEN_MARGIN);
+  const bottom = Math.min(
+    Math.max(pageHeight, clip.y + clip.height),
+    clip.y + clip.height + TILE_SCREEN_MARGIN,
+  );
+  const around = { ...clip, y: top, height: bottom - top };
+  const wide = await captureMaskedRegion(
+    ctx.session,
+    ctx.mask,
+    { clip: around, scale: 1 },
+    ctx.signal,
+  );
+  if (!wide) return null;
+  if (ctx.mask.hasSecrets() || (ctx.mask.hasOneTimeCodes?.() ?? false)) {
+    const read = await screenPixels(services.localOcr, ctx.mask, wide, ctx.signal);
+    if (read.kind !== "clean") return null;
+  }
+  const meta = await sharp(wide).metadata();
+  const ratio = (meta.height ?? around.height) / around.height;
+  const tile = await sharp(wide)
+    .extract({
+      left: 0,
+      top: Math.round((clip.y - top) * ratio),
+      width: meta.width ?? Math.round(clip.width * ratio),
+      height: Math.min(
+        Math.round(clip.height * ratio),
+        (meta.height ?? 0) - Math.round((clip.y - top) * ratio),
+      ),
+    })
+    .png()
+    .toBuffer();
+  return new Uint8Array(tile);
+}
+
 /** Spec §7.7 for pages without usable DOM text: masked viewport tiles, each transcribed by OCR. */
 async function opaqueBlocks(
   services: LibraryServices,
@@ -467,13 +516,8 @@ async function opaqueBlocks(
       width: viewport.clientWidth,
       height: viewport.clientHeight,
     };
-    const png = await captureMaskedRegion(ctx.session, ctx.mask, { clip, scale: 1 }, ctx.signal);
+    const png = await screenedTile(services, ctx, clip, metrics.cssContentSize.height);
     if (!png) {
-      withheld++;
-      continue;
-    }
-    // Pixels reach OpenAI only after a local secret screen passes (A-M1).
-    if (!(await pixelsAreClean(services.localOcr, ctx.mask, png, ctx.signal))) {
       withheld++;
       continue;
     }

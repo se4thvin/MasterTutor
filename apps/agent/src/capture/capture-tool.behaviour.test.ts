@@ -5,6 +5,7 @@ import type { MaskSources } from "../browser/masking.ts";
 import { FIXTURES } from "../testing/browser-harness.ts";
 import { type CaptureEnv, startCaptureEnv } from "../testing/capture-env.ts";
 import { seedRun } from "../testing/notes.ts";
+import { createLocalOcr } from "../browser/local-ocr.ts";
 import { createCaptureTool } from "./capture-tool.ts";
 import { pageExtract } from "./page/extract.ts";
 import { captureWorlds } from "./worlds.ts";
@@ -349,8 +350,12 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     const crashed = async (): Promise<never> => {
       throw new Error("tesseract crashed");
     };
+    const box = { x: 10, y: 10, width: 200, height: 20 };
     for (const localOcr of [
-      { text: async () => "Password: hunter2-canary", words: async () => [] },
+      {
+        text: async () => "Password: hunter2-canary",
+        words: async () => [{ words: [{ text: "hunter2-canary", box }] }],
+      },
       { text: crashed, words: crashed },
     ]) {
       const scope = await seedRun(env.db.db);
@@ -409,6 +414,44 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       .where(sql`${sources.meta}->>'noteId' = ${result.noteId}`);
     expect(source?.screenshotKey).toMatch(/page\.png$/);
   });
+
+  it("screens an opaque tile with its neighbours' edge lines whole before OpenAI sees it (review I2)", async () => {
+    const vault: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text.replaceAll("MARMOT4CANARY8VELVET", "[secret]"),
+    };
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+    const { cssVisualViewport: viewport } = await (
+      await env.session.cdp()
+    ).send("Page.getLayoutMetrics");
+    // A canvas-only page whose secret line straddles the first tile's bottom edge.
+    const edge = viewport.clientHeight;
+    await env.session.page.setContent(`<body style="margin:0">
+      <canvas id="c" width="1000" height="${edge * 2}"></canvas><script>{
+        const ctx = document.getElementById("c").getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, ${edge * 2});
+        ctx.fillStyle = "#000"; ctx.font = "40px sans-serif";
+        ctx.fillText("Quarterly report", 40, 120);
+        ctx.fillText("Key MARMOT4CANARY8VELVET", 40, ${edge + 14});
+      }</script></body>`);
+    let openAiPixels = 0;
+    const reader = createLocalOcr();
+    try {
+      const tool = createCaptureTool({
+        ...env.services,
+        localOcr: reader,
+        ocr: { transcribe: async () => ((openAiPixels += 1), "Quarterly report") },
+      });
+      const ctx = env.context(scope, vault);
+      await tool.run(ctx, page);
+      await env.commit(ctx);
+    } finally {
+      await reader.close();
+    }
+    expect(openAiPixels).toBe(0);
+  }, 180_000);
 
   it("withholds page.png when local OCR finds a secret or fails (A-M2)", async () => {
     const vault: MaskSources = {
