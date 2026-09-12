@@ -13,12 +13,13 @@ export interface OcrLine {
 
 /**
  * Self-hosted OCR (tesseract, offline English model): reads pixels without sending them anywhere.
- * `words` is the agent loop's screenshot screen and always runs before queued `text` reads
- * (capture images, PDF pages, page.png tiles), so a step never waits behind a long capture (QA-092).
+ * An `urgent` read (the agent loop's screenshot screen) always runs before every queued capture
+ * read (images, PDF pages, page.png and opaque tiles), so a step never waits behind a long
+ * capture (QA-092).
  */
 export interface LocalOcr {
   text(png: Uint8Array): Promise<string>;
-  words(png: Uint8Array): Promise<OcrLine[]>;
+  words(png: Uint8Array, options?: { urgent?: boolean }): Promise<OcrLine[]>;
 }
 
 interface TesseractWord {
@@ -96,7 +97,7 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
     });
   return {
     text: (png) => serial(async (ready) => (await ready.recognize(Buffer.from(png))).data.text),
-    words: (png) =>
+    words: (png, options) =>
       serial(async (ready) => {
         const { data } = await ready.recognize(Buffer.from(png), {}, { blocks: true });
         const blocks = (data.blocks ?? []) as unknown as TesseractBlock[];
@@ -116,7 +117,7 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
             })),
           ),
         );
-      }, true),
+      }, options?.urgent ?? false),
     async close() {
       const current = worker;
       worker = undefined;
@@ -209,26 +210,142 @@ export type PixelScreen = { kind: "clean" } | { kind: "hit"; boxes: Box[] } | { 
 const MAX_WORDS = 6;
 
 /**
- * Where registered secrets show in an image (I-1): the boxes of the words that hold one. The
- * vault registers only secret-class values (passwords, PINs), never usernames or emails, so a
- * page showing the account's email is left as it is. A secret OCR reads across lines, or a read
- * that fails, is `failed`: the caller withholds the image.
+ * Tesseract misses most UI-size text (11–14 px) at 1× and reads it at 2× (QA-098, measured): the
+ * image is read once at 1×, then full-width bands are re-read at 2× where that read found small
+ * text (median word height under SMALL_LINE_PX), an unsure word, or ink and no word at all.
+ */
+const OCR_UPSCALE = 2;
+const SMALL_LINE_PX = 16;
+const SURE_CONFIDENCE = 85;
+/** Context kept around a band, and the gap under which two bands merge into one read. */
+const BAND_PAD = 6;
+const BAND_GAP = 16;
+/** A row holds ink when its pixels span at least this much luminance (any colours, any theme). */
+const INK_CONTRAST = 40;
+/** Ink rows a band needs to be worth a read (a 1 px rule is not text). */
+const MIN_INK_ROWS = 4;
+
+type Span = readonly [top: number, bottom: number];
+
+function mergeSpans(spans: readonly Span[], height: number): Box[] {
+  const merged: Array<[number, number]> = [];
+  for (const [top, bottom] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const from = Math.max(0, top - BAND_PAD);
+    const to = Math.min(height, bottom + BAND_PAD);
+    const last = merged.at(-1);
+    if (last && from - last[1] <= BAND_GAP) last[1] = Math.max(last[1], to);
+    else merged.push([from, to]);
+  }
+  return merged
+    .filter(([top, bottom]) => bottom > top)
+    .map(([top, bottom]) => ({ x: 0, y: top, width: 0, height: bottom - top }));
+}
+
+const median = (values: readonly number[]) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+};
+
+/** Full-width bands to re-read at 2×: small or unsure lines, and ink the 1× read found no word in. */
+export function closerLookBands(
+  lines: readonly OcrLine[],
+  size: { width: number; height: number },
+  inkRows: readonly boolean[] = [],
+): Box[] {
+  const spans: Span[] = [];
+  const read = new Array<boolean>(size.height).fill(false);
+  for (const { words } of lines) {
+    if (words.length === 0) continue;
+    const top = Math.min(...words.map((word) => word.box.y));
+    const bottom = Math.max(...words.map((word) => word.box.y + word.box.height));
+    for (let y = Math.max(0, top - BAND_PAD); y < Math.min(size.height, bottom + BAND_PAD); y++)
+      read[y] = true;
+    const small = median(words.map((word) => word.box.height)) < SMALL_LINE_PX;
+    const unsure = words.some((word) => (word.confidence ?? 100) < SURE_CONFIDENCE);
+    if (small || unsure) spans.push([top, bottom]);
+  }
+  for (let y = 0; y < inkRows.length;) {
+    let end = y;
+    while (end < inkRows.length && inkRows[end] && !read[end]) end++;
+    if (end - y >= MIN_INK_ROWS) spans.push([y, end]);
+    y = Math.max(end, y + 1);
+  }
+  return mergeSpans(spans, size.height).map((band) => ({ ...band, width: size.width }));
+}
+
+/** Which rows of an image hold ink, and its size. */
+async function inkRowsOf(
+  png: Uint8Array,
+): Promise<{ rows: boolean[]; width: number; height: number }> {
+  const { data, info } = await sharp(png).greyscale().raw().toBuffer({ resolveWithObject: true });
+  const rows: boolean[] = [];
+  for (let y = 0; y < info.height; y++) {
+    let min = 255;
+    let max = 0;
+    const start = y * info.width * info.channels;
+    for (let x = 0; x < info.width; x++) {
+      const value = data[start + x * info.channels]!;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+    rows.push(max - min >= INK_CONTRAST);
+  }
+  return { rows, width: info.width, height: info.height };
+}
+
+/**
+ * Where registered secrets show in an image (I-1): the boxes of the words that hold one, from the
+ * 1× read and the 2× bands. The vault registers only secret-class values (passwords, PINs), never
+ * usernames or emails. A secret OCR reads across lines, or a read that fails, is `failed`: the
+ * caller withholds the image. `urgent` is the agent loop's own screen (QA-092).
  */
 export async function screenPixels(
   ocr: LocalOcr,
   secrets: MaskSources,
   png: Uint8Array,
   signal: AbortSignal,
+  options: { urgent: boolean } = { urgent: false },
 ): Promise<PixelScreen> {
   if (!screensPixels(secrets)) return { kind: "clean" };
-  let lines: OcrLine[];
+  const read = async (image: Uint8Array): Promise<OcrLine[] | null> => {
+    try {
+      return await abortable(ocr.words(image, options), signal);
+    } catch {
+      signal.throwIfAborted();
+      return null;
+    }
+  };
+  let ink: Awaited<ReturnType<typeof inkRowsOf>>;
   try {
-    lines = await abortable(ocr.words(png), signal);
+    ink = await inkRowsOf(png);
   } catch {
-    signal.throwIfAborted();
     return { kind: "failed" };
   }
-  return screenLines(secrets, lines);
+  const lines = await read(png);
+  if (lines === null) return { kind: "failed" };
+  const native = screenLines(secrets, lines);
+  if (native.kind === "failed") return native;
+  const boxes = native.kind === "hit" ? [...native.boxes] : [];
+  for (const band of closerLookBands(lines, ink, ink.rows)) {
+    const large = await sharp(png)
+      .extract({ left: band.x, top: band.y, width: band.width, height: band.height })
+      .resize(band.width * OCR_UPSCALE, band.height * OCR_UPSCALE, { kernel: "lanczos3" })
+      .png()
+      .toBuffer();
+    const bandLines = await read(new Uint8Array(large));
+    if (bandLines === null) return { kind: "failed" };
+    const closer = screenLines(secrets, bandLines);
+    if (closer.kind === "failed") return closer;
+    if (closer.kind === "hit")
+      for (const box of closer.boxes)
+        boxes.push({
+          x: band.x + box.x / OCR_UPSCALE,
+          y: band.y + box.y / OCR_UPSCALE,
+          width: box.width / OCR_UPSCALE,
+          height: box.height / OCR_UPSCALE,
+        });
+  }
+  return boxes.length > 0 ? { kind: "hit", boxes } : { kind: "clean" };
 }
 
 /** Where registered secrets show in lines already read (screenPixels without the read). */
