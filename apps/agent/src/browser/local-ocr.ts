@@ -212,10 +212,10 @@ const MAX_WORDS = 6;
 /**
  * Tesseract misses most UI-size text (11–14 px) at 1× and reads it at 2× (QA-098, measured): the
  * image is read once at 1×, then full-width bands are re-read at 2× where that read found small
- * text (median word height under SMALL_LINE_PX), an unsure word, or ink and no word at all.
+ * text (a line under SMALL_LINE_PX tall, 14 px text and smaller), an unsure word, or ink and no word at all.
  */
 const OCR_UPSCALE = 2;
-const SMALL_LINE_PX = 16;
+const SMALL_LINE_PX = 15;
 const SURE_CONFIDENCE = 85;
 /** Context kept around a band, and the gap under which two bands merge into one read. */
 const BAND_PAD = 6;
@@ -241,11 +241,6 @@ function mergeSpans(spans: readonly Span[], height: number): Box[] {
     .map(([top, bottom]) => ({ x: 0, y: top, width: 0, height: bottom - top }));
 }
 
-const median = (values: readonly number[]) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)] ?? 0;
-};
-
 /** Full-width bands to re-read at 2×: small or unsure lines, and ink the 1× read found no word in. */
 export function closerLookBands(
   lines: readonly OcrLine[],
@@ -260,7 +255,9 @@ export function closerLookBands(
     const bottom = Math.max(...words.map((word) => word.box.y + word.box.height));
     for (let y = Math.max(0, top - BAND_PAD); y < Math.min(size.height, bottom + BAND_PAD); y++)
       read[y] = true;
-    const small = median(words.map((word) => word.box.height)) < SMALL_LINE_PX;
+    // The line's full height (ascender top to descender bottom) tracks its text size: 11 px text
+    // spans ~11 px, 14 px ~13, 16 px body ~16 (measured).
+    const small = bottom - top < SMALL_LINE_PX;
     const unsure = words.some((word) => (word.confidence ?? 100) < SURE_CONFIDENCE);
     if (small || unsure) spans.push([top, bottom]);
   }

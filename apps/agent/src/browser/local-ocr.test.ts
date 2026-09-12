@@ -210,10 +210,14 @@ describe("closerLookBands (QA-098: 2x only where the 1x read was small or unsure
   it("asks nothing more of large, confidently read text", () => {
     expect(closerLookBands([{ words: [word(100, 20, 95), word(100, 9, 96)] }], size)).toEqual([]);
   });
-  it("judges size by the median word, so a 14 px line of descenders is still small (review I1)", () => {
-    // g, p and y reach below the baseline: their boxes are ~14 px at 14 px CSS, the line's median too.
-    const line = { words: [word(200, 14, 95), word(200, 10, 95), word(200, 14, 95)] };
-    expect(closerLookBands([line], size)).toEqual([{ x: 0, y: 194, width: 800, height: 26 }]);
+  it("judges size by the line's full height: 11 and 14 px text is re-read, 16 px body is not", () => {
+    // Word boxes as tesseract gives them: a line spans about its text size, words less.
+    const eleven = { words: [word(50, 11, 95), word(50, 8, 95)] };
+    const fourteen = { words: [word(200, 13, 95), word(201, 10, 95), word(200, 13, 95)] };
+    const body = { words: [word(400, 16, 95), word(403, 12, 95), word(403, 9, 95)] };
+    expect(closerLookBands([eleven], size)).toEqual([{ x: 0, y: 44, width: 800, height: 23 }]);
+    expect(closerLookBands([fourteen], size)).toEqual([{ x: 0, y: 194, width: 800, height: 25 }]);
+    expect(closerLookBands([body], size)).toEqual([]);
   });
   it("re-reads ink the 1x read found no word in (review I1)", () => {
     const ink = Array.from(
