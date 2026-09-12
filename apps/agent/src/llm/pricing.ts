@@ -81,6 +81,18 @@ export function embeddingUsage(tokens: number): Usage {
   return { ...EMPTY_USAGE, inputTokens: tokens, usd: (tokens * EMBEDDING_USD_PER_M) / 1e6 };
 }
 
+/**
+ * What one OCR call may cost, checked before it is made (final review I6). One high-detail tile of
+ * at most 1280×800 is about 1.1k image tokens; a dense page transcribes to well under 4k tokens.
+ */
+export function ocrTileUsage(): Usage {
+  return usageDelta(
+    MODELS.agentPrimary,
+    { input: 1_500, cached: 0, cacheWrite: 0, output: 4_000 },
+    0,
+  );
+}
+
 export function transcriptionUsage(seconds: number): Usage {
   return { ...EMPTY_USAGE, usd: (Math.max(0, seconds) / 60) * TRANSCRIPTION_USD_PER_MINUTE };
 }

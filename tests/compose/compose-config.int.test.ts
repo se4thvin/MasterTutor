@@ -207,6 +207,11 @@ describe("compose.yml", () => {
     for (const image of bases) expect(image).toMatch(/^node:24-slim@sha256:[0-9a-f]{64}$/);
   });
 
+  it("starts the agent without waiting on docling or pdf-worker (final review I7)", () => {
+    const agent = load(["compose.yml"], ["pdf"]).services.agent!;
+    expect(Object.keys(agent.depends_on ?? {}).sort()).toEqual(["garage-init", "migrate"]);
+  });
+
   it("isolates docling on its own internal network (S4)", () => {
     const pdf = load(["compose.yml"], ["pdf"]);
     const docling = pdf.services.docling!;
@@ -227,11 +232,6 @@ describe("compose.yml", () => {
     });
     expect(Object.keys(env(pdf.services.agent!))).toContain("DOCLING_URL");
     expect(base.services.docling).toBeUndefined();
-    // The agent falls back to pdf.js: an unhealthy docling must never hold it back (QA-108).
-    expect(pdf.services.agent!.depends_on?.docling).toMatchObject({
-      condition: "service_started",
-      required: false,
-    });
   });
 
   it("lets agent, web and Traefik reach n.eko on every slot", () => {

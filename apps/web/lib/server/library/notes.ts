@@ -1,6 +1,7 @@
 import type {
   BlockRef,
   ListNotesInput,
+  MarkVerifiedResult,
   NoteBlock,
   NoteDetail,
   NoteRef,
@@ -142,7 +143,7 @@ export async function markVerified(
   db: Database,
   workspaceId: string,
   input: BlockRef,
-): Promise<NoteBlock> {
+): Promise<MarkVerifiedResult> {
   return db.transaction(async (tx) => {
     const [found] = await tx
       .select({ noteId: notes.id, coverage: notes.coverage })
@@ -157,8 +158,9 @@ export async function markVerified(
       .where(eq(noteBlocks.id, input.blockId))
       .returning(NOTE_BLOCK_COLUMNS);
     if (!row) throw missingBlock();
-    await refreshNoteQuality(tx, workspaceId, found.noteId, found.coverage);
-    return noteBlockView(row);
+    // The note's new fidelity goes back with the block, so the page shows the server's rule.
+    const fidelity = await refreshNoteQuality(tx, workspaceId, found.noteId, found.coverage);
+    return { block: noteBlockView(row), fidelity };
   });
 }
 
