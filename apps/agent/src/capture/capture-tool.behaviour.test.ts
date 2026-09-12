@@ -6,6 +6,7 @@ import { FIXTURES } from "../testing/browser-harness.ts";
 import { type CaptureEnv, startCaptureEnv } from "../testing/capture-env.ts";
 import { seedRun } from "../testing/notes.ts";
 import { createLocalOcr } from "../browser/local-ocr.ts";
+import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { createCaptureTool } from "./capture-tool.ts";
 import { pageExtract } from "./page/extract.ts";
 import { captureWorlds } from "./worlds.ts";
@@ -416,11 +417,18 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
   });
 
   it("screens an opaque tile with its neighbours' edge lines whole before OpenAI sees it (review I2)", async () => {
-    const vault: MaskSources = {
-      nodeIds: () => [],
-      hasSecrets: () => true,
-      redact: (text: string) => text.replaceAll("MARMOT4CANARY8VELVET", "[secret]"),
-    };
+    // The vault's own matcher (exact and confusable-folded), as a run holding this secret has.
+    const prints = createSecretFingerprints();
+    prints.remember("review-i2", {
+      filled: {
+        cdp: await env.session.cdp(),
+        frameId: "main",
+        loaderId: "doc",
+        backendNodeIds: [],
+      },
+      secret: "MARMOT4CANARY8VELVET",
+    });
+    const vault = prints.forRun("review-i2");
     const scope = await seedRun(env.db.db);
     await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
     const { cssVisualViewport: viewport } = await (
