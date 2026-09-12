@@ -101,8 +101,16 @@ describe("fixture notes", () => {
       originalMarkdown: para!.markdown,
     });
     const review = detail.blocks.find((b) => !b.verified)!;
-    expect((await api.notes.markVerified({ blockId: review.id })).verified).toBe(true);
+    expect(await api.notes.markVerified({ blockId: review.id })).toMatchObject({
+      block: { verified: true },
+      fidelity: "verified",
+    });
     expect((await api.notes.get({ noteId: ids.note(1) })).note.fidelity).toBe("verified");
+    // Lost media keeps a fully verified note partial (the one rule, final review I1).
+    const lecture = await api.notes.get({ noteId: ids.note(9) });
+    const transcript = lecture.blocks.find((b) => !b.verified)!;
+    expect((await api.notes.markVerified({ blockId: transcript.id })).fidelity).toBe("partial");
+    expect((await api.notes.get({ noteId: ids.note(9) })).note.fidelity).toBe("partial");
   });
 
   it("moves notes and records the user as filer", async () => {

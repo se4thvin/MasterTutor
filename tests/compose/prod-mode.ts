@@ -22,6 +22,74 @@ export const PROD_LIKE_LOCAL_FILES = [
 
 const SLOT = /^browser-\d+$/;
 
+interface WorkerRule {
+  /** The only environment it may have: fixed, secret-free settings (values included). */
+  env: Readonly<Record<string, string>>;
+  /** Exactly these networks, each internal (no egress). */
+  networks: readonly string[];
+  /** Runs in every production stack (docling only under profile pdf, which check-env requires). */
+  required: boolean;
+}
+
+/** The isolated workers that read untrusted bytes or slot audio: one hardening rule (final I8). */
+export const WORKERS: Readonly<Record<string, WorkerRule>> = {
+  "pdf-worker": { env: {}, networks: ["pdf"], required: true },
+  "audio-capture": { env: {}, networks: ["audio", "pulse"], required: true },
+  docling: {
+    env: {
+      DOCLING_SERVE_ENABLE_UI: "false",
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "false",
+      DOCLING_SERVE_MAX_FILE_SIZE: "104857600",
+      DOCLING_SERVE_MAX_NUM_PAGES: "500",
+    },
+    networks: ["pdf"],
+    required: false,
+  },
+};
+
+/** No secrets, read-only, no capabilities, no new privileges, non-root, bounded, internal only. */
+function workerProblems(config: ComposeConfig, name: string, rule: WorkerRule): string[] {
+  const service = config.services[name];
+  if (!service) return rule.required ? [`service ${name}: must run (final I8)`] : [];
+  const problems: string[] = [];
+  const env = Object.entries(service.environment ?? {});
+  if (
+    env.length !== Object.keys(rule.env).length ||
+    env.some(([key, value]) => rule.env[key] !== value)
+  ) {
+    problems.push(`${name}.environment: only its fixed settings, no secrets (final I8)`);
+  }
+  if (service.read_only !== true) problems.push(`${name}.read_only: must be true (final I8)`);
+  if (!service.cap_drop?.includes("ALL"))
+    problems.push(`${name}.cap_drop: must drop ALL (final I8)`);
+  if (!service.security_opt?.includes("no-new-privileges:true")) {
+    problems.push(`${name}.security_opt: must set no-new-privileges (final I8)`);
+  }
+  const uid = /^(\d+)(?::\d+)?$/.exec(service.user ?? "")?.[1];
+  if (uid === undefined || Number(uid) === 0) {
+    problems.push(`${name}.user: must be a numeric non-root uid (final I8)`);
+  }
+  if (!(
+    Number(service.mem_limit) > 0 &&
+    Number(service.cpus) > 0 &&
+    Number(service.pids_limit) > 0
+  )) {
+    problems.push(`${name}: must bound memory, CPU and processes (final I8)`);
+  }
+  const networks = Object.keys(service.networks ?? {}).sort();
+  if (networks.join(",") !== [...rule.networks].sort().join(",")) {
+    problems.push(`${name}.networks: must be exactly ${rule.networks.join(", ")} (final I8)`);
+  }
+  for (const network of networks) {
+    if (config.networks[network]?.internal !== true) {
+      problems.push(`${name}.networks: ${network} must be internal (final I8)`);
+    }
+  }
+  if ((service.ports ?? []).length > 0)
+    problems.push(`${name}.ports: must publish nothing (final I8)`);
+  return problems;
+}
+
 export function prodModeProblems(config: ComposeConfig): string[] {
   const problems: string[] = [];
   const envOf = (service: string) => config.services[service]?.environment ?? {};
@@ -49,20 +117,12 @@ export function prodModeProblems(config: ComposeConfig): string[] {
       problems.push(`${name}.SLOT_EGRESS_ALLOW_CIDRS: must be empty`);
     }
   }
-  // B4 review I7: slot audio is recorded only by audio-capture, which holds no secrets.
-  const capture = config.services["audio-capture"];
-  if (capture && Object.keys(capture.environment ?? {}).length > 0) {
-    problems.push("audio-capture.environment: must be empty (no secrets, B4 I7)");
-  }
-  if (capture && capture.read_only !== true) {
-    problems.push("audio-capture.read_only: must be true (B4 I7)");
-  }
-  if (capture?.networks && "cdp" in capture.networks) {
-    problems.push("audio-capture.networks: must not join cdp (B4 I7)");
-  }
+  for (const [name, rule] of Object.entries(WORKERS))
+    problems.push(...workerProblems(config, name, rule));
   if (config.services.agent?.networks && "pulse" in config.services.agent.networks) {
     problems.push("agent.networks: must not join pulse (B4 I7)");
   }
+  const capture = config.services["audio-capture"];
   const captureAddress = capture?.networks?.pulse?.ipv4_address;
   for (const [name, service] of Object.entries(config.services)) {
     if (!SLOT.test(name)) continue;

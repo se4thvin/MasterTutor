@@ -207,9 +207,8 @@ services:
         condition: service_completed_successfully
       garage-init:
         condition: service_completed_successfully
-      docling:
-        condition: service_healthy
-        required: false
+    # No dependency on docling or pdf-worker: a PDF falls back to pdf.js while docling is down
+    # or still loading its models, and to pdf_unavailable while pdf-worker restarts (final I7).
     networks:
       backend: {}
       cdp:
@@ -293,6 +292,8 @@ services:
     image: quay.io/docling-project/docling-serve-cpu:v1.36.0@sha256:225c8586e20d5d0fc6811a9e0e044fa602bcc4393f00389009bad42d6787b58f
     profiles: ["pdf"]
     restart: unless-stopped
+    # The image's own non-root user, pinned (final review I8); its files are group 0 (OpenShift layout).
+    user: "1001:0"
     read_only: true
     tmpfs:
       - /tmp:size=1g
