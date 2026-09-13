@@ -1,7 +1,7 @@
 "use client";
 
 import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -34,13 +34,13 @@ import { FolderTree } from "./folder-tree.tsx";
 import { SearchResults } from "./search-results.tsx";
 import { NoteCard } from "./note-card.tsx";
 import { useDeleteNote } from "./use-delete-note.ts";
+import { useFolders } from "./use-folders.ts";
 import { useMoveNote } from "./use-move-note.ts";
 import { useNoteSearch } from "./use-note-search.ts";
 
 function useLibraryScope() {
   const params = parseLibraryParams(useSearchParams());
-  const { data } = useQuery(orpc.folders.tree.queryOptions({ input: {} }));
-  const folders = data?.folders ?? [];
+  const folders = useFolders();
   const path =
     params.folder !== "all" && params.folder !== "unfiled"
       ? folderPath(folders, params.folder)

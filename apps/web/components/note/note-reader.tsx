@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { RollingNumber } from "@/components/bits/rolling-number.tsx";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
+import { useFolders } from "@/components/library/use-folders.ts";
 import { ButtonLink } from "@/components/ui/button.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -33,7 +34,7 @@ const LAYOUT_ITEMS: SegmentItem<View>[] = [
 
 export function NoteReader({ noteId }: { noteId: string }) {
   const { data, isPending, isError } = useQuery(orpc.notes.get.queryOptions({ input: { noteId } }));
-  const folders = useQuery(orpc.folders.tree.queryOptions({ input: {} })).data?.folders ?? [];
+  const folders = useFolders();
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [openBlockId, setOpenBlockId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
