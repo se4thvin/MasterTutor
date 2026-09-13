@@ -4,7 +4,7 @@ import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
 import { createLocalOcr, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
 import type { MaskSources } from "./masking.ts";
 import { captureModelScreenshot } from "./screenshot.ts";
-import type { CachedScreen } from "./local-ocr.ts";
+import type { BandRead } from "./pixel-screen.ts";
 import { createScreenCache, type ScreenCache } from "./screen-cache.ts";
 import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { ocrContains } from "../vault/testing/ocr.ts";
@@ -149,7 +149,7 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     const plain = { ...sources, hasSecrets: () => false };
     const ocr = sharedLocalOcr();
     await captureModelScreenshot(session, sources, signal, ocr); // warm the worker
-    const added = async (cache: ScreenCache<CachedScreen>) => {
+    const added = async (cache: ScreenCache<BandRead>) => {
       let started = performance.now();
       await captureModelScreenshot(session, sources, signal, ocr, cache);
       const screened = performance.now() - started;
@@ -162,7 +162,7 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     const scrolled: number[] = [];
     for (let i = 0; i < 9; i++) {
       await session.page.evaluate(() => window.scrollTo(0, 0));
-      const cache = createScreenCache<CachedScreen>(sources);
+      const cache = createScreenCache<BandRead>(sources);
       first.push(await added(cache));
       same.push(await added(cache)); // a step that changed nothing on screen
       await session.page.evaluate(() => window.scrollBy(0, 160));

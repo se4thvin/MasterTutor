@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { screenPixels, type CachedScreen, type LocalOcr } from "./local-ocr.ts";
+import type { LocalOcr } from "./local-ocr.ts";
+import { screenPixels, type BandRead } from "./pixel-screen.ts";
 import type { MaskSources } from "./masking.ts";
 import { createScreenCache } from "./screen-cache.ts";
 
@@ -54,7 +55,7 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
   it("reuses the screen of an unchanged frame: no OCR at all", async () => {
     const ocr = countingOcr();
     const sources = vault();
-    const cache = createScreenCache<CachedScreen>(sources);
+    const cache = createScreenCache<BandRead>(sources);
     const png = await frame();
     expect(await screenPixels(ocr, sources, png, signal, { urgent: true, cache })).toEqual({
       kind: "clean",
@@ -66,7 +67,7 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
   it("re-screens what changed: a pixel outside the band re-reads the frame, not the band", async () => {
     const ocr = countingOcr();
     const sources = vault();
-    const cache = createScreenCache<CachedScreen>(sources);
+    const cache = createScreenCache<BandRead>(sources);
     await screenPixels(ocr, sources, await frame(), signal, { urgent: true, cache });
     await screenPixels(ocr, sources, await frame({ x: 5, y: 150 }), signal, {
       urgent: true,
@@ -83,7 +84,7 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
   it("drops every result when the secret set changes (a new secret or one-time code)", async () => {
     const ocr = countingOcr();
     const sources = vault();
-    const cache = createScreenCache<CachedScreen>(sources);
+    const cache = createScreenCache<BandRead>(sources);
     const png = await frame();
     await screenPixels(ocr, sources, png, signal, { urgent: true, cache });
     sources.bump();
@@ -94,7 +95,7 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
     const ocr = countingOcr();
     const mine = vault();
     const theirs = vault();
-    const cache = createScreenCache<CachedScreen>(mine);
+    const cache = createScreenCache<BandRead>(mine);
     const png = await frame();
     await screenPixels(ocr, mine, png, signal, { urgent: true, cache });
     await screenPixels(ocr, theirs, png, signal, { urgent: true, cache });
@@ -104,7 +105,7 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
   });
   it("never caches a failed read, and caches nothing without a secret-set version", async () => {
     const sources = vault();
-    const cache = createScreenCache<CachedScreen>(sources);
+    const cache = createScreenCache<BandRead>(sources);
     let reads = 0;
     const failing: LocalOcr = {
       text: async () => "",
@@ -121,7 +122,7 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
     expect(reads).toBe(2);
     const ocr = countingOcr();
     const unversioned = { ...vault(), secretsVersion: undefined };
-    const plain = createScreenCache<CachedScreen>(unversioned);
+    const plain = createScreenCache<BandRead>(unversioned);
     await screenPixels(ocr, unversioned, png, signal, { urgent: true, cache: plain });
     await screenPixels(ocr, unversioned, png, signal, { urgent: true, cache: plain });
     expect(ocr.reads).toBe(4);
