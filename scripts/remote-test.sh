@@ -59,6 +59,8 @@ if [[ "$suite" == qa && "${1:-}" == "--down" ]]; then
   exec ssh "$host" "$(remote --cleanup "$project")"
 fi
 
+# shellcheck source=remote-test/snapshot.sh
+source "$root/scripts/remote-test/snapshot.sh"
 echo "remote-test: syncing $name to $host:~/$remote_dir" >&2
 # The worktree's sync lock on the host keeps concurrent syncs (and the snapshots runs take,
 # remote-test/snapshot.sh) from interleaving.
@@ -70,16 +72,17 @@ rsync -az --delete \
   --include=/orchestration/benchmarks/ --include=/orchestration/benchmarks/README.md \
   --include=/orchestration/briefs/ --include=/orchestration/briefs/bench-fix.md \
   --exclude='/orchestration/**' --exclude=orchestration \
-  --exclude=.next --exclude=/.worktrees \
+  --exclude=.next --exclude=/.worktrees $(sync_excludes) \
   --rsync-path="mkdir -p $remote_dir mt-ci/.sync && flock mt-ci/.sync/$name.lock rsync" \
   "$root/" "$host:$remote_dir/"
 
-# Result folders are git-ignored or excluded from the sync, so --delete never touches them.
+# The sync excludes the result folders (sync_excludes), so its --delete never touches them.
 fetch() { rsync -az "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
 # Baselines an explicit --update-snapshots (or -u) changed on the host (remote-test/snapshot.sh
 # publishes only those): the changed *.spec.ts-snapshots/*.png files, never committed here.
+# --update keeps a baseline edited here after the run's sync.
 fetch_baselines() {
-  rsync -az --prune-empty-dirs --out-format='remote-test: fetched baseline %n' \
+  rsync -az --update --prune-empty-dirs --out-format='remote-test: fetched baseline %n' \
     --include='*/' --include='*.spec.ts-snapshots/*.png' --exclude='*' \
     "$host:$remote_dir/apps/web/e2e/" "$root/apps/web/e2e/" >&2 ||
     echo "remote-test: no baselines to fetch" >&2
