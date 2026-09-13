@@ -341,6 +341,27 @@ describe("per-run snapshots of one worktree's sync (remote-test/snapshot.sh)", (
     expect(stdout.split("\n")).toEqual(["r2", "out", ""]);
   });
 
+  it("never lets a sync delete a run's results, whatever rsync honours of .gitignore (QA-039)", () => {
+    // macOS's openrsync deletes git-ignored receiver files under --delete; explicit excludes hold.
+    const { status, stdout, stderr } = snapshot(`mkdir -p mac/apps/web/e2e mac/tests/bench
+      echo "test-results/" >mac/apps/web/.gitignore; echo src >mac/apps/web/e2e/a.ts; echo b >mac/tests/bench/b.ts
+      for p in $SNAPSHOT_RESULTS; do mkdir -p "host/$p"; echo r >"host/$p/r"; done
+      echo stale >host/apps/web/gone.ts
+      rsync -a --delete --filter=':- .gitignore' $(sync_excludes) mac/ host/
+      cd host && find . -type f | sort`);
+    expect(status, stderr).toBe(0);
+    expect(stdout.trim().split("\n")).toEqual([
+      "./apps/web/.gitignore",
+      "./apps/web/e2e/.out/r",
+      "./apps/web/e2e/a.ts",
+      "./apps/web/playwright-report/r",
+      "./apps/web/test-results/r",
+      "./tests/bench/.out/r",
+      "./tests/bench/b.ts",
+    ]);
+    expect(client).toContain("$(sync_excludes)");
+  });
+
   it("syncs under the same per-worktree lock the host's snapshots take", () => {
     expect(client).toContain(
       '--rsync-path="mkdir -p $remote_dir mt-ci/.sync && flock mt-ci/.sync/$name.lock rsync"',

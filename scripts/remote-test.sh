@@ -58,6 +58,8 @@ if [[ "$suite" == qa && "${1:-}" == "--down" ]]; then
   exec ssh "$host" "$(remote --cleanup "$project")"
 fi
 
+# shellcheck source=remote-test/snapshot.sh
+source "$root/scripts/remote-test/snapshot.sh"
 echo "remote-test: syncing $name to $host:~/$remote_dir" >&2
 # The worktree's sync lock on the host keeps concurrent syncs (and the snapshots runs take,
 # remote-test/snapshot.sh) from interleaving.
@@ -65,11 +67,11 @@ rsync -az --delete \
   --filter=':- .gitignore' \
   --include=/.env.test --include=/.env.example --exclude='.env*' \
   --exclude=/.git --exclude=node_modules --exclude=.superpowers --exclude=orchestration \
-  --exclude=.next --exclude=/.worktrees \
+  --exclude=.next --exclude=/.worktrees $(sync_excludes) \
   --rsync-path="mkdir -p $remote_dir mt-ci/.sync && flock mt-ci/.sync/$name.lock rsync" \
   "$root/" "$host:$remote_dir/"
 
-# Result folders are git-ignored or excluded from the sync, so --delete never touches them.
+# The sync excludes the result folders (sync_excludes), so its --delete never touches them.
 fetch() { rsync -az "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
 fetch_results() {
   case "$1" in
