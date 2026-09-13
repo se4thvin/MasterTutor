@@ -72,11 +72,13 @@ rsync -az --delete \
   "$root/" "$host:$remote_dir/"
 
 # The sync excludes the result folders (sync_excludes), so its --delete never touches them.
-fetch() { rsync -az "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
+# fetch <folder> [rsync args...]
+fetch() { rsync -az "${@:2}" "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
 fetch_results() {
   case "$1" in
-    # ui also brings back visual baselines that an explicit --update-snapshots wrote (Task 8).
-    ui) fetch apps/web/playwright-report && fetch apps/web/test-results && fetch apps/web/e2e/visual.spec.ts-snapshots ;;
+    # ui also brings back visual baselines that an explicit --update-snapshots wrote (Task 8, B1);
+    # --update keeps a baseline changed here after the run's snapshot was taken.
+    ui) fetch apps/web/playwright-report && fetch apps/web/test-results && fetch apps/web/e2e/visual.spec.ts-snapshots --update ;;
     e2e | qa) fetch apps/web/e2e/.out ;;
     bench-mock) fetch tests/bench/.out ;;
   esac

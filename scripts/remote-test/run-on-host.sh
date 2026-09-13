@@ -110,7 +110,11 @@ base="$root"
 run_dir="$runs_dir/$project"
 sync_lock="$HOME/mt-ci/.sync/$(basename "$base").lock"
 on_exit() {
-  publish_results "$run_dir/src" "$base" "$sync_lock" || true
+  # A ui run may have rewritten the visual baselines (--update-snapshots): they come back too.
+  local baselines=""
+  [[ "$suite" != ui ]] || baselines="$SNAPSHOT_BASELINES"
+  # shellcheck disable=SC2086 # a space-separated list of folders
+  publish_results "$run_dir/src" "$base" "$sync_lock" $baselines || true
   # qa's stack (and its snapshot) outlives this script; everything else is removed when it exits.
   if [[ "$suite" != qa ]]; then cleanup_run "$project"; fi
 }
