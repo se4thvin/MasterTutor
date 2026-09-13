@@ -4,6 +4,8 @@ import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
 import { createLocalOcr, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
 import type { MaskSources } from "./masking.ts";
 import { captureModelScreenshot } from "./screenshot.ts";
+import type { CachedScreen } from "./local-ocr.ts";
+import { createScreenCache, type ScreenCache } from "./screen-cache.ts";
 import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { ocrContains } from "../vault/testing/ocr.ts";
 import type { BrowserSession } from "./session.ts";
@@ -136,4 +138,44 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     );
     expect(p95).toBeLessThan(10_000);
   }, 300_000);
+  it("measures first-view and repeat-step latency with the run's screen cache (reported, QA-098 ruling)", async () => {
+    await session.goto(`${FIXTURES}/capture/article/index.html`, signal);
+    const prints = createSecretFingerprints();
+    prints.remember("latency", {
+      filled: { cdp: await session.cdp(), frameId: "main", loaderId: "doc", backendNodeIds: [] },
+      secret: SECRET,
+    });
+    const sources = prints.forRun("latency");
+    const plain = { ...sources, hasSecrets: () => false };
+    const ocr = sharedLocalOcr();
+    await captureModelScreenshot(session, sources, signal, ocr); // warm the worker
+    const added = async (cache: ScreenCache<CachedScreen>) => {
+      let started = performance.now();
+      await captureModelScreenshot(session, sources, signal, ocr, cache);
+      const screened = performance.now() - started;
+      started = performance.now();
+      await captureModelScreenshot(session, plain, signal, ocr);
+      return screened - (performance.now() - started);
+    };
+    const first: number[] = [];
+    const same: number[] = [];
+    const scrolled: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      await session.page.evaluate(() => window.scrollTo(0, 0));
+      const cache = createScreenCache<CachedScreen>(sources);
+      first.push(await added(cache));
+      same.push(await added(cache)); // a step that changed nothing on screen
+      await session.page.evaluate(() => window.scrollBy(0, 160));
+      scrolled.push(await added(cache)); // a step that scrolled part of the frame
+    }
+    const stats = (values: number[]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      return `p50 ${Math.round(sorted[Math.floor(sorted.length / 2)]!)} ms, p95 ${Math.round(sorted[Math.ceil(sorted.length * 0.95) - 1]!)} ms`;
+    };
+    process.stderr.write(
+      `QA-098 screen added per step: first view ${stats(first)}; unchanged ${stats(same)}; scrolled ${stats(scrolled)}\n`,
+    );
+    prints.forgetRun("latency");
+    expect(Math.max(...same)).toBeLessThan(Math.max(...first));
+  }, 600_000);
 });

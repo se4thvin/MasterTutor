@@ -40,6 +40,11 @@ export interface MaskSources {
    * Optional: no secrets registered.
    */
   inOcrText?(text: string): boolean;
+  /**
+   * Changes whenever the set of secrets and codes changes: a cached pixel screen holds only for
+   * the version it was made under. Optional: without it, screens are never cached.
+   */
+  secretsVersion?(): number;
 }
 
 /** A frame's document the vault filled into: CDP frame id plus that document's loaderId. */

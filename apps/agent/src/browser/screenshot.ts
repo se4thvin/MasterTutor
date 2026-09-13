@@ -10,7 +10,8 @@ import {
   type Box,
   type MaskSources,
 } from "./masking.ts";
-import { screenPixels, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
+import { screenPixels, sharedLocalOcr, type CachedScreen, type LocalOcr } from "./local-ocr.ts";
+import type { ScreenCache } from "./screen-cache.ts";
 import type { BrowserSession, Layout } from "./session.ts";
 
 export interface ModelScreenshot {
@@ -108,15 +109,16 @@ async function screened(
   sources: MaskSources,
   ocr: LocalOcr,
   signal: AbortSignal,
+  cache: ScreenCache<CachedScreen> | undefined,
 ): Promise<ModelScreenshot | null> {
-  const first = await screenPixels(ocr, sources, shot.png, signal, { urgent: true });
+  const first = await screenPixels(ocr, sources, shot.png, signal, { urgent: true, cache });
   if (first.kind === "clean") return shot;
   if (first.kind === "failed") return null;
   const png = await drawMasks(shot.png, first.boxes.map(pad), {
     width: shot.width,
     height: shot.height,
   });
-  const again = await screenPixels(ocr, sources, png, signal, { urgent: true });
+  const again = await screenPixels(ocr, sources, png, signal, { urgent: true, cache });
   if (again.kind !== "clean") return null;
   return { ...shot, png, masked: shot.masked + first.boxes.length };
 }
@@ -139,6 +141,8 @@ export async function captureModelScreenshot(
   sources: MaskSources,
   signal: AbortSignal,
   ocr: LocalOcr = sharedLocalOcr(),
+  /** The run's screen cache (session-browser): unchanged regions are not read again. */
+  cache?: ScreenCache<CachedScreen>,
 ): Promise<ModelScreenshot> {
   let layout = await session.layout();
   const drop = async (reason: string = WITHHELD.moved) => {
@@ -183,7 +187,13 @@ export async function captureModelScreenshot(
       continue;
     }
     if (await containsSecretText(session, sources, signal)) return drop();
-    const shot = await screened(await finalize(raw, layout, after.boxes), sources, ocr, signal);
+    const shot = await screened(
+      await finalize(raw, layout, after.boxes),
+      sources,
+      ocr,
+      signal,
+      cache,
+    );
     if (shot === null) return drop(WITHHELD.unreadable);
     session.lastScale = shot.scale;
     return shot;
