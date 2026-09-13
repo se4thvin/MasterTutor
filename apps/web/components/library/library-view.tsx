@@ -164,14 +164,17 @@ export function LibraryView() {
   });
   const writeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(writeTimer.current), []);
-  useEffect(() => clearTimeout(writeTimer.current), [params.folder]);
   const typeQuery = (value: string) => {
     setDraft(value);
     clearTimeout(writeTimer.current);
-    writeTimer.current = setTimeout(
-      () => router.replace(libraryHref({ ...latest.current, q: value }), { scroll: false }),
-      URL_WRITE_DEBOUNCE_MS,
-    );
+    // A folder change before the write lands drops it. Checked when the timer fires, not by an
+    // effect on the folder: that effect's first run could come after a keystroke typed while the
+    // view hydrated, and cancel its write (QA-017).
+    const folder = latest.current.folder;
+    writeTimer.current = setTimeout(() => {
+      if (latest.current.folder !== folder) return;
+      router.replace(libraryHref({ ...latest.current, q: value }), { scroll: false });
+    }, URL_WRITE_DEBOUNCE_MS);
   };
   const clearQuery = () => {
     clearTimeout(writeTimer.current);
