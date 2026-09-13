@@ -4,6 +4,7 @@
 # (/tmp/mt-behaviour.lock). On exit the stack is stopped (volumes kept) and the lock is released.
 # Usage: scripts/bench-local.sh smoke                       (T15's pnpm prod:smoke, $1)
 #        scripts/bench-local.sh bench <pnpm bench args...>  (waits up to 60 min for the Vault item)
+#        scripts/bench-local.sh regrade <record.md>         (re-grades from stored traces: no run, no spend)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -f compose.prod.yml ]] || { echo "compose.prod.yml (Task 12) is required" >&2; exit 2; }
@@ -43,6 +44,9 @@ case "${1:-}" in
     done
     [[ "$ready" == 1 ]] || { echo "Vault item not ready after 60 min; stopping" >&2; exit 3; }
     pnpm bench "$@" ;;
+  regrade)
+    shift
+    pnpm bench regrade "$@" ;;
   *)
-    echo "usage: scripts/bench-local.sh smoke | bench <pnpm bench args...>" >&2; exit 2 ;;
+    echo "usage: scripts/bench-local.sh smoke | bench <pnpm bench args...> | regrade <record.md>" >&2; exit 2 ;;
 esac

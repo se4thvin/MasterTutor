@@ -52,9 +52,21 @@ const signInByCoordinates: MockTurn[] = [
 ];
 /** Consent, then sign in by read_page refs (browser_use). */
 const signInByRefs: MockTurn[] = [
-  turn([{ type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } }]),
+  turn([
+    {
+      type: "function",
+      name: "read_page",
+      args: { mode: "interactive", sinceHash: null, offset: null },
+    },
+  ]),
   turn([{ type: "click_named", name: "Accept" }]),
-  turn([{ type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } }]),
+  turn([
+    {
+      type: "function",
+      name: "read_page",
+      args: { mode: "interactive", sinceHash: null, offset: null },
+    },
+  ]),
   turn([{ type: "fill_named", alias: "bench-fixture", field: "username", name: "Email" }]),
   turn([{ type: "fill_named", alias: "bench-fixture", field: "password", name: "Password" }]),
   turn([{ type: "click_named", name: "Sign in" }]),
@@ -71,10 +83,67 @@ const activities: MockTurn[] = [
   turn([click(440, 602)]),
 ];
 const readBook: MockTurn[] = [
-  turn([{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }]),
+  turn([
+    { type: "function", name: "read_page", args: { mode: "text", sinceHash: null, offset: null } },
+  ]),
+];
+
+/** Moves through the address bar only (CTRL+L, the URL, ENTER): navigation, never page input. */
+const open = (url: string) =>
+  turn([
+    {
+      type: "computer",
+      actions: [
+        { type: "keypress", keys: ["CTRL", "L"] },
+        { type: "type", text: url },
+        { type: "keypress", keys: ["ENTER"] },
+      ],
+    },
+  ]);
+const read = (mode: "text" | "interactive") =>
+  turn([{ type: "function", name: "read_page", args: { mode, sinceHash: null, offset: null } }]);
+const LIBRARY = "http://bench.fixtures.test:8080/library";
+const press = (name: string) => turn([{ type: "click_named", name }]);
+const section = (path: string) => `${LIBRARY}/chapter/${path}`;
+/**
+ * The grading run of the fixture library (section discovery): the index, readings 1-3 (expanding
+ * reading 3's collapsed chapter, a disclosure click), then their sections, except 3.2, which it
+ * never reads (so that section must grade unknown). Address bar only otherwise.
+ */
+const discoverLibrary: MockTurn[] = [
+  open(LIBRARY),
+  read("interactive"),
+  ...[1, 2, 3].flatMap((n) => [open(`${LIBRARY}/reading/${n}`), read("interactive")]),
+  press("Chapter 3 more"),
+  read("interactive"),
+  ...[
+    "1/section/1",
+    "1/section/2",
+    "2/section/1",
+    "2/section/2",
+    "3/section/1",
+    "3/section/3",
+  ].flatMap((path) => [open(section(path)), read("text")]),
+];
+/**
+ * The main run on the library: all of 1.1 (both questions, start and play the animation), one of
+ * 2.2's two questions, and 3.3; nothing in 1.2. Grading must tell those apart per activity.
+ */
+const workLibrary: MockTurn[] = [
+  open(section("1/section/1")),
+  read("interactive"),
+  ...["Answer 1.1.1.1", "Answer 1.1.1.2", "Start 1.1.2", "Play step 1.1.2"].map(press),
+  open(section("2/section/2")),
+  read("interactive"),
+  press("Answer 2.2.1.1"),
+  open(section("3/section/3")),
+  read("interactive"),
+  press("Answer 3.3.1.1"),
 ];
 
 SCENARIOS.push(
+  { name: "bench-readings-browser_use", turns: [...signInByRefs, ...workLibrary, done] },
+  { name: "bench-readings-verify-browser_use", turns: [...signInByRefs, ...discoverLibrary, done] },
   { name: "bench-activities-computer_use", turns: [...signInByCoordinates, ...activities, done] },
   { name: "bench-activities-browser_use", turns: [...signInByRefs, ...activities, done] },
   { name: "bench-verify-computer_use", turns: [...signInByCoordinates, ...readBook, done] },

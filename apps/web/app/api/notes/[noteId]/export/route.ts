@@ -1,4 +1,5 @@
 import { Uuid } from "@mastertutor/contracts";
+import { attachmentDisposition } from "@mastertutor/contracts/export";
 import { workspaceIdOf } from "@mastertutor/db";
 import { getDb } from "@/lib/server/db.ts";
 import { getWebEnv } from "@/lib/server/env.ts";
@@ -42,12 +43,11 @@ export async function GET(
     throw error;
   }
   if (!out) return status(404);
-  const ascii = out.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
   return new Response(out.body, {
     headers: {
       ...OBJECT_HEADERS,
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(out.fileName)}`,
+      "Content-Disposition": attachmentDisposition(out.fileName),
       "Cache-Control": OBJECT_CACHE,
     },
   });

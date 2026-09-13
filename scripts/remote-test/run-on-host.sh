@@ -109,12 +109,14 @@ image="mt-ci-runner:$image_hash"
 base="$root"
 run_dir="$runs_dir/$project"
 sync_lock="$HOME/mt-ci/.sync/$(basename "$base").lock"
+# Playwright's --update-snapshots (or -u) rewrites baselines on purpose; only then do they go back.
+update_baselines=0
+case "$suite" in
+  ui | e2e) for arg in "$@"; do [[ "$arg" == -u || "$arg" == --update-snapshots* ]] && update_baselines=1; done ;;
+esac
 on_exit() {
-  # A ui run may have rewritten the visual baselines (--update-snapshots): they come back too.
-  local baselines=""
-  [[ "$suite" != ui ]] || baselines="$SNAPSHOT_BASELINES"
-  # shellcheck disable=SC2086 # a space-separated list of folders
-  publish_results "$run_dir/src" "$base" "$sync_lock" $baselines || true
+  publish_results "$run_dir/src" "$base" "$sync_lock" || true
+  if [[ "$update_baselines" == 1 ]]; then publish_baselines "$run_dir/src" "$base" "$sync_lock" || true; fi
   # qa's stack (and its snapshot) outlives this script; everything else is removed when it exits.
   if [[ "$suite" != qa ]]; then cleanup_run "$project"; fi
 }
@@ -200,6 +202,7 @@ docker run --rm --init --name "$project-runner" \
   -e TESTCONTAINERS_RYUK_DISABLED=true -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
   -e BEHAVIOUR_REMOTE_HOST=1 -e BEHAVIOUR_DOWNLOADS="$run_dir/downloads" \
   -e BEHAVIOUR_SLOT_IMAGE="mastertutor/browser-slot:$project" \
+  -e BEHAVIOUR_AUDIO_IMAGE="mastertutor/audio-capture:$project" \
   "${slot_env[@]}" \
   "$image" bash -c "$command" bash "${suite_args[@]}"
 status=$?

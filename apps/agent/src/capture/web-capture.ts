@@ -10,7 +10,7 @@ import { containsSecretText } from "../browser/masking.ts";
 import { captureMaskedRegion } from "../browser/region-capture.ts";
 import type { LibraryServices } from "../library.ts";
 import { sha256Hex } from "../notes/hash.ts";
-import { NoteWriteError, screenText, screenValue, type BlockDraft } from "../notes/note-writer.ts";
+import { NoteWriteError, screenValue, type BlockDraft } from "../notes/note-writer.ts";
 import { ToolError, type ToolContext } from "../tools/types.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
 import {
@@ -26,6 +26,7 @@ import { pageLocateBlocks } from "./page/locate.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import type { PageExtract } from "./page/types.ts";
 import { pixelsAreClean } from "../browser/local-ocr.ts";
+import { readRegion } from "./ocr-region.ts";
 import { preparePage } from "./prepare.ts";
 import { registerClosedShadowRoots } from "./shadow.ts";
 import { takeSnapshot, type Snapshot } from "./snapshot.ts";
@@ -451,13 +452,12 @@ async function opaqueBlocks(
 ): Promise<{ blocks: BlockDraft[]; withheld: number; lost: number }> {
   const metrics = await (await ctx.session.cdp()).send("Page.getLayoutMetrics");
   const viewport = metrics.cssVisualViewport;
-  const tiles = Math.min(
-    OPAQUE_TILES,
-    Math.ceil(metrics.cssContentSize.height / viewport.clientHeight),
-  );
+  const needed = Math.ceil(metrics.cssContentSize.height / viewport.clientHeight);
+  const tiles = Math.min(OPAQUE_TILES, needed);
   const blocks: BlockDraft[] = [];
   let withheld = 0;
-  let lost = 0;
+  // Final review I2: what lies past the tile cap is not in the note, and counts as lost.
+  let lost = Math.max(0, needed - tiles);
   for (let i = 0; i < tiles; i++) {
     ctx.signal.throwIfAborted();
     const clip = {
@@ -469,34 +469,9 @@ async function opaqueBlocks(
     const png = await captureMaskedRegion(ctx.session, ctx.mask, { clip, scale: 1 }, ctx.signal);
     if (!png) {
       withheld++;
+      lost++;
       continue;
     }
-    // Pixels reach OpenAI only after a local secret screen passes (A-M1).
-    if (!(await pixelsAreClean(services.localOcr, ctx.mask, png, ctx.signal))) {
-      withheld++;
-      continue;
-    }
-    // Transcribed and screened before the tile is stored: canvas text is invisible to the AX gate.
-    let text: string | null;
-    try {
-      text = await services.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step });
-    } catch (error) {
-      if (ctx.signal.aborted) throw error;
-      // A transient model error loses this tile's text, not the capture (M6).
-      services.log.warn({ errName: (error as Error).name }, "OCR failed for a page region");
-      text = null;
-    }
-    if (text !== null) screenText(ctx.mask, text);
-    // Unread pixels are never stored while the run holds secrets (re-review I1).
-    if (text === null && ctx.mask.hasSecrets()) {
-      withheld++;
-      continue;
-    }
-    const asset = await services.assets.put(
-      ctx.workspaceId,
-      { bytes: png, mime: "image/png", width: clip.width, height: clip.height, sourceUrl: null },
-      ctx.mask,
-    );
     const anchor = {
       selector: null,
       xpath: null,
@@ -505,21 +480,20 @@ async function opaqueBlocks(
       textFragment: null,
       bbox: clip,
     };
-    blocks.push({
-      type: "image",
-      markdown: `Page region ${i + 1}`,
-      origin: "dom",
-      assetId: asset.assetId,
+    // Same pipeline and rule as a textless PDF page: withheld, unread or empty is lost.
+    const region = await readRegion(services, ctx, {
+      png,
+      width: clip.width,
+      height: clip.height,
+      label: `Page region ${i + 1}`,
+      imageOrigin: "dom",
       anchor,
-      verified: true,
     });
-    if (text === null) {
+    blocks.push(...region.blocks);
+    if (region.lost) {
       lost++;
-      continue;
+      if (region.blocks.length === 0) withheld++;
     }
-    // Headings, lists and paragraphs stay separate blocks, each within the size limit (M4).
-    for (const part of splitMarkdown(text).flatMap((block) => limitBlockSize(block)))
-      blocks.push({ ...part, origin: "ocr_model", assetId: null, anchor, verified: false });
   }
   return { blocks, withheld, lost };
 }
@@ -553,7 +527,7 @@ export async function captureWeb(
     const opaque = await opaqueBlocks(services, ctx);
     blocks.push(...opaque.blocks);
     figuresWithheld += opaque.withheld;
-    mediaLost += opaque.lost + (opaque.blocks.length === 0 ? 1 : 0);
+    mediaLost += opaque.lost || (opaque.blocks.length === 0 ? 1 : 0);
   }
   // Unread frames are missing content: the note cannot claim to be verified (I4).
   mediaLost += main.framesMissing;

@@ -244,6 +244,10 @@ export const NoteDetail = z.object({
 });
 export type NoteDetail = z.infer<typeof NoteDetail>;
 
+/** "Mark verified": the block, and the note's fidelity as the one rule (noteFidelity) now gives it. */
+export const MarkVerifiedResult = z.object({ block: NoteBlock, fidelity: Fidelity });
+export type MarkVerifiedResult = z.infer<typeof MarkVerifiedResult>;
+
 /** A person may save any block the agent may store: the one block-size limit (MAX_BLOCK_CHARS). */
 export const UpdateBlockInput = z.object({
   blockId: Uuid,

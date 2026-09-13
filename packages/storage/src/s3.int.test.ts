@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bootstrapGarage, waitForGarageAdmin } from "./garage-admin.ts";
-import { createStorage, type Storage } from "./s3.ts";
+import { ObjectNotFound, createStorage, type Storage } from "./s3.ts";
 import { startTestGarage, type TestGarage } from "./testing.ts";
 
 const WEB = {
@@ -74,6 +74,10 @@ describe("Storage against Garage", () => {
     await expect(
       web.put("assets/x/forbidden", "nope", { contentType: "text/plain" }),
     ).rejects.toThrow();
+  });
+
+  it("tells a missing object from other getStream failures (QA-086)", async () => {
+    await expect(web.getStream("assets/x/never-written")).rejects.toBeInstanceOf(ObjectNotFound);
   });
 
   it("streams an object", async () => {

@@ -34,6 +34,7 @@ export interface ComposeService {
   tmpfs?: string[];
   read_only?: boolean;
   restart?: string;
+  depends_on?: Record<string, { condition?: string; required?: boolean }>;
   sysctls?: Record<string, string>;
   volumes?: ComposeVolumeMount[];
   mem_limit?: string | number;

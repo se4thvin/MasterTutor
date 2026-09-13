@@ -27,7 +27,7 @@ const ctx = (
   mask: NO_MASK_SOURCES,
   slotName: "browser-1",
 });
-const readArgs = { mode: "text", sinceHash: null } as const;
+const readArgs = { mode: "text", sinceHash: null, offset: null } as const;
 const fakeReadPage = (run: () => Promise<ReadPageResult>) =>
   register({ name: "read_page", args: ReadPageArgs, result: ReadPageResult, untrusted: true, run });
 

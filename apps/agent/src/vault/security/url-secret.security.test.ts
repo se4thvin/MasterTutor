@@ -21,7 +21,11 @@ const ENCODED = {
 };
 const read: MockTurn = {
   outputs: [
-    { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+    {
+      type: "function",
+      name: "read_page",
+      args: { mode: "interactive", sinceHash: null, offset: null },
+    },
   ],
 };
 

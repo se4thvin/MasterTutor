@@ -23,7 +23,11 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
 const read: MockTurn = {
   outputs: [
-    { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+    {
+      type: "function",
+      name: "read_page",
+      args: { mode: "interactive", sinceHash: null, offset: null },
+    },
   ],
 };
 const fill = (alias: string, field: "username" | "password", name: string): MockTurn => ({

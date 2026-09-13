@@ -46,6 +46,8 @@ import {
   type SuiteRunOptions,
 } from "./run-suite.ts";
 import { assertMayStart, openLedger, totalUsd, type Ledger } from "./ledger.ts";
+import { appendEvidence } from "./appendix.ts";
+import { regradeRecord } from "./regrade.ts";
 import { ensureFixtureVaultItem, fixturesSuite } from "./suites/fixtures.ts";
 import { zybooksSuite } from "./suites/zybooks.ts";
 import {
@@ -93,6 +95,7 @@ export type CliCommand =
   | { kind: "watch"; runId: string }
   | { kind: "vault-check"; suite: SuiteId }
   | { kind: "resolve"; id: string }
+  | { kind: "regrade"; path: string }
   | { kind: "run" | "baseline"; suite: SuiteId; options: SuiteRunOptions };
 
 const money = (flag: string) =>
@@ -157,10 +160,16 @@ export function parseCli(
   }
   if (command === "watch") return { kind: "watch", runId: parsed(Uuid, arg) };
   if (command === "resolve") return { kind: "resolve", id: parsed(Uuid, arg) };
+  if (command === "regrade") {
+    if (!arg) throw new UsageError("usage: pnpm bench regrade <record.md>");
+    return { kind: "regrade", path: arg };
+  }
   const suite = oneOf(SUITE_IDS, "--suite", values.suite);
   if (command === "vault-check") return { kind: "vault-check", suite };
   if (command !== "run" && command !== "baseline")
-    throw new UsageError("usage: pnpm bench <init|run|baseline|vault-check|watch|resolve> …");
+    throw new UsageError(
+      "usage: pnpm bench <init|run|baseline|vault-check|watch|resolve|regrade> …",
+    );
 
   const defaults = SUITE_DEFAULTS[suite];
   if (values.mock && suite === "zybooks")
@@ -440,6 +449,20 @@ async function main(argv: string[]): Promise<void> {
   assertNoSiteCredentialsInEnv(process.env);
   const cmd = parseCli(argv, (suite) => listRecords(suite));
   if (cmd.kind === "init") return init(cmd);
+  if (cmd.kind === "regrade") {
+    // I5: the stored traces only, through the stack's database; no sign-in, no run, no spend.
+    const suiteId = parsed(
+      z.enum(SUITE_IDS),
+      readFrontmatter(readFileSync(cmd.path, "utf8"))["suite"],
+    );
+    const suite = SUITES[suiteId]();
+    const compose = STACK_COMPOSE[suite.stack];
+    await regradeRecord(cmd.path, suite, { compose, loadTrace: loadRunTrace }, () =>
+      new Date().toISOString(),
+    );
+    log(`regraded: ${cmd.path} (a "## Regrade" section was appended)`);
+    return;
+  }
   if (cmd.kind === "resolve") {
     const ledger = openLedger();
     try {
@@ -507,9 +530,9 @@ async function main(argv: string[]): Promise<void> {
   const options = cmd.options;
   selectBenchmarks(suite, options); // usage mistakes fail before the ledger records anything
   const run = (spend: SpendBook) =>
-    cmd.kind === "run"
-      ? runSuite(suite, options, deps(spend))
-      : runBaseline(suite, options, deps(spend));
+    cmd.kind === "baseline"
+      ? runBaseline(suite, options, deps(spend))
+      : runSuite(suite, options, deps(spend));
   let result: SuiteRunResult;
   let path: string;
   if (options.mock) {
@@ -532,6 +555,10 @@ async function main(argv: string[]): Promise<void> {
     }
   }
   log(`record: ${path}`);
+  // Evidence the record needs beyond T20's report (Task 23): per-step evidence on every real
+  // zyBooks record.
+  const evidence = { api, compose, loadTrace: loadRunTrace };
+  if (suite.id === "zybooks" && !result.mock) await appendEvidence(result, path, evidence, suite);
   if (result.mode === "once")
     log(
       `Stopped after one run (D46). Review ${path}, set reviewed: true, reviewed_by and authorize: N in its frontmatter, then continue with --continue-after-review ${path}.`,
