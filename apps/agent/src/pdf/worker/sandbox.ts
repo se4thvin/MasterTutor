@@ -27,8 +27,12 @@ export const CHILD_HEAP_MB = 512;
 
 const require = createRequire(import.meta.url);
 const WORKER = fileURLToPath(new URL("./main.ts", import.meta.url));
-/** apps/agent: the worker's own code and package.json (Node reads it for the module type). */
+/** apps/agent: its package.json (Node reads it for the module type) and its dependency links. */
 const AGENT_ROOT = resolve(dirname(WORKER), "../../..");
+/** The child's own code: worker/ and the wire schema beside it (src/pdf). */
+const PDF_ROOT = resolve(dirname(WORKER), "..");
+/** The child's direct imports, resolved through apps/agent/node_modules links. */
+const WORKER_PACKAGES = ["pdfjs-dist", "@napi-rs/canvas", "zod"] as const;
 
 /** A package's own directory, symlinks resolved (pnpm links into node_modules/.pnpm). */
 function packageDir(pkg: string, from: NodeJS.Require = require): string {
@@ -65,12 +69,31 @@ function workerPackageDirs(): string[] {
   return [packageDir("pdfjs-dist"), canvas, ...platforms, packageDir("zod")].map(storeEntry);
 }
 
+/**
+ * The permission model follows symlinks: a root holding a node_modules directory (apps/agent, or
+ * a store entry that turned out to be the hoisted top level) would let the child read every linked
+ * package, packages/* included (QA-105). The child gets its own files and links only.
+ */
+function readRoots(): string[] {
+  const roots = [
+    resolve(AGENT_ROOT, "package.json"),
+    PDF_ROOT,
+    ...WORKER_PACKAGES.map((pkg) => resolve(AGENT_ROOT, "node_modules", pkg)),
+    ...workerPackageDirs(),
+  ];
+  const linkDirs = [resolve(AGENT_ROOT, "node_modules"), resolve(AGENT_ROOT, "../../node_modules")];
+  for (const root of roots)
+    if (linkDirs.some((dir) => dir === root || dir.startsWith(root + sep)))
+      throw new Error(`pdf worker read root ${root} holds node_modules`);
+  return [...new Set(roots)];
+}
+
 /** Read library code only; no writes, no child processes, no workers, no eval; bounded memory (S3). */
 export function workerFlags(): string[] {
-  const roots = new Set([AGENT_ROOT, ...workerPackageDirs()]);
+  const roots = readRoots();
   return [
     "--permission",
-    ...[...roots].map((root) => `--allow-fs-read=${root}`),
+    ...roots.map((root) => `--allow-fs-read=${root}`),
     "--allow-addons",
     "--disallow-code-generation-from-strings",
     `--max-old-space-size=${CHILD_HEAP_MB}`,

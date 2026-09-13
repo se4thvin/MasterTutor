@@ -640,7 +640,7 @@ export class RunLoop {
       return CONTINUE;
     }
     const turn = parsed.turn;
-    if (turn?.status === "done") return this.#complete();
+    if (turn?.status === "done") return this.#complete(signal);
     if (turn?.status === "need_human")
       return this.#wait(
         turn.needHuman === "captcha" ? "captcha" : "takeover",
@@ -1163,9 +1163,14 @@ export class RunLoop {
 
   /* --------------------------------- endings --------------------------------- */
 
-  async #complete(): Promise<StepOutcome> {
+  async #complete(signal: AbortSignal): Promise<StepOutcome> {
     const step = new StepCollector();
-    const result = await this.#deps.hooks.onComplete({ run: this.#run, log: this.#deps.log, step });
+    const result = await this.#deps.hooks.onComplete({
+      run: this.#run,
+      log: this.#deps.log,
+      step,
+      signal,
+    });
     if (!result.ok) {
       await this.#discard(step);
       this.#notes.push(`Executor: the run cannot finish yet: ${result.reason}`);
@@ -1260,7 +1265,7 @@ export class RunLoop {
           steps: [step, approveStep("done")],
           transition: TO_RUNNING,
         });
-        return this.#complete();
+        return this.#complete(signal);
       }
       this.#run = { ...this.#run, budget: extendBudget(this.#run.budget) };
       if (instruction) this.#notes.push(`Message from the user: ${instruction}`);

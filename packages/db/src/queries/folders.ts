@@ -69,6 +69,19 @@ export function folderPaths(rows: readonly FolderNode[]): Map<string, string[]> 
 
 const fold = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase("en");
 
+/** The child of `parentId` named `name`: exact name first, then case- and width-insensitive. */
+export function findSibling(
+  rows: readonly FolderNode[],
+  parentId: string | null,
+  name: string,
+): FolderNode | undefined {
+  const siblings = rows.filter((row) => row.parentId === parentId);
+  return (
+    siblings.find((row) => row.name === name) ??
+    siblings.find((row) => fold(row.name) === fold(name))
+  );
+}
+
 /** Walks `path` from the root; returns the deepest existing folder (exact name first, then case-insensitive). */
 export function resolveFolderPath(
   rows: readonly FolderNode[],
@@ -77,10 +90,7 @@ export function resolveFolderPath(
   let parentId: string | null = null;
   let matched = 0;
   for (const name of path) {
-    const siblings = rows.filter((row) => row.parentId === parentId);
-    const hit =
-      siblings.find((row) => row.name === name) ??
-      siblings.find((row) => fold(row.name) === fold(name));
+    const hit = findSibling(rows, parentId, name);
     if (!hit) break;
     parentId = hit.id;
     matched++;

@@ -155,4 +155,23 @@ describe("pageExtract", () => {
     expect(extract.markdown).not.toContain("Site Logo");
     expect(extract.markdown.match(/Snake\\?_case basics/g)).toHaveLength(1);
   });
+
+  it("never restores a title h1 outside the main content: a logo or an aside (QA-077)", async () => {
+    const body = `<p>Our catalogue lists every gadget we stock, with prices, sizes and delivery times
+      for each region we ship to, updated every morning.</p>
+      <p>Orders placed before noon leave the warehouse on the same day in most regions.</p>`;
+    for (const page of [
+      `<div class="logo"><h1>Acme Widgets</h1></div><main><h2>Catalogue</h2>${body}</main>`,
+      `<aside><h1>Acme Widgets</h1></aside><main><h2>Catalogue</h2>${body}</main>`,
+      `<div id="site-logo"><h1>Acme Widgets</h1></div><div><h2>Catalogue</h2>${body}</div>`,
+    ]) {
+      await session.page.setContent(
+        `<!doctype html><html><head><title>Acme Widgets</title></head><body>${page}</body></html>`,
+      );
+      const worlds = await captureWorlds(session);
+      const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+      expect(extract.markdown).toContain("Orders placed before noon");
+      expect(extract.markdown).not.toContain("# Acme Widgets");
+    }
+  });
 });

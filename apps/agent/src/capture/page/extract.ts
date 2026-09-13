@@ -397,15 +397,21 @@ export function pageExtract(options: ExtractOptions): PageExtract {
   }
 
   // Defuddle drops the H1 that repeats the page title; that heading is page text, so the note
-  // keeps it. Only that H1: rendered text only, outside page chrome, matching the title.
+  // keeps it. Only that H1: rendered text only, in the main content, matching the title. Main
+  // content is the main landmark or an article when the page has one; never chrome, an aside or
+  // a logo (a home page's logo h1 often repeats document.title).
   if (!scoped && engine === "defuddle") {
     const squash = (value: string) => value.replace(/\s+/g, " ").trim();
     const fold = (value: string) => squash(value).toLocaleLowerCase();
     const titles = new Set([result?.title ?? "", document.title].map(fold).filter(Boolean));
-    const inChrome = (el: Element) => {
+    const MAIN = "main, [role=main], article";
+    const hasMain = document.querySelector(MAIN) !== null;
+    const inMainContent = (el: Element) => {
+      if (el.closest("aside, [role=complementary], [class*=logo i], [id*=logo i]")) return false;
+      if (hasMain && !el.closest(MAIN)) return false;
       for (let at: Element | null = el; at; at = at.parentElement)
-        if (lib.isChrome(at)) return true;
-      return false;
+        if (lib.isChrome(at)) return false;
+      return true;
     };
     const renderedText = (el: Element) => {
       const parts: string[] = [];
@@ -418,7 +424,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       return squash(parts.join(""));
     };
     for (const h1 of document.querySelectorAll("h1")) {
-      if (!lib.visible(h1) || inChrome(h1)) continue;
+      if (!lib.visible(h1) || !inMainContent(h1)) continue;
       const text = renderedText(h1);
       if (!text || !titles.has(fold(text))) continue;
       // Compared with the unescaped Markdown, so `_`, `*` or `[` in a title never add it twice.
