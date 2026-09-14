@@ -10,7 +10,7 @@ import {
   type Box,
   type MaskSources,
 } from "./masking.ts";
-import { sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
+import { screensPixels, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
 import { screenPixels, type BandRead } from "./pixel-screen.ts";
 import type { ScreenCache } from "./screen-cache.ts";
 import type { BrowserSession, Layout } from "./session.ts";
@@ -100,22 +100,64 @@ async function finalize(
 }
 
 /**
- * I-1: on a run that holds secrets, the image the model would receive is read locally (the one
- * tesseract worker) before it leaves. Words that show a registered secret are filled; a second
- * read must then come back clean. A failed read, or a secret still readable, gives null: the
- * step's screenshot is withheld and the model is told so (fail closed, no pause).
+ * The page's own pixels as captured, for the screen: the raw capture cropped to the CSS viewport
+ * (no scrollbars, whose thumb moves on every scroll) with the DOM masks drawn. Unlike the model
+ * image it is never resampled, so a scrolled line keeps its exact pixels and the run's screen
+ * cache reuses it. Null when the capture is not at 1 device pixel per CSS pixel: the model image
+ * is screened instead.
+ */
+async function screenSource(
+  raw: Buffer,
+  size: { width: number; height: number },
+  layout: Layout,
+  boxes: readonly Box[],
+): Promise<Buffer | null> {
+  const extraX = size.width - layout.width;
+  const extraY = size.height - layout.height;
+  if (extraX < 0 || extraY < 0 || extraX > MAX_SCROLLBAR_PX || extraY > MAX_SCROLLBAR_PX)
+    return null;
+  const content = await sharp(raw)
+    .extract({ left: 0, top: 0, width: layout.width, height: layout.height })
+    .png()
+    .toBuffer();
+  return boxes.length > 0 ? drawMasks(content, boxes, layout) : content;
+}
+
+/** Widest scrollbar a 1:1 capture can carry beside the CSS viewport. */
+const MAX_SCROLLBAR_PX = 32;
+
+/**
+ * I-1: on a run that holds secrets, what the model would see is read locally (the one tesseract
+ * worker) before it leaves: the page's unresampled pixels (screenSource), or the model image
+ * itself. Words that show a registered secret are filled on the model image, which must then read
+ * clean. A failed read, or a secret still readable, gives null: the step's screenshot is withheld
+ * and the model is told so (fail closed, no pause). The model image is a downscale of the source,
+ * so nothing readable in it is unreadable in the source.
  */
 async function screened(
   shot: ModelScreenshot,
+  source: { png: Buffer; width: number; height: number } | null,
   sources: MaskSources,
   ocr: LocalOcr,
   signal: AbortSignal,
   cache: ScreenCache<BandRead> | undefined,
 ): Promise<ModelScreenshot | null> {
-  const first = await screenPixels(ocr, sources, shot.png, signal, { urgent: true, cache });
+  const first = await screenPixels(ocr, sources, source?.png ?? shot.png, signal, {
+    urgent: true,
+    cache,
+  });
   if (first.kind === "clean") return shot;
   if (first.kind === "failed") return null;
-  const png = await drawMasks(shot.png, first.boxes.map(pad), {
+  // Source boxes are capture pixels; the model image is the whole capture fitted to its size.
+  const sx = source ? shot.width / source.width : 1;
+  const sy = source ? shot.height / source.height : 1;
+  const boxes = first.boxes.map((box) => ({
+    x: box.x * sx,
+    y: box.y * sy,
+    width: box.width * sx,
+    height: box.height * sy,
+  }));
+  const png = await drawMasks(shot.png, boxes.map(pad), {
     width: shot.width,
     height: shot.height,
   });
@@ -188,8 +230,12 @@ export async function captureModelScreenshot(
       continue;
     }
     if (await containsSecretText(session, sources, signal)) return drop();
+    const source = screensPixels(sources)
+      ? await screenSource(raw, { width: meta.width, height: meta.height }, layout, after.boxes)
+      : null;
     const shot = await screened(
       await finalize(raw, layout, after.boxes),
+      source && { png: source, width: meta.width, height: meta.height },
       sources,
       ocr,
       signal,
