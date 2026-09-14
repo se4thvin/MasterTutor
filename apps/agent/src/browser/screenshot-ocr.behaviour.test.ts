@@ -4,7 +4,7 @@ import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
 import { createLocalOcr, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
 import type { MaskSources } from "./masking.ts";
 import { captureModelScreenshot } from "./screenshot.ts";
-import type { CachedScreen } from "./local-ocr.ts";
+import type { BandRead } from "./pixel-screen.ts";
 import { createScreenCache, type ScreenCache } from "./screen-cache.ts";
 import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { ocrContains } from "../vault/testing/ocr.ts";
@@ -95,6 +95,57 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     prints.forgetRun("qa-098");
   }, 180_000);
 
+  it("catches a large stems-only PIN with the band cache, on first view and scrolled in (review I1)", async () => {
+    const prints = createSecretFingerprints();
+    prints.remember("big-pin", {
+      filled: { cdp: await session.cdp(), frameId: "main", loaderId: "doc", backendNodeIds: [] },
+      secret: "1111",
+    });
+    const sources = prints.forRun("big-pin");
+    // A sparse PIN screen: the 96 px "1111" is straight stems for 40+ rows.
+    const page = (pinY: number, height: number) =>
+      session.page
+        .setContent(`<body style="margin:0"><canvas id="c" width="1000" height="${height}"></canvas>
+        <script>{
+          const ctx = document.getElementById("c").getContext("2d");
+          ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, ${height});
+          ctx.fillStyle = "#000";
+          ctx.font = "16px sans-serif"; ctx.fillText("Your account PIN", 40, ${pinY - 180});
+          ctx.font = "96px sans-serif"; ctx.fillText("1111", 40, ${pinY});
+          ctx.font = "14px sans-serif"; ctx.fillText("Keep it safe.", 40, ${pinY + 300});
+        }</script></body>`);
+    const fresh = createScreenCache<BandRead>(sources);
+    await page(260, 700);
+    const first = await captureModelScreenshot(session, sources, signal, sharedLocalOcr(), fresh);
+    expect(first.dropped || first.masked > 0, "first view").toBe(true);
+    // Out of view at first, then scrolled in as one new band against a warm cache.
+    const warm = createScreenCache<BandRead>(sources);
+    await page(1500, 2200);
+    await captureModelScreenshot(session, sources, signal, sharedLocalOcr(), warm);
+    await session.page.evaluate(() => window.scrollTo(0, 1150));
+    const scrolled = await captureModelScreenshot(session, sources, signal, sharedLocalOcr(), warm);
+    expect(scrolled.dropped || scrolled.masked > 0, "scrolled in").toBe(true);
+    prints.forgetRun("big-pin");
+  }, 180_000);
+
+  it("never sends the scrollbar strip: the model image is exactly the screened viewport (review I2)", async () => {
+    // A page paints its scrollbar: what it shows there is no DOM text and was never screened.
+    await session.page.setContent(`<style>
+        ::-webkit-scrollbar { width: 25px; height: 25px; background: #ff0000; }
+        ::-webkit-scrollbar-thumb { background: #ff0000; }
+        body { margin: 0; background: #fff; }
+      </style><div style="height: 3000px; font: 16px sans-serif">Long page</div>`);
+    const shot = await captureModelScreenshot(session, vault, signal, sharedLocalOcr());
+    const { data, info } = await sharp(shot.png).raw().toBuffer({ resolveWithObject: true });
+    let red = 0;
+    for (let at = 0; at < data.length; at += info.channels)
+      if (data[at]! > 200 && data[at + 1]! < 60 && data[at + 2]! < 60) red++;
+    expect(red).toBe(0);
+    // Model x is CSS x: the image is the CSS viewport, not the capture squeezed into it.
+    const layout = await session.layout();
+    expect([shot.width, shot.scale]).toEqual([layout.width, 1]);
+  }, 120_000);
+
   it("withholds the screenshot when local OCR fails, and says why", async () => {
     await canvasPage([`Signed in as ${USER}`]);
     const failing: LocalOcr = {
@@ -149,7 +200,7 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     const plain = { ...sources, hasSecrets: () => false };
     const ocr = sharedLocalOcr();
     await captureModelScreenshot(session, sources, signal, ocr); // warm the worker
-    const added = async (cache: ScreenCache<CachedScreen>) => {
+    const added = async (cache: ScreenCache<BandRead>) => {
       let started = performance.now();
       await captureModelScreenshot(session, sources, signal, ocr, cache);
       const screened = performance.now() - started;
@@ -162,7 +213,7 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     const scrolled: number[] = [];
     for (let i = 0; i < 9; i++) {
       await session.page.evaluate(() => window.scrollTo(0, 0));
-      const cache = createScreenCache<CachedScreen>(sources);
+      const cache = createScreenCache<BandRead>(sources);
       first.push(await added(cache));
       same.push(await added(cache)); // a step that changed nothing on screen
       await session.page.evaluate(() => window.scrollBy(0, 160));

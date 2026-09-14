@@ -8,7 +8,8 @@ import {
 } from "@mastertutor/contracts";
 import type { Page } from "playwright-core";
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
-import { sharedLocalOcr, type CachedScreen } from "../browser/local-ocr.ts";
+import { sharedLocalOcr } from "../browser/local-ocr.ts";
+import type { BandRead } from "../browser/pixel-screen.ts";
 import type { MaskSources } from "../browser/masking.ts";
 import { createScreenCache, type ScreenCache } from "../browser/screen-cache.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
@@ -136,7 +137,7 @@ export class SessionLoopBrowser implements LoopBrowser {
   readonly #registry: ToolRegistry;
   readonly #mask: MaskSources;
   /** This run's pixel-screen cache: lives and dies with this lease (QA-098 ruling). */
-  readonly #screens: ScreenCache<CachedScreen>;
+  readonly #screens: ScreenCache<BandRead>;
   readonly #run: () => RunSnapshot;
   readonly #log: Log;
   readonly #slotName: string;
