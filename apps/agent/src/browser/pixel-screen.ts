@@ -26,9 +26,9 @@ const INK_CONTRAST = 40;
 /** Ink rows a region needs to be worth a read (a 1 px rule is not text). */
 const MIN_INK_ROWS = 4;
 /**
- * Line bands are cut where at least this many consecutive rows repeat the row above (blank space,
- * a plain background, a vertical border): the cut depends on content only, so a scrolled band keeps
- * its exact pixels. Larger than any stroke of ordinary text, so no glyph is cut in two.
+ * Line bands are cut where at least this many consecutive rows repeat the row above and carry no
+ * ink (blank space, a plain background, a full-height border): the cut depends on content only, so
+ * a scrolled band keeps its exact pixels. Inked rows never separate, so no glyph is cut in two.
  */
 const SEPARATOR_ROWS = 24;
 /**
@@ -92,59 +92,81 @@ interface Pixels {
   channels: number;
   /** Rows whose pixels span INK_CONTRAST of luminance. */
   ink: boolean[];
-  /** Rows byte-identical to the row above. */
-  repeats: boolean[];
+  /** Rows a band may be cut through: identical to the row above, and no ink. */
+  separator: boolean[];
 }
 
-/** The image's exact pixels (RGB, alpha flattened away), its ink rows and its repeated rows. */
+/**
+ * The image's exact pixels (RGB, alpha flattened away) and, per row, whether it holds ink and
+ * whether it may separate two bands. Ink is measured over the columns that change somewhere in
+ * the frame, so a full-height rule or sidebar edge does not make every row inked.
+ */
 async function decode(png: Uint8Array): Promise<Pixels> {
   const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const rowBytes = info.width * info.channels;
+  const { width, height, channels } = info;
+  const rowBytes = width * channels;
+  const varies = new Array<boolean>(width).fill(false);
+  for (let y = 1; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      if (varies[x]) continue;
+      const at = y * rowBytes + x * channels;
+      const first = x * channels;
+      if (
+        data[at] !== data[first] ||
+        data[at + 1] !== data[first + 1] ||
+        data[at + 2] !== data[first + 2]
+      )
+        varies[x] = true;
+    }
   const ink: boolean[] = [];
-  const repeats: boolean[] = [];
-  for (let y = 0; y < info.height; y++) {
+  const separator: boolean[] = [];
+  for (let y = 0; y < height; y++) {
     let min = 255;
     let max = 0;
     const start = y * rowBytes;
-    for (let x = 0; x < info.width; x++) {
-      const at = start + x * info.channels;
+    for (let x = 0; x < width; x++) {
+      if (!varies[x]) continue;
+      const at = start + x * channels;
       const value = (data[at]! * 299 + data[at + 1]! * 587 + data[at + 2]! * 114) / 1000;
       if (value < min) min = value;
       if (value > max) max = value;
     }
     ink.push(max - min >= INK_CONTRAST);
-    // The top row has nothing above it: it counts as repeated, so it starts no band by itself.
-    repeats.push(
-      y === 0 || data.compare(data, start - rowBytes, start, start, start + rowBytes) === 0,
-    );
+    // A band is cut only through rows that repeat the row above and carry no ink: a stroke that
+    // runs straight down (the stems of a large "1111") is ink, so no glyph is cut in two (review I1).
+    // The top row has nothing above it: it counts as repeated.
+    const repeats =
+      y === 0 || data.compare(data, start - rowBytes, start, start, start + rowBytes) === 0;
+    separator.push(repeats && !ink[y]);
   }
-  return { data, width: info.width, height: info.height, channels: info.channels, ink, repeats };
+  return { data, width, height, channels, ink, separator };
 }
 
 /**
- * Horizontal bands of content, full width: runs of rows that change, cut where SEPARATOR_ROWS or
- * more repeated rows lie between them. Each band keeps one repeated row of context on each side.
+ * Horizontal bands of content, full width: runs of rows between separators, cut where
+ * SEPARATOR_ROWS or more separator rows lie between them. Each band keeps one separator row of
+ * context on each side.
  */
-export function lineBands(repeats: readonly boolean[]): Span[] {
+export function lineBands(separator: readonly boolean[]): Span[] {
   const bands: Array<[number, number]> = [];
   let y = 0;
-  while (y < repeats.length) {
-    while (y < repeats.length && repeats[y]) y++;
-    if (y >= repeats.length) break;
+  while (y < separator.length) {
+    while (y < separator.length && separator[y]) y++;
+    if (y >= separator.length) break;
     const top = y;
     let bottom = y + 1;
-    for (let at = bottom; at < repeats.length;) {
-      if (!repeats[at]) {
+    for (let at = bottom; at < separator.length;) {
+      if (!separator[at]) {
         bottom = at + 1;
         at++;
         continue;
       }
       let run = at;
-      while (run < repeats.length && repeats[run]) run++;
-      if (run - at >= SEPARATOR_ROWS || run >= repeats.length) break;
+      while (run < separator.length && separator[run]) run++;
+      if (run - at >= SEPARATOR_ROWS || run >= separator.length) break;
       at = run;
     }
-    bands.push([Math.max(0, top - 1), Math.min(repeats.length, bottom + 1)]);
+    bands.push([Math.max(0, top - 1), Math.min(separator.length, bottom + 1)]);
     y = bottom;
   }
   return bands;
@@ -152,7 +174,8 @@ export function lineBands(repeats: readonly boolean[]): Span[] {
 
 /**
  * What a band's reads found, relative to the band's top: its 1× lines and its 2× lines (scaled to
- * 1×). OCR text of the run's own pages, kept in the run's memory only, never stored.
+ * 1×). OCR text of the run's own pages, a secret's text included: kept in the run's memory only,
+ * never stored, and never put in a log, trace or error (review M3).
  */
 export interface BandRead {
   lines: OcrLine[];
@@ -207,15 +230,18 @@ export async function screenPixels(
     return { kind: "failed" };
   }
   const rowBytes = pixels.width * pixels.channels;
+  // Cut from the decoded pixels: no second decode of the PNG per band (review M5).
   const crop = (top: number, height: number, scale: number) =>
-    sharp(png)
+    sharp(pixels.data, {
+      raw: { width: pixels.width, height: pixels.height, channels: pixels.channels as 3 },
+    })
       .extract({ left: 0, top, width: pixels.width, height })
       .resize(pixels.width * scale, height * scale, { kernel: "lanczos3" })
       .png()
       .toBuffer()
       .then((buffer) => new Uint8Array(buffer));
   // Without a cache the frame is one band: one read, as before.
-  const bands: Span[] = cache ? lineBands(pixels.repeats) : [[0, pixels.height]];
+  const bands: Span[] = cache ? lineBands(pixels.separator) : [[0, pixels.height]];
   const keys = bands.map(([top, bottom]) =>
     cache
       ? pixelKey(
@@ -239,19 +265,24 @@ export async function screenPixels(
     for (const i of missing) fresh.set(i, []);
     const distance = (i: number, y: number) =>
       y < bands[i]![0] ? bands[i]![0] - y : y >= bands[i]![1] ? y - bands[i]![1] + 1 : 0;
+    // Each word goes to the band its own centre lies in (review M1): a cached band keeps its own
+    // read; a word outside every band joins the nearest new one.
     for (const line of lines) {
-      if (line.words.length === 0) continue;
-      const top = Math.min(...line.words.map((word) => word.box.y));
-      const bottom = Math.max(...line.words.map((word) => word.box.y + word.box.height));
-      const middle = (top + bottom) / 2;
-      const at = bands.findIndex((_, i) => distance(i, middle) === 0);
-      // A cached band already holds its own read; a line outside every band joins the nearest new one.
-      if (at >= 0 && !fresh.has(at)) continue;
-      const owner =
-        at >= 0
-          ? at
-          : missing.reduce((best, i) => (distance(i, middle) < distance(best, middle) ? i : best));
-      fresh.get(owner)!.push(...shift([line], -bands[owner]![0]));
+      const perBand = new Map<number, OcrLine["words"]>();
+      for (const word of line.words) {
+        const middle = word.box.y + word.box.height / 2;
+        const at = bands.findIndex((_, i) => distance(i, middle) === 0);
+        if (at >= 0 && !fresh.has(at)) continue;
+        const owner =
+          at >= 0
+            ? at
+            : missing.reduce((best, i) =>
+                distance(i, middle) < distance(best, middle) ? i : best,
+              );
+        perBand.set(owner, [...(perBand.get(owner) ?? []), word]);
+      }
+      for (const [owner, words] of perBand)
+        fresh.get(owner)!.push(...shift([{ words }], -bands[owner]![0]));
     }
   } else if (missing.length > 0) {
     // The new bands stacked in one image (blank rows between them): one OCR call, not one each.
@@ -281,12 +312,19 @@ export async function screenPixels(
     const lines = await read(stacked);
     if (lines === null) return { kind: "failed" };
     for (const i of missing) fresh.set(i, []);
+    // Each word goes to the band its centre lies in; a word in the blank gap belongs to none.
     for (const line of lines) {
-      if (line.words.length === 0) continue;
-      const top = Math.min(...line.words.map((word) => word.box.y));
-      const k = offsets.findLastIndex((offset) => offset <= top);
-      if (k < 0) continue;
-      fresh.get(missing[k]!)!.push(...shift([line], -offsets[k]!));
+      const perBand = new Map<number, OcrLine["words"]>();
+      for (const word of line.words) {
+        const middle = word.box.y + word.box.height / 2;
+        const k = offsets.findIndex(
+          (offset, n) =>
+            middle >= offset && middle < offset + bands[missing[n]!]![1] - bands[missing[n]!]![0],
+        );
+        if (k >= 0) perBand.set(k, [...(perBand.get(k) ?? []), word]);
+      }
+      for (const [k, words] of perBand)
+        fresh.get(missing[k]!)!.push(...shift([{ words }], -offsets[k]!));
     }
   }
   // 2×: small, unsure or unread ink parts of each new band.
