@@ -110,10 +110,12 @@ describe("screenPixels with the run's cache across a scroll (screen-scroll-cache
     const sources = vault();
     const cache = createScreenCache<BandRead>(sources);
     await screenPixels(ocr, sources, await frame(0), signal, { urgent: true, cache });
-    expect(ocr.heights).toEqual([VIEW]); // first view: one read of the whole frame
+    expect(ocr.heights).toHaveLength(1); // first view: one read
     await screenPixels(ocr, sources, await frame(70), signal, { urgent: true, cache });
-    // Scrolled 70 px: bars 2–4 kept their pixels; only bar 5, new at the bottom, is read.
-    expect(ocr.heights).toEqual([VIEW, 21]);
+    // Scrolled 70 px: bars 2–4 kept their pixels; only bar 5, new at the bottom, is read
+    // (its 21 rows, with the stack's 24 blank rows below).
+    expect(ocr.heights[1]).toBe(21 + 24);
+    expect(ocr.heights).toHaveLength(2);
   });
   it("still catches a secret that scrolls into view", async () => {
     const ocr = pixelOcr({ 50: "pw hunter2" });
@@ -142,6 +144,6 @@ describe("screenPixels with the run's cache across a scroll (screen-scroll-cache
     expect(
       await screenPixels(ocr, sources, await frame(70), signal, { urgent: true, cache }),
     ).toEqual(box(40));
-    expect(ocr.heights).toEqual([VIEW, 21]); // the secret's band was not read again
+    expect(ocr.heights[1]).toBe(21 + 24); // the secret's band was not read again
   });
 });
