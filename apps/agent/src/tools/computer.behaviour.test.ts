@@ -440,8 +440,9 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
       : s.page.locator(`#${id}`).inputValue();
   /** hung-frame.html: Code (top) at 40,20; a same-origin frame with Note at 40,80; a hung advert. */
   async function hungPage() {
-    // The advert hangs for 3 s, so leaving the page afterwards does not wait long.
-    const { s, executor } = await setup("/hung-frame.html?ms=3000");
+    // The advert hangs for 6 s (past the approved click's 1 s settle wait), so leaving the page
+    // afterwards does not wait long.
+    const { s, executor } = await setup("/hung-frame.html?ms=6000");
     await new Promise((resolve) => setTimeout(resolve, 800)); // the advert hangs once loaded
     // Clicking there fails closed too, until a person approves it (breaker fix).
     const code = { x: 100, y: 35 };
