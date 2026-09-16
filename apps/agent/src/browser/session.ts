@@ -142,7 +142,9 @@ export class BrowserSession {
 
   cdp(): Promise<CDPSession> {
     if (this.#cdp === null) {
-      const attempt = this.#context.newCDPSession(this.#page).then(async (cdp) => {
+      const page = this.#page;
+      const attempt = this.#context.newCDPSession(page).then(async (cdp) => {
+        this.#pendingNavigations.watchFrames(page, cdp);
         await cdp.send("DOM.enable");
         // Frame events (Page.frameAttached/frameNavigated) for the typing guard.
         await cdp.send("Page.enable");
@@ -232,6 +234,7 @@ export class BrowserSession {
       await cdp.detach().catch(() => undefined);
       return null;
     }
+    this.#pendingNavigations.watchFrames(frame.page(), cdp);
     void cdp.send("Page.enable").catch(() => undefined);
     return { id: info.targetInfo.targetId, worlds: new IsolatedWorlds(cdp) };
   }
@@ -338,8 +341,10 @@ export class BrowserSession {
     page.on("framenavigated", (frame) => this.#inProcess.delete(frame));
     page.once("close", () => this.#onClose(page));
     void page.bringToFront().catch(() => undefined);
-    // From adoption on, every frame's navigations (Playwright attaches each frame before it runs).
+    // From adoption on, every frame's navigations (Playwright attaches each frame before it runs),
+    // and those the page's own CDP session reports.
     this.#pendingNavigations.watch(page);
+    void this.cdp().catch(() => undefined);
   }
 
   async #onNewPage(page: Page): Promise<void> {

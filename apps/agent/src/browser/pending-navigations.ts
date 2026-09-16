@@ -1,7 +1,9 @@
-import type { Frame, Page, Request } from "playwright-core";
+import type { CDPSession, Frame, Page, Request } from "playwright-core";
 
 /** After its response has fully arrived, a navigation that does not commit (a 204, a download) ends this late. */
 const NO_COMMIT_GRACE_MS = 1_000;
+/** CDP navigation types that keep the document. */
+const SAME_DOCUMENT = new Set(["sameDocument", "historySameDocument"]);
 
 /**
  * The navigation requests in flight in a page's frames: any that replaces a document (a link, a
@@ -12,9 +14,14 @@ const NO_COMMIT_GRACE_MS = 1_000;
  * while one is pending the page counts as changed and the click is refused. Nothing is dropped
  * for taking long: a request the server holds back stays pending until it commits, fails, or
  * its frame goes away.
+ *
+ * The browser's own account backs this up (watchFrames): Playwright can report a frame detached
+ * while it only moves to another process, before its new document commits.
  */
 export class PendingNavigations {
   readonly #pages = new WeakMap<Page, Map<Request, Frame>>();
+  /** Per CDP session of a page: the frames (CDP ids) it saw start a navigation not yet ended. */
+  readonly #sessions = new WeakMap<Page, Map<CDPSession, Set<string>>>();
 
   watch(page: Page): void {
     if (this.#pages.has(page)) return;
@@ -52,9 +59,32 @@ export class PendingNavigations {
     page.on("framedetached", detached);
   }
 
+  /**
+   * Also tracks the navigations of the frames `cdp` (a CDP session of `page`, before Page.enable)
+   * hosts, from their start to their end as the browser reports it: committed, the frame detached
+   * (a move to another process included, at its commit) or stopped loading (a 204, a download).
+   */
+  watchFrames(page: Page, cdp: CDPSession): void {
+    let sessions = this.#sessions.get(page);
+    if (!sessions) this.#sessions.set(page, (sessions = new Map()));
+    if (sessions.has(cdp)) return;
+    const navigating = new Set<string>();
+    sessions.set(cdp, navigating);
+    cdp.on("Page.frameStartedNavigating", ({ frameId, navigationType }) => {
+      if (!SAME_DOCUMENT.has(navigationType)) navigating.add(frameId);
+    });
+    cdp.on("Page.frameNavigated", ({ frame }) => navigating.delete(frame.id));
+    cdp.on("Page.frameDetached", ({ frameId }) => navigating.delete(frameId));
+    cdp.on("Page.frameStoppedLoading", ({ frameId }) => navigating.delete(frameId));
+    cdp.once("close", () => sessions.delete(cdp));
+  }
+
   /** True while a navigation is in flight in any frame of `page`. */
   pending(page: Page): boolean {
-    return (this.#pages.get(page)?.size ?? 0) > 0;
+    if ((this.#pages.get(page)?.size ?? 0) > 0) return true;
+    for (const navigating of this.#sessions.get(page)?.values() ?? [])
+      if (navigating.size > 0) return true;
+    return false;
   }
 }
 
