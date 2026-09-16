@@ -15,6 +15,7 @@ import {
   ComputerExecutor,
   FOCUS_MOVED_REFUSAL,
   PAGE_CHANGED_REFUSAL,
+  PAGE_SETTLING_REFUSAL,
   SECRET_FIELD_REFUSAL,
   PAGE_TOO_COMPLEX,
   PAGE_TOO_COMPLEX_REFUSAL,
@@ -447,14 +448,47 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     expect(await executor.execute(click(code), signal)).toBe(UNGUARDED_CLICK_REFUSAL);
     const target = (await hitTest(s, code)).target;
     expect(markUnguarded(s, target)?.opaqueFrame).toBe(true); // so the loop asks a person
+    // Even approved, nothing is pressed while the advert hangs (the page is still settling)...
     expect(
       await executor.execute(click(code), signal, {
         target: markUnguarded(s, target),
         personApproved: true,
       }),
-    ).toBeNull();
+    ).toBe(PAGE_SETTLING_REFUSAL);
+    // ...so the person puts the cursor there themselves.
+    await s.page.locator("#code").focus();
     return { s, executor };
   }
+
+  it("an approved click waits for a slow frame elsewhere: refused while it hangs, run once it answers", async () => {
+    const { s, executor } = await setup("/hung-frame.html?ms=2500");
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+    const code = { x: 100, y: 35 };
+    const approved = async () => ({
+      target: markUnguarded(s, (await hitTest(s, code)).target),
+      personApproved: true,
+    });
+    const started = Date.now();
+    expect(await executor.execute(click(code), signal, await approved())).toBe(
+      PAGE_SETTLING_REFUSAL,
+    );
+    const waited = Date.now() - started;
+    console.info(JSON.stringify({ metric: "settling_refusal_ms", waited }));
+    expect(waited).toBeLessThan(ARM_BUDGET_MS * 4 + 1_000);
+    expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
+    // The advert answers again (its hang is over): the same approved click now runs.
+    await waitFor(
+      () =>
+        s.page
+          .frames()
+          .find((frame) => frame.url().includes("hang.html"))
+          ?.evaluate(() => true)
+          .catch(() => false),
+      { label: "advert answers" },
+    );
+    expect(await executor.execute(click(code), signal, await approved())).toBeNull();
+    expect(await s.page.evaluate(() => document.activeElement?.id)).toBe("code");
+  });
 
   it.each([
     [{ type: "type", text: "hello" }, "hello"],
@@ -736,7 +770,7 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
         return { target, personApproved: true };
       };
       const run = await executor.run([click(at)], signal, gate);
-      if (run.notes.includes(UNGUARDED_CLICK_REFUSAL)) hits.refused += 1;
+      if (run.notes.includes(PAGE_SETTLING_REFUSAL)) hits.refused += 1;
       await new Promise((resolve) => setTimeout(resolve, 60));
       const reached = await clicked(s);
       if (reached === "cancel" || reached === "delete") hits[reached] += 1;

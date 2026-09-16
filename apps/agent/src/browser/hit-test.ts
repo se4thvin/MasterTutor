@@ -9,8 +9,6 @@ export interface HitTest {
   snap: { x: number; y: number } | null;
   /** The key each scanned document kept its element under (the click guard checks the press). */
   key: string;
-  /** How many documents, from the top one down to the target's, kept an element under `key`. */
-  documents: number;
 }
 
 export interface ScrollState {
@@ -192,7 +190,6 @@ async function resolve(
   let rootScroll = { x: 0, y: 0 };
   let path = "";
   let ownSession: string | null = null; // the out-of-process frame we are inside, if any
-  let documents = 0; // scanned so far, each keeping its element under key
   const chain: ScrollState["chain"] = [];
   let late: Promise<never> | null = null;
   const inTime = <T>(work: Promise<T>): Promise<T> => {
@@ -204,7 +201,7 @@ async function resolve(
   };
   const opaque = () => {
     if (ownSession) void session.forgetFrame(ownSession);
-    return { target: opaqueTarget(path, topUrl), snap: null, key, documents, chain };
+    return { target: opaqueTarget(path, topUrl), snap: null, key, chain };
   };
   const confirm = async (at: { x: number; y: number }, key: string) => {
     const { backendNodeId } = await worlds.cdp.send("DOM.getNodeForLocation", {
@@ -229,7 +226,6 @@ async function resolve(
       if (depth === 0) throw error;
       return opaque();
     }
-    documents = depth + 1;
     if (frameId === undefined) rootScroll = scan.scroll;
     if (depth > 0) path += `@${scan.origin}>`;
     chain.push(...scan.chain.map((entry) => ({ ...entry, key: `${depth}:${entry.key}` })));
@@ -245,7 +241,7 @@ async function resolve(
           context: digest(path, scan.target.context, topUrl),
         };
         // A snap point is only meaningful in the top frame's coordinates.
-        return { target, snap: depth === 0 ? scan.snap : null, key, documents, chain };
+        return { target, snap: depth === 0 ? scan.snap : null, key, chain };
       }
       path += scan.target!.path;
       if (depth >= MAX_FRAME_DEPTH) return opaque();
@@ -335,8 +331,8 @@ export async function hitTest(
   session: BrowserSession,
   point: { x: number; y: number },
 ): Promise<HitTest> {
-  const { target, snap, key, documents } = await resolve(session, point, { scroll: false });
-  return { target, snap, key, documents };
+  const { target, snap, key } = await resolve(session, point, { scroll: false });
+  return { target, snap, key };
 }
 
 export async function focusTarget(session: BrowserSession): Promise<TargetDescription | null> {

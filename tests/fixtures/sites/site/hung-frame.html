@@ -49,6 +49,9 @@
       ad.title = "Advert";
       ad.src = `http://ads.fixtures-hung.test/hang.html?ms=${new URLSearchParams(location.search).get("ms") ?? 15000}`;
       document.body.append(ad);
+      // ?focus=notes: the cursor starts in Notes (no click needed while the advert hangs).
+      if (new URLSearchParams(location.search).get("focus") === "notes")
+        document.getElementById("notes").focus();
     </script>
   </body>
 </html>
