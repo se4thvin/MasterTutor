@@ -16,7 +16,8 @@ import {
 interface TakeoverControls {
   takeover: TakeoverState;
   takeControl(wake: boolean): void;
-  handBack(note: string | null): void;
+  /** `keep` lists the held downloads to keep; null when none were held (the request is unchanged). */
+  handBack(note: string | null, keep: readonly string[] | null): void;
 }
 
 /**
@@ -86,9 +87,11 @@ export function useTakeover(
   );
 
   const handBack = useCallback(
-    (note: string | null) => {
+    (note: string | null, keep: readonly string[] | null) => {
       dispatch({ type: "release" });
-      api.runs.handBack({ runId, note }).catch((failure: unknown) => {
+      // Every held download not listed in keep is discarded server-side (A11).
+      const input = keep === null ? { runId, note } : { runId, note, keep: [...keep] };
+      api.runs.handBack(input).catch((failure: unknown) => {
         dispatch({ type: "release_failed" });
         toast({ title: handBackErrorCopy(errorCode(failure)) });
       });

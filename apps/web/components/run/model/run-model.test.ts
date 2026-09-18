@@ -160,6 +160,27 @@ describe("applyRunEvent", () => {
     expect(model.model).toBe("gpt-6.1-sol");
   });
 
+  it("seeds the held downloads from the snapshot, so a reload during control still offers them", () => {
+    const detail = recordedDetail({
+      controller: "user",
+      status: "waiting",
+      waitReason: "takeover",
+      heldDownloads: [{ id: ids.asset(11), filename: "notes.txt", bytes: 28 }],
+    });
+    const model = initRunModel(detail, recordedSteps());
+    expect(model.heldDownloads).toEqual([{ id: ids.asset(11), filename: "notes.txt", bytes: 28 }]);
+    // The same download replayed by the stream is not offered twice.
+    const replayed = applyRunEvents(model, [
+      rec({
+        type: "download_pending",
+        downloadId: ids.asset(11),
+        filename: "notes.txt",
+        bytes: 28,
+      }),
+    ]);
+    expect(replayed.heldDownloads).toHaveLength(1);
+  });
+
   it("holds downloads made during control for Keep or Discard until the hand-back (B6 A11)", () => {
     const held = rec({
       type: "download_pending",
@@ -247,5 +268,22 @@ describe("syncRunModel (A6 hand-back resync)", () => {
     });
     expect(synced.lastEventId).toBe("20");
     expect(synced.steps).toBe(model.steps);
+  });
+});
+
+describe("a finished run holds no slot (Phase 7 Task 3)", () => {
+  // The agent releases the slot just after the terminal status, but the stream closes at that
+  // status, so the release never reaches an open view: the live frame must not outlive the run.
+  it("drops the slot with a terminal status, from events, a detail or a re-read", () => {
+    const running = applyRunEvent(base(), rec({ type: "slot", slotName: "browser-2" }));
+    expect(running.slotName).toBe("browser-2");
+    const done = applyRunEvent(
+      running,
+      rec({ type: "status", status: "cancelled", waitReason: null, reason: null }),
+    );
+    expect(done.slotName).toBeNull();
+    const finished = { ...recordedDetail(), status: "completed" as const, slotName: "browser-1" };
+    expect(initRunModel(finished, []).slotName).toBeNull();
+    expect(syncRunModel(running, finished).slotName).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createWorker } from "tesseract.js";
+import { createWorker, PSM } from "tesseract.js";
 
 export interface Ocr {
   text(png: Buffer): Promise<string>;
@@ -20,6 +20,10 @@ export async function createOcr(): Promise<Ocr> {
     gzip: true,
     logger: () => undefined,
   });
+  // A screenshot is scattered UI text, not one uniform block (tesseract.js's default, PSM 6).
+  // In block mode a line inside a bordered field can be dropped entirely: with Linux's DejaVu
+  // rendering the filled email field was never read, so OCR could not see what it must catch.
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
   return {
     text: async (png) => (await worker.recognize(png)).data.text,
     close: async () => {

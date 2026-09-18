@@ -1,6 +1,7 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { assets, downloads, runs } from "../schema/index.ts";
+import { lockRunRow } from "./events.ts";
 
 export async function findAssetBySha(
   db: Database,
@@ -12,6 +13,36 @@ export async function findAssetBySha(
     .from(assets)
     .where(and(eq(assets.workspaceId, workspaceId), eq(assets.sha256, sha256)));
   return row ?? null;
+}
+
+/**
+ * The workspace's asset for this content: inserted once per (workspace, sha256), otherwise the
+ * existing row (whose object key it keeps). The one upsert every download path uses.
+ */
+export async function upsertAsset(
+  tx: DbTx,
+  input: {
+    workspaceId: string;
+    sha256: string;
+    bucket: string;
+    key: string;
+    mime: string;
+    bytes: number;
+    sourceUrl: string | null;
+  },
+): Promise<string> {
+  const [inserted] = await tx
+    .insert(assets)
+    .values({ ...input, sourceUrl: input.sourceUrl?.slice(0, 4_096) ?? null })
+    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
+    .returning({ id: assets.id });
+  if (inserted) return inserted.id;
+  const [existing] = await tx
+    .select({ id: assets.id })
+    .from(assets)
+    .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)));
+  if (!existing) throw new Error("asset row missing after insert");
+  return existing.id;
 }
 
 export interface DownloadRecordInput {
@@ -40,28 +71,15 @@ export async function recordDownload(
     .where(eq(runs.id, input.runId));
   if (run?.workspaceId !== input.workspaceId)
     throw new Error("download run is not in the given workspace");
-  const [inserted] = await tx
-    .insert(assets)
-    .values({
-      workspaceId: input.workspaceId,
-      sha256: input.sha256,
-      bucket: input.bucket,
-      key: input.key,
-      mime: input.mime,
-      bytes: input.bytes,
-      sourceUrl: input.sourceUrl.slice(0, 4_096),
-    })
-    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
-    .returning({ id: assets.id });
-  const assetId =
-    inserted?.id ??
-    (
-      await tx
-        .select({ id: assets.id })
-        .from(assets)
-        .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)))
-    )[0]?.id;
-  if (!assetId) throw new Error("asset row missing after insert");
+  const assetId = await upsertAsset(tx, {
+    workspaceId: input.workspaceId,
+    sha256: input.sha256,
+    bucket: input.bucket,
+    key: input.key,
+    mime: input.mime,
+    bytes: input.bytes,
+    sourceUrl: input.sourceUrl,
+  });
   const [download] = await tx
     .insert(downloads)
     .values({
@@ -97,7 +115,7 @@ export async function recordPendingDownload(
     )
     .for("update");
   if (!run) return false;
-  await tx.insert(downloads).values({ ...input, pending: true });
+  await tx.insert(downloads).values({ ...input, pending: true, byUser: true });
   return true;
 }
 
@@ -118,6 +136,31 @@ export async function pendingDownloads(
     })
     .from(downloads)
     .where(and(eq(downloads.runId, runId), eq(downloads.pending, true)));
+}
+
+/**
+ * The run's downloads still waiting for the person's Keep or Discard (B6 A11), for the run
+ * snapshot: pending and not yet kept, only while a person holds control, and only for a run in
+ * this workspace. Oldest first, the order they were made.
+ */
+export async function heldDownloads(
+  db: Database,
+  input: { runId: string; workspaceId: string },
+): Promise<Array<{ id: string; filename: string; bytes: number }>> {
+  return db
+    .select({ id: downloads.id, filename: downloads.filename, bytes: downloads.bytes })
+    .from(downloads)
+    .innerJoin(runs, eq(runs.id, downloads.runId))
+    .where(
+      and(
+        eq(downloads.runId, input.runId),
+        eq(runs.workspaceId, input.workspaceId),
+        eq(runs.controller, "user"),
+        eq(downloads.pending, true),
+        isNull(downloads.keptAt),
+      ),
+    )
+    .orderBy(asc(downloads.createdAt), asc(downloads.id));
 }
 
 /** Marks the listed pending downloads of this run as kept (the person's hand-back decision). */
@@ -149,6 +192,9 @@ export async function fileKeptDownload(
     sourceUrl: string | null;
   },
 ): Promise<{ assetId: string }> {
+  // Run row before download row, as the hand-back takes them (requestHandBack, then
+  // keepPendingDownloads): the caller's download_ready event would otherwise lock in reverse.
+  await lockRunRow(tx, input.runId);
   const [row] = await tx
     .select({ bytes: downloads.bytes })
     .from(downloads)
@@ -162,28 +208,15 @@ export async function fileKeptDownload(
       ),
     );
   if (!row) throw new Error("no pending download to file");
-  const [inserted] = await tx
-    .insert(assets)
-    .values({
-      workspaceId: input.workspaceId,
-      sha256: input.sha256,
-      bucket: input.bucket,
-      key: input.key,
-      mime: input.mime,
-      bytes: row.bytes,
-      sourceUrl: input.sourceUrl?.slice(0, 4_096) ?? null,
-    })
-    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
-    .returning({ id: assets.id });
-  const assetId =
-    inserted?.id ??
-    (
-      await tx
-        .select({ id: assets.id })
-        .from(assets)
-        .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)))
-    )[0]?.id;
-  if (!assetId) throw new Error("asset row missing after insert");
+  const assetId = await upsertAsset(tx, {
+    workspaceId: input.workspaceId,
+    sha256: input.sha256,
+    bucket: input.bucket,
+    key: input.key,
+    mime: input.mime,
+    bytes: row.bytes,
+    sourceUrl: input.sourceUrl,
+  });
   await tx
     .update(downloads)
     .set({ assetId, pending: false })
@@ -191,18 +224,37 @@ export async function fileKeptDownload(
   return { assetId };
 }
 
-/** Every held download of the run, gone (lease end, crash recovery): their ids, for the files. */
+const DISCARDED = { pending: false, discardedAt: sql`now()` } as const;
+
+/**
+ * Every held download of the run discarded (lease end, crash recovery): their ids, for the files.
+ * Discarded rows stay as markers so they still count toward the person's cap.
+ */
 export async function discardPendingDownloads(tx: DbTx, runId: string): Promise<string[]> {
   const rows = await tx
-    .delete(downloads)
+    .update(downloads)
+    .set(DISCARDED)
     .where(and(eq(downloads.runId, runId), eq(downloads.pending, true)))
     .returning({ id: downloads.id });
   return rows.map((row) => row.id);
 }
 
-/** A pending download nobody kept: gone (its local file is the caller's to delete). */
+/** A pending download nobody kept, discarded (its local file is the caller's to delete). */
 export async function discardDownload(tx: DbTx, runId: string, id: string): Promise<void> {
   await tx
-    .delete(downloads)
+    .update(downloads)
+    .set(DISCARDED)
     .where(and(eq(downloads.id, id), eq(downloads.runId, runId), eq(downloads.pending, true)));
+}
+
+/**
+ * The person's own downloads in this run, across all its leases, kept, held or discarded (the
+ * per-run count cap): approved agent downloads do not count, and a discard frees nothing.
+ */
+export async function countUserDownloads(db: Database, runId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(downloads)
+    .where(and(eq(downloads.runId, runId), eq(downloads.byUser, true)));
+  return row?.count ?? 0;
 }

@@ -3,7 +3,15 @@ import { decodeNotify } from "@mastertutor/contracts";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
-import { assets, downloads, runEvents, runs } from "../schema/index.ts";
+import {
+  assets,
+  downloads,
+  runEvents,
+  runs,
+  session,
+  session as sessionTable,
+  workspaceMembers,
+} from "../schema/index.ts";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -14,6 +22,7 @@ import {
   type TestDatabase,
 } from "../testing.ts";
 import {
+  countUserDownloads,
   discardDownload,
   fileKeptDownload,
   findAssetBySha,
@@ -21,9 +30,21 @@ import {
   pendingDownloads,
   recordDownload,
   recordPendingDownload,
+  upsertAsset,
 } from "./downloads.ts";
 import { returnControlToAgent } from "./control.ts";
-import { canAccessLiveSlot, getRunForMember, requestHandBack, requestTakeover } from "./live.ts";
+import { emitRunEvent } from "./events.ts";
+import {
+  canAccessLiveSlot,
+  getRunForMember,
+  clearLiveViewer,
+  liveViewsToClose,
+  recordLiveViewer,
+  requestHandBack,
+  requestTakeover,
+  revokeLiveHolds,
+  staleLiveHolds,
+} from "./live.ts";
 
 let testDb: TestDatabase;
 let owner: DbHandle;
@@ -389,8 +410,16 @@ describe("download records (agent role)", () => {
     );
     await agent.db.transaction((tx) => discardDownload(tx, runId, dropped));
     expect(await pendingDownloads(agent.db, runId)).toEqual([]);
-    const rows = await owner.db.select().from(downloads).where(eq(downloads.runId, runId));
-    expect(rows).toEqual([expect.objectContaining({ id: kept, assetId: filed.assetId })]);
+    const rows = await owner.db
+      .select()
+      .from(downloads)
+      .where(eq(downloads.runId, runId))
+      .orderBy(asc(downloads.createdAt));
+    // A discarded one stays as a marker (it counts toward the cap), never with an asset.
+    expect(rows).toEqual([
+      expect.objectContaining({ id: kept, assetId: filed.assetId, discardedAt: null }),
+      expect.objectContaining({ id: dropped, assetId: null, discardedAt: expect.any(Date) }),
+    ]);
   });
 
   it("applies keep only when this user's own hand-back passes control to the agent (N1)", async () => {
@@ -491,5 +520,231 @@ describe("download records (agent role)", () => {
       ids.sort(),
     );
     expect(await pendingDownloads(agent.db, runId)).toEqual([]);
+  });
+
+  it("files a kept download while the same member hands back again, with no deadlock (run row before download row)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const id = randomUUID();
+    await agent.db.transaction((tx) =>
+      recordPendingDownload(tx, {
+        id,
+        runId,
+        filename: "race.txt",
+        bytes: 5,
+        approvedBy: member.userId,
+      }),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let filedSignal!: () => void;
+    const filedFirst = new Promise<void>((resolve) => (filedSignal = resolve));
+    // The agent's settle: file the kept download, then announce it, in one transaction.
+    const settle = agent.db.transaction(async (tx) => {
+      const { assetId } = await fileKeptDownload(tx, {
+        downloadId: id,
+        runId,
+        workspaceId: member.workspaceId,
+        sha256: "9".repeat(64),
+        bucket: "mastertutor",
+        key: `downloads/${runId}/999999999999-race.txt`,
+        mime: "text/plain",
+        sourceUrl: null,
+      });
+      filedSignal();
+      await gate;
+      await emitRunEvent(tx, runId, {
+        type: "download_ready",
+        downloadId: id,
+        assetId,
+        filename: "race.txt",
+        bytes: 5,
+      });
+    });
+    await filedFirst;
+    // The member retook control during the settle and hands back again, keeping the same id.
+    const handBack = requestHandBack(web.db, {
+      runId,
+      userId: member.userId,
+      note: null,
+      keep: [id],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    release();
+    const outcomes = await Promise.allSettled([settle, handBack]);
+    expect(outcomes.map((o) => (o.status === "rejected" ? String(o.reason) : "ok"))).toEqual([
+      "ok",
+      "ok",
+    ]);
+  });
+
+  it("counts only the person's own downloads toward the cap, discarded ones included (B6 minor 1)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    // An approved download the agent made does not use the person's quota.
+    await agent.db.transaction((tx) =>
+      recordDownload(tx, {
+        runId,
+        workspaceId: member.workspaceId,
+        filename: "approved.pdf",
+        sha256: "f".repeat(64),
+        bucket: "mastertutor",
+        key: `downloads/${runId}/ffffffffffff-approved.pdf`,
+        mime: "application/pdf",
+        bytes: 3,
+        sourceUrl: "https://example.com/approved.pdf",
+        approvedBy: member.userId,
+      }),
+    );
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const [one, two] = [randomUUID(), randomUUID()];
+    for (const id of [one, two])
+      await agent.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId,
+          filename: "h.txt",
+          bytes: 1,
+          approvedBy: member.userId,
+        }),
+      );
+    expect(await countUserDownloads(agent.db, runId)).toBe(2);
+    // Discarding never frees quota within the run.
+    await agent.db.transaction((tx) => discardDownload(tx, runId, one));
+    await agent.db.transaction((tx) => discardPendingDownloads(tx, runId));
+    expect(await countUserDownloads(agent.db, runId)).toBe(2);
+  });
+
+  it("upserts an asset once per workspace and sha256, whichever path stores it", async () => {
+    const asset = {
+      workspaceId: member.workspaceId,
+      sha256: "e".repeat(64),
+      bucket: "mastertutor",
+      key: "downloads/00000000-0000-4000-8000-000000000001/eeeeeeeeeeee-e.pdf",
+      mime: "application/pdf",
+      bytes: 4,
+      sourceUrl: null,
+    };
+    const first = await agent.db.transaction((tx) => upsertAsset(tx, asset));
+    const again = await agent.db.transaction((tx) =>
+      upsertAsset(tx, { ...asset, key: "downloads/other/key.pdf" }),
+    );
+    expect(again).toBe(first);
+    expect((await owner.db.select().from(assets).where(eq(assets.id, first)))[0]?.key).toBe(
+      asset.key,
+    );
+  });
+});
+
+describe("live revocation: sign-out or removal closes open live views (B6 final)", () => {
+  it("NOTIFYs live_revoke when a session ends (sign-out) and when a membership is removed", async () => {
+    const person = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    await owner.db.insert(session).values({
+      id: randomUUID(),
+      token: randomUUID(),
+      userId: person.userId,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    const signedOut = await nextNotification(owner.sql, "live_revoke", () =>
+      owner.db.delete(session).where(eq(session.userId, person.userId)),
+    );
+    expect(decodeNotify("live_revoke", signedOut)).toEqual({
+      userId: person.userId,
+      workspaceId: null,
+    });
+    const removed = await nextNotification(owner.sql, "live_revoke", () =>
+      owner.db.delete(workspaceMembers).where(eq(workspaceMembers.userId, person.userId)),
+    );
+    expect(decodeNotify("live_revoke", removed)).toEqual({
+      userId: person.userId,
+      workspaceId: member.workspaceId,
+    });
+  });
+
+  it("returns that person's control on any open run, leased or not, and never anyone else's", async () => {
+    const person = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const other = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const leased = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const sleeping = await seedRun(owner.db, {
+      workspaceId: member.workspaceId,
+      status: "sleeping",
+    });
+    const theirs = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, "browser-1", leased);
+    await requestTakeover(web.db, { runId: leased, userId: person.userId });
+    await requestTakeover(web.db, { runId: sleeping, userId: person.userId });
+    await requestTakeover(web.db, { runId: theirs, userId: other.userId });
+    const notified = await nextNotification(owner.sql, "run_control", () =>
+      agent.db.transaction((tx) =>
+        revokeLiveHolds(tx, { userId: person.userId, workspaceId: member.workspaceId }),
+      ),
+    );
+    expect(decodeNotify("run_control", notified).runId).toMatch(/[0-9a-f-]{36}/);
+    expect(await runRow(leased)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(await runRow(sleeping)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(await runRow(theirs)).toMatchObject({ controller: "user", controlUserId: other.userId });
+    const events = (await owner.db.select().from(runEvents).where(eq(runEvents.runId, leased))).map(
+      (e) => e.payload,
+    );
+    expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "live_revoked" }));
+    // Another workspace's revocation touches nothing here.
+    await requestTakeover(web.db, { runId: theirs, userId: other.userId });
+    await agent.db.transaction((tx) =>
+      revokeLiveHolds(tx, { userId: other.userId, workspaceId: outsider.workspaceId }),
+    );
+    expect(await runRow(theirs)).toMatchObject({ controller: "user", controlUserId: other.userId });
+    await releaseSlotForTest(owner.db, "browser-1");
+  });
+
+  it("closes only live views that person has open, on leased runs; clears the mark after", async () => {
+    const person = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const other = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const viewed = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const controlledOnly = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const notLeased = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, "browser-1", viewed);
+    await leaseSlotForTest(owner.db, "browser-2", controlledOnly);
+    await recordLiveViewer(web.db, viewed, person.userId);
+    await recordLiveViewer(web.db, notLeased, person.userId);
+    // Someone else opened the view of the run the person controls: theirs is not closed (minor 5).
+    await requestTakeover(web.db, { runId: controlledOnly, userId: person.userId });
+    await recordLiveViewer(web.db, controlledOnly, other.userId);
+    expect(await liveViewsToClose(agent.db, { userId: person.userId, workspaceId: null })).toEqual([
+      { runId: viewed, slotName: "browser-1" },
+    ]);
+    await clearLiveViewer(agent.db, viewed, person.userId);
+    expect((await runRow(viewed)).liveViewerId).toBeNull();
+    await clearLiveViewer(agent.db, controlledOnly, person.userId);
+    expect((await runRow(controlledOnly)).liveViewerId).toBe(other.userId);
+    await releaseSlotForTest(owner.db, "browser-1");
+    await releaseSlotForTest(owner.db, "browser-2");
+  });
+
+  it("finds holds whose person signed out or left: the sweep after a missed notification", async () => {
+    const gone = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const expired = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const active = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const session = async (userId: string, expiresIn: number) =>
+      owner.db.insert(sessionTable).values({
+        id: randomUUID(),
+        token: randomUUID(),
+        userId,
+        expiresAt: new Date(Date.now() + expiresIn),
+      });
+    await session(gone.userId, 3_600_000);
+    await session(expired.userId, -1_000);
+    await session(active.userId, 3_600_000);
+    const [r1, r2, r3] = [
+      await seedRun(owner.db, { workspaceId: member.workspaceId }),
+      await seedRun(owner.db, { workspaceId: member.workspaceId }),
+      await seedRun(owner.db, { workspaceId: member.workspaceId }),
+    ];
+    await recordLiveViewer(web.db, r1!, gone.userId);
+    await requestTakeover(web.db, { runId: r2!, userId: expired.userId });
+    await recordLiveViewer(web.db, r3!, active.userId);
+    await owner.db.delete(workspaceMembers).where(eq(workspaceMembers.userId, gone.userId));
+    const stale = await staleLiveHolds(agent.db);
+    expect(stale).toContainEqual({ userId: gone.userId, workspaceId: member.workspaceId });
+    expect(stale).toContainEqual({ userId: expired.userId, workspaceId: member.workspaceId });
+    expect(stale).not.toContainEqual({ userId: active.userId, workspaceId: member.workspaceId });
   });
 });

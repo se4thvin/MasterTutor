@@ -11,7 +11,21 @@ describe("NOTIFY payloads", () => {
       "run_control",
       "otp_ready",
       "run_event",
+      "live_revoke",
     ]);
+  });
+
+  it("names the person whose live views to close: on sign-out (any workspace) or removal (one)", () => {
+    const workspaceId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+    expect(decodeNotify("live_revoke", '{"userId":"u_1","workspaceId":null}')).toEqual({
+      userId: "u_1",
+      workspaceId: null,
+    });
+    expect(decodeNotify("live_revoke", JSON.stringify({ userId: "u_1", workspaceId }))).toEqual({
+      userId: "u_1",
+      workspaceId,
+    });
+    expect(() => decodeNotify("live_revoke", '{"userId":"","workspaceId":null}')).toThrow();
   });
   it("round-trips ids-only payloads", () => {
     const text = encodeNotify("run_wake", { runId, reason: "takeover" });

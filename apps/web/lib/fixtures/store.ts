@@ -1,4 +1,4 @@
-import type { RunSummary, UsageReport } from "@mastertutor/contracts";
+import { USAGE_MAX_DAYS, type RunSummary, type UsageReport } from "@mastertutor/contracts";
 import { createSeed } from "./seed.ts";
 import type { FixtureState } from "./types.ts";
 
@@ -34,7 +34,7 @@ export function usageReport(runs: readonly RunSummary[], from: string, to: strin
   const end = new Date(`${to}T00:00:00Z`);
   for (
     const d = new Date(`${from}T00:00:00Z`);
-    d <= end && perDay.length < 400;
+    d <= end && perDay.length < USAGE_MAX_DAYS;
     d.setUTCDate(d.getUTCDate() + 1)
   ) {
     const day = d.toISOString().slice(0, 10);

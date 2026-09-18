@@ -111,6 +111,17 @@ export const ApprovalView = z.object({
 });
 export type ApprovalView = z.infer<typeof ApprovalView>;
 
+/**
+ * A download made while a person held control, still waiting for their Keep or Discard (B6 A11).
+ * In the snapshot so a reload during control still offers it: the stream resumes past its event.
+ */
+export const HeldDownloadView = z.object({
+  id: Uuid,
+  filename: z.string().max(255),
+  bytes: z.number().int().nonnegative(),
+});
+export type HeldDownloadView = z.infer<typeof HeldDownloadView>;
+
 export const RunDetail = RunSummary.extend({
   plan: Plan.nullable(),
   allowedOrigins: z.array(Origin),
@@ -118,6 +129,8 @@ export const RunDetail = RunSummary.extend({
   slotName: SlotName.nullable(),
   targetFolderId: Uuid.nullable(),
   pendingApprovals: z.array(ApprovalView),
+  /** Undecided downloads held while a person has control; empty whenever the agent has it. */
+  heldDownloads: z.array(HeldDownloadView),
   lastEventId: z
     .string()
     .regex(/^[0-9]+$/)
@@ -334,14 +347,24 @@ export type VaultAuditView = z.infer<typeof VaultAuditView>;
 
 /* -------------------------------- settings -------------------------------- */
 
+/**
+ * Optimistic concurrency for the defaults (D14, R29-5): opaque to clients, compared exactly by the
+ * server. It changes when the defaults or concurrency change, never on a kill-switch toggle.
+ */
+export const SettingsVersion = z.string().min(1).max(64);
+export type SettingsVersion = z.infer<typeof SettingsVersion>;
+
 export const SettingsView = z.object({
   killSwitch: z.boolean(),
   defaultBudget: Budget,
   defaultAllowedOrigins: z.array(Origin),
   concurrency: z.number().int().min(1),
+  version: SettingsVersion,
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 export const UpdateSettingsInput = z.object({
+  /** The version the client last read; a stale one is CONFLICT. */
+  version: SettingsVersion,
   defaultBudget: Budget.optional(),
   defaultAllowedOrigins: z.array(OriginInput).max(50).optional(),
   concurrency: z.number().int().min(1).max(64).optional(),
@@ -350,9 +373,18 @@ export type UpdateSettingsInput = z.infer<typeof UpdateSettingsInput>;
 export const SetKillSwitchInput = z.object({ on: z.boolean() });
 export type SetKillSwitchInput = z.infer<typeof SetKillSwitchInput>;
 
+/** The longest usage range, both ends included (D52: perDay is dense, one entry per day). */
+export const USAGE_MAX_DAYS = 400;
+/** perRun lists at most this many runs of the range, newest first. */
+export const USAGE_MAX_RUNS = 500;
+const DAY_MS = 86_400_000;
 export const UsageInput = z
   .object({ from: IsoDate, to: IsoDate })
-  .refine((range) => range.from <= range.to, { message: "from must not be after to" });
+  .refine((range) => range.from <= range.to, { message: "from must not be after to" })
+  .refine(
+    (range) => (Date.parse(range.to) - Date.parse(range.from)) / DAY_MS + 1 <= USAGE_MAX_DAYS,
+    { message: `A usage range covers at most ${USAGE_MAX_DAYS} days` },
+  );
 export type UsageInput = z.infer<typeof UsageInput>;
 export const UsageReport = z.object({
   perDay: z.array(z.object({ day: IsoDate, runs: Count, usd: z.number(), steps: Count })),

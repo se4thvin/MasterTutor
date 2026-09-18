@@ -96,6 +96,10 @@ describe("agent_role", () => {
       await expect(agent.unsafe(`select * from "${table}"`)).rejects.toThrow(/permission denied/);
     }
   });
+  it("sees only who has an unexpired session, never a session token (live revocation)", async () => {
+    await agent`select user_id, expires_at from "session"`;
+    await expect(agent`select token from "session"`).rejects.toThrow(/permission denied/);
+  });
   it("can read transcripts and sealed values", async () => {
     await agent`select * from run_transcript`;
     await agent`select sealed from vault_secrets`;

@@ -1,17 +1,22 @@
-# Test overlay. Run: pnpm compose:test up -d --build --wait
-# Production Traefik is Dokploy's; B6 adds the per-slot /live routers.
+# Test overlay (spec §12). The one file that defines the test stack (Phase 7 Task 1, X2):
+#   pnpm compose:test up -d --build --wait                 core stack, two slots (smoke, live view)
+#   pnpm compose:test --profile e2e up -d --build --wait   plus llm-mock and the fixture sites
+# scripts/e2e.sh runs the Playwright stack suite in the `e2e` service (profile e2e-runner).
+# Production Traefik is Dokploy's; the per-slot /live routers are infra/traefik/test-dynamic.yml.
 services:
   traefik:
     image: traefik:v3.7.13
+    # Listens on the public port inside its container too: the e2e runner shares this network
+    # namespace and opens exactly http://localhost:18080, the app's origin (BETTER_AUTH_URL).
     command:
-      - --entrypoints.web.address=:80
+      - --entrypoints.web.address=:18080
       - --providers.file.filename=/etc/traefik/dynamic.yml
       - --ping=true
       - --log.level=WARN
     volumes:
       - ./infra/traefik/test-dynamic.yml:/etc/traefik/dynamic.yml:ro
     ports:
-      - "127.0.0.1:${TEST_HTTP_PORT:-18080}:80"
+      - "127.0.0.1:${TEST_HTTP_PORT:-18080}:18080"
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 2s
@@ -25,9 +30,35 @@ services:
       cdp:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.12
 
-  # Phase 0 runs a single slot to save memory and disk. Later E2E phases re-enable browser-2.
+  agent:
+    environment:
+      OPENAI_BASE_URL: http://llm-mock:8090/v1
+      # Fixture hosts (*.fixtures.test) bypass only the private-range check (network-policy.ts).
+      AGENT_TEST_MODE: "1"
+
+  web:
+    environment:
+      OPENAI_BASE_URL: http://llm-mock:8090/v1
+
+  # Two slots: two concurrent runs and the live view's cross-slot cases. Each advertises its static
+  # cdp address for WebRTC (outside the cdp ip_range .128/25), which the e2e runner reaches from
+  # Traefik's namespace; the fixtures network is the only private range their egress allows.
+  browser-1:
+    environment:
+      NEKO_WEBRTC_NAT1TO1: ${CDP_SUBNET_PREFIX:-172.30.231}.21
+      SLOT_EGRESS_ALLOW_CIDRS: 172.30.241.0/24
+    networks:
+      cdp:
+        ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.21
+      fixtures: {}
   browser-2:
-    profiles: !override ["extra-slots"]
+    environment:
+      NEKO_WEBRTC_NAT1TO1: ${CDP_SUBNET_PREFIX:-172.30.231}.22
+      SLOT_EGRESS_ALLOW_CIDRS: 172.30.241.0/24
+    networks:
+      cdp:
+        ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.22
+      fixtures: {}
   browser-3:
     profiles: !override ["extra-slots"]
   browser-4:
@@ -45,3 +76,147 @@ services:
       GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=otp:KESTREL4IMAP9CANARY@mail.test"
     networks:
       backend: {}
+
+  # The model for the test stack (tests/llm-mock, B1 scenario format). Runs pick a scenario with
+  # scenarioGoal() (tests/llm-mock/src/select.ts). Only this service builds the test-tools image.
+  llm-mock:
+    profiles: ["e2e"]
+    image: mastertutor/test-tools:local
+    build:
+      context: .
+      dockerfile: tests/e2e/Dockerfile
+      target: tools
+    user: node
+    command: ["node", "tests/llm-mock/src/bin.ts"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8090"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8090/__mock/requests?nonce=health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      backend: {}
+      # The e2e runner (in Traefik's namespace) reads GET /__mock/requests over edge.
+      edge: {}
+
+  # Static fixture sites (tests/fixtures/sites), the same nginx config as the behaviour stack.
+  fixtures:
+    profiles: ["e2e"]
+    image: nginx:1.30.5-alpine-slim
+    volumes:
+      - ./tests/fixtures/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./tests/fixtures/sites:/srv/fixtures:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "--header",
+          "Host: site.fixtures.test",
+          "http://127.0.0.1/",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      fixtures:
+        aliases:
+          [
+            site.fixtures.test,
+            other.fixtures.test,
+            other.fixtures-isolated.test,
+            ads.fixtures-hung.test,
+          ]
+
+  # The vault-fixture site (B3; tests/fixtures/vault-sites/bin.ts) on its own hosts. Its account is
+  # tests/security/canaries.ts. It mails OTP codes to greenmail, which stays backend-only.
+  vault-fixtures:
+    profiles: ["e2e"]
+    image: mastertutor/test-tools:local
+    user: node
+    command: ["node", "tests/fixtures/vault-sites/bin.ts"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: "80"
+      SMTP_HOST: greenmail
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get({ host: '127.0.0.1', port: 80, path: '/', headers: { host: 'login.fixtures.test' } }, (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      greenmail:
+        condition: service_started
+    networks:
+      fixtures:
+        aliases: [login.fixtures.test, log1n.fixtures.test, evil.fixtures-isolated.test]
+      backend: {}
+
+  # Phase 10 Task 22's dynamic activity site (tests/fixtures/bench-activities/server.ts, created by
+  # T22), on the fixtures network at http://bench.fixtures.test:8080. Its own profile keeps the e2e
+  # stack independent of it; scripts/bench-mock.sh starts it with --profile bench.
+  bench-fixtures:
+    profiles: ["bench"]
+    image: node:24-slim
+    user: node
+    command: ["node", "/srv/server.ts"]
+    volumes:
+      - ./tests/fixtures/bench-activities:/srv:ro
+    environment:
+      PORT: "8080"
+      BENCH_FIXTURE_USER: ${BENCH_FIXTURE_USER:-}
+      BENCH_FIXTURE_PASSWORD: ${BENCH_FIXTURE_PASSWORD:-}
+    networks:
+      fixtures:
+        aliases: [bench.fixtures.test]
+
+  # Playwright for apps/web/playwright.stack.config.ts. It shares Traefik's network namespace, so
+  # localhost:18080 is the public entry point and the slots' WebRTC addresses are reachable, as for
+  # a real browser. Run it with scripts/e2e.sh (profile e2e-runner keeps `up` from starting it).
+  e2e:
+    profiles: ["e2e-runner"]
+    image: mastertutor/e2e:local
+    build:
+      context: .
+      dockerfile: tests/e2e/Dockerfile
+      target: e2e
+    network_mode: "service:traefik"
+    environment:
+      CI: ${CI:-}
+      HOME: /tmp
+      E2E_BASE_URL: http://localhost:18080
+      E2E_LLM_MOCK_URL: http://llm-mock:8090
+    volumes:
+      - ./apps/web/e2e:/repo/apps/web/e2e
+      - ./apps/web/playwright.stack.config.ts:/repo/apps/web/playwright.stack.config.ts:ro
+    depends_on:
+      traefik:
+        condition: service_healthy
+
+networks:
+  # Fixture sites only. Internal: the slots, nginx and the vault fixture; SLOT_EGRESS_ALLOW_CIDRS
+  # opens exactly this subnet in the slots' egress firewall (the behaviour stack uses .240).
+  fixtures:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.241.0/24
