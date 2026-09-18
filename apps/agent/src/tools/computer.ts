@@ -250,15 +250,16 @@ export class ComputerExecutor {
         : null;
     let cancelled = false;
     try {
-      // A document the guard could not arm (a hung or slow frame, anywhere: a frame can move under
-      // the pointer) would take an unchecked press: fail closed, as typing does (approval needed).
-      // Once a person approved this element, the page gets a moment to settle; a document still
-      // unarmed after that means nothing is pressed even so.
+      // A document the guard could not arm (a hung or slow frame) would take an unchecked press:
+      // fail closed, as typing does (approval needed). Once a person approved this element, only
+      // an unarmed document near the press point holds it back (a frame elsewhere cannot take
+      // it): the page gets a moment to settle, then nothing is pressed if one still is.
+      const pressAt = hit.snap ?? point;
       const unarmed = () => guard !== null && !guard.complete && !guard.tooMany;
       if (unarmed() && verdict?.personApproved !== true)
         return this.#refuse(UNGUARDED_CLICK_REFUSAL);
       const settleBy = Date.now() + ARM_SETTLE_MS;
-      while (unarmed() && Date.now() < settleBy) {
+      while (unarmed() && (await guard!.unguardedAt(pressAt)) && Date.now() < settleBy) {
         await guard!.disarm();
         await pause(ARM_RETRY_MS, signal);
         guard = await armClickGuard(this.#session, signal, hit.key);
@@ -269,13 +270,17 @@ export class ComputerExecutor {
         this.#handOver = PAGE_TOO_COMPLEX;
         return this.#refuse(PAGE_TOO_COMPLEX_REFUSAL);
       }
-      if (unarmed()) return this.#refuse(PAGE_SETTLING_REFUSAL);
+      if (unarmed() && (await guard!.unguardedAt(pressAt)))
+        return this.#refuse(PAGE_SETTLING_REFUSAL);
       this.#session.guard.assertAgent(signal);
       const options = {
         button: button === "right" ? "right" : button === "wheel" ? "middle" : "left",
       } as const;
       for (let clickCount = 1; clickCount <= (double ? 2 : 1); clickCount++) {
-        // A document added or replaced since arming is not guarded: press nothing.
+        // A document added or replaced since arming is not guarded, and an unarmed frame may
+        // have moved under the point: press nothing.
+        if (unarmed() && (await guard!.unguardedAt(pressAt)))
+          return this.#refuse(TARGET_MOVED_REFUSAL);
         if (guard && (await guard.changedNow())) return this.#refuse(TARGET_MOVED_REFUSAL);
         await mouse.down({ ...options, clickCount });
         await mouse.up({ ...options, clickCount });

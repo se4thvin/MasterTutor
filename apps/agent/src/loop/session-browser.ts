@@ -16,7 +16,7 @@ import { captureModelScreenshot, withheldScreenshot } from "../browser/screensho
 import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { markUnguarded } from "../browser/input-guard.ts";
+import { markStillUnguarded } from "../browser/input-guard.ts";
 import {
   applyStorageState,
   collectStorageState,
@@ -208,11 +208,11 @@ export class SessionLoopBrowser implements LoopBrowser {
       // While some document of the page could not be armed (a frame that hangs, or too many),
       // clicking and typing count as acting inside an uninspectable page: they need approval.
       return point
-        ? markUnguarded(this.#session, (await hitTest(this.#session, point)).target)
+        ? markStillUnguarded(this.#session, (await hitTest(this.#session, point)).target)
         : null;
     }
     if (action.type === "type" || action.type === "keypress")
-      return markUnguarded(this.#session, previous ?? (await focusTarget(this.#session)));
+      return markStillUnguarded(this.#session, previous ?? (await focusTarget(this.#session)));
     return null;
   }
 

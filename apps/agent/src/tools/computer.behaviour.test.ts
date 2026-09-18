@@ -7,7 +7,7 @@ import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { captureModelScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
-import { ARM_BUDGET_MS, markUnguarded } from "../browser/input-guard.ts";
+import { ARM_BUDGET_MS, markStillUnguarded, markUnguarded } from "../browser/input-guard.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { waitFor } from "../testing/wait.ts";
@@ -440,46 +440,27 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
       : s.page.locator(`#${id}`).inputValue();
   /** hung-frame.html: Code (top) at 40,20; a same-origin frame with Note at 40,80; a hung advert. */
   async function hungPage() {
-    // The advert hangs for 6 s (past the approved click's 1 s settle wait), so leaving the page
-    // afterwards does not wait long.
-    const { s, executor } = await setup("/hung-frame.html?ms=6000");
+    // The advert hangs for 3 s, so leaving the page afterwards does not wait long.
+    const { s, executor } = await setup("/hung-frame.html?ms=3000");
     await new Promise((resolve) => setTimeout(resolve, 800)); // the advert hangs once loaded
     // Clicking there fails closed too, until a person approves it (breaker fix).
     const code = { x: 100, y: 35 };
     expect(await executor.execute(click(code), signal)).toBe(UNGUARDED_CLICK_REFUSAL);
     const target = (await hitTest(s, code)).target;
     expect(markUnguarded(s, target)?.opaqueFrame).toBe(true); // so the loop asks a person
-    // Even approved, nothing is pressed while the advert hangs (the page is still settling)...
+    // Approved, it runs: the hung advert is not near the point, so it cannot take the press.
     expect(
       await executor.execute(click(code), signal, {
         target: markUnguarded(s, target),
         personApproved: true,
       }),
-    ).toBe(PAGE_SETTLING_REFUSAL);
-    // ...so the person puts the cursor there themselves.
-    await s.page.locator("#code").focus();
+    ).toBeNull();
     return { s, executor };
   }
 
-  it("an approved click waits for a slow frame elsewhere: refused while it hangs, run once it answers", async () => {
-    const { s, executor } = await setup("/hung-frame.html?ms=2500");
-    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
-    const code = { x: 100, y: 35 };
-    const approved = async () => ({
-      target: markUnguarded(s, (await hitTest(s, code)).target),
-      personApproved: true,
-    });
-    const started = Date.now();
-    expect(await executor.execute(click(code), signal, await approved())).toBe(
-      PAGE_SETTLING_REFUSAL,
-    );
-    const waited = Date.now() - started;
-    console.info(JSON.stringify({ metric: "settling_refusal_ms", waited }));
-    // About 1 s of re-arming, each try bounded by the budget (arm and disarm).
-    expect(waited).toBeLessThan(ARM_BUDGET_MS * 8 + 1_000);
-    expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
-    // The advert answers again (its hang is over): the same approved click now runs.
-    await waitFor(
+  /** The advert in hung-frame.html answers again (its hang is over). */
+  const advertAnswers = (s: BrowserSession) =>
+    waitFor(
       () =>
         s.page
           .frames()
@@ -488,7 +469,63 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
           .catch(() => false),
       { label: "advert answers" },
     );
-    expect(await executor.execute(click(code), signal, await approved())).toBeNull();
+  const approvedAt = async (s: BrowserSession, at: { x: number; y: number }) => ({
+    target: markUnguarded(s, (await hitTest(s, at)).target),
+    personApproved: true,
+  });
+
+  it("an unarmed frame next to the point holds an approved click back until it answers", async () => {
+    // The hung advert's box starts 6 px right of the point (within the 8 px margin).
+    const { s, executor } = await setup("/hung-frame.html?ms=2500&ad=248");
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+    const code = { x: 242, y: 35 };
+    const started = Date.now();
+    expect(await executor.execute(click(code), signal, await approvedAt(s, code))).toBe(
+      PAGE_SETTLING_REFUSAL,
+    );
+    const waited = Date.now() - started;
+    console.info(JSON.stringify({ metric: "settling_refusal_ms", waited }));
+    // About 1 s of re-arming, each try bounded by the budget (arm and disarm).
+    expect(waited).toBeLessThan(ARM_BUDGET_MS * 8 + 1_000);
+    expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
+    await advertAnswers(s);
+    expect(await executor.execute(click(code), signal, await approvedAt(s, code))).toBeNull();
+    expect(await s.page.evaluate(() => document.activeElement?.id)).toBe("code");
+  });
+
+  it("an unarmed frame that slides under the point after arming: the approved click is refused (0/5 pressed)", async () => {
+    let refused = 0;
+    for (let i = 0; i < 5; i++) {
+      // 100 ms after the pointer enters Code (the arm is under way), the hung advert covers it.
+      const { s, executor } = await setup("/hung-frame.html?ms=3000&slide=100");
+      await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+      await s.page.mouse.move(600, 500); // off Code, so the executor's move enters it
+      const code = { x: 100, y: 35 };
+      const note = await executor.execute(click(code), signal, await approvedAt(s, code));
+      if (note === PAGE_SETTLING_REFUSAL || note === TARGET_MOVED_REFUSAL) refused += 1;
+      expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
+      await session?.close();
+      session = undefined;
+    }
+    expect(refused).toBe(5);
+  });
+
+  it("a page whose frame recovered stops asking for approval: a complete arm clears the mark", async () => {
+    const { s, executor } = await setup("/hung-frame.html?ms=1500");
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+    const code = { x: 100, y: 35 };
+    expect(await executor.execute(click(code), signal)).toBe(UNGUARDED_CLICK_REFUSAL);
+    const target = (await hitTest(s, code)).target;
+    expect(markUnguarded(s, target)?.opaqueFrame).toBe(true);
+    // While it still hangs, the loop's classification keeps asking a person...
+    expect((await markStillUnguarded(s, target))?.opaqueFrame).toBe(true);
+    await advertAnswers(s);
+    // ...and once every document arms again, it no longer does: the click runs unapproved.
+    const fresh = await markStillUnguarded(s, (await hitTest(s, code)).target);
+    expect(fresh?.opaqueFrame).toBeFalsy();
+    expect(
+      await executor.execute(click(code), signal, { target: fresh, personApproved: false }),
+    ).toBeNull();
     expect(await s.page.evaluate(() => document.activeElement?.id)).toBe("code");
   });
 
