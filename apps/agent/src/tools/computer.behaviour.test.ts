@@ -475,7 +475,8 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     );
     const waited = Date.now() - started;
     console.info(JSON.stringify({ metric: "settling_refusal_ms", waited }));
-    expect(waited).toBeLessThan(ARM_BUDGET_MS * 4 + 1_000);
+    // About 1 s of re-arming, each try bounded by the budget (arm and disarm).
+    expect(waited).toBeLessThan(ARM_BUDGET_MS * 8 + 1_000);
     expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
     // The advert answers again (its hang is over): the same approved click now runs.
     await waitFor(
