@@ -9,12 +9,14 @@ import {
   type SourceKind,
 } from "@mastertutor/contracts";
 import type { LibraryServices } from "../library.ts";
+import { sha256Hex } from "../notes/hash.ts";
 import {
   NoteWriteError,
   screenValue,
   writeContext,
   type BlockDraft,
 } from "../notes/note-writer.ts";
+import { capturePdf } from "../pdf/pdf-capture.ts";
 import { type Tool, type ToolContext, ToolError } from "../tools/types.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
 import { imageInfo, sniffSvg } from "./images.ts";
@@ -193,8 +195,36 @@ export function createCaptureTool(services: LibraryServices): Tool<CaptureArgs, 
     untrusted: false,
     async run(ctx, args) {
       const kind = args.kind ?? ((await isPdf(ctx)) ? "pdf" : "web");
-      if (kind === "pdf")
-        throw new ToolError("pdf_unsupported", "PDF capture is not available yet");
+      if (kind === "pdf") {
+        const pdf = await asToolErrors(() => capturePdf(services, ctx));
+        return persistCapture(services, ctx, {
+          kind: "pdf",
+          url: pdf.url,
+          canonicalUrl: null,
+          title: pdf.title,
+          lede: null,
+          faviconUrl: null,
+          blocks: pdf.blocks,
+          coverage: pdf.coverage,
+          contentSha256: pdf.contentSha256,
+          snapshot: {
+            mhtml: null,
+            png: pdf.pagePng,
+            mhtmlSha256: null,
+            pngSha256: pdf.pagePng ? sha256Hex(pdf.pagePng) : null,
+            skipped: pdf.pagePng ? ["mhtml:pdf"] : ["mhtml:pdf", "png:withheld"],
+          },
+          meta: {
+            engine: pdf.engine,
+            pages: pdf.pages,
+            pdfAssetId: pdf.pdfAssetId,
+            originalWithheld: pdf.originalWithheld,
+            blocksTruncated: pdf.blocksTruncated,
+            mediaLost: pdf.mediaLost,
+          },
+          dedupe: true,
+        });
+      }
       const web = await asToolErrors(() =>
         captureWeb(services, ctx, { scope: args.scope, selector: args.selector }),
       );

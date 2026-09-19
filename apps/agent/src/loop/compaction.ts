@@ -1,9 +1,8 @@
-import { CompactionSummary, type ToolProfile } from "@mastertutor/contracts";
+import { CompactionSummary, type ToolProfile, wrapUntrusted } from "@mastertutor/contracts";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { CallResult, ModelCaller } from "../llm/caller.ts";
 import { userMessage } from "../llm/items.ts";
 import { ModelUnavailable } from "../runtime/errors.ts";
-import { wrapUntrusted } from "../tools/untrusted.ts";
 import { GARAGE_REF, transcriptAsText, type TranscriptEntry } from "./transcript.ts";
 
 export const COMPACTION_REQUEST =

@@ -1,9 +1,13 @@
-import { ApprovalEdit, ApprovalRequest, type ApprovalStatus } from "@mastertutor/contracts";
+import {
+  ApprovalEdit,
+  ApprovalRequest,
+  type ApprovalStatus,
+  CallResult,
+} from "@mastertutor/contracts";
 import { approvals, otpCodes, runEvents, runSteps, type Database } from "@mastertutor/db";
 import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Tx } from "../runtime/types.ts";
-import { CallResult } from "./call-result.ts";
 
 /**
  * One approval covers one risky item of a model turn: a computer action (`<callId>#<index>`), a

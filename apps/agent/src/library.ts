@@ -10,6 +10,8 @@ import { createAssetStore, type AssetStore } from "./notes/assets.ts";
 import { createEmbedder } from "./notes/embedder.ts";
 import { createFilingModel, fileRunNote, type FilingModel } from "./notes/filing.ts";
 import { NoteWriter } from "./notes/note-writer.ts";
+import { createDoclingClient, type DoclingClient } from "./pdf/docling.ts";
+import { createPdfWorkerClient, type PdfAnalyzer } from "./pdf/pdf-worker.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
 
@@ -17,6 +19,10 @@ export interface LibraryDeps {
   db: Database;
   storage: Storage;
   openai: StatelessOpenAI;
+  /** docling-serve on the internal `pdf` network (profile `pdf`); null keeps the pdf.js path. */
+  doclingUrl?: string | null;
+  /** The pdf-worker service (internal `pdf` network): PDFs are parsed there, never here. */
+  pdfWorkerUrl: string;
   log: Log;
 }
 
@@ -30,6 +36,10 @@ export interface LibraryServices {
   /** Self-hosted OCR that screens pixels for vault secrets before storage or OpenAI (A-M1). */
   localOcr: LocalOcr;
   filing: FilingModel;
+  /** docling-serve (profile `pdf`), or null for the pdf.js path. */
+  docling: DoclingClient | null;
+  /** The pdf-worker service (B5 review I-1). */
+  pdf: PdfAnalyzer;
   log: Log;
 }
 
@@ -42,6 +52,8 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     ocr: createOcrModel(deps.openai),
     localOcr: sharedLocalOcr(),
     filing: createFilingModel(deps.openai),
+    docling: deps.doclingUrl ? createDoclingClient(deps.doclingUrl) : null,
+    pdf: createPdfWorkerClient(deps.pdfWorkerUrl),
     log: deps.log,
   };
 }
