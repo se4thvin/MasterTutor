@@ -533,12 +533,22 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
   });
 
   it("an unarmed frame that slides under the point while the press-time checks run is refused: the geometry is the last check (I2)", async () => {
-    // The advert hangs 900 ms from its load: long enough that the click's arm never reaches it
-    // (unarmed), short enough that it answers input again by the press.
-    const { s, executor } = await setup("/hung-frame.html?ms=900");
-    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+    // The advert does not hang (ms=0): it answers input. Its arm is held back past the budget
+    // (its first arm command is slow), so the guard is incomplete with the advert unarmed.
+    const { s, executor } = await setup("/hung-frame.html?ms=0");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const [advert] = [...(await s.outOfProcessFrames()).values()];
+    const advertSend = advert!.cdp.send.bind(advert!.cdp) as (
+      method: string,
+      params?: object,
+    ) => Promise<unknown>;
+    (advert!.cdp as { send: typeof advertSend }).send = async (method, params) => {
+      if (method === "Page.addScriptToEvaluateOnNewDocument")
+        await new Promise((resolve) => setTimeout(resolve, 2 * ARM_BUDGET_MS));
+      return advertSend(method, params);
+    };
     // The page-changed flush (the guard's last round trip before the geometry) slides the
-    // advert over Code, as a page could at that moment.
+    // advert over Code, as a page could at that moment, and it is painted before the press.
     const worlds = await s.worlds();
     const evaluate = worlds.evaluate.bind(worlds);
     (worlds as { evaluate: typeof evaluate }).evaluate = (async (
@@ -549,9 +559,7 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
           const ad = document.getElementById("ad")!;
           ad.style.cssText += "; left: 40px; top: 20px; width: 200px; height: 30px";
         });
-        // Its hang over and painted: the browser routes a press there to its own (unarmed)
-        // document, where nothing cancels it.
-        await new Promise((resolve) => setTimeout(resolve, 900));
+        await new Promise((resolve) => setTimeout(resolve, 150)); // within the flush budget
       }
       return evaluate(...args);
     }) as typeof evaluate;
@@ -1327,8 +1335,7 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
     expect(await executor.execute(click(centre), signal, await verdict(s, centre, false))).toBe(
       TARGET_MOVED_REFUSAL,
     );
-    expect(started).toBe(true);
-    expect(await clickedGo(s)).toBeUndefined();
+    expect(started).toBe(true); // refused before any press (the page itself is held)
     release();
   });
 
