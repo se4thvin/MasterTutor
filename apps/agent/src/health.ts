@@ -90,7 +90,9 @@ export async function startHealthServer(options: HealthServerOptions): Promise<H
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(options.port, options.host ?? "0.0.0.0", () => resolve());
+    // Loopback: the compose healthcheck runs inside the container, and nothing on the agent's
+    // networks (pdf, cdp, backend) may read the report (B5 review M-9, QA-112).
+    server.listen(options.port, options.host ?? "127.0.0.1", () => resolve());
   });
   const { port } = server.address() as AddressInfo;
   return {

@@ -14,6 +14,8 @@ export interface NoteRecord {
   note: NoteSummary;
   blocks: NoteBlock[];
   sources: SourceView[];
+  /** What capture recorded as lost (sources.meta.mediaLost on the server); none when absent. */
+  mediaLost?: number;
 }
 
 /** Mutable per-namespace state. Vault items hold field names only; values are never kept. */

@@ -214,7 +214,9 @@ describe("secret canary", () => {
     await shoot("echo");
     const registry = new ToolRegistry([register(readPageTool)], env.log.logger, mask);
     for (const mode of ["text", "interactive"] as const)
-      outputs.push((await registry.run("read_page", { mode, sinceHash: null }, ctx)).output);
+      outputs.push(
+        (await registry.run("read_page", { mode, sinceHash: null, offset: null }, ctx)).output,
+      );
 
     expect(results).toEqual(Array(6).fill({ ok: true })); // G5: six fills, six results
     expect(shots.map((shot) => shot.where)).toEqual([

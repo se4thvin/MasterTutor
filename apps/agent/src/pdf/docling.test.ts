@@ -140,3 +140,59 @@ describe("docling answers are bounded (B5 review I-6)", () => {
     }
   });
 });
+
+describe("doclingBlocks Markdown escaping (QA-104)", () => {
+  const one = (texts: unknown[], tables: unknown[] = []) =>
+    doclingBlocks(
+      DoclingDocument.parse({
+        body: {
+          children: [
+            ...texts.map((_, i) => ({ $ref: `#/texts/${i}` })),
+            ...tables.map((_, i) => ({ $ref: `#/tables/${i}` })),
+          ],
+        },
+        texts,
+        groups: [],
+        tables,
+        pictures: [],
+        pages: {},
+      }),
+    );
+  it("fences code longer than any backtick run in it, and keeps the language a plain word", () => {
+    const [block] = one([
+      {
+        self_ref: "#/texts/0",
+        label: "code",
+        text: "a\n```\n[x](https://evil.test)",
+        code_language: "js\n```\n# Owned",
+        prov: prov(1),
+      },
+    ]);
+    expect(block?.markdown).toBe("````js\na\n```\n[x](https://evil.test)\n````");
+  });
+  it("keeps $$ inside a formula from closing the math block", () => {
+    const [block] = one([
+      {
+        self_ref: "#/texts/0",
+        label: "formula",
+        text: "x$$\n[y](https://evil.test)",
+        prov: prov(1),
+      },
+    ]);
+    expect(block?.markdown).toBe("$$\nx\\$\\$\n[y](https://evil.test)\n$$");
+  });
+  it("escapes Markdown in simple table cells", () => {
+    const [block] = one(
+      [],
+      [
+        {
+          self_ref: "#/tables/0",
+          label: "table",
+          prov: prov(1),
+          data: { grid: [[{ text: "[a](https://evil.test)" }, { text: "*b*|c" }]] },
+        },
+      ],
+    );
+    expect(block?.markdown.split("\n")[0]).toBe("| \\[a\\](https://evil.test) | \\*b\\*\\|c |");
+  });
+});

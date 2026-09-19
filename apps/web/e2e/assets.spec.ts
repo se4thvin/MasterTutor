@@ -28,3 +28,13 @@ test("assets are session-only and served inert", async ({ page, baseURL }) => {
     .addCookies([{ name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL! }]);
   expect((await page.request.get(`/api/assets/${ids.asset(1)}`)).status()).toBe(401);
 });
+
+test("the snapshot route answers fixture mode with the object headers too (QA-088)", async ({
+  page,
+}) => {
+  const res = await page.request.get(`/api/sources/${ids.asset(1)}/snapshot/page.png`);
+  expect(res.status()).toBe(404);
+  expect(res.headers()["x-content-type-options"]).toBe("nosniff");
+  expect(res.headers()["content-security-policy"]).toContain("sandbox");
+  expect(res.headers()["cache-control"]).toBe("private, no-store");
+});

@@ -32,7 +32,7 @@ describe("llm-mock", () => {
                 {
                   type: "function",
                   name: "read_page",
-                  args: { mode: "interactive", sinceHash: null },
+                  args: { mode: "interactive", sinceHash: null, offset: null },
                 },
               ],
             },
@@ -89,7 +89,7 @@ describe("llm-mock", () => {
                 {
                   type: "function",
                   name: "read_page",
-                  args: { mode: "interactive", sinceHash: null },
+                  args: { mode: "interactive", sinceHash: null, offset: null },
                 },
               ],
             },
@@ -145,7 +145,7 @@ describe("llm-mock", () => {
                 {
                   type: "function",
                   name: "read_page",
-                  args: { mode: "interactive", sinceHash: null },
+                  args: { mode: "interactive", sinceHash: null, offset: null },
                 },
               ],
               usage: { input: 1_000 },
@@ -258,7 +258,11 @@ describe("llm-mock", () => {
           turns: [
             {
               outputs: [
-                { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+                {
+                  type: "function",
+                  name: "read_page",
+                  args: { mode: "text", sinceHash: null, offset: null },
+                },
               ],
             },
             { outputs: [{ type: "turn", status: "done", reason: "ok" }] },

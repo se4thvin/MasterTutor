@@ -12,7 +12,9 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { StepCollector } from "../loop/step-collector.ts";
 import { fakeLibraryServices } from "../testing/library.ts";
-import { commitStep, seedRun, testWrite } from "../testing/notes.ts";
+import { libraryHooks } from "../library.ts";
+import type { RunSnapshot } from "../loop/run-state.ts";
+import { commitStep, seedRun, testLogger, testWrite } from "../testing/notes.ts";
 import { fileRunNote, type FilingModel } from "./filing.ts";
 
 let tdb: TestDatabase;
@@ -83,6 +85,33 @@ describe("fileRunNote", () => {
     expect(step.usage.usd).toBeGreaterThan(0);
   });
 
+  it("reuses a case-variant sibling created meanwhile instead of adding a near-duplicate (QA-083)", async () => {
+    const { scope, noteId } = await runNote();
+    const bio = await createFolder(h.db, scope.workspaceId, { name: "Biology", parentId: null });
+    const step = new StepCollector();
+    const plan = await fileRunNote(
+      services({ decide: async () => ({ path: ["Biology", "plants"], createLeaf: true }) }),
+      scope,
+      step,
+    );
+    expect(plan?.kind).toBe("create");
+    const plants = await createFolder(h.db, scope.workspaceId, {
+      name: "Plants",
+      parentId: bio.id,
+    });
+    await commitStep(h.db, scope.runId, step);
+    const [note] = await h.db
+      .select({ folderId: notes.folderId })
+      .from(notes)
+      .where(eq(notes.id, noteId));
+    expect(note?.folderId).toBe(plants.id);
+    const children = await h.db
+      .select({ name: folders.name })
+      .from(folders)
+      .where(eq(folders.parentId, bio.id));
+    expect(children.map((c) => c.name)).toEqual(["Plants"]);
+  });
+
   it("uses the task's target folder without asking the model", async () => {
     const seedScope = await seedRun(h.db);
     const target = await createFolder(h.db, seedScope.workspaceId, {
@@ -129,6 +158,29 @@ describe("fileRunNote", () => {
       .where(eq(notes.id, noteId));
     expect(note?.folderId).toBeNull();
     expect(await filed(scope.runId)).toEqual([]);
+  });
+
+  it("gives the completion hook's filing call the run's signal: a kill interrupts it (QA-082)", async () => {
+    const { scope } = await runNote();
+    const controller = new AbortController();
+    const hooks = libraryHooks(
+      services({
+        decide: (_input, { signal }) =>
+          new Promise((_resolve, reject) => {
+            if (!signal) return reject(new Error("no signal"));
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            controller.abort(new Error("killed"));
+          }),
+      }),
+    );
+    await expect(
+      hooks.onComplete!({
+        run: { id: scope.runId, workspaceId: scope.workspaceId } as RunSnapshot,
+        log: testLogger,
+        step: new StepCollector(),
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("killed");
   });
 
   it("leaves the note unfiled when the model fails, and respects user moves", async () => {

@@ -2,12 +2,13 @@ import { escapeMarkdownText, VERIFIED_COVERAGE, type BBox } from "@mastertutor/c
 import sharp from "sharp";
 import { fetchInBrowser } from "../capture/fetch-resource.ts";
 import { pixelsAreClean, type LocalOcr } from "../browser/local-ocr.ts";
-import { blockPlainText, limitBlockSize, splitMarkdown } from "../capture/markdown-blocks.ts";
+import { blockPlainText, limitBlockSize } from "../capture/markdown-blocks.ts";
+import { readRegion } from "../capture/ocr-region.ts";
 import type { OcrModel } from "../capture/opaque.ts";
 import { coverageOf, precisionAgainst } from "../capture/text.ts";
 import { AssetRejected, type AssetStore } from "../notes/assets.ts";
 import { sha256Hex } from "../notes/hash.ts";
-import { NoteWriteError, screenText, screenValue, type BlockDraft } from "../notes/note-writer.ts";
+import { NoteWriteError, screenValue, type BlockDraft } from "../notes/note-writer.ts";
 import type { Log } from "../runtime/types.ts";
 import { ToolError, type ToolContext } from "../tools/types.ts";
 import type { DoclingBlock, DoclingClient } from "./docling.ts";
@@ -211,7 +212,14 @@ export async function buildPdfCapture(
           // Q7: docling text is a caption here, escaped; the image itself is the block's assetId (decision 14).
           if (id) {
             const caption = escapeMarkdownText(block.markdown);
-            blocks.push(figureBlock("figure", caption, id, anchor(block.page, block.bbox)));
+            // The crop is the page's own pixels; the caption is docling's text, held to the PDF
+            // text like any other block (QA-111).
+            const figure = figureBlock("figure", caption, id, anchor(block.page, block.bbox));
+            const plain = block.markdown.trim();
+            blocks.push({
+              ...figure,
+              verified: plain === "" || precision(plain) >= VERIFIED_COVERAGE,
+            });
           } else lost++;
         } else {
           const ocrPage = !textPages.has(block.page);
@@ -263,45 +271,40 @@ export async function buildPdfCapture(
       }
       // I-4: no text layer (scanned, or text drawn as outlines): read like a scanned page.
       if (await isBlank(png)) continue;
-      // Transcribed, and the text screened, before the image is stored.
-      let text: string | null;
-      try {
-        text = (await deps.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step })).trim();
-      } catch (error) {
-        if (ctx.signal.aborted) throw error;
-        deps.log.warn({ errName: (error as Error).name }, "OCR failed for a PDF page");
-        text = null;
-      }
-      if (text !== null) screenText(ctx.mask, text);
-      // Unread pixels are never stored while the run holds secrets (re-review I1).
-      if (text === null && ctx.mask.hasSecrets()) {
-        mediaLost++;
-        continue;
-      }
-      const id = await storePng(png);
-      blocks.push(figureBlock("image", label, id, anchor(page.page, whole)));
-      // I-4: a page that shows something but reads as no text is missing text, not an empty page.
-      if (!text) {
-        mediaLost++;
-        continue;
-      }
-      // Headings, lists and paragraphs stay separate blocks, each within the size limit (M4).
-      for (const part of splitMarkdown(text).flatMap((block) => limitBlockSize(block)))
-        blocks.push({
-          ...part,
-          origin: "ocr_model",
-          assetId: null,
-          anchor: anchor(page.page, whole),
-          verified: false,
-        });
+      // The same pipeline and rule as a web canvas region (final review I2).
+      const meta = await sharp(png).metadata();
+      const region = await readRegion(deps, ctx, {
+        png,
+        width: meta.width ?? null,
+        height: meta.height ?? null,
+        label,
+        imageOrigin: "pdf",
+        anchor: anchor(page.page, whole),
+        screened: true,
+      });
+      blocks.push(...region.blocks);
+      if (region.lost) mediaLost++;
     }
   }
 
-  // The original keeps every page's pixels: stored only once each image page passed the screen.
-  const imagePages = pages.filter((p) => p.hasImages || !p.hasText).map((p) => p.page);
+  // The original keeps every page's pixels, vector drawings on text pages included (QA-109): on a
+  // secret-holding run it is stored only once every page was rendered and passed the screen.
+  if (ctx.mask.hasSecrets() && rendersWithheld === 0) {
+    const unrendered = pages
+      .filter((p) => !rendered.has(`${p.page}@${RENDER_SCALE}`))
+      .map((p) => p.page);
+    if (unrendered.length > 0) {
+      const extra = await deps.pdf.analyze(
+        bytes,
+        { render: unrendered, scale: RENDER_SCALE },
+        ctx.signal,
+      );
+      await keepClean(extra.renders);
+    }
+  }
   const pixelsScreened =
     rendersWithheld === 0 &&
-    (!ctx.mask.hasSecrets() || imagePages.every((page) => pageRender(page) !== undefined));
+    (!ctx.mask.hasSecrets() || pages.every((page) => pageRender(page.page) !== undefined));
   // Text past the block cap is not in the note: it counts as missing, so the note is partial.
   const blocksTruncated =
     engine === "pdfjs" && (analysis.truncated || analysis.blocks.length > MAX_PDF_BLOCKS);

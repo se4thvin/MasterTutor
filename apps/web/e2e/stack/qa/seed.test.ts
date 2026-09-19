@@ -1,5 +1,6 @@
 import { APPROVAL_KINDS } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
+import { OWNER } from "../support/env.ts";
 import { SEED, goalOf, seedRuns, seedSql } from "./seed.ts";
 
 describe("QA seed (Phase 8 Task 8)", () => {
@@ -33,6 +34,13 @@ describe("QA seed (Phase 8 Task 8)", () => {
   it("writes real newlines, never a literal backslash-n (P8-11)", () => {
     expect(sql).not.toContain("\\n");
     expect(sql).toContain("| Year | Event |\n|---|---|");
+  });
+
+  it("writes only into T1's owner's workspace, never 'the first owner' (QA-040)", () => {
+    expect(sql).not.toContain("limit 1");
+    const scoped = sql.match(/\(select [^()]*from workspace_members[^()]*\)/g) ?? [];
+    expect(scoped.length).toBeGreaterThan(0);
+    for (const subquery of scoped) expect(subquery).toContain(`'${OWNER.email}'`);
   });
 
   it("is one transaction", () => {

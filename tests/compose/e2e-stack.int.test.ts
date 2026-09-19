@@ -158,6 +158,7 @@ describe("tests/e2e/compose.remote.yml on the shared CI host (X4, D45)", () => {
       edge: "10.213.26.0/24",
       backend: "10.213.27.0/24",
       egress: "10.213.28.0/24",
+      pulse: "10.213.29.0/24",
     });
     for (const slot of SLOTS)
       expect(remote.services[slot]?.environment?.SLOT_EGRESS_ALLOW_CIDRS, slot).toBe(

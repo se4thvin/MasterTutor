@@ -640,7 +640,7 @@ export class RunLoop {
       return CONTINUE;
     }
     const turn = parsed.turn;
-    if (turn?.status === "done") return this.#complete();
+    if (turn?.status === "done") return this.#complete(signal);
     if (turn?.status === "need_human")
       return this.#wait(
         turn.needHuman === "captcha" ? "captcha" : "takeover",
@@ -968,6 +968,7 @@ export class RunLoop {
           notes: [...run.notes, ...refusals],
           acknowledged,
           effects: run.effects,
+          targets: run.targets,
         },
         ran: run.executed > 0,
         failed: false,
@@ -1040,7 +1041,9 @@ export class RunLoop {
       };
       await store.commit({ steps: [{ seq, phase: "act", state: "started", action }] });
       // One collector per call: a function tool's note writes join this act's commit (B2 seam F2).
-      const step = new StepCollector();
+      const step = new StepCollector({
+        usdLeft: this.#run.budget.maxUsd - this.#run.usage.usd,
+      });
       let executed: Executed;
       try {
         executed = await this.#execute(call, signal, step);
@@ -1160,9 +1163,14 @@ export class RunLoop {
 
   /* --------------------------------- endings --------------------------------- */
 
-  async #complete(): Promise<StepOutcome> {
+  async #complete(signal: AbortSignal): Promise<StepOutcome> {
     const step = new StepCollector();
-    const result = await this.#deps.hooks.onComplete({ run: this.#run, log: this.#deps.log, step });
+    const result = await this.#deps.hooks.onComplete({
+      run: this.#run,
+      log: this.#deps.log,
+      step,
+      signal,
+    });
     if (!result.ok) {
       await this.#discard(step);
       this.#notes.push(`Executor: the run cannot finish yet: ${result.reason}`);
@@ -1257,7 +1265,7 @@ export class RunLoop {
           steps: [step, approveStep("done")],
           transition: TO_RUNNING,
         });
-        return this.#complete();
+        return this.#complete(signal);
       }
       this.#run = { ...this.#run, budget: extendBudget(this.#run.budget) };
       if (instruction) this.#notes.push(`Message from the user: ${instruction}`);

@@ -132,7 +132,15 @@ export interface Shot {
   theme: "light" | "dark";
   layout: readonly string[];
   axe: readonly string[];
+  /** "did not open: …", "server error: HTTP 5xx …" or "page error: …" (QA-041). */
+  errors: readonly string[];
 }
+type Source = "layout" | "axe" | "error";
+const SOURCE_DETAIL: Record<Source, string> = {
+  layout: "fe's layout detector",
+  axe: "axe (serious or critical)",
+  error: "the shooter",
+};
 
 const CATEGORY_BY_PREFIX: readonly [RegExp, (typeof FINDING_CATEGORIES)[number]][] = [
   [/^target smaller/, "target-size"],
@@ -151,7 +159,7 @@ const stableIssue = (issue: string) =>
     .slice(0, 400);
 
 /**
- * The shooter's detector and axe output as findings with stable keys (I5): one per issue and
+ * The shooter's detector, axe and error output as findings with stable keys (I5): one per issue and
  * screen; `selector` is the issue without its measurements; `width`/`theme` are null when the
  * issue shows at more than one. The swarm agent copies these verbatim, never re-words them.
  */
@@ -160,44 +168,52 @@ export function autoFindings(
   runId: string,
   shots: readonly Shot[],
 ): FindingInput[] {
-  const found = new Map<string, { issue: string; axe: boolean; shots: Shot[] }>();
+  const found = new Map<string, { issue: string; source: Source; shots: Shot[] }>();
   for (const shot of shots) {
-    for (const [issues, axe] of [
-      [shot.layout, false],
-      [shot.axe, true],
+    for (const [issues, source] of [
+      [shot.layout, "layout"],
+      [shot.axe, "axe"],
+      [shot.errors, "error"],
     ] as const) {
       for (const issue of issues) {
         const key = `${shot.screen}\n${stableIssue(issue)}`;
-        const entry = found.get(key) ?? { issue, axe, shots: [] };
+        const entry = found.get(key) ?? { issue, source, shots: [] };
         entry.shots.push(shot);
         found.set(key, entry);
       }
     }
   }
   const only = <T>(values: readonly T[]) => (new Set(values).size === 1 ? values[0]! : null);
-  return [...found.values()].map(({ issue, axe, shots: seen }) => {
-    const category = axe
-      ? issue.startsWith("color-contrast")
-        ? "contrast"
-        : "a11y"
-      : (CATEGORY_BY_PREFIX.find(([prefix]) => prefix.test(issue))?.[1] ?? "other");
+  return [...found.values()].map(({ issue, source, shots: seen }) => {
+    const category =
+      source === "axe"
+        ? issue.startsWith("color-contrast")
+          ? "contrast"
+          : "a11y"
+        : source === "error"
+          ? "other"
+          : (CATEGORY_BY_PREFIX.find(([prefix]) => prefix.test(issue))?.[1] ?? "other");
+    const severity = issue.startsWith("did not open")
+      ? "blocker"
+      : category === "target-size"
+        ? "minor"
+        : "major";
+    // A screen that failed may have no PNG; its JSON is always written.
+    const ext = source === "error" ? "json" : "png";
     return FindingInput.parse({
       group,
       screen: seen[0]!.screen,
       width: only(seen.map((s) => s.width)),
       theme: only(seen.map((s) => s.theme)),
       category,
-      severity: category === "target-size" ? "minor" : "major",
+      severity,
       title: issue.slice(0, 160),
-      detail: `${axe ? "axe (serious or critical)" : "fe's layout detector"}: ${issue}`.slice(
-        0,
-        4_000,
-      ),
+      detail: `${SOURCE_DETAIL[source]}: ${issue}`.slice(0, 4_000),
       evidence: seen
         .slice(0, 20)
         .map(
           (s) =>
-            `orchestration/runs/${runId}/artifacts/shots/${s.screen}/w${s.width}-${s.theme}.png`,
+            `orchestration/runs/${runId}/artifacts/shots/${s.screen}/w${s.width}-${s.theme}.${ext}`,
         ),
       selector: stableIssue(issue),
       autoDetected: true,

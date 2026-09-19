@@ -1140,7 +1140,13 @@ describe("RunLoop (spec §5.3)", () => {
 
   describe("function-tool approvals (the tool's own approval request)", () => {
     const readPage: MockTurn = {
-      outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+      outputs: [
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
+      ],
     };
     const firstUse = async () =>
       ({
@@ -1161,7 +1167,7 @@ describe("RunLoop (spec §5.3)", () => {
       await resumed.resume(new AbortController().signal);
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       expect(browser.functionRuns).toEqual([
-        { name: "read_page", args: { mode: "text", sinceHash: null } },
+        { name: "read_page", args: { mode: "text", sinceHash: null, offset: null } },
       ]);
     });
 
@@ -1216,8 +1222,16 @@ describe("RunLoop (spec §5.3)", () => {
     it("binds each call's approval to the destination its own card named (T10-12 I1)", async () => {
       const twoFills: MockTurn = {
         outputs: [
-          { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
-          { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+          {
+            type: "function",
+            name: "read_page",
+            args: { mode: "text", sinceHash: null, offset: null },
+          },
+          {
+            type: "function",
+            name: "read_page",
+            args: { mode: "interactive", sinceHash: null, offset: null },
+          },
         ],
       };
       const { run, browser, reload, ...first } = await setup([twoFills, done()]);
@@ -1280,7 +1294,11 @@ describe("RunLoop (spec §5.3)", () => {
           name: "fill_credential",
           args: { alias: "site", field: "otp", target: "e1" },
         },
-        { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
       ],
     };
     const { run, browser, loop } = await setup([fillOtp]);
@@ -1588,7 +1606,11 @@ describe("RunLoop (spec §5.3)", () => {
           name: "fill_credential",
           args: { alias: "site", field: "password", target: "e1" },
         },
-        { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
       ],
     };
     const { run, browser, loop } = await setup([twoCalls]);
@@ -1601,7 +1623,13 @@ describe("RunLoop (spec §5.3)", () => {
   describe("bypass mode (D44)", () => {
     const bypass = { approvalMode: "bypass" as const };
     const readPage: MockTurn = {
-      outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+      outputs: [
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
+      ],
     };
     const firstUse = async () =>
       ({
@@ -1767,6 +1795,22 @@ describe("function-tool writes join the act commit (B2 seam F2)", () => {
     expect(await storage.head("assets/orphan")).toBeNull();
   });
 
+  it("tells a tool what the run's budget still allows before it spends (B4 review I4)", async () => {
+    const { browser, loop } = await setup([capture, done()], {
+      budget: { maxSteps: 50, maxUsd: 2, maxActiveMinutes: 60 },
+    });
+    const left: number[] = [];
+    browser.functionHook = async (_name, step) => {
+      left.push(step.usdLeft());
+      step.addUsage({ ...EMPTY_USAGE, usd: 0.5 });
+      left.push(step.usdLeft());
+    };
+    expect((await drive(loop)).kind).toBe("completed");
+    expect(left[0]).toBeLessThanOrEqual(2);
+    expect(left[0]).toBeGreaterThan(1);
+    expect(left[1]).toBeCloseTo(left[0]! - 0.5, 6);
+  });
+
   it("charges what an interrupted tool already spent (Task 0 review M7)", async () => {
     const { run, browser, loop } = await setup([capture, done()]);
     browser.functionHook = async (_name, step) => {
@@ -1780,15 +1824,19 @@ describe("function-tool writes join the act commit (B2 seam F2)", () => {
 
   it("commits onComplete's writes with the completed transition", async () => {
     const event = blockAdded();
+    let seen: unknown;
     const { run, loop } = await setup([done()], {
       hooks: {
-        onComplete: async ({ step }) => {
+        onComplete: async ({ step, signal }) => {
+          seen = signal;
           step.emit(event);
           return { ok: true };
         },
       },
     });
     expect((await drive(loop)).kind).toBe("completed");
+    // A kill during completion reaches the hook's model calls (QA-082).
+    expect(seen).toBeInstanceOf(AbortSignal);
     const rows = await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id));
     expect(rows.map((row) => row.type)).toContain("block_added");
   });

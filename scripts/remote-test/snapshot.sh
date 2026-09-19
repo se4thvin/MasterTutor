@@ -1,5 +1,5 @@
-# Per-run snapshots of a synced worktree on the shared CI host. Sourced by run-on-host.sh and by
-# scripts/remote-test.test.ts.
+# Per-run snapshots of a synced worktree on the shared CI host. Sourced by run-on-host.sh, by
+# remote-test.sh (for sync_excludes) and by scripts/remote-test.test.ts.
 #
 # remote-test.sh rsyncs a worktree into ~/mt-ci/<worktree>/ while holding that worktree's sync
 # lock (~/mt-ci/.sync/<worktree>.lock), so syncs from concurrent runs never interleave. A later
@@ -11,6 +11,15 @@
 # Folders a suite writes results to, which remote-test.sh fetches from ~/mt-ci/<worktree>/.
 SNAPSHOT_RESULTS="apps/web/playwright-report apps/web/test-results apps/web/e2e/.out tests/bench/.out"
 
+# sync_excludes: rsync args that keep remote-test.sh's sync away from the result folders. Without
+# them a sync's --delete wipes a run's published results before they are fetched: macOS's
+# openrsync does not protect git-ignored receiver files the way rsync's `:- .gitignore` does.
+# Baselines (SNAPSHOT_BASELINES) are tracked sources: synced and snapshotted, never excluded.
+sync_excludes() {
+  local path
+  for path in $SNAPSHOT_RESULTS; do echo "--exclude=/$path"; done
+}
+
 # take_snapshot <synced dir> <snapshot dir> <sync lock>: the snapshot becomes an exact copy of
 # the synced sources, as of one moment between syncs.
 take_snapshot() {
@@ -21,6 +30,23 @@ take_snapshot() {
   find "$snap" -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} +
   flock "$lock" tar -C "$base" --exclude=node_modules --exclude=.next --exclude=./.mt-install.lock \
     "${excludes[@]}" -cf - . | tar -C "$snap" -xf -
+}
+
+# Playwright baselines a run may rewrite on purpose (--update-snapshots): every
+# <spec>.spec.ts-snapshots/*.png under apps/web/e2e.
+SNAPSHOT_BASELINES="apps/web/e2e"
+
+# publish_baselines <snapshot dir> <synced dir> <sync lock>: copies the baselines a run wrote or
+# changed back to the synced folder, for remote-test.sh to fetch, and names each one. Unchanged
+# baselines are left alone. Nothing is committed: the person reviews and commits them.
+publish_baselines() {
+  local snap=$1 base=$2 lock=$3 path
+  [[ -d "$snap/$SNAPSHOT_BASELINES" ]] || return 0
+  while IFS= read -r path; do
+    cmp -s "$snap/$path" "$base/$path" && continue
+    flock "$lock" bash -c 'mkdir -p "$(dirname "$2")" && cp -p "$1" "$2"' bash "$snap/$path" "$base/$path"
+    echo "remote-test: baseline updated: $path" >&2
+  done < <(cd "$snap" && find "$SNAPSHOT_BASELINES" -path '*.spec.ts-snapshots/*.png' -type f | sort)
 }
 
 # publish_results <snapshot dir> <synced dir> <sync lock>: copies the result folders a run made

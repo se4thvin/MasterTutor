@@ -13,7 +13,12 @@ done
   echo "qa:shoot: --run <YYYY-MM-DD-NN-test-qa-…> is required" >&2
   exit 2
 }
-"$root/scripts/remote-test.sh" qa shoot "${args[@]}"
-mkdir -p "$root/orchestration/runs/$run/artifacts/shots"
-rsync -a "$root/apps/web/e2e/.out/qa/$run/" "$root/orchestration/runs/$run/artifacts/shots/"
-echo "qa:shoot: shots in orchestration/runs/$run/artifacts/shots" >&2
+# A shoot that exits 1 (a screen did not open) still wrote every other shot: file them, then fail.
+status=0
+"$root/scripts/remote-test.sh" qa shoot "${args[@]}" || status=$?
+if [[ -d "$root/apps/web/e2e/.out/qa/$run" ]]; then
+  mkdir -p "$root/orchestration/runs/$run/artifacts/shots"
+  rsync -a "$root/apps/web/e2e/.out/qa/$run/" "$root/orchestration/runs/$run/artifacts/shots/"
+  echo "qa:shoot: shots in orchestration/runs/$run/artifacts/shots" >&2
+fi
+exit "$status"

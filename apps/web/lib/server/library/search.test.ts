@@ -35,4 +35,30 @@ describe("searchNotes", () => {
     );
     expect(out.items[0]?.title).toBe("lexical");
   });
+  it("hands the request's abort signal to the query embedding and stops once aborted (QA-091)", async () => {
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    const embeddings = {
+      embeddings: {
+        create: (_body: { input: string[] }, options?: { signal?: AbortSignal }) => {
+          seen = options?.signal;
+          return new Promise<never>((_resolve, reject) =>
+            options?.signal?.addEventListener("abort", () => reject(options.signal?.reason)),
+          );
+        },
+      },
+    };
+    const pending = searchNotes(
+      db,
+      "w",
+      { q: "atp", kind: null, limit: 5 },
+      {
+        embeddings,
+        signal: controller.signal,
+      },
+    );
+    controller.abort(new Error("client went away"));
+    await expect(pending).rejects.toThrow("client went away");
+    expect(seen?.aborted).toBe(true);
+  });
 });

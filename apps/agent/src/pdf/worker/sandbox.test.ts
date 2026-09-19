@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process";
+import { dirname, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
-import { PDFDocument } from "pdf-lib";
+import {
+  concatTransformationMatrix,
+  drawObject,
+  PDFDocument,
+  PDFName,
+  popGraphicsState,
+  pushGraphicsState,
+} from "pdf-lib";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { MAX_IMAGE_PIXELS, MAX_RENDER_PIXELS } from "../protocol.ts";
@@ -59,6 +68,38 @@ describe("runInSandbox (pdf.js in a permission-restricted child)", () => {
     // The image was skipped, not painted: the page stays white instead of red.
     expect(channels[1]!.mean).toBeGreaterThan(240);
   });
+  it("decodes a JPEG 2000 image, as scanned archives use (QA-111)", async () => {
+    // A 64×64 red JP2 (made with macOS sips), as the page's only content.
+    const jp2 = await readFile(
+      new URL("../../../../../tests/fixtures/pdf-images/red-64.jp2", import.meta.url),
+    );
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([200, 200]);
+    const image = doc.context.register(
+      doc.context.stream(jp2, {
+        Type: "XObject",
+        Subtype: "Image",
+        Width: 64,
+        Height: 64,
+        Filter: "JPXDecode",
+      }),
+    );
+    page.node.setXObject(PDFName.of("Im0"), image);
+    page.pushOperators(
+      pushGraphicsState(),
+      concatTransformationMatrix(200, 0, 0, 200, 0, 0),
+      drawObject("Im0"),
+      popGraphicsState(),
+    );
+    const out = await runInSandbox({ render: [1], scale: 1 }, await doc.save(), signal);
+    if (!out.ok) throw new Error(out.error);
+    const { channels } = await sharp(png(out.renders[0]!.png))
+      .flatten({ background: "#ffffff" })
+      .stats();
+    // Painted red, not left white: the JPX decoder (pdf.js's OpenJPEG wasm) ran.
+    expect(channels[0]!.mean).toBeGreaterThan(180);
+    expect(channels[1]!.mean).toBeLessThan(60);
+  });
   it("refuses a page with more text items than MAX_PAGE_ITEMS as too large (I-3)", async () => {
     const doc = await PDFDocument.create();
     const page = doc.addPage([612, 792]);
@@ -92,5 +133,45 @@ describe("runInSandbox (pdf.js in a permission-restricted child)", () => {
       { env: {}, encoding: "utf8" },
     );
     expect(exec.status).not.toBe(0);
+    expect(exec.stderr).toMatch(/ERR_ACCESS_DENIED/);
+  });
+  it("can write no file and compile no code from strings (QA-106)", () => {
+    const write = spawnSync(
+      process.execPath,
+      [...workerFlags(), "-e", "require('node:fs').writeFileSync('/tmp/mt-sandbox-write', 'x')"],
+      { env: {}, encoding: "utf8" },
+    );
+    expect(write.status).not.toBe(0);
+    expect(write.stderr).toMatch(/ERR_ACCESS_DENIED/);
+    for (const code of ["eval('1 + 1')", "new Function('return 1')()"]) {
+      const run = spawnSync(process.execPath, [...workerFlags(), "-e", code], {
+        env: {},
+        encoding: "utf8",
+      });
+      expect(run.status, code).not.toBe(0);
+      expect(run.stderr, code).toMatch(/Code generation from strings disallowed/);
+    }
+  });
+  it("reads no package outside its own through node_modules links (QA-105)", () => {
+    const agent = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+    const roots = workerFlags()
+      .filter((flag) => flag.startsWith("--allow-fs-read="))
+      .map((flag) => flag.slice("--allow-fs-read=".length));
+    // No root is a top-level node_modules or an ancestor of one: links there lead anywhere.
+    for (const modules of [resolve(agent, "node_modules"), resolve(agent, "../../node_modules")])
+      for (const root of roots)
+        expect(modules === root || modules.startsWith(root + sep)).toBe(false);
+    for (const linked of ["@mastertutor/contracts/package.json", "sharp/package.json"]) {
+      const read = spawnSync(
+        process.execPath,
+        [
+          ...workerFlags(),
+          "-e",
+          `require('node:fs').readFileSync(${JSON.stringify(resolve(agent, "node_modules", linked))})`,
+        ],
+        { env: {}, encoding: "utf8" },
+      );
+      expect(read.stderr, linked).toMatch(/ERR_ACCESS_DENIED/);
+    }
   });
 });

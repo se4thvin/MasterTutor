@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
   toOrigin,
@@ -9,9 +8,11 @@ import {
 } from "@mastertutor/contracts";
 import type { Page } from "playwright-core";
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
+import { sharedLocalOcr, type CachedScreen } from "../browser/local-ocr.ts";
 import type { MaskSources } from "../browser/masking.ts";
+import { createScreenCache, type ScreenCache } from "../browser/screen-cache.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import { perceptualHash } from "../browser/phash.ts";
+import { perceptualHash, UNCOMPARABLE_HASH } from "../browser/phash.ts";
 import { captureModelScreenshot, WITHHELD, withheldScreenshot } from "../browser/screenshot.ts";
 import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession } from "../browser/session.ts";
@@ -120,9 +121,9 @@ export async function observeOnOnePage(
         title: "",
         domHash: "",
         screenshot: await withheldScreenshot(observation.screenshot, WITHHELD.navigating),
-        // A black frame says nothing about the page: a random hash keeps loop detection from
-        // treating consecutive withheld frames as the same screen (M8).
-        phash: randomBytes(8).readBigUInt64BE(),
+        // A black frame says nothing about the page: loop detection never treats consecutive
+        // withheld frames as the same screen (M8).
+        phash: UNCOMPARABLE_HASH,
       };
     url = now;
   }
@@ -134,6 +135,8 @@ export class SessionLoopBrowser implements LoopBrowser {
   readonly #executor: ComputerExecutor;
   readonly #registry: ToolRegistry;
   readonly #mask: MaskSources;
+  /** This run's pixel-screen cache: lives and dies with this lease (QA-098 ruling). */
+  readonly #screens: ScreenCache<CachedScreen>;
   readonly #run: () => RunSnapshot;
   readonly #log: Log;
   readonly #slotName: string;
@@ -153,6 +156,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     this.#executor = options.executor;
     this.#registry = options.registry;
     this.#mask = options.mask;
+    this.#screens = createScreenCache(options.mask);
     this.#run = options.run;
     this.#log = options.log;
   }
@@ -167,8 +171,14 @@ export class SessionLoopBrowser implements LoopBrowser {
 
   async #capture(url: string, signal: AbortSignal): Promise<Observation> {
     const session = this.#session;
-    const screenshot = await captureModelScreenshot(session, this.#mask, signal);
-    const page = await readPage(session, { mode: "interactive", sinceHash: null });
+    const screenshot = await captureModelScreenshot(
+      session,
+      this.#mask,
+      signal,
+      sharedLocalOcr(),
+      this.#screens,
+    );
+    const page = await readPage(session, { mode: "interactive", sinceHash: null, offset: null });
     const state = await (await session.worlds()).evaluate(pageStateScript, null);
     return {
       url,
@@ -220,8 +230,16 @@ export class SessionLoopBrowser implements LoopBrowser {
     return null;
   }
 
-  runComputer(actions: readonly ComputerAction[], signal: AbortSignal, gate: ActionGate) {
-    return this.#executor.run(actions, signal, gate);
+  async runComputer(actions: readonly ComputerAction[], signal: AbortSignal, gate: ActionGate) {
+    const run = await this.#executor.run(actions, signal, gate);
+    // Targets are stored on the act step: a vault secret in their page text is redacted (M13).
+    const redact = (text: string) => this.#mask.redact(text);
+    return {
+      ...run,
+      targets: run.targets.map((t) =>
+        t ? { label: redact(t.label), ancestors: t.ancestors.map(redact) } : null,
+      ),
+    };
   }
 
   functionApproval(name: FunctionToolName, args: unknown, signal: AbortSignal) {

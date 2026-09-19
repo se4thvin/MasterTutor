@@ -311,7 +311,7 @@ describe("fill_credential", () => {
     const registry = new ToolRegistry([register(readPageTool)], env.log.logger, mask);
     const { output } = await registry.run(
       "read_page",
-      { mode: "text", sinceHash: null },
+      { mode: "text", sinceHash: null, offset: null },
       {
         runId,
         workspaceId: env.workspaceId,
@@ -731,6 +731,60 @@ describe("fill_credential", () => {
         error: "no_focused_field",
       });
       expect(await frame.inputValue("#child-password")).toBe("");
+    });
+
+    it("fills a focused input inside an open shadow root (QA-071)", async () => {
+      await tb.page.goto(`${login}/password-shadow`);
+      await tb.page.waitForSelector("#password");
+      await tb.page.focus("#password");
+      expect(await fillCredential(focusedDeps(), ctx(), focused("password"))).toEqual({ ok: true });
+      expect(await tb.page.inputValue("#password")).not.toBe("");
+    });
+
+    it("holds a focused field in an off-origin form to the card that named it (QA-071)", async () => {
+      await tb.page.goto(`${login}/offsite-form`);
+      await tb.page.focus("#password");
+      const d = focusedDeps();
+      expect(await fillCredential(d, ctx(), focused("password"))).toEqual({
+        error: "approval_required",
+      });
+      expect(await tb.page.inputValue("#password")).toBe("");
+      const card = await fillApproval(d, ctx(), focused("password"));
+      expect(card).toEqual({
+        kind: "credential_first_use",
+        alias: "site",
+        origin: login,
+        postsTo: fx.origin("evil"),
+      });
+      expect(
+        await fillCredential(d, ctx(policyApproval(fx.origin("evil"))), focused("password")),
+      ).toEqual({
+        error: "needs_human",
+      });
+      expect(await fillCredential(d, ctx(approve(card)), focused("password"))).toEqual({
+        ok: true,
+      });
+    });
+
+    it("raises no card when nothing is focused, so no person approves a fill that cannot happen (QA-063)", async () => {
+      // A never-granted alias: before the fix its approve phase raised a first-use card.
+      await env.seedItem({
+        alias: "focus-none",
+        origin: login,
+        secrets: { username: account.email },
+      });
+      await tb.page.goto(`${login}/password`);
+      await tb.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      expect(
+        await fillApproval(focusedDeps(), ctx(), {
+          alias: "focus-none",
+          field: "username",
+          target: "focused",
+        }),
+      ).toBeNull();
+      expect(await fillCredential(focusedDeps(), ctx(), focused("username"))).toEqual({
+        error: "no_focused_field",
+      });
     });
 
     it("asks the approve-phase question about the focused field like any ref", async () => {
