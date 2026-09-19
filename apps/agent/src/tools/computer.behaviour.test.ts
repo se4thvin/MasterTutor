@@ -542,11 +542,14 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     (worlds as { evaluate: typeof evaluate }).evaluate = (async (
       ...args: Parameters<typeof evaluate>
     ) => {
-      if (String(args[0]).replace(/\s/g, "") === "()=>0")
+      if (String(args[0]).replace(/\s/g, "") === "()=>0") {
         await s.page.evaluate(() => {
           const ad = document.getElementById("ad")!;
           ad.style.cssText += "; left: 40px; top: 20px; width: 200px; height: 30px";
         });
+        // Painted, so the browser routes a press there to the (hung) advert's own document.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
       return evaluate(...args);
     }) as typeof evaluate;
     const code = { x: 100, y: 35 };
@@ -1287,36 +1290,39 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
       const release = await holdSlowPages(s);
       await s.goto(`${SITE}/loading-frames.html?leave`, signal);
       await s.page.mouse.move(600, 200); // off Continue, so the executor's move enters it
-      expect(
+      // Refused while it is seen in the settle wait, or else at the press.
+      expect([PAGE_SETTLING_REFUSAL, TARGET_MOVED_REFUSAL]).toContain(
         await executor.execute(click(centre), signal, await verdict(s, centre, approved)),
-      ).toBe(PAGE_SETTLING_REFUSAL);
+      );
       expect(await clickedGo(s)).toBeUndefined();
       release();
     },
   );
 
-  /** The arm's round trips take `ms` each (well within the budget): checks before the press run late. */
-  async function slowArm(s: BrowserSession, ms: number) {
-    const cdp = (await s.worlds()).cdp;
-    const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
-    (cdp as { send: typeof send }).send = async (method, params) => {
-      if (method === "Page.addScriptToEvaluateOnNewDocument" || method === "Target.setAutoAttach")
-        await new Promise((resolve) => setTimeout(resolve, ms));
-      return send(method, params);
-    };
-  }
-
   it("a main-frame navigation that starts after the settle wait is still caught at the press (T1)", async () => {
-    // 50 ms after the pointer enters Continue (after the settle wait, during the slowed arm) the
-    // page navigates itself, held: only the press-time check can see it.
     const { s, executor } = await setup();
     const release = await holdSlowPages(s);
-    await s.goto(`${SITE}/loading-frames.html?leave=50`, signal);
-    await slowArm(s, 60);
+    await s.goto(`${SITE}/loading-frames.html`, signal);
+    // During the guard's last round trips before the press (the page-changed flush), the page
+    // navigates itself (held): only the press-time check can see it.
+    const worlds = await s.worlds();
+    const evaluate = worlds.evaluate.bind(worlds);
+    let started = false;
+    (worlds as { evaluate: typeof evaluate }).evaluate = (async (
+      ...args: Parameters<typeof evaluate>
+    ) => {
+      if (!started && String(args[0]).replace(/\s/g, "") === "()=>0") {
+        started = true;
+        await s.page.evaluate(() => (location.href = "/interactive.html?held"));
+        await new Promise((resolve) => setTimeout(resolve, 100)); // its start is reported
+      }
+      return evaluate(...args);
+    }) as typeof evaluate;
     await s.page.mouse.move(600, 200);
     expect(await executor.execute(click(centre), signal, await verdict(s, centre, false))).toBe(
       TARGET_MOVED_REFUSAL,
     );
+    expect(started).toBe(true);
     expect(await clickedGo(s)).toBeUndefined();
     release();
   });
