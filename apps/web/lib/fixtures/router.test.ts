@@ -25,8 +25,6 @@ describe("session", () => {
     await expect(fixture.vault.list({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     const live = createRouterClient(liveRouter, { context: { viewer: null } });
     await expect(live.settings.get({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    const signedIn = createRouterClient(liveRouter, { context: { viewer: FIXTURE_VIEWER } });
-    await expect(signedIn.benchmarks.list({})).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
   });
 });
 

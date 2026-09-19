@@ -7,6 +7,7 @@ import {
   RUN_STATUSES,
   SLOT_STATES,
   STEP_STATES,
+  TOOL_PROFILES,
 } from "@mastertutor/contracts";
 import { is } from "drizzle-orm";
 import { PgTable, getTableConfig } from "drizzle-orm/pg-core";
@@ -52,6 +53,7 @@ describe("schema", () => {
 
   it("keeps pg enums in sync with contracts", () => {
     expect(schema.runStatusEnum.enumValues).toEqual([...RUN_STATUSES]);
+    expect(schema.toolProfileEnum.enumValues).toEqual([...TOOL_PROFILES]);
     expect(schema.controllerEnum.enumValues).toEqual([...CONTROLLERS]);
     expect(schema.approvalModeEnum.enumValues).toEqual([...APPROVAL_MODES]);
     expect(schema.approvalKindEnum.enumValues).toEqual([...APPROVAL_KINDS]);

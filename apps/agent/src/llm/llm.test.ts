@@ -11,15 +11,17 @@ import {
   type ModelReply,
   type ModelRequest,
 } from "./client.ts";
-import { goalText } from "./instructions.ts";
+import { agentInstructions, goalText } from "./instructions.ts";
 import { callSignature, describeCall, parseModelOutput } from "./items.ts";
 import { MODEL_PRICES, addUsage, costUsd, usageDelta } from "./pricing.ts";
+import { agentTools } from "./tools.ts";
 
 const request: ModelRequest = {
   model: MODELS.agentPrimary,
   instructions: "i",
   input: [],
   format: "agent_turn",
+  toolProfile: "browser_use",
 };
 const reply: ModelReply = {
   id: "resp_1",
@@ -340,5 +342,69 @@ describe("statelessParams (openai-data-policy.md)", () => {
       background: true,
     } as never);
     expect(params).toEqual({ model: "m", input: [], store: false });
+  });
+});
+
+describe("tool profiles (Phase 10)", () => {
+  const names = (tools: ReturnType<typeof agentTools>) =>
+    tools.map((tool) => ("name" in tool ? tool.name : tool.type));
+
+  it("declares exactly the profile's tools", () => {
+    expect(names(agentTools("computer_use"))).toEqual([
+      "computer",
+      "fill_credential",
+      "use_passkey",
+    ]);
+    expect(names(agentTools("browser_use")).sort()).toEqual([...TOOL_NAMES].sort());
+  });
+
+  it("describes fill_credential by profile: focused for pixels, a ref or focused for the DOM", () => {
+    const fill = (profile: "computer_use" | "browser_use") =>
+      JSON.stringify(
+        agentTools(profile).find((tool) => "name" in tool && tool.name === "fill_credential"),
+      );
+    expect(fill("computer_use")).toContain('target \\"focused\\"');
+    expect(fill("computer_use")).not.toContain("read_page");
+    expect(fill("browser_use")).toContain("read_page");
+  });
+
+  it("sends the run's profile tools on every request", async () => {
+    const mock = await startLlmMock({
+      scenarios: [
+        { name: "pixels", turns: [{ outputs: [{ type: "turn", status: "done", reason: "ok" }] }] },
+      ],
+    });
+    try {
+      const client = createOpenAIModelClient({ apiKey: "test-key", baseURL: `${mock.url}/v1` });
+      await client.create(
+        {
+          ...request,
+          toolProfile: "computer_use",
+          input: [
+            { role: "user", content: [{ type: "input_text", text: "[scenario:pixels] go" }] },
+          ],
+        },
+        signal(),
+      );
+      expect(
+        mock.requestsFor("pixels")[0]!.body.tools?.map((tool) => tool.name ?? tool.type),
+      ).toEqual(["computer", "fill_credential", "use_passkey"]);
+    } finally {
+      await mock.close();
+    }
+  });
+
+  it("writes instructions per profile, with a generic consent-banner rule and no site names", () => {
+    const pixels = agentInstructions("computer_use");
+    const dom = agentInstructions("browser_use");
+    expect(pixels).not.toContain("read_page");
+    expect(pixels).toContain('target "focused"');
+    expect(dom).toContain('read_page with mode "interactive"');
+    expect(dom).toContain("element ref");
+    for (const text of [pixels, dom]) {
+      expect(text).toContain("cookie or consent banner");
+      expect(text).toContain("<untrusted_page_content>");
+      expect(text).not.toMatch(/zybook|osano/i);
+    }
   });
 });

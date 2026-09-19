@@ -32,7 +32,7 @@ import type { SlotPool } from "../slots/pool.ts";
 import { matchAccelerator } from "../tools/accelerators.ts";
 import { ComputerExecutor, type ActionGate } from "../tools/computer.ts";
 import { readPage, readPageTool } from "../tools/read-page.ts";
-import { ToolRegistry } from "../tools/registry.ts";
+import { ToolRegistry, profileTools } from "../tools/registry.ts";
 import { register, type CallApproval } from "../tools/types.ts";
 import type { RunHooks } from "./hooks.ts";
 import type { ConnectBrowser, LoopBrowser, Observation } from "./loop-browser.ts";
@@ -335,7 +335,7 @@ export function slotBrowserConnector(options: {
       });
       const mask = options.hooks.maskSources(run().id);
       const registry = new ToolRegistry(
-        [register(readPageTool), ...options.hooks.functionTools],
+        profileTools(run().toolProfile, [register(readPageTool), ...options.hooks.functionTools]),
         options.log,
         mask,
       );

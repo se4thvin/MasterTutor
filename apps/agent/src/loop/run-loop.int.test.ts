@@ -1,4 +1,4 @@
-import { MODELS, type ApprovalMode, type Budget } from "@mastertutor/contracts";
+import { MODELS, type ApprovalMode, type Budget, type ToolProfile } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
   approvals,
@@ -100,6 +100,7 @@ async function setup(
   turns: MockTurn[],
   options: {
     approvalMode?: ApprovalMode;
+    toolProfile?: ToolProfile;
     budget?: Budget;
     hooks?: Partial<RunHooks>;
     leaseExpired?: () => boolean;
@@ -113,6 +114,7 @@ async function setup(
     status: "running",
     leaseOwner: OWNER,
     approvalMode: options.approvalMode,
+    toolProfile: options.toolProfile,
     budget: options.budget,
   });
   const browser = new FakeLoopBrowser();
@@ -1694,5 +1696,28 @@ describe("RunLoop (spec §5.3)", () => {
       });
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
     });
+  });
+});
+
+describe("tool profiles reach the model (Phase 10)", () => {
+  it("a computer_use run sends only its profile's tools and its own instructions", async () => {
+    const { name, loop } = await setup([done()], { toolProfile: "computer_use" });
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const body = mock.requestsFor(name)[0]!.body as {
+      tools?: Array<{ type: string; name?: string }>;
+      instructions?: string;
+    };
+    expect(body.tools?.map((tool) => tool.name ?? tool.type)).toEqual([
+      "computer",
+      "fill_credential",
+      "use_passkey",
+    ]);
+    expect(body.instructions).not.toContain("read_page");
+  });
+
+  it("a browser_use run keeps all seven tools", async () => {
+    const { name, loop } = await setup([done()]);
+    await drive(loop);
+    expect((mock.requestsFor(name)[0]!.body as { tools?: unknown[] }).tools).toHaveLength(7);
   });
 });
