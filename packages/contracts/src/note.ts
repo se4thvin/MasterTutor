@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BlockOrigin, BlockType } from "./enums.ts";
+import { MAX_BLOCK_CHARS } from "./markdown.ts";
 import { IsoDateTime, Sha256Hex, Uuid } from "./primitives.ts";
 
 export const BBox = z.object({
@@ -41,7 +42,7 @@ export const NoteBlock = z.object({
   noteId: Uuid,
   position: z.string().min(1).max(256),
   type: BlockType,
-  markdown: z.string().max(200_000),
+  markdown: z.string().max(MAX_BLOCK_CHARS),
   assetId: Uuid.nullable(),
   sourceId: Uuid.nullable(),
   origin: BlockOrigin,

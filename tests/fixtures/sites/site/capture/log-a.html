@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Log A</title>
+  </head>
+  <body>
+    <p>Tab A keeps fetching.</p>
+    <script>
+      let n = 0;
+      setInterval(() => void fetch(`/capture/data.json?tab=a&n=${n++}`).then((r) => r.text()), 100);
+    </script>
+  </body>
+</html>

@@ -1,4 +1,4 @@
-import { MODELS, type Usage } from "@mastertutor/contracts";
+import { EMPTY_USAGE, MODELS, type Usage } from "@mastertutor/contracts";
 
 export interface TokenUsage {
   input: number;
@@ -69,4 +69,18 @@ export function addUsage(a: Usage, b: Usage): Usage {
     usd: Math.round((a.usd + b.usd) * 1e6) / 1e6,
     activeMs: a.activeMs + b.activeMs,
   };
+}
+
+/** USD per million input tokens for MODELS.embeddings (text-embedding-3-small list price). */
+export const EMBEDDING_USD_PER_M = 0.02;
+/** USD per audio minute for MODELS.transcription (gpt-4o-transcribe-diarize list price). */
+export const TRANSCRIPTION_USD_PER_MINUTE = 0.006;
+
+/** Embedding spend for one request; counts toward the run budget (preflight F16). */
+export function embeddingUsage(tokens: number): Usage {
+  return { ...EMPTY_USAGE, inputTokens: tokens, usd: (tokens * EMBEDDING_USD_PER_M) / 1e6 };
+}
+
+export function transcriptionUsage(seconds: number): Usage {
+  return { ...EMPTY_USAGE, usd: (Math.max(0, seconds) / 60) * TRANSCRIPTION_USD_PER_MINUTE };
 }

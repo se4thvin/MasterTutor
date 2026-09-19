@@ -16,3 +16,4 @@ apps/web/AGENTS.md
 apps/web/CLAUDE.md
 tests/fixtures/vault-sites/.dist/
 apps/web/e2e/.out/
+orchestration/runs/*/artifacts/shots/

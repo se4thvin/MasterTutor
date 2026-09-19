@@ -342,6 +342,57 @@ describe("llm-mock", () => {
   });
 });
 
+describe("non-Responses endpoints and structured formats", () => {
+  it("answers embeddings deterministically and records them", async () => {
+    const mock = await startLlmMock();
+    const res = await fetch(`${mock.url}/v1/embeddings`, {
+      method: "POST",
+      body: JSON.stringify({ model: "m", input: ["a"] }),
+    });
+    expect(((await res.json()) as { data: unknown[] }).data).toHaveLength(1);
+    expect(mock.requests.at(-1)!.path).toBe("/v1/embeddings");
+    await mock.close();
+  });
+  it("refuses identifiers on embeddings and transcriptions", async () => {
+    const mock = await startLlmMock();
+    expect(
+      (
+        await fetch(`${mock.url}/v1/embeddings`, {
+          method: "POST",
+          body: JSON.stringify({ model: "m", input: ["a"], user: "u" }),
+        })
+      ).status,
+    ).toBe(400);
+    const form = new FormData();
+    form.append("model", "gpt-4o-transcribe-diarize");
+    form.append("metadata", "x");
+    form.append("file", new Blob([new Uint8Array([1])]), "a.wav");
+    expect(
+      (await fetch(`${mock.url}/v1/audio/transcriptions`, { method: "POST", body: form })).status,
+    ).toBe(400);
+    expect(mock.failures).toHaveLength(2);
+    await mock.close();
+  });
+  it("routes ocr_text and filing_decision formats without a scenario tag", async () => {
+    const mock = await startLlmMock();
+    const res = await fetch(`${mock.url}/v1/responses`, {
+      method: "POST",
+      body: JSON.stringify({
+        model: "m",
+        store: false,
+        input: [],
+        text: { format: { name: "filing_decision" } },
+      }),
+    });
+    const body = (await res.json()) as { output: Array<{ content: Array<{ text: string }> }> };
+    expect(JSON.parse(body.output[0]!.content[0]!.text)).toEqual({
+      path: ["Inbox"],
+      createLeaf: true,
+    });
+    await mock.close();
+  });
+});
+
 describe("llm-mock scenario routing (D26, P7-8)", () => {
   const counter = (): Scenario => ({
     name: "count",

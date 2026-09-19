@@ -1,9 +1,9 @@
+import { buildNoteMarkdown, markdownFileName } from "@mastertutor/contracts/export";
 import { createRouterClient } from "@orpc/server";
 import { describe, expect, it } from "vitest";
 import { ids } from "../fixtures/ids.ts";
 import { fixtureRouter } from "../fixtures/router.ts";
 import { FIXTURE_VIEWER } from "../server/viewer.ts";
-import { buildNoteMarkdown, exportFileName } from "./note-markdown.ts";
 import { safeDownloadUrl } from "./download-url.ts";
 
 const api = createRouterClient(fixtureRouter, {
@@ -27,53 +27,53 @@ describe("Obsidian export", () => {
   });
 
   it("escapes YAML and makes safe file names", () => {
-    expect(exportFileName('A "quoted" / title: part 1')).toBe("A quoted title part 1.md");
-    expect(exportFileName("   ")).toBe("note.md");
+    expect(markdownFileName('A "quoted" / title: part 1')).toBe("A quoted title part 1.md");
+    expect(markdownFileName("   ")).toBe("note.md");
   });
 
   it("hardens file names against control characters, dot files and reserved names", () => {
-    expect(exportFileName("bell\u0007tab\u0009nul\u0000end\u007f")).toBe("bell tab nul end.md");
-    expect(exportFileName("..hidden")).toBe("hidden.md");
-    expect(exportFileName("trailing. . ")).toBe("trailing.md");
-    expect(exportFileName("CON")).toBe("_CON.md");
-    expect(exportFileName("lpt9.txt")).toBe("_lpt9.txt.md");
-    expect(exportFileName("Console")).toBe("Console.md");
+    expect(markdownFileName("bell\u0007tab\u0009nul\u0000end\u007f")).toBe("bell tab nul end.md");
+    expect(markdownFileName("..hidden")).toBe("hidden.md");
+    expect(markdownFileName("trailing. . ")).toBe("trailing.md");
+    expect(markdownFileName("CON")).toBe("_CON.md");
+    expect(markdownFileName("lpt9.txt")).toBe("_lpt9.txt.md");
+    expect(markdownFileName("Console")).toBe("Console.md");
   });
 
   it("caps file names at 255 UTF-8 bytes (NAME_MAX), not characters, without splitting one", () => {
     const bytes = (name: string) => new TextEncoder().encode(name).length;
-    const ascii = exportFileName("a".repeat(400));
+    const ascii = markdownFileName("a".repeat(400));
     expect(bytes(ascii)).toBe(255);
     expect(ascii.endsWith(".md")).toBe(true);
-    const emoji = exportFileName("😀".repeat(200));
+    const emoji = markdownFileName("😀".repeat(200));
     expect(bytes(emoji)).toBeLessThanOrEqual(255);
     expect(emoji).toBe(`${"😀".repeat(63)}.md`);
     expect(emoji.isWellFormed()).toBe(true);
     // A ZWJ family is one grapheme: it is kept whole or dropped, never cut into its parts.
     const family = "👨‍👩‍👧";
-    const families = exportFileName(family.repeat(40));
+    const families = markdownFileName(family.repeat(40));
     expect(bytes(families)).toBeLessThanOrEqual(255);
     expect(families.slice(0, -3).replaceAll(family, "")).toBe("");
-    expect(exportFileName("é".repeat(200))).toBe(`${"é".repeat(126)}.md`);
+    expect(markdownFileName("é".repeat(200))).toBe(`${"é".repeat(126)}.md`);
   });
 
   it("checks reserved names after the cap, so a cut cannot expose one", () => {
     // One grapheme of 261 bytes (e + 130 combining acutes) cannot fit, leaving only "CON".
-    expect(exportFileName(`CON ${"e" + "\u0301".repeat(130)}`)).toBe("_CON.md");
+    expect(markdownFileName(`CON ${"e" + "\u0301".repeat(130)}`)).toBe("_CON.md");
     // A long reserved-looking name keeps its prefix and still fits NAME_MAX.
-    const long = exportFileName(`lpt9.${"a".repeat(300)}`);
+    const long = markdownFileName(`lpt9.${"a".repeat(300)}`);
     expect(long.startsWith("_lpt9.")).toBe(true);
     expect(new TextEncoder().encode(long).length).toBe(255);
   });
 
   it("strips bidi controls so a name cannot display as something else", () => {
-    expect(exportFileName("invoice\u202Egpj.exe")).toBe("invoicegpj.exe.md");
+    expect(markdownFileName("invoice\u202Egpj.exe")).toBe("invoicegpj.exe.md");
     const bidi = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069];
     // LRM, RLM and ALM are bidi controls too.
     for (const cp of [...bidi, 0x200e, 0x200f, 0x061c]) {
-      expect(exportFileName(`a${String.fromCodePoint(cp)}b`), cp.toString(16)).toBe("ab.md");
+      expect(markdownFileName(`a${String.fromCodePoint(cp)}b`), cp.toString(16)).toBe("ab.md");
     }
-    expect(exportFileName("\u2067\u2069")).toBe("note.md");
+    expect(markdownFileName("\u2067\u2069")).toBe("note.md");
   });
 
   it("explains an unverified block by its origin, not always as an image", async () => {
@@ -135,9 +135,11 @@ describe("Obsidian export", () => {
     expect(safeDownloadUrl("blob:https://app.example/1234", origin)).toBe(
       "blob:https://app.example/1234",
     );
-    expect(safeDownloadUrl("data:text/markdown;charset=utf-8,%23", origin)).toBe(
-      "data:text/markdown;charset=utf-8,%23",
+    expect(safeDownloadUrl("data:application/zip;base64,UEsDBA==", origin)).toBe(
+      "data:application/zip;base64,UEsDBA==",
     );
+    // The export is a zip (decision 18): a Markdown data URL is no longer what it serves.
+    expect(safeDownloadUrl("data:text/markdown,%23", origin)).toBeNull();
     for (const bad of [
       "javascript:alert(1)",
       "data:text/html,<script>1</script>",
@@ -151,6 +153,6 @@ describe("Obsidian export", () => {
 
   it("is served by the fixture notes.export as a data URL", async () => {
     const result = await api.notes.export({ noteId: ids.note(1) });
-    expect(result.downloadUrl.startsWith("data:text/markdown;charset=utf-8,")).toBe(true);
+    expect(result.downloadUrl.startsWith("data:application/zip;base64,")).toBe(true);
   });
 });

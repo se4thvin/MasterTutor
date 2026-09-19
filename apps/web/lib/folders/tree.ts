@@ -1,7 +1,14 @@
 import type { FolderView } from "@mastertutor/contracts";
 
-/** Root folders are depth 1; spec §4 allows at most 8 levels. */
-export const MAX_FOLDER_DEPTH = 8;
+/** One folder rule for web, fixture and agent (contracts); the DB trigger stays the authority. */
+export {
+  MAX_FOLDER_DEPTH,
+  canCreateFolder,
+  canMoveFolder,
+  descendantIds,
+  folderDepth,
+  folderChain as folderPath,
+} from "@mastertutor/contracts";
 
 export interface FolderNode {
   folder: FolderView;
@@ -43,64 +50,6 @@ export function childFolders(
   parentId: string | null,
 ): FolderView[] {
   return folders.filter((f) => f.parentId === parentId).sort(byOrder);
-}
-
-export function folderPath(folders: readonly FolderView[], id: string): FolderView[] {
-  const byId = new Map(folders.map((f) => [f.id, f]));
-  const path: FolderView[] = [];
-  const seen = new Set<string>();
-  let current = byId.get(id);
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id);
-    path.unshift(current);
-    current = current.parentId ? byId.get(current.parentId) : undefined;
-  }
-  return path;
-}
-
-export function folderDepth(folders: readonly FolderView[], id: string | null): number {
-  return id === null ? 0 : folderPath(folders, id).length;
-}
-
-export function descendantIds(folders: readonly FolderView[], id: string): Set<string> {
-  const result = new Set([id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const f of folders) {
-      if (f.parentId !== null && result.has(f.parentId) && !result.has(f.id)) {
-        result.add(f.id);
-        grew = true;
-      }
-    }
-  }
-  return result;
-}
-
-function subtreeHeight(
-  folders: readonly FolderView[],
-  id: string,
-  seen: Set<string> = new Set(),
-): number {
-  if (seen.has(id)) return 0;
-  seen.add(id);
-  const heights = folders
-    .filter((f) => f.parentId === id)
-    .map((c) => subtreeHeight(folders, c.id, seen));
-  return 1 + Math.max(0, ...heights);
-}
-
-export function canMoveFolder(
-  folders: readonly FolderView[],
-  folderId: string,
-  newParentId: string | null,
-): boolean {
-  if (newParentId !== null && descendantIds(folders, folderId).has(newParentId)) return false;
-  return folderDepth(folders, newParentId) + subtreeHeight(folders, folderId) <= MAX_FOLDER_DEPTH;
-}
-
-export function canCreateFolder(folders: readonly FolderView[], parentId: string | null): boolean {
-  return folderDepth(folders, parentId) + 1 <= MAX_FOLDER_DEPTH;
 }
 
 export function flattenVisible(

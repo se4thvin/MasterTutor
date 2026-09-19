@@ -1,4 +1,9 @@
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import type { PgDatabase } from "drizzle-orm/pg-core";
+import {
+  drizzle,
+  type PostgresJsDatabase,
+  type PostgresJsQueryResultHKT,
+} from "drizzle-orm/postgres-js";
 import postgres, { type Sql } from "postgres";
 import * as schema from "./schema/index.ts";
 
@@ -22,3 +27,5 @@ export function createDb(databaseUrl: string, options: CreateDbOptions = {}): Db
 
 /** A drizzle transaction handle. Writes that must commit with a NOTIFY take one of these. */
 export type DbTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** Anything query helpers accept: the pool or a transaction. */
+export type DbLike = PgDatabase<PostgresJsQueryResultHKT, typeof schema>;

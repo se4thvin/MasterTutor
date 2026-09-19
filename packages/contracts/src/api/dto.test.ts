@@ -12,6 +12,7 @@ import {
   HeldDownloadView,
   ListNotesInput,
   RunDetail,
+  StoredDownloadView,
   RunSummary,
   SetSecretInput,
   SettingsView,
@@ -285,5 +286,32 @@ describe("tool profiles and takeovers (Phase 10, P10a-3/5)", () => {
     expect(BenchmarkView.safeParse(without(benchmarkView, "toolProfile")).success).toBe(false);
     expect(BenchmarkRunView.safeParse(benchmarkRun).success).toBe(true);
     expect(BenchmarkRunView.safeParse(without(benchmarkRun, "takeovers")).success).toBe(false);
+  });
+});
+
+describe("RunDetail.downloads (reload of a finished run)", () => {
+  it("carries each stored download as id, asset, filename, size and time, and nothing else", () => {
+    expect(Object.keys(RunDetail.shape)).toContain("downloads");
+    const stored = {
+      id: runId,
+      assetId: runId,
+      filename: "week-2 report.pdf",
+      bytes: 2_048,
+      at: "2026-10-07T10:00:00.000Z",
+    };
+    expect(StoredDownloadView.parse({ ...stored, approvedBy: "u-1", sha256: "x" })).toEqual(stored);
+  });
+
+  it("refuses an over-long name, a negative size and a download with no stored file", () => {
+    const ok = {
+      id: runId,
+      assetId: runId,
+      filename: "a.pdf",
+      bytes: 1,
+      at: "2026-10-07T10:00:00.000Z",
+    };
+    expect(StoredDownloadView.safeParse({ ...ok, filename: "x".repeat(256) }).success).toBe(false);
+    expect(StoredDownloadView.safeParse({ ...ok, bytes: -1 }).success).toBe(false);
+    expect(StoredDownloadView.safeParse({ ...ok, assetId: null }).success).toBe(false);
   });
 });

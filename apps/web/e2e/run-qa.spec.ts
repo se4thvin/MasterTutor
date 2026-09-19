@@ -1,95 +1,8 @@
-import type { Page } from "@playwright/test";
-import { rec, recordedDetail, recordedEvents } from "../lib/fixtures/run-recording.ts";
+import { recordedEvents } from "../lib/fixtures/run-recording.ts";
 import { movingAnimations } from "./helpers/motion.ts";
 import { emit, frame, gotoRun } from "./helpers/run.ts";
-import { expect, expectCleanScreen, isCompact, test } from "./helpers/test.ts";
-
-async function openReplay(page: Page) {
-  if (isCompact(page)) await page.getByRole("button", { name: /^Steps/ }).click();
-  await page.getByRole("button", { name: "Replay step: Clicked “Log in”" }).click();
-  if (isCompact(page)) {
-    await page.keyboard.press("Escape");
-    // Closing the sheet returns focus to the Steps button below the frame, which scrolls the page;
-    // check the frame where a viewer sees it, not under the sticky toolbar.
-    await page.locator("#main").evaluate((main) => main.scrollTo({ top: 0 }));
-  }
-}
-
-const SCENARIOS: { name: string; state: string; setup(page: Page): Promise<void> }[] = [
-  { name: "live", state: "live", setup: async (page) => void (await gotoRun(page)) },
-  {
-    name: "acting",
-    state: "acting",
-    setup: async (page) => {
-      await gotoRun(page);
-      await emit(page, [recordedEvents()[0]!]);
-    },
-  },
-  {
-    name: "approval",
-    state: "approval",
-    setup: async (page) => {
-      await gotoRun(page);
-      await emit(page, recordedEvents());
-    },
-  },
-  {
-    name: "control",
-    state: "control",
-    setup: async (page) =>
-      void (await gotoRun(page, {
-        detail: recordedDetail({ controller: "user", status: "waiting", waitReason: "takeover" }),
-      })),
-  },
-  {
-    name: "paused",
-    state: "paused",
-    setup: async (page) =>
-      void (await gotoRun(page, {
-        detail: recordedDetail({ status: "sleeping", slotName: null }),
-      })),
-  },
-  {
-    name: "reconnecting",
-    state: "reconnecting",
-    setup: async (page) => {
-      await gotoRun(page);
-      await page.waitForFunction(() => window.__sse.sources.some((s) => s.readyState === 1));
-      await page.evaluate(() => {
-        window.__sse.blockOpen = true;
-        window.__sse.fail(true);
-      });
-    },
-  },
-  {
-    name: "replay",
-    state: "replay",
-    setup: async (page) => {
-      await gotoRun(page);
-      await openReplay(page);
-    },
-  },
-  {
-    name: "otp",
-    state: "live",
-    setup: async (page) => {
-      await gotoRun(page);
-      await emit(page, [
-        rec({ type: "status", status: "waiting", waitReason: "otp", reason: null }),
-      ]);
-    },
-  },
-  {
-    // D44 carry-over: the badge and the frame chip must fit at every width, 390 included.
-    name: "bypass",
-    state: "live",
-    setup: async (page) => {
-      await gotoRun(page, { detail: recordedDetail({ approvalMode: "bypass" }) });
-      await expect(page.getByRole("note", { name: "Bypass mode" })).toBeVisible();
-      await expect(frame(page).getByText("Bypass", { exact: true })).toBeVisible();
-    },
-  },
-];
+import { RUN_SCENARIOS } from "./helpers/run-scenarios.ts";
+import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 test.describe("F3 QA (D22): every width from the project, light and dark, layout and axe", () => {
   test("new task", async ({ page }) => {
@@ -104,7 +17,7 @@ test.describe("F3 QA (D22): every width from the project, light and dark, layout
     await expectCleanScreen(page);
   });
 
-  for (const s of SCENARIOS) {
+  for (const s of RUN_SCENARIOS) {
     test(`run ${s.name}`, async ({ page }) => {
       await s.setup(page);
       await expect(frame(page)).toHaveAttribute("data-state", s.state, { timeout: 5_000 });

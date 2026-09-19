@@ -147,6 +147,8 @@ async function fillInto(
       backendNodeIds: group.map((box) => box.backendNodeId),
     },
     secret: SECRET_FIELDS.has(field) ? text : null,
+    // A filled code stays registered with the local pixel screen for the rest of the run (ruling).
+    code: field === "otp" || field === "totp" ? text : null,
   });
   return fillGroup(group, text, { forcePassword, pinnedOrigin });
 }
