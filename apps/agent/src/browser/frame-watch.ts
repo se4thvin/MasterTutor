@@ -83,24 +83,30 @@ export async function watchFrameTargets(
   root: CdpChannel,
   events: FrameTargetEvents,
 ): Promise<void> {
-  const follow = async (channel: CdpChannel, parent: string | null): Promise<void> => {
-    const children = new Map<string, ReturnType<typeof childChannel>>();
-    const targets = new Map<string, string>();
+  // Each followed target, by its parent channel's session id: its id, its channel, and how to
+  // report everything under it gone (a target's own detach events die with its parent's channel).
+  type Followed = { targetId: string; channel: ReturnType<typeof childChannel>; gone(): void };
+  const follow = async (channel: CdpChannel, parent: string | null): Promise<() => void> => {
+    const children = new Map<string, Followed>();
+    const gone = (sessionId: string) => {
+      const child = children.get(sessionId);
+      if (!child) return;
+      children.delete(sessionId);
+      child.channel.close();
+      child.gone();
+      events.detached(child.targetId);
+    };
     channel.on("Target.receivedMessageFromTarget", ((event: {
       sessionId: string;
       message: string;
-    }) => children.get(event.sessionId)?.receive(event.message)) as (params: never) => void);
-    channel.on("Target.detachedFromTarget", ((event: { sessionId: string }) => {
-      children.get(event.sessionId)?.close();
-      children.delete(event.sessionId);
-      const targetId = targets.get(event.sessionId);
-      targets.delete(event.sessionId);
-      if (targetId) events.detached(targetId);
-    }) as (params: never) => void);
+    }) => children.get(event.sessionId)?.channel.receive(event.message)) as (
+      params: never,
+    ) => void);
+    channel.on("Target.detachedFromTarget", ((event: { sessionId: string }) =>
+      gone(event.sessionId)) as (params: never) => void);
     channel.on("Target.attachedToTarget", ((event: AttachedEvent) => {
       const { sessionId, targetInfo, waitingForDebugger } = event;
       const child = childChannel(channel, sessionId);
-      children.set(sessionId, child);
       const resume = () =>
         waitingForDebugger
           ? child.send("Runtime.runIfWaitingForDebugger").catch(() => undefined)
@@ -111,15 +117,19 @@ export async function watchFrameTargets(
         );
         return;
       }
-      targets.set(sessionId, targetInfo.targetId);
+      const followed: Followed = { targetId: targetInfo.targetId, channel: child, gone: () => {} };
+      children.set(sessionId, followed);
       events.attached(child, targetInfo.targetId, parent, !waitingForDebugger);
       void (async () => {
         await child.send("Page.enable").catch(() => undefined);
-        await follow(child, targetInfo.targetId);
+        followed.gone = await follow(child, targetInfo.targetId);
         await resume();
       })();
     }) as (params: never) => void);
     await channel.send("Target.setAutoAttach", AUTO_ATTACH).catch(() => undefined);
+    return () => {
+      for (const sessionId of [...children.keys()]) gone(sessionId);
+    };
   };
   await follow(root, null);
 }
