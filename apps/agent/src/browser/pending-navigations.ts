@@ -1,9 +1,13 @@
-import type { CDPSession, Frame, Page, Request } from "playwright-core";
+import type { Frame, Page, Request } from "playwright-core";
 
 /** After its response has fully arrived, a navigation that does not commit (a 204, a download) ends this late. */
 const NO_COMMIT_GRACE_MS = 1_000;
 /** CDP navigation types that keep the document. */
 const SAME_DOCUMENT = new Set(["sameDocument", "historySameDocument"]);
+
+/** Where a channel's Page events come from (a CDP channel, frame-watch.ts). */
+type FrameEvents = { on(method: string, listener: (params: never) => void): unknown };
+type StartedNavigating = { frameId: string; navigationType: string };
 
 /**
  * The navigation requests in flight in a page's frames: any that replaces a document (a link, a
@@ -21,12 +25,12 @@ const SAME_DOCUMENT = new Set(["sameDocument", "historySameDocument"]);
 export class PendingNavigations {
   readonly #pages = new WeakMap<Page, Map<Request, Frame>>();
   /**
-   * Per CDP session of a page: the out-of-process frame it belongs to (null for the page's own),
-   * and the frames (CDP ids) it saw start a navigation not yet ended.
+   * Per CDP channel of a page: the out-of-process frame it belongs to (null for the page's own),
+   * the frames (CDP ids) it saw start a navigation not yet ended, and whether it was found late.
    */
   readonly #sessions = new WeakMap<
     Page,
-    Map<CDPSession, { root: string | null; navigating: Set<string> }>
+    Map<FrameEvents, { root: string | null; navigating: Set<string>; unknown: boolean }>
   >();
 
   watch(page: Page): void {
@@ -66,45 +70,65 @@ export class PendingNavigations {
   }
 
   /**
-   * Also tracks the navigations of the frames `cdp` (a CDP session of `page`, before Page.enable)
+   * Also tracks the navigations of the frames `events` (a CDP channel of `page`, before Page.enable)
    * hosts, from their start to their end as the browser reports it: committed, the frame detached
    * (a move to another process included, at its commit) or stopped loading (a 204, a download).
+   * `root`: the out-of-process frame the channel belongs to (null: the page's own process).
+   * `late`: the channel was found after its frames could run, so a navigation it never saw may be
+   * under way: until its own frame next commits or stops (or no subframe request is in flight), it
+   * counts as navigating. Returns a function that stops tracking it (the channel is gone).
    */
-  watchFrames(page: Page, cdp: CDPSession, root: string | null): void {
+  watchFrames(page: Page, events: FrameEvents, root: string | null, late: boolean): () => void {
     let sessions = this.#sessions.get(page);
     if (!sessions) this.#sessions.set(page, (sessions = new Map()));
-    if (sessions.has(cdp)) return;
-    const navigating = new Set<string>();
-    sessions.set(cdp, { root, navigating });
-    cdp.on("Page.frameStartedNavigating", ({ frameId, navigationType }) => {
-      if (!SAME_DOCUMENT.has(navigationType)) navigating.add(frameId);
-    });
-    cdp.on("Page.frameNavigated", ({ frame }) => navigating.delete(frame.id));
-    cdp.on("Page.frameDetached", ({ frameId }) => navigating.delete(frameId));
-    cdp.on("Page.frameStoppedLoading", ({ frameId }) => navigating.delete(frameId));
-    cdp.once("close", () => sessions.delete(cdp));
+    const entry = { root, navigating: new Set<string>(), unknown: late };
+    sessions.set(events, entry);
+    const ends = (frameId: string, main: boolean) => {
+      entry.navigating.delete(frameId);
+      if (frameId === root || (root === null && main)) entry.unknown = false;
+    };
+    events.on("Page.frameStartedNavigating", (({ frameId, navigationType }: StartedNavigating) => {
+      if (!SAME_DOCUMENT.has(navigationType)) entry.navigating.add(frameId);
+    }) as (params: never) => void);
+    events.on("Page.frameNavigated", (({ frame }: { frame: { id: string; parentId?: string } }) =>
+      ends(frame.id, frame.parentId === undefined)) as (params: never) => void);
+    events.on("Page.frameDetached", (({ frameId }: { frameId: string }) =>
+      entry.navigating.delete(frameId)) as (params: never) => void);
+    events.on("Page.frameStoppedLoading", (({ frameId }: { frameId: string }) =>
+      ends(frameId, false)) as (params: never) => void);
+    return () => {
+      if (sessions.get(events) === entry) sessions.delete(events);
+    };
   }
 
   /** True while a navigation is in flight in any frame of `page`. */
   pending(page: Page): boolean {
-    const { frames, frameIds } = this.inFlight(page);
-    return frames.length > 0 || frameIds.length > 0;
+    const { mainFrame, frames, unknown } = this.inFlight(page);
+    return mainFrame || frames.length > 0 || unknown.length > 0;
   }
 
   /**
-   * The frames of `page` with a navigation in flight: Playwright's frames (by their requests), and
-   * the CDP frame ids the sessions reported, each with the out-of-process frame its session belongs
-   * to (null: the page's own session).
+   * What of `page` may be navigating: its main frame (by Playwright's requests); the CDP frame ids
+   * the channels reported, each with the out-of-process frame its channel belongs to (null: the
+   * page's own process); and the channels found late whose frames may be (their root).
    */
   inFlight(page: Page): {
-    frames: Frame[];
-    frameIds: Array<{ frameId: string; root: string | null }>;
+    mainFrame: boolean;
+    frames: Array<{ frameId: string; root: string | null }>;
+    unknown: Array<string | null>;
   } {
-    const frames = [...new Set(this.#pages.get(page)?.values() ?? [])];
-    const frameIds = [...(this.#sessions.get(page)?.values() ?? [])].flatMap(
-      ({ root, navigating }) => [...navigating].map((frameId) => ({ frameId, root })),
+    const requested = [...(this.#pages.get(page)?.values() ?? [])];
+    const mainFrame = requested.includes(page.mainFrame());
+    const entries = [...(this.#sessions.get(page)?.values() ?? [])];
+    // Playwright sees every frame's navigation request: with none in flight in a subframe, a late
+    // channel's frames are not navigating.
+    if (!requested.some((frame) => frame !== page.mainFrame()))
+      for (const entry of entries) entry.unknown = false;
+    const frames = entries.flatMap(({ root, navigating }) =>
+      [...navigating].map((frameId) => ({ frameId, root })),
     );
-    return { frames, frameIds };
+    const unknown = entries.filter((entry) => entry.unknown).map((entry) => entry.root);
+    return { mainFrame, frames, unknown };
   }
 }
 

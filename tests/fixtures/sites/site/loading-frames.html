@@ -53,9 +53,15 @@
           ),
         );
       }
-      // ?leave: when the pointer enters the button, the page itself navigates (the main frame).
+      // ?leave=N: N ms after the pointer enters the button, the page itself navigates (the main
+      // frame).
       if (params.has("leave"))
-        button.addEventListener("mouseenter", () => (location.href = "/interactive.html?held"));
+        button.addEventListener("mouseenter", () =>
+          setTimeout(
+            () => (location.href = "/interactive.html?held"),
+            Number(params.get("leave") || 0),
+          ),
+        );
     </script>
   </body>
 </html>

@@ -1,5 +1,4 @@
 import { holdNewProcessFrames, type FrameHold } from "./frame-hold.ts";
-import { NEAR_FRAME_MARGIN_PX, ownerBoxCovers } from "./frame-owner-box.ts";
 import type { IsolatedWorlds } from "./isolated-world.ts";
 import { FRAME_OWNERS, type PageHelpers, type TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
@@ -67,7 +66,9 @@ export async function markStillUnguarded(
   target: TargetDescription | null,
 ): Promise<TargetDescription | null> {
   if (target && incomplete.has(session)) {
-    const guard = await armGuard(session, new AbortController().signal, null);
+    // A click-mode arm (frame holds and new-document scripts included), as a click would need;
+    // its key keeps nothing, and it is disarmed at once.
+    const guard = await armGuard(session, new AbortController().signal, "");
     await guard.disarm();
   }
   return markUnguarded(session, target);
@@ -454,10 +455,7 @@ async function armGuard(
       const covers = async () => {
         const frames = await unarmedFrames();
         if (frames.includes(null)) return true;
-        const { cdp } = await session.worlds();
-        const near = await Promise.all(
-          frames.map((frameId) => ownerBoxCovers(cdp, frameId!, point, NEAR_FRAME_MARGIN_PX)),
-        );
+        const near = await Promise.all(frames.map((frameId) => session.frameNear(frameId!, point)));
         return near.includes(true);
       };
       return Promise.race([covers().catch(() => true), timeout(ARM_BUDGET_MS).then(() => true)]);
