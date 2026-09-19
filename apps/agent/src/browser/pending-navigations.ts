@@ -20,8 +20,14 @@ const SAME_DOCUMENT = new Set(["sameDocument", "historySameDocument"]);
  */
 export class PendingNavigations {
   readonly #pages = new WeakMap<Page, Map<Request, Frame>>();
-  /** Per CDP session of a page: the frames (CDP ids) it saw start a navigation not yet ended. */
-  readonly #sessions = new WeakMap<Page, Map<CDPSession, Set<string>>>();
+  /**
+   * Per CDP session of a page: the out-of-process frame it belongs to (null for the page's own),
+   * and the frames (CDP ids) it saw start a navigation not yet ended.
+   */
+  readonly #sessions = new WeakMap<
+    Page,
+    Map<CDPSession, { root: string | null; navigating: Set<string> }>
+  >();
 
   watch(page: Page): void {
     if (this.#pages.has(page)) return;
@@ -64,12 +70,12 @@ export class PendingNavigations {
    * hosts, from their start to their end as the browser reports it: committed, the frame detached
    * (a move to another process included, at its commit) or stopped loading (a 204, a download).
    */
-  watchFrames(page: Page, cdp: CDPSession): void {
+  watchFrames(page: Page, cdp: CDPSession, root: string | null): void {
     let sessions = this.#sessions.get(page);
     if (!sessions) this.#sessions.set(page, (sessions = new Map()));
     if (sessions.has(cdp)) return;
     const navigating = new Set<string>();
-    sessions.set(cdp, navigating);
+    sessions.set(cdp, { root, navigating });
     cdp.on("Page.frameStartedNavigating", ({ frameId, navigationType }) => {
       if (!SAME_DOCUMENT.has(navigationType)) navigating.add(frameId);
     });
@@ -81,10 +87,24 @@ export class PendingNavigations {
 
   /** True while a navigation is in flight in any frame of `page`. */
   pending(page: Page): boolean {
-    if ((this.#pages.get(page)?.size ?? 0) > 0) return true;
-    for (const navigating of this.#sessions.get(page)?.values() ?? [])
-      if (navigating.size > 0) return true;
-    return false;
+    const { frames, frameIds } = this.inFlight(page);
+    return frames.length > 0 || frameIds.length > 0;
+  }
+
+  /**
+   * The frames of `page` with a navigation in flight: Playwright's frames (by their requests), and
+   * the CDP frame ids the sessions reported, each with the out-of-process frame its session belongs
+   * to (null: the page's own session).
+   */
+  inFlight(page: Page): {
+    frames: Frame[];
+    frameIds: Array<{ frameId: string; root: string | null }>;
+  } {
+    const frames = [...new Set(this.#pages.get(page)?.values() ?? [])];
+    const frameIds = [...(this.#sessions.get(page)?.values() ?? [])].flatMap(
+      ({ root, navigating }) => [...navigating].map((frameId) => ({ frameId, root })),
+    );
+    return { frames, frameIds };
   }
 }
 

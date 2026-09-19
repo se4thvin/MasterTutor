@@ -10,6 +10,7 @@ import {
 import { abortable } from "../runtime/abortable.ts";
 import type { Log } from "../runtime/types.ts";
 import { DownloadGate, type DownloadFolder } from "./download-gate.ts";
+import { NEAR_FRAME_MARGIN_PX, boxNear, ownerBoxCovers } from "./frame-owner-box.ts";
 import { PendingNavigations } from "./pending-navigations.ts";
 import { ControlGuard } from "./guard.ts";
 import { IsolatedWorlds, type WorldOptions } from "./isolated-world.ts";
@@ -63,6 +64,8 @@ export interface BrowserSessionOptions {
   redactUrl?: (url: string) => string;
 }
 
+/** A navigation check that takes longer than this counts as near the point (fail closed). */
+const NAVIGATION_CHECK_BUDGET_MS = 250;
 /** Playwright refuses a separate CDP session for a frame in its parent's process with this. */
 const IN_PROCESS_FRAME = /does not have a separate CDP session/;
 
@@ -172,11 +175,60 @@ export class BrowserSession {
     return this.#pendingNavigations.pending(this.#page);
   }
 
+  /**
+   * Whether a navigation in flight could put a new document under `point` (top viewport CSS px):
+   * one in the main frame always can; one in a subframe when the box of its frame (or of the
+   * out-of-process frame it lies in), 8 px around, holds the point, or that box cannot be read
+   * (in time: NAVIGATION_CHECK_BUDGET_MS).
+   */
+  navigationNear(point: { x: number; y: number }): Promise<boolean> {
+    return Promise.race([
+      this.#navigationNear(point).catch(() => true),
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(true), NAVIGATION_CHECK_BUDGET_MS).unref(),
+      ),
+    ]);
+  }
+
+  async #navigationNear(point: { x: number; y: number }): Promise<boolean> {
+    const { frames, frameIds } = this.#pendingNavigations.inFlight(this.#page);
+    if (frames.length === 0 && frameIds.length === 0) return false;
+    const main = this.#page.mainFrame();
+    const near = async (frame: Frame | undefined): Promise<boolean> => {
+      if (!frame || frame === main) return true;
+      const owner = await frame.frameElement();
+      try {
+        const box = await owner.boundingBox();
+        return box === null || boxNear(box, point, NEAR_FRAME_MARGIN_PX);
+      } finally {
+        void owner.dispose().catch(() => undefined);
+      }
+    };
+    const top = await this.worlds();
+    const mainId = await top.mainFrameId();
+    const outOfProcess = new Map<string, Frame>();
+    for (const [frame, entry] of this.#outOfProcess) {
+      const found = await entry;
+      if (found) outOfProcess.set(found.id, frame);
+    }
+    const checks = [
+      ...frames.map((frame) => near(frame).catch(() => true)),
+      ...frameIds.map(({ frameId, root }) =>
+        root !== null
+          ? near(outOfProcess.get(root)).catch(() => true)
+          : frameId === mainId
+            ? Promise.resolve(true)
+            : ownerBoxCovers(top.cdp, frameId, point, NEAR_FRAME_MARGIN_PX),
+      ),
+    ];
+    return (await Promise.all(checks)).includes(true);
+  }
+
   cdp(): Promise<CDPSession> {
     if (this.#cdp === null) {
-      const page = this.#page;
-      const attempt = this.#context.newCDPSession(page).then(async (cdp) => {
-        this.#pendingNavigations.watchFrames(page, cdp);
+      const tab = this.#page;
+      const attempt = this.#context.newCDPSession(tab).then(async (cdp) => {
+        this.#pendingNavigations.watchFrames(tab, cdp, null);
         await cdp.send("DOM.enable");
         // Frame events (Page.frameAttached/frameNavigated) for the typing guard.
         await cdp.send("Page.enable");
@@ -270,7 +322,7 @@ export class BrowserSession {
       await cdp.detach().catch(() => undefined);
       return null;
     }
-    this.#pendingNavigations.watchFrames(frame.page(), cdp);
+    this.#pendingNavigations.watchFrames(frame.page(), cdp, info.targetInfo.targetId);
     void cdp.send("Page.enable").catch(() => undefined);
     return { id: info.targetInfo.targetId, worlds: new IsolatedWorlds(cdp) };
   }

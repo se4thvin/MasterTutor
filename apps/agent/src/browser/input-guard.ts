@@ -1,5 +1,5 @@
 import { holdNewProcessFrames, type FrameHold } from "./frame-hold.ts";
-import { ownerBoxCovers } from "./frame-owner-box.ts";
+import { NEAR_FRAME_MARGIN_PX, ownerBoxCovers } from "./frame-owner-box.ts";
 import type { IsolatedWorlds } from "./isolated-world.ts";
 import { FRAME_OWNERS, type PageHelpers, type TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
@@ -8,8 +8,6 @@ import type { BrowserSession } from "./session.ts";
 export const ARM_BUDGET_MS = 250;
 /** A page with more documents than this is not armed one by one: typing fails closed instead. */
 const MAX_DOCUMENTS = 64;
-/** How far around its frame's box a document the guard could not arm still counts as near a press. */
-const UNARMED_FRAME_MARGIN_PX = 8;
 
 /**
  * The executor's own input is guarded inside the page, in every document, while it is sent.
@@ -44,8 +42,10 @@ export interface InputGuard {
   /**
    * `changed` as of now: every session that armed answers first, so the frame events it sent
    * before are seen. One that does not answer within the budget counts as changed (fail closed).
+   * A navigation in flight counts too: in the main frame always, in a subframe when it could put
+   * a document under `point` (BrowserSession.navigationNear), measured now.
    */
-  changedNow(): Promise<boolean>;
+  changedNow(point: { x: number; y: number }): Promise<boolean>;
   /** Whether a page script moved focus out of the home document since arming. */
   focusMoved(): Promise<boolean>;
   /**
@@ -456,7 +456,7 @@ async function armGuard(
         if (frames.includes(null)) return true;
         const { cdp } = await session.worlds();
         const near = await Promise.all(
-          frames.map((frameId) => ownerBoxCovers(cdp, frameId!, point, UNARMED_FRAME_MARGIN_PX)),
+          frames.map((frameId) => ownerBoxCovers(cdp, frameId!, point, NEAR_FRAME_MARGIN_PX)),
         );
         return near.includes(true);
       };
@@ -465,7 +465,7 @@ async function armGuard(
     get changed() {
       return changed;
     },
-    changedNow: async () => {
+    changedNow: async (point) => {
       // Sessions that armed (a session that never answered is why the guard is incomplete).
       const armed = watched
         .map(({ worlds }) => worlds)
@@ -479,7 +479,7 @@ async function armGuard(
       ]);
       // A navigation already under way when the guard armed is never held (its new document
       // gets no guard): while any is in flight the page counts as changed.
-      return changed || !flushed || session.navigationPending();
+      return changed || !flushed || session.navigationNear(point);
     },
     focusMoved: async () =>
       home

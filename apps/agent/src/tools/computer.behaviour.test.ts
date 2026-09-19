@@ -1144,3 +1144,105 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     }
   });
 });
+
+describe("ComputerExecutor with frames navigating away from the point (ruling 3)", () => {
+  /** loading-frames.html: Continue spans x 0–200, y 50–90; this point is 4 px from its right edge. */
+  const edge = { x: 196, y: 70 };
+  const centre = { x: 100, y: 70 };
+  /** Holds every request to the other site (the frames' documents) until the test ends. */
+  async function loadingPage(query: string) {
+    const { s, executor } = await setup();
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await s.page.route("http://other.fixtures-isolated.test/**", async (route) => {
+      await Promise.race([held, new Promise((resolve) => setTimeout(resolve, 20_000))]);
+      await route.fallback().catch(() => undefined);
+    });
+    await s.goto(`${SITE}/loading-frames.html?${query}`, signal);
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the frames' requests are out
+    expect(s.navigationPending()).toBe(true);
+    return { s, executor, release };
+  }
+  const verdict = async (s: BrowserSession, at: { x: number; y: number }, approved: boolean) => ({
+    target: markUnguarded(s, (await hitTest(s, at)).target),
+    personApproved: approved,
+  });
+  const clickedGo = (s: BrowserSession) =>
+    s.page.evaluate(() => {
+      const holder = window as { __clicked?: string };
+      const value = holder.__clicked;
+      holder.__clicked = undefined;
+      return value;
+    });
+
+  it.each([false, true])(
+    "still-loading frames away from the button do not hold the click back (approved: %s): 5/5 clicked",
+    async (approved) => {
+      const { s, executor, release } = await loadingPage("ads=3");
+      for (let i = 0; i < 5; i++) {
+        expect(
+          await executor.execute(click(centre), signal, await verdict(s, centre, approved)),
+        ).toBeNull();
+        expect(await clickedGo(s)).toBe("go");
+      }
+      expect(s.navigationPending()).toBe(true); // they were loading all along
+      release();
+    },
+  );
+
+  it.each([false, true])(
+    "a loading frame 4 px from the point refuses the click (approved: %s)",
+    async (approved) => {
+      const { s, executor, release } = await loadingPage("near");
+      expect(await executor.execute(click(edge), signal, await verdict(s, edge, approved))).toBe(
+        TARGET_MOVED_REFUSAL,
+      );
+      expect(await clickedGo(s)).toBeUndefined();
+      release();
+    },
+  );
+
+  it("a loading frame that grows next to the point between the checks and the press refuses the click: 5/5", async () => {
+    let refused = 0;
+    for (let i = 0; i < 5; i++) {
+      // 50 ms after the pointer enters Continue, the far frame grows to end 4 px from the point.
+      const { s, executor, release } = await loadingPage("grow=50");
+      // The arm's round trips take 60 ms each (well within the budget), so the growth lands after
+      // the first checks (the settle wait and the hit test) and before the press.
+      const cdp = (await s.worlds()).cdp;
+      const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
+      (cdp as { send: typeof send }).send = async (method, params) => {
+        if (method === "Page.addScriptToEvaluateOnNewDocument" || method === "Target.setAutoAttach")
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        return send(method, params);
+      };
+      await s.page.mouse.move(600, 200); // off Continue, so the executor's move enters it
+      const note = await executor.execute(click(edge), signal, await verdict(s, edge, false));
+      if (note === TARGET_MOVED_REFUSAL && (await clickedGo(s)) === undefined) refused += 1;
+      release();
+      await session?.close();
+      session = undefined;
+    }
+    expect(refused).toBe(5);
+  });
+
+  it.each([false, true])(
+    "a main-frame navigation refuses the click wherever it is (approved: %s)",
+    async (approved) => {
+      const { s, executor } = await setup();
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      await s.page.route(`${SITE}/interactive.html?held`, async (route) => {
+        await Promise.race([held, new Promise((resolve) => setTimeout(resolve, 20_000))]);
+        await route.fallback().catch(() => undefined);
+      });
+      await s.goto(`${SITE}/loading-frames.html?leave`, signal);
+      await s.page.mouse.move(600, 200); // off Continue, so the executor's move enters it
+      expect(
+        await executor.execute(click(centre), signal, await verdict(s, centre, approved)),
+      ).toBe(TARGET_MOVED_REFUSAL);
+      expect(await clickedGo(s)).toBeUndefined();
+      release();
+    },
+  );
+});

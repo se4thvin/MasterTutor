@@ -228,7 +228,10 @@ export class ComputerExecutor {
     await mouse.move(point.x, point.y);
     // A frame mid-navigation refuses the click (its next document is not guarded): give a page
     // whose frames load all the time a moment to settle, then check what is under the pointer.
-    for (let waited = 0; waited < NAVIGATION_SETTLE_MS && this.#session.navigationPending();)
+    for (
+      let waited = 0;
+      waited < NAVIGATION_SETTLE_MS && (await this.#session.navigationNear(point));
+    )
       waited += await pause(25, signal).then(() => 25);
     const hit = await hitTest(this.#session, point);
     // The page may have changed since the gate classified this click (TOCTOU): if anything
@@ -281,7 +284,7 @@ export class ComputerExecutor {
         // have moved under the point: press nothing.
         if (unarmed() && (await guard!.unguardedAt(pressAt)))
           return this.#refuse(TARGET_MOVED_REFUSAL);
-        if (guard && (await guard.changedNow())) return this.#refuse(TARGET_MOVED_REFUSAL);
+        if (guard && (await guard.changedNow(pressAt))) return this.#refuse(TARGET_MOVED_REFUSAL);
         await mouse.down({ ...options, clickCount });
         await mouse.up({ ...options, clickCount });
       }
