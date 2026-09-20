@@ -11,7 +11,7 @@ import { abortable, pause } from "../runtime/abortable.ts";
 import type { Log } from "../runtime/types.ts";
 import { DownloadGate, type DownloadFolder } from "./download-gate.ts";
 import { NEAR_FRAME_MARGIN_PX, ownerBoxCovers } from "./frame-owner-box.ts";
-import { sessionChannel, watchFrameTargets } from "./frame-watch.ts";
+import { sessionChannel, watchFrameTargets, type CdpChannel } from "./frame-watch.ts";
 import { PendingNavigations } from "./pending-navigations.ts";
 import { ControlGuard } from "./guard.ts";
 import { IsolatedWorlds, type WorldOptions } from "./isolated-world.ts";
@@ -65,6 +65,49 @@ export interface BrowserSessionOptions {
   redactUrl?: (url: string) => string;
 }
 
+/** How long a call into the page may take before it counts as not answering. */
+const PAGE_ANSWER_BUDGET_MS = 1_500;
+
+/**
+ * The page did not answer in time: a main-frame navigation is in flight (Chromium holds every call
+ * into the page until it commits), or the page hangs.
+ */
+export class PageNotAnswering extends Error {
+  constructor() {
+    super("the page did not answer in time");
+  }
+}
+
+/** For a `.catch`: a page that did not answer gives null; anything else (an abort) goes on. */
+export function notAnswering(error: unknown): null {
+  if (error instanceof PageNotAnswering) return null;
+  throw error;
+}
+
+/** `work`, ended by `signal`, or by PageNotAnswering after PAGE_ANSWER_BUDGET_MS. */
+export function pageAnswer<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new PageNotAnswering()), PAGE_ANSWER_BUDGET_MS).unref();
+  });
+  const bounded = Promise.race([work, late]).finally(() => clearTimeout(timer));
+  return signal ? abortable(bounded, signal) : bounded;
+}
+
+/**
+ * Whether the document behind `channel` had finished loading (readyState "complete", so no
+ * navigation of its frames was under way unseen). Bounded; false when it does not answer.
+ */
+async function loadedAlready(channel: CdpChannel): Promise<boolean> {
+  const answer = channel.send<{ result: { value?: unknown } }>("Runtime.evaluate", {
+    expression: "document.readyState",
+    returnByValue: true,
+  });
+  return pageAnswer(answer)
+    .then(({ result }) => result.value === "complete")
+    .catch(() => false);
+}
+
 /** A navigation check that takes longer than this counts as near the point (fail closed). */
 const NAVIGATION_CHECK_BUDGET_MS = 250;
 /** Playwright refuses a separate CDP session for a frame in its parent's process with this. */
@@ -100,6 +143,8 @@ export class BrowserSession {
   readonly #pendingNavigations = new PendingNavigations();
   /** The current page's out-of-process frames (CDP ids), each with the one it lies in (null: none). */
   #frameParents = new Map<string, string | null>();
+  /** Pages whose frames could not be followed (their navigations unobserved: fail closed). */
+  readonly #framesUnwatched = new WeakSet<Page>();
   /** Resolves once the current page's frames are followed (a navigation after it is observed). */
   #framesWatched: Promise<void> = Promise.resolve();
   readonly #testMode: boolean;
@@ -196,6 +241,7 @@ export class BrowserSession {
   }
 
   async #navigationNear(point: { x: number; y: number }): Promise<boolean> {
+    if (this.#framesUnwatched.has(this.#page)) return true;
     const { mainFrame, frames, unknown } = this.#pendingNavigations.inFlight(this.#page);
     if (mainFrame || unknown.includes(null)) return true;
     // A frame inside an out-of-process frame lies within that frame's box.
@@ -227,28 +273,35 @@ export class BrowserSession {
    * PendingNavigations.watchFrames).
    */
   async #watchFrames(page: Page, parents: Map<string, string | null>): Promise<void> {
-    const cdp = await this.#context.newCDPSession(page).catch(() => null);
-    if (!cdp) return;
-    const root = sessionChannel(cdp);
-    const unwatchTop = this.#pendingNavigations.watchFrames(page, root, null, true);
-    const unwatch = new Map<string, () => void>();
-    cdp.once("close", () => {
-      unwatchTop();
-      for (const stop of unwatch.values()) stop();
-    });
-    await root.send("Page.enable").catch(() => undefined);
-    await watchFrameTargets(root, {
-      attached: (channel, targetId, parent, late) => {
-        parents.set(targetId, parent);
-        unwatch.get(targetId)?.();
-        unwatch.set(targetId, this.#pendingNavigations.watchFrames(page, channel, targetId, late));
-      },
-      detached: (targetId) => {
-        unwatch.get(targetId)?.();
-        unwatch.delete(targetId);
-        parents.delete(targetId);
-      },
-    });
+    try {
+      const cdp = await this.#context.newCDPSession(page);
+      const root = sessionChannel(cdp);
+      const top = this.#pendingNavigations.watchFrames(page, root, null, true);
+      const watched = new Map<string, { stop(): void }>();
+      cdp.once("close", () => {
+        top.stop();
+        for (const channel of watched.values()) channel.stop();
+      });
+      await root.send("Page.enable");
+      void loadedAlready(root).then((loaded) => loaded && top.loaded());
+      await watchFrameTargets(root, {
+        attached: (channel, targetId, parent, late) => {
+          parents.set(targetId, parent);
+          watched.get(targetId)?.stop();
+          const frames = this.#pendingNavigations.watchFrames(page, channel, targetId, late);
+          watched.set(targetId, frames);
+          if (late) void loadedAlready(channel).then((loaded) => loaded && frames.loaded());
+        },
+        detached: (targetId) => {
+          watched.get(targetId)?.stop();
+          watched.delete(targetId);
+          parents.delete(targetId);
+        },
+      });
+    } catch {
+      // No navigation of this page can be observed: every click counts as near one (fail closed).
+      this.#framesUnwatched.add(page);
+    }
   }
 
   cdp(): Promise<CDPSession> {
@@ -505,8 +558,12 @@ export class BrowserSession {
     await cdp.send("Network.enable", RESPONSE_LOG_BUFFERS);
   }
 
-  async layout(): Promise<Layout> {
-    const metrics = await (await this.cdp()).send("Page.getLayoutMetrics");
+  /** The viewport, within PAGE_ANSWER_BUDGET_MS (else PageNotAnswering) and ended by `signal`. */
+  async layout(signal?: AbortSignal): Promise<Layout> {
+    const metrics = await pageAnswer(
+      this.cdp().then((cdp) => cdp.send("Page.getLayoutMetrics")),
+      signal,
+    );
     const viewport = metrics.cssVisualViewport;
     return {
       width: Math.round(viewport.clientWidth),

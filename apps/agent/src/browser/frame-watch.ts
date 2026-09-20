@@ -77,7 +77,8 @@ function childChannel(parent: CdpChannel, sessionId: string) {
  * Follows every frame target under `root` (the page's session) for the page's lifetime: each new
  * one is held before its first document runs (auto-attach, waitForDebuggerOnStart), reported to
  * `events` (which arms its observers), then resumed; its own frame targets are followed the same
- * way. Other targets (workers) are resumed and left alone. Never throws.
+ * way. A target that cannot be followed stays held. Other targets (workers) are resumed and left
+ * alone. Throws when `root` itself cannot be followed.
  */
 export async function watchFrameTargets(
   root: CdpChannel,
@@ -121,12 +122,17 @@ export async function watchFrameTargets(
       children.set(sessionId, followed);
       events.attached(child, targetInfo.targetId, parent, !waitingForDebugger);
       void (async () => {
-        await child.send("Page.enable").catch(() => undefined);
-        followed.gone = await follow(child, targetInfo.targetId);
+        try {
+          await child.send("Page.enable");
+          followed.gone = await follow(child, targetInfo.targetId);
+        } catch {
+          // Not observed, so not resumed: held, it cannot navigate unseen (fail closed).
+          return;
+        }
         await resume();
       })();
     }) as (params: never) => void);
-    await channel.send("Target.setAutoAttach", AUTO_ATTACH).catch(() => undefined);
+    await channel.send("Target.setAutoAttach", AUTO_ATTACH);
     return () => {
       for (const sessionId of [...children.keys()]) gone(sessionId);
     };

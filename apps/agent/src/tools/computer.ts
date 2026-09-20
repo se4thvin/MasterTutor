@@ -1,10 +1,10 @@
 import type { ActionEffect, ActionTarget, ComputerAction } from "@mastertutor/contracts";
 import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import type { BrowserSession } from "../browser/session.ts";
+import { notAnswering, pageAnswer, type BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
 import { armClickGuard, armTypingGuard, markUnguarded } from "../browser/input-guard.ts";
-import { pause } from "../runtime/abortable.ts";
+import { abortable, pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
 import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
@@ -172,9 +172,14 @@ export class ComputerExecutor {
     return { executed, notes, effects, targets, handOver: this.#handOver };
   }
 
-  async toPage(x: number, y: number): Promise<{ x: number; y: number } | null> {
+  /** Throws PageNotAnswering when the page does not answer in time; ended by `signal`. */
+  async toPage(
+    x: number,
+    y: number,
+    signal?: AbortSignal,
+  ): Promise<{ x: number; y: number } | null> {
     const scale = this.#session.lastScale;
-    const layout = await this.#session.layout();
+    const layout = await this.#session.layout(signal);
     // Whole CSS pixels: the hit test, the browser's own hit test and the click all use this point.
     const px = Math.floor(x / scale);
     const py = Math.floor(y / scale);
@@ -246,11 +251,15 @@ export class ComputerExecutor {
       if (Date.now() >= loadedBy) return this.#refuse(PAGE_SETTLING_REFUSAL);
       await pause(25, signal);
     }
-    const point = await this.toPage(x, y);
+    // Every call into the page below is bounded and ends with the run's signal: a page that stops
+    // answering (a navigation began meanwhile) refuses the click as settling, never stalls it.
+    const point = await this.toPage(x, y, signal).catch(notAnswering);
+    if (point === null && this.#session.mainFrameNavigating())
+      return this.#refuse(PAGE_SETTLING_REFUSAL);
     if (!point) return this.#outside(x, y);
     const mouse = this.#session.page.mouse;
     this.#session.guard.assertAgent(signal);
-    await mouse.move(point.x, point.y);
+    await abortable(mouse.move(point.x, point.y), signal);
     // A frame mid-navigation near the point refuses the click (its next document is not
     // guarded): give a page whose frames load all the time a moment to settle (a bounded wait,
     // each check bounded too), then check what is under the pointer.
@@ -259,14 +268,15 @@ export class ComputerExecutor {
       if (Date.now() >= navigationSettleBy) return this.#refuse(PAGE_SETTLING_REFUSAL);
       await pause(25, signal);
     }
-    const hit = await hitTest(this.#session, point);
+    const hit = await pageAnswer(hitTest(this.#session, point), signal).catch(notAnswering);
+    if (!hit) return this.#refuse(PAGE_SETTLING_REFUSAL);
     this.#target = hit.target;
     const urlBefore = this.#session.page.url();
     // The page may have changed since the gate classified this click (TOCTOU): if anything
     // differs, nothing is pressed and the model's next click is gated again.
     if (verdict && !sameTarget(verdict.target, markUnguarded(this.#session, hit.target)))
       return this.#refuse(TARGET_MOVED_REFUSAL);
-    if (hit.snap) await mouse.move(hit.snap.x, hit.snap.y);
+    if (hit.snap) await abortable(mouse.move(hit.snap.x, hit.snap.y), signal);
     // Only now that the press will go to the approved link (m6).
     if (verdict?.allowDownload) {
       const { url: approvedUrl, approvedBy } = verdict.allowDownload;
@@ -313,8 +323,14 @@ export class ComputerExecutor {
         if (guard && (await guard.changedNow(pressAt))) return this.#refuse(TARGET_MOVED_REFUSAL);
         if (unarmed() && (await guard!.unguardedAt(pressAt)))
           return this.#refuse(TARGET_MOVED_REFUSAL);
-        await mouse.down({ ...options, clickCount });
-        await mouse.up({ ...options, clickCount });
+        await abortable(mouse.down({ ...options, clickCount }), signal);
+        // Never leave the button down after an abort (a takeover or kill mid-press).
+        await abortable(mouse.up({ ...options, clickCount }), signal).catch(
+          async (error: unknown) => {
+            await mouse.up({ ...options, clickCount }).catch(() => undefined);
+            throw error;
+          },
+        );
       }
     } finally {
       if (signal.aborted) void guard?.disarm();
