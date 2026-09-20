@@ -19,6 +19,7 @@ import {
   type SourceChip,
 } from "./draft.ts";
 import { OptionsGrid } from "./options-grid.tsx";
+import { useSavedDraft } from "./saved-draft.ts";
 import { SourceField } from "./source-field.tsx";
 
 const SUGGESTIONS = [
@@ -27,7 +28,7 @@ const SUGGESTIONS = [
   "Every code listing from a docs page",
 ] as const;
 
-export function NewTaskForm() {
+export function NewTaskForm({ viewerId }: { viewerId: string }) {
   const router = useRouter();
   const toast = useToast();
   const goalId = useId();
@@ -51,7 +52,20 @@ export function NewTaskForm() {
   const [folderId, setFolderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const savedDraft = useSavedDraft(
+    viewerId,
+    { goal, sources, domains: domainEdits, budget, folderId },
+    (saved) => {
+      setGoal(saved.goal);
+      setSources(saved.sources);
+      setDomainEdits(saved.domains);
+      setBudget(saved.budget);
+      setFolderId(saved.folderId);
+    },
+  );
   const domains = domainEdits ?? settings.data?.defaultAllowedOrigins ?? [];
+  // A restored folder may have been deleted since: only a folder that still exists is used.
+  const targetFolderId = folders.some((folder) => folder.id === folderId) ? folderId : null;
   const standardBudget = settings.data?.defaultBudget ?? DEFAULT_BUDGET;
   const killed = settings.data?.killSwitch === true;
   const bypassUnconfirmed = approvalMode === "bypass" && !bypassAcknowledged;
@@ -65,7 +79,7 @@ export function NewTaskForm() {
       budget,
       standardBudget,
       approvalMode,
-      targetFolderId: folderId,
+      targetFolderId,
       bypassAcknowledged,
     });
     if ("error" in input) {
@@ -78,6 +92,8 @@ export function NewTaskForm() {
     emitHero("start");
     try {
       const [run] = await Promise.all([api.runs.create(input), heroCaptureFloor()]);
+      // Only a created run retires the draft; a failed start keeps it (and the page) as it was.
+      savedDraft.clear();
       router.push(`/runs/${run.id}`);
     } catch (failure) {
       setBusy(false);
@@ -228,7 +244,7 @@ export function NewTaskForm() {
         bypassAcknowledged={bypassAcknowledged}
         onBypassAcknowledged={setBypassAcknowledged}
         folders={folders}
-        folderId={folderId}
+        folderId={targetFolderId}
         onFolder={setFolderId}
       />
     </form>
