@@ -16,6 +16,7 @@ import {
   buildCreateRunInput,
   startErrorCopy,
   type BudgetPreset,
+  type DraftError,
   type SourceChip,
 } from "./draft.ts";
 import { OptionsGrid } from "./options-grid.tsx";
@@ -50,7 +51,9 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
     setBypassAcknowledged(false);
   };
   const [folderId, setFolderId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DraftError | null>(null);
+  const addDomainRef = useRef<HTMLButtonElement>(null);
+  const goalError = error && !error.field ? error.error : null;
   const [busy, setBusy] = useState(false);
   const savedDraft = useSavedDraft(
     viewerId,
@@ -83,8 +86,9 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
       bypassAcknowledged,
     });
     if ("error" in input) {
-      setError(input.error);
-      goalRef.current?.focus();
+      setError(input);
+      if (input.field === "domains") addDomainRef.current?.focus();
+      else goalRef.current?.focus();
       return;
     }
     setError(null);
@@ -139,8 +143,8 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
               value={goal}
               maxLength={4_000}
               placeholder="Week 3 of the ML course: every lecture, figure and table. Skip the quizzes."
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? `${goalId}-error` : undefined}
+              aria-invalid={goalError ? true : undefined}
+              aria-describedby={goalError ? `${goalId}-error` : undefined}
               onChange={(e) => setGoal(e.target.value)}
               onInput={() => emitHero("type")}
               onFocus={() => emitHero("focus", true)}
@@ -208,9 +212,9 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
               Confirm bypass mode under Approvals to start.
             </p>
           ) : null}
-          {error ? (
+          {goalError ? (
             <p id={`${goalId}-error`} role="alert" className="nt-error">
-              {error}
+              {goalError}
             </p>
           ) : null}
           <div className="nt-suggest">
@@ -236,6 +240,8 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
         sources={sources}
         domains={domains}
         onDomains={setDomainEdits}
+        domainsError={error?.field === "domains" ? error.error : null}
+        addDomainRef={addDomainRef}
         budget={budget}
         onBudget={setBudget}
         standardBudget={standardBudget}

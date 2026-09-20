@@ -2,14 +2,17 @@ import { toOrigin, Uuid } from "@mastertutor/contracts";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { z } from "zod";
 import { BUDGET_PRESETS, parseSource, type BudgetPreset, type SourceChip } from "./draft.ts";
+import { draftKey } from "./saved-draft-key.ts";
 
 /**
  * The New task draft, kept per viewer in this browser so leaving the page loses nothing.
  * A per-viewer convenience only: storage may be blocked or throw, and the page works without it.
  *
  * Never kept: the approval mode and the bypass acknowledgement (S10, D44: always chosen afresh),
- * text still being typed into the add-source and add-domain fields, and any source URL whose
- * query looks like it carries a credential (a token, key or signature).
+ * text still being typed into the add-source and add-domain fields, and any URL that looks like it
+ * carries a credential: such a source is left out, and such a link in the goal is cut back to its
+ * origin. That check is best effort (a heuristic over query, fragment and path; it fails closed
+ * on anything that looks like a token). Sign-out removes every saved draft (saved-draft-key.ts).
  */
 interface SavedDraft {
   goal: string;
@@ -28,11 +31,13 @@ export const EMPTY_DRAFT: SavedDraft = {
   folderId: null,
 };
 
-const KEY_PREFIX = "mt.new-task-draft:";
 const SAVE_DEBOUNCE_MS = 400;
 const GOAL_MAX = 4_000;
 const LIST_MAX = 50;
-const SECRET_PARAM = /token|key|sig|secret|pass|auth|session|credential|otp|code/i;
+const SECRET_PARAM = /token|key|sig|secret|pass|auth|session|credential|otp|code|^[tks]$/i;
+/** A path segment that reads like a token: long, mixed-case alphanumerics with a digit, or long hex. */
+const TOKEN_SEGMENT = /^(?=[\w-]*\d)(?=[\w-]*[a-z])(?=[\w-]*[A-Z])[\w-]{20,}$|^[0-9a-fA-F]{32,}$/;
+const URL_IN_TEXT = /https?:\/\/[^\s<>"'`)\]]+/gi;
 
 const Stored = z.object({
   v: z.literal(1),
@@ -43,13 +48,32 @@ const Stored = z.object({
   folderId: Uuid.nullable(),
 });
 
-/** A URL whose query names a credential-like parameter is never written to storage. */
+/**
+ * Best effort: a URL is treated as carrying a credential when a query or fragment parameter has a
+ * credential-like name (`?token=`, `#access_token=`, `?k=`), or a path segment reads like a token.
+ * Over-matching is fine (the source just isn't kept); anything unparsable fails closed.
+ */
 export function mayHoldCredential(url: string): boolean {
   try {
-    return [...new URL(url).searchParams.keys()].some((name) => SECRET_PARAM.test(name));
+    const parsed = new URL(url);
+    const fragment = new URLSearchParams(parsed.hash.slice(1));
+    const names = [...parsed.searchParams.keys(), ...fragment.keys()];
+    if (names.some((name) => SECRET_PARAM.test(name))) return true;
+    return parsed.pathname
+      .split("/")
+      .some((segment) => TOKEN_SEGMENT.test(decodeURIComponent(segment)));
   } catch {
     return true;
   }
+}
+
+/** Links pasted into the goal that look like they carry a credential are cut back to their origin. */
+function redactGoal(goal: string): string {
+  return goal.replace(URL_IN_TEXT, (link) => {
+    if (!mayHoldCredential(link)) return link;
+    const origin = toOrigin(link);
+    return origin ? `${origin}/…` : "…";
+  });
 }
 
 /** What would be stored, or null for a draft with nothing worth keeping. */
@@ -64,7 +88,7 @@ export function serializeDraft(draft: SavedDraft): string | null {
   if (empty) return null;
   return JSON.stringify({
     v: 1,
-    goal: draft.goal.slice(0, GOAL_MAX),
+    goal: redactGoal(draft.goal).slice(0, GOAL_MAX),
     sources: sources.slice(0, LIST_MAX),
     domains: draft.domains?.slice(0, LIST_MAX) ?? null,
     budget: draft.budget,
@@ -123,7 +147,7 @@ export function useSavedDraft(
   draft: SavedDraft,
   restore: (saved: SavedDraft) => void,
 ): { clear(): void } {
-  const key = KEY_PREFIX + viewerId;
+  const key = draftKey(viewerId);
   const [ready, setReady] = useState(false);
   const pending = useRef<{ value: string | null } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);

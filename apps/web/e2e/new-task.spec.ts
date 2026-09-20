@@ -1,4 +1,5 @@
 import { DEFAULT_BUDGET } from "@mastertutor/contracts";
+import { FIXTURE_AUTH_COOKIE } from "../lib/fixtures/cookies.ts";
 import { ids } from "../lib/fixtures/ids.ts";
 import { mockRpc } from "./helpers/run.ts";
 import type { Page } from "@playwright/test";
@@ -139,9 +140,18 @@ test.describe("New task", () => {
       await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
       await page.getByRole("radio", { name: "Auto in allowed domains" }).click();
       await page.getByRole("button", { name: /^Start/ }).click();
-      await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveText(
+      const error = page
+        .getByRole("alert")
+        .filter({ hasText: "Auto mode needs an allowed domain. Add one, or choose Ask me." });
+      await expect(error).toBeVisible();
+      // The refusal belongs to Allowed domains, not to the goal (M4).
+      const addDomain = page.getByRole("button", { name: "Add domain" });
+      await expect(addDomain).toBeFocused();
+      await expect(addDomain).toHaveAttribute("aria-invalid", "true");
+      await expect(addDomain).toHaveAccessibleDescription(
         "Auto mode needs an allowed domain. Add one, or choose Ask me.",
       );
+      await expect(page.getByLabel("Describe the task")).not.toHaveAttribute("aria-invalid");
       expect(creates).toBe(0);
     });
   });
@@ -306,6 +316,55 @@ test.describe("New task", () => {
       await page.goto("/new");
       await expect(page.getByRole("button", { name: /^Start/ })).toBeEnabled();
       await expect(page.getByLabel("Describe the task")).toHaveValue("");
+    });
+
+    test("is kept per user: another account's draft in this browser is never restored", async ({
+      page,
+    }) => {
+      await page.addInitScript(() => {
+        window.localStorage.setItem(
+          "mt.new-task-draft:someone-else",
+          JSON.stringify({
+            v: 1,
+            goal: "Someone else's private task",
+            sources: [],
+            domains: null,
+            budget: "deep",
+            folderId: null,
+          }),
+        );
+      });
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Mine");
+      await expect.poll(() => storedDraft(page)).toContain("Mine");
+      await page.reload();
+      await expect(page.getByLabel("Describe the task")).toHaveValue("Mine");
+      await expect(page.getByRole("radio", { name: "Standard" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await expect(page.getByText("Someone else's private task")).toHaveCount(0);
+    });
+
+    test("sign-out removes every saved draft from this browser", async ({ page }) => {
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Week 3: every lecture and table");
+      await expect.poll(() => storedDraft(page)).toContain("Week 3");
+      await page.route("**/api/auth/sign-out", (route) =>
+        route.fulfill({
+          status: 200,
+          headers: { "set-cookie": `${FIXTURE_AUTH_COOKIE}=signed-out; Path=/` },
+          json: { success: true },
+        }),
+      );
+      await page.goto("/settings");
+      await page.getByRole("button", { name: "Sign out" }).click();
+      await expect(page).toHaveURL(/\/sign-in$/);
+      expect(
+        await page.evaluate(() =>
+          Object.keys(window.localStorage).filter((k) => k.startsWith("mt.new-task-draft:")),
+        ),
+      ).toEqual([]);
     });
 
     test("the page still works when storage throws", async ({ page }) => {

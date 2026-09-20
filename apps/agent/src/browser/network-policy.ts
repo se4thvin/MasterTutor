@@ -193,7 +193,8 @@ function isTopLevelNavigation(route: Route): boolean {
 }
 
 /**
- * Domain allowlist in code (spec §5.5): top-level documents outside allowed_origins, and every
+ * Domain allowlist in code (spec §5.5): top-level documents outside allowed_origins (redirect hops
+ * included), and every
  * top-level non-http(s) scheme (file:, view-source:, chrome:, data:, ...) except about:blank, are
  * aborted and reported; private ranges are blocked for every request. Fixture hosts bypass only the
  * private-range check, and only when AGENT_TEST_MODE=1. WebSockets and service workers are not
@@ -233,6 +234,23 @@ export async function installNetworkPolicy(
       }
     }
     await route.continue();
+  });
+  // A redirect hop never reaches context.route (Playwright routes only a navigation's first URL),
+  // so a top-level redirect to an origin outside the allowlist is caught here: it is reported
+  // like any blocked navigation (the new_origin approval) and the frame is moved to about:blank
+  // before the redirect target can commit.
+  context.on("request", (request) => {
+    try {
+      if (request.redirectedFrom() === null || !request.isNavigationRequest()) return;
+      const frame = request.frame();
+      if (frame.parentFrame() !== null) return;
+      const origin = toOrigin(request.url());
+      if (origin !== null && options.allowedOrigins().includes(origin)) return;
+      if (origin !== null) options.onBlockedNavigation({ url: request.url(), origin });
+      void frame.goto("about:blank").catch(() => undefined);
+    } catch {
+      // The request or its frame is gone: nothing was loaded.
+    }
   });
   context.on("response", (response) => {
     const check = (async () => {

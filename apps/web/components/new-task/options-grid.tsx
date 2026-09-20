@@ -1,7 +1,7 @@
 "use client";
 
 import { toOrigin, type ApprovalMode, type Budget, type FolderView } from "@mastertutor/contracts";
-import { useId, useState } from "react";
+import { useId, useState, type Ref } from "react";
 import { formatCount } from "@/components/bits/format.ts";
 import { RollingNumber } from "@/components/bits/rolling-number.tsx";
 import { RubberSegment } from "@/components/bits/rubber-segment.tsx";
@@ -36,6 +36,9 @@ interface OptionsGridProps {
   sources: SourceChip[];
   domains: string[];
   onDomains(next: string[]): void;
+  /** Why Start was refused because of the allowed domains (auto mode with none). */
+  domainsError: string | null;
+  addDomainRef: Ref<HTMLButtonElement>;
   budget: BudgetPreset;
   onBudget(next: BudgetPreset): void;
   standardBudget: Budget;
@@ -130,10 +133,22 @@ export function OptionsGrid(p: OptionsGridProps) {
             {invalid ? <p className="nt-error">Enter a domain like example.com.</p> : null}
           </div>
         ) : (
-          <Button variant="plain" icon="add" onClick={() => setAdding(true)}>
+          <Button
+            ref={p.addDomainRef}
+            variant="plain"
+            icon="add"
+            aria-invalid={p.domainsError ? true : undefined}
+            aria-describedby={p.domainsError ? `${id}-domains-error` : undefined}
+            onClick={() => setAdding(true)}
+          >
             Add domain
           </Button>
         )}
+        {p.domainsError ? (
+          <p id={`${id}-domains-error`} role="alert" className="nt-error">
+            {p.domainsError}
+          </p>
+        ) : null}
       </section>
 
       <section className="nt-opt" aria-labelledby={`${id}-budget`}>
