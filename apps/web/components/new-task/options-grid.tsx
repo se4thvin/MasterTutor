@@ -74,7 +74,11 @@ export function OptionsGrid(p: OptionsGridProps) {
         <h2 id={`${id}-domains`} className="nt-opt-title">
           Allowed domains
         </h2>
-        <p className="nt-opt-text">The agent stays on these. Leaving them asks you first.</p>
+        <p className="nt-opt-text">
+          {sourceHosts.length + p.domains.length > 0
+            ? "The agent stays on these. Leaving them asks you first."
+            : "None yet. Every site the agent opens is a new domain."}
+        </p>
         <ul className="nt-chips" aria-label="Allowed domains">
           {sourceHosts.map((host) => (
             <li key={`src-${host}`}>

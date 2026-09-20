@@ -87,7 +87,7 @@ export class FakeLoopBrowser implements LoopBrowser {
     return {
       url: this.url,
       title: this.title,
-      origin: new URL(this.url).origin,
+      origin: toOrigin(this.url),
       domHash: this.domHash,
       screenshot: {
         png: this.png,

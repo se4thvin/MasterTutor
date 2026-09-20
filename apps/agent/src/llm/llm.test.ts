@@ -198,6 +198,16 @@ describe("goalText", () => {
     ])
       expect(text).toContain(part);
   });
+  it("tells a goal-only run it starts on a blank page and must find its own sources", () => {
+    const text = goalText(
+      { goal: "Find a good intro to Rust lifetimes", allowedOrigins: [], approvalMode: "ask" },
+      [],
+    );
+    expect(text).toContain("Allowed origins: none yet");
+    expect(text).toContain("blank page");
+    expect(text).toContain("search the web");
+    expect(text).toContain("risky actions wait for the user's approval");
+  });
 });
 
 describe("ModelCaller", () => {
@@ -405,6 +415,9 @@ describe("tool profiles (Phase 10)", () => {
       expect(text).toContain("cookie or consent banner");
       expect(text).toContain("<untrusted_page_content>");
       expect(text).not.toMatch(/zybook|osano/i);
+      // Goal-only runs: a free, self-hosted-friendly search page reached through normal browsing.
+      expect(text).toContain("https://html.duckduckgo.com/html/?q=");
+      expect(text).toContain("the executor asks the user first");
     }
   });
 });
