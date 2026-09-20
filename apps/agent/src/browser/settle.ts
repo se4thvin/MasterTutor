@@ -45,6 +45,8 @@ export async function settle(
   const page = session.page;
   const deadline = Date.now() + (options.navigationTimeoutMs ?? 15_000);
   while (session.navigations.pending(page) > 0 && Date.now() < deadline) await pause(50, signal);
+  // A main-frame navigation that never gets an answer would stall the page: stop it.
+  await session.stopStuckNavigation(signal, Math.max(0, deadline - Date.now()));
   await abortable(
     page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined),
     signal,

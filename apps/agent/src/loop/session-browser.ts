@@ -218,6 +218,8 @@ export class SessionLoopBrowser implements LoopBrowser {
     if (history === "reload" || history === "back" || history === "forward")
       return historyTarget(this.#session, history);
     if (action.type === "click" || action.type === "double_click") {
+      // The page answers nothing while its own document waits on a navigation that never answers.
+      await this.#session.stopStuckNavigation(new AbortController().signal, 1_000);
       const point = await this.#executor.toPage(action.x, action.y);
       // While some document of the page could not be armed (a frame that hangs, or too many),
       // clicking and typing count as acting inside an uninspectable page: they need approval.
@@ -225,8 +227,10 @@ export class SessionLoopBrowser implements LoopBrowser {
         ? markStillUnguarded(this.#session, (await hitTest(this.#session, point)).target)
         : null;
     }
-    if (action.type === "type" || action.type === "keypress")
+    if (action.type === "type" || action.type === "keypress") {
+      await this.#session.stopStuckNavigation(new AbortController().signal, 1_000);
       return markStillUnguarded(this.#session, previous ?? (await focusTarget(this.#session)));
+    }
     return null;
   }
 

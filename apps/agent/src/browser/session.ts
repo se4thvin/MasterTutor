@@ -7,7 +7,7 @@ import {
   type Frame,
   type Page,
 } from "playwright-core";
-import { abortable } from "../runtime/abortable.ts";
+import { abortable, pause } from "../runtime/abortable.ts";
 import type { Log } from "../runtime/types.ts";
 import { DownloadGate, type DownloadFolder } from "./download-gate.ts";
 import { NEAR_FRAME_MARGIN_PX, ownerBoxCovers } from "./frame-owner-box.ts";
@@ -516,6 +516,35 @@ export class BrowserSession {
     };
   }
 
+  /** True while the page's own document (the main frame) is being replaced. */
+  mainFrameNavigating(): boolean {
+    return this.#pendingNavigations.inFlight(this.#page).mainFrame;
+  }
+
+  /**
+   * While the main frame's navigation is in flight, Chromium answers nothing about the page that
+   * runs in it (layout, evaluation: each waits for the new document), so a navigation that never
+   * gets an answer would stall every step. Waits up to `waitMs` for it to end; if it has not,
+   * stops it, as the browser's stop button does, so the current document answers again. Returns
+   * whether it stopped one.
+   */
+  async stopStuckNavigation(signal: AbortSignal, waitMs: number): Promise<boolean> {
+    const waitBy = Date.now() + waitMs;
+    while (this.mainFrameNavigating() && Date.now() < waitBy) await pause(50, signal);
+    if (!this.mainFrameNavigating()) return false;
+    this.#log.debug(
+      { errorCode: "navigation_stopped" },
+      "stopped a navigation that did not answer",
+    );
+    await abortable(
+      this.cdp().then((cdp) => cdp.send("Page.stopLoading")),
+      signal,
+    ).catch(() => undefined);
+    const stoppedBy = Date.now() + 1_000;
+    while (this.mainFrameNavigating() && Date.now() < stoppedBy) await pause(25, signal);
+    return true;
+  }
+
   /** Navigates the active tab; false when blocked or failed (never throws for network errors). */
   async goto(url: string, signal: AbortSignal): Promise<boolean> {
     this.guard.assertAgent(signal);
@@ -533,6 +562,8 @@ export class BrowserSession {
     } catch {
       if (signal.aborted) throw signal.reason;
       this.#log.debug({ errorCode: "navigation_failed" }, "navigation failed");
+      // A navigation still waiting for its answer would stall every later step: stop it.
+      await this.stopStuckNavigation(signal, 0);
       return false;
     }
   }
