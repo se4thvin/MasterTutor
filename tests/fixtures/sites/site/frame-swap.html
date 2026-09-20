@@ -19,15 +19,26 @@
   </head>
   <body>
     <!-- A same-site frame showing Cancel. ?after=N: N ms after the pointer enters it, the frame
-         navigates to ?to= (default another site, so a new process) showing Delete in that spot. -->
+         navigates to ?to= (default another site, so a new process) showing Delete in that spot.
+         &busy=M: a hidden frame of that site keeps its renderer busy for M ms from the same
+         moment, so the Delete document commits late. -->
     <iframe id="panel" title="Account" src="/widget.html?gap"></iframe>
     <script>
       const params = new URLSearchParams(location.search);
       const panel = document.getElementById("panel");
       const to = params.get("to") ?? "other.fixtures-isolated.test";
+      const busy = params.has("busy") ? document.createElement("iframe") : null;
+      if (busy) {
+        busy.src = `http://${to}/busy.html`;
+        busy.style.cssText = "left: 900px; top: 600px; width: 1px; height: 1px";
+        document.body.append(busy);
+      }
       panel.addEventListener("mouseenter", () =>
         setTimeout(
-          () => (panel.src = `http://${to}/widget.html?only=delete`),
+          () => {
+            busy?.contentWindow.postMessage(params.get("busy"), "*");
+            panel.src = `http://${to}/widget.html?only=delete`;
+          },
           Number(params.get("after") ?? 60_000),
         ),
       );

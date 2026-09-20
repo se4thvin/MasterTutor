@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Busy</title>
+  </head>
+  <body>
+    <script>
+      // Keeps this site's renderer busy for the number of milliseconds a message asks for.
+      addEventListener("message", (event) => {
+        const until = Date.now() + Number(event.data);
+        while (Date.now() < until);
+      });
+    </script>
+  </body>
+</html>

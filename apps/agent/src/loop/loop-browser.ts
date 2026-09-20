@@ -33,9 +33,11 @@ export interface Observation {
 /** Everything the loop needs from a browser; the real one is SessionLoopBrowser (Task 17). */
 export interface LoopBrowser {
   observe(signal: AbortSignal): Promise<Observation>;
+  /** `signal`: the run's (a takeover or kill ends the classification at once). */
   targetFor(
     action: ComputerAction,
     previous: TargetDescription | null,
+    signal: AbortSignal,
   ): Promise<TargetDescription | null>;
   runComputer(
     actions: readonly ComputerAction[],
