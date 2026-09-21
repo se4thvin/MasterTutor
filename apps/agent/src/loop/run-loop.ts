@@ -90,7 +90,6 @@ import {
   GARAGE_REF,
   lastUserEventId,
   loadTranscript,
-  recentScreenshotKeys,
   unansweredCalls,
   type TranscriptEntry,
 } from "./transcript.ts";
@@ -530,9 +529,7 @@ export class RunLoop {
       record("in", pending, null, "compaction");
       record("out", compacted.call.reply.output, compacted.call.reply.id, "compaction");
       deltas.push(usageDelta(compacted.call.model, compacted.call.reply.usage, 0));
-      // Only this run's own screenshots are referenced (Group D: resolveGarageRef).
-      const keys = recentScreenshotKeys(history, runId, 2);
-      const items = seedFromSummary(compacted.summary, keys, {
+      const items = seedFromSummary(compacted.summary, {
         pageText: this.#pageHeader(obs),
         screenshotKey: this.#screenshotKey!,
         // The first turn's context (the vault's alias list) is not in the summary: send it again,

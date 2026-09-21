@@ -92,13 +92,14 @@ export function summarizeTranscript(
 }
 
 /**
- * The base of a fresh context. Images are `garage:` refs (rehydrated per request, never re-uploaded);
- * `carried` are this turn's executor notes and user messages, verbatim: a summary must not
- * paraphrase what the user said or what the executor refused.
+ * The base of a fresh context. The image is a `garage:` ref (rehydrated per request, never
+ * re-uploaded): only the current screen, since OpenAI refuses a second message image while the
+ * computer tool is declared (model-input.ts MESSAGE_IMAGE_WINDOW). `carried` are this turn's
+ * executor notes and user messages, verbatim: a summary must not paraphrase what the user said or
+ * what the executor refused.
  */
 export function seedFromSummary(
   summary: CompactionSummary,
-  previousKeys: readonly string[],
   current: { pageText: string; screenshotKey: string; carried: readonly string[] },
 ): ResponseInputItem[] {
   return [
@@ -108,11 +109,8 @@ export function seedFromSummary(
         `Summary:\n${JSON.stringify(summary)}`,
         ...current.carried,
         current.pageText,
-        "Earlier screenshots, oldest first, then the current screen:",
       ],
-      null,
+      `${GARAGE_REF}${current.screenshotKey}`,
     ),
-    ...previousKeys.slice(-2).map((key) => userMessage([], `${GARAGE_REF}${key}`)),
-    userMessage([], `${GARAGE_REF}${current.screenshotKey}`),
   ];
 }
