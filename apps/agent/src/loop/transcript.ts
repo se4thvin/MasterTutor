@@ -137,27 +137,6 @@ export function resolveGarageRef(runId: string, value: unknown): string | null {
   return key;
 }
 
-/** Keys of the newest `count` screenshots; only real image fields count, never message or argument text. */
-export function recentScreenshotKeys(
-  entries: readonly TranscriptEntry[],
-  runId: string,
-  count: number,
-): string[] {
-  const keys: string[] = [];
-  const walk = (value: unknown) => {
-    if (Array.isArray(value)) return value.forEach(walk);
-    if (value === null || typeof value !== "object") return;
-    const object = value as Record<string, unknown>;
-    if (object.type === "computer_screenshot" || object.type === "input_image") {
-      const key = resolveGarageRef(runId, object.image_url);
-      if (key) keys.push(key);
-    }
-    Object.values(object).forEach(walk);
-  };
-  entries.forEach((entry) => walk(entry.item));
-  return keys.slice(-count);
-}
-
 /** A plain-text run log for rebuilding a lost chain (spec §5.4). Images become "[screenshot]". */
 export function transcriptAsText(entries: readonly TranscriptEntry[], maxChars = 150_000): string {
   const lines = entries.map((entry) => {
