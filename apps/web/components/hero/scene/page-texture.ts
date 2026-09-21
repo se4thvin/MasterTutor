@@ -6,7 +6,7 @@ import { CanvasTexture, SRGBColorSpace } from "three";
  */
 export function pageTexture(
   maxAnisotropy: number,
-  accent: { tint: string; signal: string; bondi: string; aqua: string },
+  theme: { tint: string; signal: string; bondi: string; aqua: string; font: string },
 ): CanvasTexture {
   const c = document.createElement("canvas");
   c.width = 512;
@@ -37,18 +37,18 @@ export function pageTexture(
     g.fill();
   }
   rr(150, 14, 230, 26, 13, "#ffffff");
-  g.font = "600 14px -apple-system, Inter, Helvetica, sans-serif";
+  g.font = `600 14px ${theme.font}`;
   g.fillStyle = "#1D1D1F";
   g.fillText("learn.example.edu", 196, 32);
-  rr(36, 84, 70, 10, 5, accent.tint);
-  g.font = "700 38px -apple-system, Inter, Helvetica, sans-serif";
+  rr(36, 84, 70, 10, 5, theme.tint);
+  g.font = `700 38px ${theme.font}`;
   g.fillText("Logistic regression", 34, 140);
   [470, 400].forEach((w, i) => rr(36, 160 + i * 18, w * 0.9, 8, 4, "#C7C7CC"));
   const grd = g.createLinearGradient(36, 210, 476, 410);
   grd.addColorStop(0, "#E8F7F5");
-  grd.addColorStop(1, accent.aqua);
+  grd.addColorStop(1, theme.aqua);
   rr(36, 210, 440, 200, 14, grd);
-  g.strokeStyle = accent.bondi;
+  g.strokeStyle = theme.bondi;
   g.globalAlpha = 0.35;
   g.lineWidth = 2;
   g.beginPath();
@@ -69,9 +69,9 @@ export function pageTexture(
   }
   g.stroke();
   g.globalAlpha = 0.09;
-  rr(28, 432, 456, 62, 10, accent.signal);
+  rr(28, 432, 456, 62, 10, theme.signal);
   g.globalAlpha = 1;
-  rr(28, 432, 5, 62, 2, accent.signal);
+  rr(28, 432, 5, 62, 2, theme.signal);
   [440, 410, 430].forEach((w, i) => rr(46, 446 + i * 16, w * 0.92, 7, 3.5, "#B8B8BE"));
   [440, 420, 445, 300].forEach((w, i) => rr(36, 520 + i * 22, w * 0.95, 8, 4, "#D2D2D7"));
   const texture = new CanvasTexture(c);

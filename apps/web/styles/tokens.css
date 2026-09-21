@@ -67,13 +67,42 @@
   --e1: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.05);
   --e2: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 6px 16px rgb(0 0 0 / 0.07), 0 1px 3px rgb(0 0 0 / 0.05);
   --e3: 0 0 0 0.5px rgb(0 0 0 / 0.1), 0 22px 48px rgb(0 0 0 / 0.14), 0 4px 10px rgb(0 0 0 / 0.06);
+  /* Type (spec §11.1). SF Pro is the one typeface, from the system stack: it is never bundled,
+     as Apple's licence forbids redistributing it. -apple-system picks SF Pro Text or Display by
+     size, so one family serves every role; other platforms get their own system UI font. */
   --font-ui:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", var(--font-inter), Inter,
-    system-ui, sans-serif;
-  --font-display:
-    -apple-system, BlinkMacSystemFont, "SF Pro Display", var(--font-inter), Inter, system-ui,
-    sans-serif;
-  --font-code: ui-monospace, "SF Mono", "Geist Mono", Menlo, monospace;
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* SF Mono, for code blocks in notes only (the exceptions are listed in stylelint.config.mjs).
+     Ids, numbers and meters stay in SF Pro with tabular-nums. */
+  --font-code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* The type scale: each --text-N is N px at the default root size. */
+  --text-11: 0.6875rem;
+  --text-12: 0.75rem;
+  --text-13: 0.8125rem;
+  --text-14: 0.875rem;
+  --text-15: 0.9375rem;
+  --text-16: 1rem;
+  --text-17: 1.0625rem;
+  --text-20: 1.25rem;
+  --text-22: 1.375rem;
+  --text-28: 1.75rem;
+  --text-34: 2.125rem;
+  --text-display: clamp(1.75rem, 3.4vw, 2.5rem);
+  --text-large: clamp(2.25rem, 4.6vw, 3.75rem);
+  --text-hero: clamp(2.75rem, 5.4vw, 4.5rem);
+  /* Inline code follows the size of the text around it. */
+  --text-inline-code: 0.875em;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --tracking-display: -0.04em;
+  --tracking-title: -0.024em;
+  --tracking-heading: -0.018em;
+  --tracking-body: -0.011em;
+  --tracking-ui: -0.006em;
+  --tracking-caps: 0.08em;
   --r-xs: 0.375rem;
   --r-sm: 0.5rem;
   --r-md: 0.75rem;

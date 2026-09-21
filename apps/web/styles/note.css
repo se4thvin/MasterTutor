@@ -1,19 +1,19 @@
 @layer components {
   .prose {
-    font-size: 1.0625rem;
+    font-size: var(--text-17);
     line-height: 1.65;
-    letter-spacing: -0.011em;
+    letter-spacing: var(--tracking-body);
     overflow-wrap: anywhere;
     & p + p {
       margin-top: 0.75rem;
     }
     & h2 {
-      font: 700 1.625rem/1.2 var(--font-display);
-      letter-spacing: -0.025em;
+      font: var(--weight-bold) var(--text-28)/1.2 var(--font-ui);
+      letter-spacing: var(--tracking-title);
       padding-top: 1.4rem;
     }
     & h3 {
-      font: 600 1.25rem/1.3 var(--font-display);
+      font: var(--weight-semibold) var(--text-20)/1.3 var(--font-ui);
       padding-top: 1rem;
     }
     & ul,
@@ -32,27 +32,31 @@
       overflow-x: auto;
       border-radius: var(--r-md);
       background: var(--bg-2);
-      font: 400 0.8125rem/1.65 var(--font-code);
+      font: var(--weight-regular) var(--text-13)/1.65 var(--font-code);
       overflow-wrap: normal;
+      /* Preflight gives code its own family; a block's code takes the pre's SF Mono. */
+      & code {
+        font: inherit;
+      }
     }
     & :not(pre) > code {
       padding: 0.1rem 0.3rem;
       border-radius: 0.3rem;
       background: var(--fill-2);
-      font: 0.875em var(--font-code);
+      font: var(--text-inline-code) var(--font-code);
     }
     & table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.875rem;
+      font-size: var(--text-14);
       overflow-wrap: normal;
     }
     & th {
       padding: 0.55rem 0.6rem;
       border-bottom: 1px solid var(--label);
       text-align: left;
-      font-size: 0.75rem;
-      font-weight: 600;
+      font-size: var(--text-12);
+      font-weight: var(--weight-semibold);
       color: var(--label-2);
     }
     & td {
@@ -123,7 +127,7 @@
     padding: 0.7rem 0.9rem;
     border-radius: var(--r-md);
     background: var(--bg-2);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
     @variant lg {
       margin-top: 2.5rem;
     }
@@ -178,14 +182,14 @@
     color: var(--signal);
   }
   .reader-title {
-    font: 700 clamp(2rem, 4vw, 3.25rem) / 1.04 var(--font-display);
-    letter-spacing: -0.038em;
+    font: var(--weight-bold) var(--text-large)/1.04 var(--font-ui);
+    letter-spacing: var(--tracking-display);
     overflow-wrap: anywhere;
   }
   .reader-lede {
-    font-size: 1.3125rem;
+    font-size: var(--text-20);
     line-height: 1.5;
-    letter-spacing: -0.017em;
+    letter-spacing: var(--tracking-heading);
     overflow-wrap: anywhere;
   }
   .reader-body {
@@ -332,7 +336,7 @@
     padding: 0.6rem 0.75rem;
     border-radius: 0.625rem;
     background: var(--bg-2);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
     line-height: 1.5;
     overflow-wrap: anywhere;
   }
@@ -341,7 +345,7 @@
     grid-template-columns: 5rem minmax(0, 1fr);
     gap: 0.25rem 0.5rem;
     margin: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-12);
     & dt {
       color: var(--label-2);
     }
@@ -354,7 +358,7 @@
     padding: 0.5rem 0.75rem;
     border-left: 3px solid var(--hairline);
     color: var(--label-2);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
   }
   .prov-actions {
     display: flex;
@@ -472,7 +476,7 @@
     border-radius: 0.625rem;
     background: var(--elevated);
     box-shadow: var(--e2);
-    font-size: 0.9375rem;
+    font-size: var(--text-15);
   }
   .src-block {
     position: relative;
@@ -528,7 +532,7 @@
     border: 0;
     border-radius: var(--r-sm);
     background: var(--bg-2);
-    font: 400 0.8125rem/1.65 var(--font-code);
+    font: var(--weight-regular) var(--text-13)/1.65 var(--font-ui);
     outline: none;
     resize: vertical;
   }
