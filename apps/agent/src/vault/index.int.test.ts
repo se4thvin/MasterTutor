@@ -105,11 +105,12 @@ async function refNamed(browser: LoopBrowser, name: string): Promise<string> {
 }
 
 describe("createVault / vaultHooks", () => {
-  it("plugs into B1 through hooks only: tools, masks, sessions, prompt, click, release", () => {
+  it("plugs into B1 through hooks only: tools, masks, sessions, prompt, sign-in, click, release", () => {
     const hooks = vaultHooks(vault);
     expect(Object.keys(hooks).sort()).toEqual(
       [
         "functionTools",
+        "hasSignIn",
         "maskSources",
         "onClick",
         "onReleased",
@@ -134,6 +135,18 @@ describe("createVault / vaultHooks", () => {
     expect(
       await vault.promptContext({ ...run(), allowedOrigins: ["https://none.example"] }),
     ).toEqual([]);
+  });
+
+  it("has a sign-in only for an allowed origin with a saved item", async () => {
+    expect(await vault.hasSignIn(run(), zybooks)).toBe(true);
+    // An item exists for other.example, but this run is not allowed there.
+    expect(await vault.hasSignIn(run(), "https://other.example")).toBe(false);
+    expect(
+      await vault.hasSignIn(
+        { ...run(), allowedOrigins: [zybooks, "https://none.example"] },
+        "https://none.example",
+      ),
+    ).toBe(false);
   });
 
   it("raises each credential tool's card through B1's real loop browser, from the live page (N9)", async () => {

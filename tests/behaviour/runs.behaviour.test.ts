@@ -295,6 +295,31 @@ describe("agent behaviour on real slots (spec §12)", () => {
     expect(agent.mock.requestsFor(name)).toHaveLength(0);
   });
 
+  it("pauses on a sign-in page without a saved sign-in, even in bypass mode, before any model call or keystroke", async () => {
+    const name = scenario("signin", [clickNamed("Password"), typeText("guessed-password"), done]);
+    const runId = await createRun(agent, `[scenario:${name}] ${OTHER}/login.html`, {
+      allowedOrigins: [OTHER],
+      approvalMode: "bypass",
+    });
+    await waitForRun(
+      agent,
+      runId,
+      (run) =>
+        run.status === "sleeping" || (run.status === "waiting" && run.waitReason === "takeover"),
+      "sign-in wait",
+    );
+    expect(
+      (await events(agent, runId)).some(
+        (e) =>
+          e.type === "status" &&
+          e.waitReason === "takeover" &&
+          e.reason === `Sign-in needed for ${OTHER} — add it in the Vault or take over`,
+      ),
+    ).toBe(true);
+    expect(agent.mock.requestsFor(name)).toHaveLength(0);
+    expect((await steps(agent, runId)).filter((s) => s.phase === "act")).toEqual([]);
+  });
+
   it("masking is passive during a live run and masks secret fields in stored screenshots", async () => {
     const first = gate();
     const second = gate();
