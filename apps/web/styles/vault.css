@@ -95,8 +95,8 @@
     min-width: 0;
   }
   .vrow-alias {
-    font-weight: 600;
-    font-size: 0.8125rem;
+    font-weight: var(--weight-semibold);
+    font-size: var(--text-13);
     overflow-wrap: anywhere;
   }
   .vrow-host {
@@ -119,13 +119,13 @@
     border-radius: var(--r-xs);
     background: var(--fill-2);
     color: var(--label);
-    font-size: 0.6875rem;
-    font-weight: 500;
+    font-size: var(--text-11);
+    font-weight: var(--weight-medium);
   }
-  /* Inherits the label colour so it stays above AA (the mockup's label-3 does not). */
+  /* Inherits the label colour so it stays above AA (the mockup's label-3 does not); a lighter
+     weight than the chip sets it apart. */
   .ft-seal {
-    font-family: var(--font-code);
-    letter-spacing: 0.05em;
+    font-weight: var(--weight-regular);
   }
   .ft-tint {
     background: var(--tint-wash);
@@ -135,7 +135,7 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.75rem;
+    font-size: var(--text-12);
   }
   .vrow-actions {
     display: flex;
@@ -157,7 +157,7 @@
     & p {
       margin-top: 0.2rem;
       color: var(--label);
-      font-size: 0.8125rem;
+      font-size: var(--text-13);
       line-height: 1.5;
     }
     & h2 {
