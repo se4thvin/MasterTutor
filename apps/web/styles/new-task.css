@@ -27,8 +27,8 @@
   }
   .nt-title {
     margin: 0.75rem 0 0;
-    font: 700 clamp(2.5rem, 5.4vw, 4.5rem) / 1 var(--font-display);
-    letter-spacing: -0.04em;
+    font: var(--weight-bold) var(--text-hero)/1 var(--font-ui);
+    letter-spacing: var(--tracking-display);
     color: var(--label);
     overflow-wrap: anywhere;
   }
@@ -36,7 +36,7 @@
     max-width: 32rem;
     margin: 1rem 0 0;
     color: var(--label-2);
-    font-size: 1.1875rem;
+    font-size: var(--text-20);
     line-height: 1.45;
   }
   .nt-composer {
@@ -60,7 +60,7 @@
     resize: none;
     background: none;
     color: var(--label);
-    font: 400 1.1875rem/1.5 var(--font-ui);
+    font: var(--weight-regular) var(--text-20)/1.5 var(--font-ui);
     &::placeholder {
       color: var(--label-2);
     }
@@ -103,12 +103,12 @@
     flex-basis: 100%;
     margin: 0.25rem 0 0;
     color: var(--danger);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
   }
   .nt-note {
     margin: 0.75rem 0 0;
     color: var(--label-2);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
   }
   .nt-foot {
     display: flex;
@@ -148,13 +148,13 @@
   .nt-opt-title {
     margin: 0.5rem 0 0.3rem;
     color: var(--label);
-    font: 600 1.0625rem/1.3 var(--font-ui);
-    letter-spacing: -0.015em;
+    font: var(--weight-semibold) var(--text-17)/1.3 var(--font-ui);
+    letter-spacing: var(--tracking-heading);
   }
   .nt-opt-text {
     margin: 0.75rem 0;
     color: var(--label-2);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
     line-height: 1.45;
   }
   .nt-risk p {
@@ -171,7 +171,7 @@
     border-radius: var(--r-sm);
     background: var(--warn-wash);
     color: var(--label);
-    font-size: 0.75rem;
+    font-size: var(--text-12);
     line-height: 1.4;
     & .ic {
       color: var(--warn);
@@ -189,13 +189,13 @@
     }
     & dt {
       color: var(--label-2);
-      font-size: 0.75rem;
+      font-size: var(--text-12);
     }
     & dd {
       margin: 0;
       color: var(--label);
-      font: 600 2rem/1 var(--font-display);
-      letter-spacing: -0.04em;
+      font: var(--weight-semibold) var(--text-34)/1 var(--font-ui);
+      letter-spacing: var(--tracking-display);
     }
   }
   .nt-select {
@@ -205,7 +205,7 @@
     gap: 0.75rem;
     margin-top: 1rem;
     color: var(--label-2);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
     & select {
       flex: 1 1 10rem;
       min-width: 0;
@@ -226,7 +226,7 @@
     min-height: var(--hit);
     margin: 0 0 0.75rem;
     color: var(--label);
-    font-size: 0.8125rem;
+    font-size: var(--text-13);
     & input {
       flex: none;
       width: 1.125rem;
