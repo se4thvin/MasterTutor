@@ -239,8 +239,7 @@
   }
   .run-chrome {
     display: grid;
-    /* On a phone one dot shows, so its column is only as wide as the dot: the host needs the room. */
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: 2.5rem minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.5rem;
     min-height: var(--hit);
@@ -248,6 +247,24 @@
     border-bottom: 0.03125rem solid var(--hairline);
     @variant sm {
       grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+    }
+    /* Coordinator ruling, 480px and below: the decorative dots go, the origin pill (host whole,
+       shield in its own slot) sits left and the status group right. When both cannot share the
+       row (a bypass chip, a long host), the status group wraps under it instead of overlapping. */
+    @media (width <= 30rem) {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      padding-block: 0.25rem;
+      & .run-dots {
+        display: none;
+      }
+      & .run-origin {
+        flex: none;
+      }
+      & .run-chrome-end {
+        margin-inline-start: auto;
+      }
     }
   }
   .run-dots {
@@ -378,6 +395,18 @@
     }
     &[data-tone="muted"] i {
       background: var(--label-3);
+    }
+    /* Coordinator ruling: at 480px and below the frame pill shows its short label. */
+    & .run-pill-short {
+      display: none;
+    }
+    @media (width <= 30rem) {
+      & .run-pill-full {
+        display: none;
+      }
+      & .run-pill-short {
+        display: inline;
+      }
     }
     &[data-pulse] i {
       animation-name: pulse;
