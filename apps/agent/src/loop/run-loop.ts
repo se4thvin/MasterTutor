@@ -83,7 +83,14 @@ import {
 import type { RunHooks } from "./hooks.ts";
 import type { LoopBrowser, Observation } from "./loop-browser.ts";
 import { buildModelInput, rehydrateImages } from "./model-input.ts";
-import { lastInputTokens, readRunControl, readWakeRequest, type RunSnapshot } from "./run-state.ts";
+import {
+  lastInputTokens,
+  readRunControl,
+  readWakeRequest,
+  signInNeeded,
+  signInPausedOrigins,
+  type RunSnapshot,
+} from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
 import { StepCollector } from "./step-collector.ts";
 import {
@@ -163,9 +170,6 @@ const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = [
   ...WAITS_KEPT_THROUGH_TAKEOVER,
 ];
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
-/** The wait shown when a page wants a sign-in the vault cannot provide. */
-export const signInNeeded = (origin: string) =>
-  `Sign-in needed for ${origin} — add it in the Vault or take over`;
 
 /** What an approval was for; an approved action only runs while its target still classifies the same. */
 function riskOf(request: ApprovalRequest): { kind: string | null; label: string | null } {
@@ -209,6 +213,8 @@ export class RunLoop {
   #observation: Observation | null = null;
   #screenshotKey: string | null = null;
   #lastInputTokens = 0;
+  /** Origins this run already paused on for a sign-in (at most once each). */
+  #signInPaused = new Set<string>();
   #firstTurn: boolean;
   #userCursor: string | null;
   #pending: PendingApproval | null = null;
@@ -242,6 +248,7 @@ export class RunLoop {
     loop.#calls = unansweredCalls(transcript);
     loop.#pending = await loadPendingApproval(deps.db, run.id);
     loop.#lastInputTokens = await lastInputTokens(deps.db, run.id);
+    loop.#signInPaused = await signInPausedOrigins(deps.db, run.id);
     // While a risky item waits for approval its calls have not run yet; anything else unanswered
     // either finished (its act row holds the result) or is answered without being re-run.
     const awaitingItem = loop.#pending !== null && loop.#pending.item !== null;
@@ -431,14 +438,18 @@ export class RunLoop {
     });
     this.#notesChanged = false;
     if (obs.captcha) return this.#wait("captcha", "A CAPTCHA needs a person", commit);
-    // Missing data, not an approval: every approval mode pauses, and the model never gets a turn
-    // on a sign-in page it has no saved sign-in for, so it cannot type guessed credentials.
+    // Missing data, not an approval: every approval mode pauses. Once per origin per run: a person
+    // who resumes without adding a sign-in lets the agent go on signed out there (the executor
+    // still refuses typing into secret fields).
     if (
       obs.signIn &&
       obs.origin !== null &&
+      !this.#signInPaused.has(obs.origin) &&
       !(await this.#deps.hooks.hasSignIn(this.#run, obs.origin))
-    )
+    ) {
+      this.#signInPaused.add(obs.origin);
       return this.#wait("takeover", signInNeeded(obs.origin), commit);
+    }
     if (stuck) return this.#wait("takeover", "stuck", commit);
     const exceeded = budgetExceeded(this.#run.usage, this.#run.budget);
     await this.#deps.store.commit(commit);
