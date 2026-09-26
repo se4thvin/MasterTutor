@@ -75,21 +75,18 @@ describe("compaction (spec §5.4)", () => {
     expect(JSON.stringify(body.input)).toContain("<untrusted_page_content");
   });
 
-  it("seeds a new chain with the summary, the last 3 screenshots as refs, and carried texts verbatim", () => {
+  it("seeds a new chain with the summary, only the current screen as a ref, and carried texts verbatim", () => {
     const run = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
-    const seed = seedFromSummary(
-      summary,
-      [`runs/${run}/transcript/1-0.png`, `runs/${run}/steps/2-ab.png`],
-      {
-        pageText: "Current page: x",
-        screenshotKey: `runs/${run}/steps/3-cd.png`,
-        carried: ["Executor: the click was refused", "Message from the user: do 2.4 next"],
-      },
-    );
+    const seed = seedFromSummary(summary, {
+      pageText: "Current page: x",
+      screenshotKey: `runs/${run}/steps/3-cd.png`,
+      carried: ["Executor: the click was refused", "Message from the user: do 2.4 next"],
+    });
     // Refs only: nothing is fetched or re-uploaded; the request rehydrates them.
     expect(JSON.stringify(seed)).toContain(`"garage:runs/${run}/steps/3-cd.png"`);
     expect(JSON.stringify(seed)).not.toContain("data:image");
-    expect(JSON.stringify(seed).match(/input_image/g)).toHaveLength(3);
+    // One message image: OpenAI refuses a second one while the computer tool is declared.
+    expect(JSON.stringify(seed).match(/input_image/g)).toHaveLength(1);
     const texts = seed.flatMap((item) =>
       "content" in item && Array.isArray(item.content)
         ? item.content.flatMap((part) =>

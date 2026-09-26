@@ -110,6 +110,78 @@ describe("buildModelInput (D37: stateless input from run_transcript)", () => {
   });
 });
 
+/** Turn-1 outputs recorded from gpt-6-astra (store:false) in the two runs that failed on turn 2. */
+const RECORDED_TURN_1 = {
+  captionOnly: {
+    id: "msg_05127aab4471b68a016ac7b919ed5087d1a3b95ac43ab1ee84",
+    role: "assistant",
+    type: "message",
+    phase: "final_answer",
+    status: "completed",
+    content: [
+      {
+        text: '{"status":"continue","needHuman":null,"reason":"I will read the section and save notes.","planUpdate":null}',
+        type: "output_text",
+        logprobs: [],
+        annotations: [],
+      },
+    ],
+  },
+  readPage: {
+    id: "fc_05da782f2ad05004016ac7b8f73c0c87d18b342d714b4d795c",
+    name: "read_page",
+    type: "function_call",
+    status: "completed",
+    call_id: "call_thxE4qdSfSeDAmCHcyJLwBGa",
+    arguments: '{"mode":"interactive","sinceHash":null,"offset":null}',
+  },
+};
+const messageImages = (items: readonly unknown[]) =>
+  (items as Array<{ content?: unknown }>)
+    .flatMap((item) =>
+      Array.isArray(item.content) ? (item.content as Array<{ type: string }>) : [],
+    )
+    .filter((part) => part.type === "input_image").length;
+
+describe("turn 2 after a recorded turn 1 (model_request_rejected, 2026-10-08)", () => {
+  // The computer tool is declared on every request, and with it OpenAI refuses more than one
+  // message image ("Computer tool cannot use multiple image inputs"); call outputs do not count.
+  it("sends only the newest page image after a caption-only reply", () => {
+    const history = [entry("in", user("goal", ref(1))), entry("out", RECORDED_TURN_1.captionOnly)];
+    const input = buildModelInput(history, [user("Current page: x", ref(2)) as never]);
+    expect(messageImages(input)).toBe(1);
+    expect(JSON.stringify(input)).toContain(ref(2));
+    expect(JSON.stringify(input[0])).toContain(SCREENSHOT_OMITTED);
+    expect(input[1]).toEqual(RECORDED_TURN_1.captionOnly);
+  });
+
+  it("sends only the newest page image after a recorded function call", () => {
+    const history = [entry("in", user("goal", ref(1))), entry("out", RECORDED_TURN_1.readPage)];
+    const input = buildModelInput(history, [
+      { type: "function_call_output", call_id: RECORDED_TURN_1.readPage.call_id, output: "{}" },
+      user("Current page: x", ref(2)) as never,
+    ]);
+    expect(messageImages(input)).toBe(1);
+    expect(JSON.stringify(input.at(-1))).toContain(ref(2));
+  });
+
+  it("keeps the newest 3 call screenshots beside the one message image", () => {
+    const history = [
+      entry("in", user("goal", ref(1))),
+      entry("out", call("c1")),
+      entry("in", output("c1", ref(2))),
+      entry("out", call("c2")),
+    ];
+    const input = buildModelInput(history, [
+      output("c2", ref(3)) as never,
+      user("now", ref(4)) as never,
+    ]);
+    const text = JSON.stringify(input);
+    for (const n of [2, 3, 4]) expect(text).toContain(ref(n));
+    expect(messageImages(input)).toBe(1);
+  });
+});
+
 describe("rehydrateImages", () => {
   it("turns this run's garage refs into data URLs and drops foreign or missing ones", async () => {
     const storage = createMemoryStorage();

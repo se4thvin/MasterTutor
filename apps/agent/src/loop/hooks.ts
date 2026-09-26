@@ -61,6 +61,8 @@ export interface RunHooks {
   control: ControlTransitions;
   functionTools: readonly RegisteredTool[];
   promptContext(run: RunSnapshot): Promise<string[]>;
+  /** Whether the run may sign in on this origin from the vault; without it a sign-in page pauses the run. */
+  hasSignIn(run: RunSnapshot, origin: string): Promise<boolean>;
   /** After an executed computer click (B3 logout detection): the target's accessible name and the page URL. */
   onClick(run: RunSnapshot, click: { label: string; url: string }): Promise<void>;
   /** This run's worker has ended (released, slept, lost its lease or failed): drop per-run state. */
@@ -86,6 +88,7 @@ export const DEFAULT_HOOKS: RunHooks = {
   },
   functionTools: [],
   promptContext: async () => [],
+  hasSignIn: async () => false,
   onClick: async () => undefined,
   onReleased: async () => undefined,
   onLeased: async () => undefined,
@@ -108,7 +111,7 @@ const MERGED_HOOKS: ReadonlySet<keyof RunHooks> = new Set<keyof RunHooks>([
  * Combines phase hook sets (B3 vault, B6 live view, B5, …) for one Supervisor (principle 5:
  * explicit injection, no global registry). onLeased runs in argument order; every onLeaseEnding
  * runs even if an earlier one throws (the first error is rethrown afterwards). B3's
- * onReleased(runId), onClick, sessionStore, maskSources and control are single-owner.
+ * onReleased(runId), onClick, sessionStore, maskSources, hasSignIn and control are single-owner.
  * A function tool name may have one owner only.
  */
 export function composeRunHooks(...parts: Partial<RunHooks>[]): Partial<RunHooks> {

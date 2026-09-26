@@ -278,6 +278,21 @@ export async function startLlmMock(
     return null;
   };
 
+  /**
+   * With the computer tool declared, the real API refuses more than one input_image across the
+   * input's messages; computer_call_output screenshots do not count (probed 2026-10-08).
+   */
+  const imageProblem = (body: MockRequestBody): string | null => {
+    if (!body.tools?.some((tool) => tool.type === "computer")) return null;
+    const items = Array.isArray(body.input) ? (body.input as Array<Record<string, unknown>>) : [];
+    const images = items
+      .flatMap((item) =>
+        Array.isArray(item.content) ? (item.content as Array<{ type?: unknown }>) : [],
+      )
+      .filter((part) => part.type === "input_image").length;
+    return images > 1 ? "Computer tool cannot use multiple image inputs." : null;
+  };
+
   /** openai-data-policy.md: stateless and anonymous, or the request is refused. */
   const policyProblem = (body: MockRequestBody): string | null => {
     if (body.store !== false) return "store must be false.";
@@ -435,6 +450,14 @@ export async function startLlmMock(
         failures.push(`${name} request: ${policy}`);
         return send(response, 400, {
           error: { message: policy, type: "invalid_request_error", param: null, code: null },
+        });
+      }
+      const images = imageProblem(body);
+      if (images) {
+        requests.push(routed(null));
+        failures.push(`${name} request: ${images}`);
+        return send(response, 400, {
+          error: { message: images, type: "invalid_request_error", param: "input", code: null },
         });
       }
       if (body.text?.format?.name === "compaction_summary") {

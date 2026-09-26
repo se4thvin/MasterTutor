@@ -41,10 +41,11 @@ export class ContextOverflow extends Error {
   }
 }
 
+/** `cause` is the provider error behind it, for diagnostics only (llm/caller.ts modelErrorLog). */
 export class ModelUnavailable extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
-    super(message);
+  constructor(code: string, message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
     this.name = "ModelUnavailable";
     this.code = code;
   }

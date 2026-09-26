@@ -26,7 +26,7 @@ export function VaultRow({
         <Icon name="web" />
       </span>
       <div className="vrow-id">
-        <span className="mono vrow-alias">{item.alias}</span>
+        <span className="tabular vrow-alias">{item.alias}</span>
         <span className="t-foot vrow-host">
           {item.label} · {hostOf(item.origin)}
         </span>

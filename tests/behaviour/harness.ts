@@ -93,10 +93,14 @@ export async function startBehaviourAgent(
       db: agentDb,
       storage,
       model: createOpenAIModelClient(openai),
-      hooks:
-        typeof options.hooks === "function"
+      hooks: {
+        // The fixture site stands in for a site with a saved sign-in: its pages carry password
+        // fields, which without one pause the run (sign-in rule). other.fixtures.test has none.
+        hasSignIn: async (_run, origin) => origin === SITE,
+        ...(typeof options.hooks === "function"
           ? options.hooks({ db: agentDb.db, storage, openai, log })
-          : options.hooks,
+          : options.hooks),
+      },
       slots: [...BEHAVIOUR_SLOTS],
       cdpBaseUrl: cdpBaseUrlForTests,
       log,
