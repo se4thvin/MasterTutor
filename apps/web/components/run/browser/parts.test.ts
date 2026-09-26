@@ -39,9 +39,17 @@ describe("OriginPill (S6, S7)", () => {
   });
 
   it("states its tone and pulse for CSS", () => {
-    expect(html(h(StatePill, { label: "Live", tone: "signal", pulse: true }))).toContain(
-      'data-tone="signal" data-pulse="true"',
+    expect(
+      html(h(StatePill, { label: "Live", short: "Live", tone: "signal", pulse: true })),
+    ).toContain('data-tone="signal" data-pulse="true"');
+  });
+
+  it("names itself with the full label and carries the short one for narrow frames", () => {
+    const out = html(
+      h(StatePill, { label: "Agent acting", short: "Acting", tone: "tint", pulse: true }),
     );
+    expect(out).toContain('role="img" aria-label="Agent acting" title="Agent acting"');
+    expect(out).toContain('<span class="run-pill-short" aria-hidden="true">Acting</span>');
   });
 });
 
