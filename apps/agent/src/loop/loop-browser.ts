@@ -26,6 +26,8 @@ export interface Observation {
   screenshot: ModelScreenshot;
   phash: PerceptualHash;
   captcha: boolean;
+  /** A visible password, one-time-code or PIN field (isSecretField): the page wants a sign-in. */
+  signIn: boolean;
   scroll: ScrollPosition;
   videoTime: number | null;
 }

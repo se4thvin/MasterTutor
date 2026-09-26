@@ -9,7 +9,7 @@ import {
   type Usage,
   type WaitReason,
 } from "@mastertutor/contracts";
-import { runSteps, runs, type Database } from "@mastertutor/db";
+import { runEvents, runSteps, runs, type Database } from "@mastertutor/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { RunRecord } from "./claim.ts";
 
@@ -72,6 +72,37 @@ export async function lastInputTokens(db: Database, runId: string): Promise<numb
     .orderBy(desc(runSteps.seq))
     .limit(1);
   return row?.usage?.inputTokens ?? 0;
+}
+
+const SIGN_IN_PREFIX = "Sign-in needed for ";
+const SIGN_IN_SUFFIX = " — add it in the Vault or take over";
+
+/** The wait shown when a page wants a sign-in the vault cannot provide. */
+export const signInNeeded = (origin: string) => `${SIGN_IN_PREFIX}${origin}${SIGN_IN_SUFFIX}`;
+
+/**
+ * Origins this run has already paused on for a sign-in, from its status events: it pauses at most
+ * once per origin, so a restored or woken worker does not ask again.
+ */
+export async function signInPausedOrigins(db: Database, runId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ reason: sql<string | null>`${runEvents.payload}->>'reason'` })
+    .from(runEvents)
+    .where(
+      and(
+        eq(runEvents.runId, runId),
+        eq(runEvents.type, "status"),
+        sql`${runEvents.payload}->>'waitReason' = 'takeover'`,
+        sql`starts_with(${runEvents.payload}->>'reason', ${SIGN_IN_PREFIX})`,
+      ),
+    );
+  return new Set(
+    rows.flatMap(({ reason }) =>
+      reason?.endsWith(SIGN_IN_SUFFIX)
+        ? [reason.slice(SIGN_IN_PREFIX.length, -SIGN_IN_SUFFIX.length)]
+        : [],
+    ),
+  );
 }
 
 export const isTerminal = (status: RunStatus) =>
