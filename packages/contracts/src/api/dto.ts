@@ -66,17 +66,34 @@ const BYPASS_UNACKNOWLEDGED = {
   path: ["bypassAcknowledged"],
 };
 
+/**
+ * Auto mode approves only inside the allowlist and denies every new origin, so a run with no
+ * allowed origin could never open a page: it needs at least one.
+ */
+export const autoModeNeedsOrigins = (input: {
+  approvalMode: string;
+  allowedOrigins: readonly string[];
+}) => input.approvalMode !== "auto_within_allowlist" || input.allowedOrigins.length > 0;
+
+/**
+ * A run needs only a goal. Sources and allowed origins are optional: with none, the agent starts
+ * on a blank page and every website it opens is a new origin, approved like any other.
+ */
 export const CreateRunInput = z
   .object({
     goal: z.string().trim().min(1).max(4_000),
-    allowedOrigins: z.array(OriginInput).min(1).max(50),
+    allowedOrigins: z.array(OriginInput).max(50).default([]),
     budget: Budget.optional(),
     targetFolderId: Uuid.nullable().default(null),
     approvalMode: ApprovalMode.default("ask"),
     toolProfile: ToolProfile.default("browser_use"),
     bypassAcknowledged: BypassAcknowledged,
   })
-  .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED);
+  .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED)
+  .refine(autoModeNeedsOrigins, {
+    message: "Auto mode needs at least one allowed origin",
+    path: ["allowedOrigins"],
+  });
 export type CreateRunInput = z.infer<typeof CreateRunInput>;
 
 export const ListRunsInput = PageInput.extend({ status: RunStatus.nullable().default(null) });

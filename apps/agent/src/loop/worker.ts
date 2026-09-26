@@ -253,7 +253,7 @@ export class RunWorker {
     const removeRestore = state ? await browser.applyStorage(state) : null;
     const target = run.currentUrl ?? startUrl(run.goal, run.allowedOrigins);
     try {
-      if (target) await browser.navigate(target, this.#abort.signal);
+      await browser.navigate(target, this.#abort.signal);
     } finally {
       // Even when the navigation is interrupted: a stale restore script must never outlive it (I3).
       await removeRestore?.().catch(() => undefined);

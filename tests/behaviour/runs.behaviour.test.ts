@@ -171,6 +171,76 @@ describe("agent behaviour on real slots (spec §12)", () => {
     expect(decisions[0]!.request).toMatchObject({ origin: OTHER });
   });
 
+  it("a goal-only run starts on a blank page and opens a website only after the user approves it", async () => {
+    const name = scenario("goal-only", [
+      {
+        outputs: [
+          {
+            type: "computer",
+            actions: [
+              { type: "keypress", keys: ["CTRL", "L"] },
+              { type: "type", text: `${OTHER}/` },
+              { type: "keypress", keys: ["ENTER"] },
+            ],
+          },
+        ],
+        check: (request) => {
+          for (const text of ["Allowed origins: none yet", "about:blank"]) expectIn(text)(request);
+        },
+      },
+      readText,
+      doneExpecting("This origin is never in a test run"),
+    ]);
+    const runId = await createRun(agent, `[scenario:${name}] Find a page about other origins`, {
+      allowedOrigins: [],
+    });
+    await waitForRun(
+      agent,
+      runId,
+      (run) => run.status === "sleeping" && run.slotName === null,
+      "asleep awaiting the new-origin approval",
+    );
+    const asked = await agent.owner.db.select().from(approvals).where(eq(approvals.runId, runId));
+    expect(asked.map((a) => [a.kind, a.status])).toEqual([["new_origin", "pending"]]);
+    expect(asked[0]!.request).toMatchObject({ origin: OTHER });
+    await decideApproval(agent, runId, "approved");
+    const run = await waitForRun(agent, runId, (r) => r.status === "completed", "completed");
+    expect(run.allowedOrigins).toEqual([OTHER]);
+    expect(run.currentUrl?.startsWith(OTHER)).toBe(true);
+  });
+
+  it("a redirect to another site still asks first in ask mode, and a denial keeps the run off it", async () => {
+    const name = scenario("redirect-other", [
+      {
+        outputs: [
+          {
+            type: "computer",
+            actions: [
+              { type: "keypress", keys: ["CTRL", "L"] },
+              { type: "type", text: `${SITE}/redirect-other` },
+              { type: "keypress", keys: ["ENTER"] },
+            ],
+          },
+        ],
+      },
+      doneExpecting(`the user did not allow opening ${OTHER}`),
+    ]);
+    const runId = await createRun(agent, `[scenario:${name}] ${SITE}/injection.html`);
+    await waitForRun(
+      agent,
+      runId,
+      (run) => run.status === "sleeping" && run.slotName === null,
+      "asleep awaiting the new-origin approval for the redirect target",
+    );
+    const asked = await agent.owner.db.select().from(approvals).where(eq(approvals.runId, runId));
+    expect(asked.map((a) => [a.kind, a.status])).toEqual([["new_origin", "pending"]]);
+    expect(asked[0]!.request).toMatchObject({ origin: OTHER });
+    await decideApproval(agent, runId, "denied");
+    const run = await waitForRun(agent, runId, (r) => r.status === "completed", "completed");
+    expect(run.allowedOrigins).toEqual([SITE]);
+    expect(run.currentUrl?.startsWith(OTHER)).toBe(false);
+  });
+
   it("restores after a crash without retrying the started action", async () => {
     const name = scenario("crash", [
       readInteractive,
