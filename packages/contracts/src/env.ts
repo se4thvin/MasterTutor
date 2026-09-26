@@ -8,6 +8,7 @@ import {
   PostgresUrl,
 } from "./primitives.ts";
 import { SlotList } from "./constants.ts";
+import { OBSERVE_INTERNAL_URL } from "./observability.ts";
 
 export const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 export const LogLevel = z.enum(LOG_LEVELS);
@@ -31,27 +32,69 @@ const S3Access = {
   S3_SECRET_ACCESS_KEY: GarageSecret,
 };
 
+export const DEPLOYMENTS = ["production", "bench", "test", "development"] as const;
+/** Telemetry is off unless an endpoint is set (spec §6.3); test stacks never set it. */
+const Telemetry = {
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.url({ protocol: /^https?$/ }).optional(),
+  MT_DEPLOYMENT: z.enum(DEPLOYMENTS).default("production"),
+};
+export const TelemetryEnv = z.object(Telemetry);
+export type TelemetryEnv = z.infer<typeof TelemetryEnv>;
+
+/**
+ * VAPID keys as `pnpm env:init` writes them and web-push's setVapidDetails takes them: unpadded
+ * base64url of the 65-byte uncompressed P-256 point (0x04 prefix, so it starts with "B") and of the
+ * 32-byte private scalar.
+ */
+const VapidPublicKey = z
+  .string()
+  .regex(/^B[A-Za-z0-9_-]{86}$/, "Expected a base64url uncompressed P-256 public key");
+const VapidPrivateKey = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{43}$/, "Expected a base64url 32-byte P-256 private key");
+
+/** Both members of a key pair, or neither (names the missing key, never a value). */
+const paired = (a: string, b: string) => (env: Record<string, unknown>, ctx: z.RefinementCtx) => {
+  if ((env[a] === undefined) !== (env[b] === undefined))
+    ctx.addIssue({
+      code: "custom",
+      path: [env[a] === undefined ? a : b],
+      message: `set together with ${env[a] === undefined ? b : a}`,
+    });
+};
+
 /** web: encryption-only vault key, member-only n.eko secret, read-only S3 key (spec §13). */
-export const WebEnv = z.object({
-  ...Common,
-  DATABASE_URL: PostgresUrl,
-  BETTER_AUTH_SECRET: Secret,
-  BETTER_AUTH_URL: z.url(),
-  AUTH_SIGNUP_OPEN: Flag,
-  VAULT_PUBLIC_KEY: Base64Key32,
-  NEKO_MEMBER_SECRET: Secret,
-  LIVE_COOKIE_SECRET: Secret,
-  OPENAI_API_KEY: z.string().min(1),
-  OPENAI_BASE_URL: z.url().optional(),
-  ...S3Access,
-  /** Test-only: serve the in-memory fixture API (apps/web/lib/fixtures). Never set in compose files. */
-  WEB_FIXTURE_API: Flag,
-});
+export const WebEnv = z
+  .object({
+    ...Common,
+    ...Telemetry,
+    DATABASE_URL: PostgresUrl,
+    BETTER_AUTH_SECRET: Secret,
+    BETTER_AUTH_URL: z.url(),
+    AUTH_SIGNUP_OPEN: Flag,
+    VAULT_PUBLIC_KEY: Base64Key32,
+    NEKO_MEMBER_SECRET: Secret,
+    LIVE_COOKIE_SECRET: Secret,
+    OPENAI_API_KEY: z.string().min(1),
+    OPENAI_BASE_URL: z.url().optional(),
+    ...S3Access,
+    /** Web Push (spec §13.4): unset means in-app alerts only. */
+    VAPID_PUBLIC_KEY: VapidPublicKey.optional(),
+    VAPID_PRIVATE_KEY: VapidPrivateKey.optional(),
+    /** OpenObserve's alert webhook bearer (spec §13.2): unset means the webhook does not exist. */
+    ALERT_WEBHOOK_SECRET: Secret.optional(),
+    /** The viewer user ForwardAuth injects for /observability (spec §12): unset means unavailable. */
+    OBSERVE_VIEWER_PASSWORD: Secret.optional(),
+    /** Test-only: serve the in-memory fixture API (apps/web/lib/fixtures). Never set in compose files. */
+    WEB_FIXTURE_API: Flag,
+  })
+  .superRefine(paired("VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"));
 export type WebEnv = z.infer<typeof WebEnv>;
 
 /** agent: decryption key, n.eko admin secret, read/write S3 key. */
 export const AgentEnv = z.object({
   ...Common,
+  ...Telemetry,
   DATABASE_URL: PostgresUrl,
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_BASE_URL: z.url().optional(),
@@ -82,23 +125,41 @@ export const MigrateEnv = z.object({
 });
 export type MigrateEnv = z.infer<typeof MigrateEnv>;
 
-/** garage-init one-shot: admin API token plus the two service keys it imports. */
-export const GarageInitEnv = z.object({
-  ...Common,
-  GARAGE_ADMIN_URL: z.url(),
-  GARAGE_ADMIN_TOKEN: Secret,
-  S3_BUCKET: BucketName.default("mastertutor"),
-  S3_WEB_ACCESS_KEY_ID: GarageKeyId,
-  S3_WEB_SECRET_ACCESS_KEY: GarageSecret,
-  S3_AGENT_ACCESS_KEY_ID: GarageKeyId,
-  S3_AGENT_SECRET_ACCESS_KEY: GarageSecret,
-  GARAGE_CAPACITY_BYTES: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(10 * 1024 ** 3),
-});
+/** garage-init one-shot: admin API token, the two service keys, and OpenObserve's own bucket and key. */
+export const GarageInitEnv = z
+  .object({
+    ...Common,
+    GARAGE_ADMIN_URL: z.url(),
+    GARAGE_ADMIN_TOKEN: Secret,
+    S3_BUCKET: BucketName.default("mastertutor"),
+    S3_WEB_ACCESS_KEY_ID: GarageKeyId,
+    S3_WEB_SECRET_ACCESS_KEY: GarageSecret,
+    S3_AGENT_ACCESS_KEY_ID: GarageKeyId,
+    S3_AGENT_SECRET_ACCESS_KEY: GarageSecret,
+    S3_OBSERVE_BUCKET: BucketName.default("observability"),
+    S3_OBSERVE_ACCESS_KEY_ID: GarageKeyId.optional(),
+    S3_OBSERVE_SECRET_ACCESS_KEY: GarageSecret.optional(),
+    GARAGE_CAPACITY_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10 * 1024 ** 3),
+  })
+  .superRefine(paired("S3_OBSERVE_ACCESS_KEY_ID", "S3_OBSERVE_SECRET_ACCESS_KEY"));
 export type GarageInitEnv = z.infer<typeof GarageInitEnv>;
+
+/** observability-init one-shot (spec §11): provisions OpenObserve's users, streams, dashboards, alerts. */
+export const ObservabilityInitEnv = z.object({
+  ...Common,
+  OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
+  OBSERVE_ROOT_PASSWORD: Secret,
+  OBSERVE_INGEST_PASSWORD: Secret,
+  OBSERVE_VIEWER_PASSWORD: Secret,
+  ALERT_WEBHOOK_SECRET: Secret,
+  ALERT_WEBHOOK_URL: z.url().default("http://web:3000/api/alerts/webhook"),
+  SPEND_ALERT_USD_PER_HOUR: z.coerce.number().positive().max(1_000).default(25),
+});
+export type ObservabilityInitEnv = z.infer<typeof ObservabilityInitEnv>;
 
 export class EnvError extends Error {
   readonly problems: string[];

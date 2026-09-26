@@ -9,7 +9,8 @@
     "./server": "./src/server/index.ts",
     "./server/openai": "./src/server/openai.ts",
     "./testing": "./src/testing/index.ts",
-    "./export": "./src/export/index.ts"
+    "./export": "./src/export/index.ts",
+    "./telemetry": "./src/telemetry.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

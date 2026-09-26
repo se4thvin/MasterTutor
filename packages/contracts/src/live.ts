@@ -66,6 +66,15 @@ export function liveUploadRouterRule(slotName: string, host: string): string {
   return slotRule(slotName, host, LIVE_UPLOAD_PATH_REGEX);
 }
 
+/** web's static address on cdp (D41): the name `web` can resolve to another app on Dokploy's network. */
+export function webCdpOrigin(cdpSubnetPrefix: string = DEFAULT_CDP_SUBNET_PREFIX): string {
+  const octets = cdpSubnetPrefix.split(".");
+  const valid =
+    octets.length === 3 && octets.every((o) => /^[0-9]{1,3}$/.test(o) && Number(o) <= 255);
+  if (!valid) throw new TypeError("Invalid CDP subnet prefix");
+  return `http://${cdpSubnetPrefix}.11:3000`;
+}
+
 /**
  * ForwardAuth target by web's static cdp address (D41): on Dokploy's shared network the name `web`
  * can resolve to another app's container, so the live routers never use it.
@@ -73,11 +82,7 @@ export function liveUploadRouterRule(slotName: string, host: string): string {
 export function liveForwardAuthAddress(
   cdpSubnetPrefix: string = DEFAULT_CDP_SUBNET_PREFIX,
 ): string {
-  const octets = cdpSubnetPrefix.split(".");
-  const valid =
-    octets.length === 3 && octets.every((o) => /^[0-9]{1,3}$/.test(o) && Number(o) <= 255);
-  if (!valid) throw new TypeError("Invalid CDP subnet prefix");
-  return `http://${cdpSubnetPrefix}.11:3000${LIVE_AUTH_PATH}`;
+  return `${webCdpOrigin(cdpSubnetPrefix)}${LIVE_AUTH_PATH}`;
 }
 
 export const IceServer = z.object({
