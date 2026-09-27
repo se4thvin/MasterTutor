@@ -44,6 +44,8 @@ pass "web healthy through Traefik"
 
 [[ "$(signup owner@example.test)" == "200" ]] || fail "first sign-up"
 [[ "$(signup intruder@example.test)" == "403" ]] || fail "sign-up stayed open after the first user"
+# Closed sign-up answers a registered email exactly like an unknown one (no account enumeration).
+[[ "$(signup owner@example.test)" == "403" ]] || fail "closed sign-up told a registered email apart"
 [[ "$(psql_value "select role from workspace_members")" == "owner" ]] || fail "owner workspace not created"
 pass "Better Auth sign-up and workspace bootstrap"
 
