@@ -187,6 +187,41 @@ export const EXPORTABLE_ATTRIBUTES: ReadonlySet<string> = new Set<string>([
   ...BASE_ATTRIBUTES,
 ]);
 
+/**
+ * The fields the pino → OTel log bridge exports (spec §9, review I3): ids, codes, names and counts
+ * only. Everything else (err, messages, URLs, user ids, free text) stays on stdout and is never
+ * exported, the same allowlist rule spans follow.
+ */
+export const LOG_FIELDS: ReadonlySet<string> = new Set([
+  "service",
+  "module",
+  "run_id",
+  "runId",
+  "errorCode",
+  "errName",
+  "reason",
+  "alias",
+  "field",
+  "outcome",
+  "origin",
+  "slot",
+  "slots",
+  "tool",
+  "signal",
+  "count",
+  "matches",
+  "port",
+  "channel",
+  "noteId",
+  "assetId",
+  "benchmarkId",
+  "approvalMode",
+  "modelStatus",
+  "modelErrorType",
+  "modelErrorCode",
+  "modelErrorParam",
+]);
+
 export interface MetricSpec {
   name: string;
   kind: "counter" | "histogram" | "updown" | "gauge";

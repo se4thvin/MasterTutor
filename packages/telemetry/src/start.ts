@@ -104,16 +104,17 @@ export function startTelemetry(options: StartOptions): TelemetryHandle {
       tracerProvider: tracer,
       meterProvider: meter,
       instrumentations: [
-        // Outgoing only (the AWS SDK's S3 calls); Next.js makes web's server spans.
+        // Outgoing only (the AWS SDK's S3 calls); Next.js makes web's server spans. Disabled,
+        // not ignored: an ignored request would suppress every span made while serving it.
         new HttpInstrumentation({
-          ignoreIncomingRequestHook: () => true,
+          disableIncomingRequestInstrumentation: true,
           requireParentforOutgoingSpans: true,
         }),
         // fetch: OpenAI, docling, pdf-worker, audio-capture, n.eko admin, Web Push.
         new UndiciInstrumentation({ requireParentforSpans: true }),
       ],
     });
-    enableLogBridge();
+    enableLogBridge((count) => countDropped("logs", "not_allowed", count));
     setTelemetry({
       enabled: true,
       flush: (ms = 2_000) =>
