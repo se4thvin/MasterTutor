@@ -158,6 +158,9 @@ importers:
       '@mastertutor/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@mastertutor/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
       '@orpc/client':
         specifier: 1.15.4
         version: 1.15.4(@opentelemetry/api@1.9.1)

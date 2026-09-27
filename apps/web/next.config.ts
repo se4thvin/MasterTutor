@@ -10,6 +10,7 @@ const config: NextConfig = {
     "@mastertutor/db",
     "@mastertutor/sealing",
     "@mastertutor/storage",
+    "@mastertutor/telemetry",
   ],
   // libsodium ships its own WASM loader; keep it a plain Node require in the server bundle.
   serverExternalPackages: ["libsodium-wrappers", "libsodium"],

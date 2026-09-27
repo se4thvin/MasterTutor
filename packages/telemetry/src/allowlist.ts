@@ -17,7 +17,7 @@ function allowed(attributes: Attributes, onDropped: (count: number) => void): At
 /**
  * The runtime half of the attribute allowlist (spec §5.2): every span leaves with product and
  * listed base attributes only; links are dropped (we never link traces). The span itself is not
- * mutated: a view over it with filtered attributes is exported.
+ * mutated: a plain copy with filtered attributes is exported (cheaper than a prototype view).
  */
 export class AllowlistSpanExporter implements SpanExporter {
   readonly #inner: SpanExporter;
@@ -29,20 +29,28 @@ export class AllowlistSpanExporter implements SpanExporter {
   }
 
   export(spans: ReadableSpan[], done: (result: ExportResult) => void): void {
-    const views = spans.map(
-      (span) =>
-        Object.create(span, {
-          attributes: { value: allowed(span.attributes, this.#onDropped), enumerable: true },
-          events: {
-            value: span.events.map((event) => ({
-              ...event,
-              attributes: event.attributes ? allowed(event.attributes, this.#onDropped) : undefined,
-            })),
-            enumerable: true,
-          },
-          links: { value: [], enumerable: true },
-        }) as ReadableSpan,
-    );
+    const views = spans.map((span): ReadableSpan => ({
+      name: span.name,
+      kind: span.kind,
+      spanContext: () => span.spanContext(),
+      parentSpanContext: span.parentSpanContext,
+      startTime: span.startTime,
+      endTime: span.endTime,
+      status: span.status,
+      attributes: allowed(span.attributes, this.#onDropped),
+      links: [],
+      events: span.events.map((event) => ({
+        ...event,
+        attributes: event.attributes ? allowed(event.attributes, this.#onDropped) : undefined,
+      })),
+      duration: span.duration,
+      ended: span.ended,
+      resource: span.resource,
+      instrumentationScope: span.instrumentationScope,
+      droppedAttributesCount: span.droppedAttributesCount,
+      droppedEventsCount: span.droppedEventsCount,
+      droppedLinksCount: span.droppedLinksCount,
+    }));
     this.#inner.export(views, done);
   }
 
