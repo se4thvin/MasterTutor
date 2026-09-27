@@ -66,8 +66,9 @@ const webImports = (
       ANIMATION_BANS,
       LAYOUT_FEATURES_STATIC,
       OPENAI_IMPORTS,
+      OTEL_BAN,
       ...(sealingOpen ? [] : [SEALING_OPEN_BAN]),
-      ...(server ? [] : [SERVER_CONTRACTS_BAN]),
+      ...(server ? [] : [SERVER_CONTRACTS_BAN, TELEMETRY_CLIENT_BAN]),
       ...(fixtures ? [FIXTURES_BAN] : []),
       ...patterns,
     ],
@@ -142,6 +143,17 @@ const UI_LIBRARIES = [
   "lucide-react",
 ];
 
+// D50: OpenTelemetry only through @mastertutor/telemetry (and the contracts log bridge, spec §4.3).
+const OTEL_BAN = {
+  group: ["@opentelemetry/*"],
+  message: "Import telemetry through @mastertutor/telemetry (spec §4.3).",
+};
+// Telemetry is server-only: web client code never imports it (spec §4.3).
+const TELEMETRY_CLIENT_BAN = {
+  group: ["@mastertutor/telemetry", "@mastertutor/telemetry/*"],
+  message: "Telemetry is server-only (spec §4.3).",
+};
+
 const OPENAI_IMPORTS = {
   // The SDK package itself, not every module named "openai" (the contracts factory is one).
   regex: "^openai(/|$)",
@@ -189,8 +201,22 @@ export default defineConfig(
     files: ["**/*.{ts,tsx,js,mjs}"],
     ignores: ["packages/contracts/src/server/openai.ts"],
     rules: {
-      "no-restricted-imports": ["error", { patterns: [OPENAI_IMPORTS, ...UI_IMPORT_BANS] }],
+      "no-restricted-imports": [
+        "error",
+        { patterns: [OPENAI_IMPORTS, OTEL_BAN, ...UI_IMPORT_BANS] },
+      ],
       "no-restricted-syntax": dynamicImportBan(UI_LIBRARIES),
+    },
+  },
+  {
+    // D50: the two homes of OpenTelemetry imports (and the log bridge's own test).
+    files: [
+      "packages/telemetry/**/*.ts",
+      "packages/contracts/src/server/log-bridge.ts",
+      "packages/contracts/src/server/logger.test.ts",
+    ],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [OPENAI_IMPORTS, ...UI_IMPORT_BANS] }],
     },
   },
   {
@@ -203,6 +229,7 @@ export default defineConfig(
         {
           patterns: [
             OPENAI_IMPORTS,
+            OTEL_BAN,
             ...UI_IMPORT_BANS,
             {
               regex: "(^|/)apps/[^/]+/src(/|$)",
@@ -231,6 +258,7 @@ export default defineConfig(
         {
           patterns: [
             OPENAI_IMPORTS,
+            OTEL_BAN,
             ...UI_IMPORT_BANS,
             {
               group: ["node:*", "pino"],
@@ -279,6 +307,22 @@ export default defineConfig(
         "three",
         "lucide-react",
       ]),
+    },
+  },
+  {
+    // Server-side web tests and the instrumentation hook are server code: they may use the
+    // Node-only contracts and telemetry (D50) like the code they test or start.
+    files: [
+      "apps/web/lib/server/**/*.test.{ts,tsx}",
+      "apps/web/app/api/**/*.test.{ts,tsx}",
+      "apps/web/instrumentation.ts",
+      "apps/web/instrumentation.test.ts",
+    ],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
+        server: true,
+        fixtures: false,
+      }),
     },
   },
   {

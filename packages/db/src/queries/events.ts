@@ -1,4 +1,5 @@
 import { RunEvent, encodeNotify } from "@mastertutor/contracts";
+import { recordRunEvent } from "@mastertutor/telemetry/record";
 import { sql } from "drizzle-orm";
 import type { DbTx } from "../client.ts";
 import { runEvents } from "../schema/index.ts";
@@ -32,6 +33,8 @@ export async function emitRunEvent(tx: DbTx, runId: string, event: RunEvent): Pr
   await tx.execute(
     sql`select pg_notify('run_event', ${encodeNotify("run_event", { runId, eventId })})`,
   );
+  // Seam 6 (spec §7.3): every domain event, agent and web, counted once (never its text fields).
+  recordRunEvent(payload);
   return eventId;
 }
 

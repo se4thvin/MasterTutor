@@ -16,6 +16,7 @@ import {
   type DbHandle,
 } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Scenario } from "../../../../tests/llm-mock/src/scenario.ts";
@@ -43,6 +44,7 @@ let workspaceId: string;
 let supervisor: Supervisor | undefined;
 let downloadsDir: string;
 let counter = 0;
+let telemetry: TestTelemetry;
 const browsers = new Map<string, FakeLoopBrowser>();
 
 /** A slot that "restarts" instantly with a new browser id. */
@@ -60,6 +62,7 @@ beforeAll(async () => {
   mock = await startLlmMock();
   workspaceId = await seedWorkspace(owner.db);
   downloadsDir = await mkdtemp(join(tmpdir(), "downloads-"));
+  telemetry = installTestTelemetry();
 });
 afterEach(async () => {
   await supervisor?.stop();
@@ -68,6 +71,7 @@ afterEach(async () => {
   expect(mock.failures.splice(0)).toEqual([]);
 });
 afterAll(async () => {
+  await telemetry?.shutdown();
   await mock?.close();
   await owner?.close();
   await database?.stop();
@@ -368,6 +372,18 @@ describe("RunWorker + Supervisor", () => {
     expect(browser.executed).toHaveLength(1);
     const last = JSON.stringify(mock.requests.at(-1)?.body.input);
     expect(last).toContain("Interrupted: the user took control");
+    const takeovers = telemetry
+      .spans()
+      .filter((s) => s.name === "mt.takeover" && s.attributes["mt.run.id"] === run.id);
+    expect(
+      takeovers.map((s) => [
+        s.attributes["mt.control.holder"],
+        s.attributes["mt.takeover.outcome"],
+      ]),
+    ).toEqual([
+      ["user", "ok"],
+      ["agent", "ok"],
+    ]);
   });
 
   it("cancels by web, and the kill switch stops everything quickly and refuses claims", async () => {
@@ -926,6 +942,11 @@ describe("B6 seams (A2)", () => {
     ]);
     expect(await row(run.id)).toMatchObject({ controller: "agent", controlUserId: null });
     expect(seen).toEqual([{ afterRestore: false }]);
+    const failed = telemetry
+      .spans()
+      .find((s) => s.name === "mt.takeover" && s.attributes["mt.run.id"] === run.id);
+    expect(failed!.attributes["mt.takeover.outcome"]).toBe("takeover_failed");
+    expect(failed!.attributes["mt.error.code"]).toBe("takeover_failed");
   });
 
   it("a throwing onUserControl is a failed takeover too, not a failed run (F3)", async () => {

@@ -1,8 +1,12 @@
 import { MODELS } from "@mastertutor/contracts";
+import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
+import { instrument } from "@mastertutor/telemetry/instrument";
+import { recordModelTokens } from "@mastertutor/telemetry/record";
 import { APIError } from "./openai.ts";
 import type { Clock } from "../runtime/clock.ts";
-import { ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
+import { ContextOverflow, ModelUnavailable, interruptionOf } from "../runtime/errors.ts";
 import type { ModelClient, ModelReply, ModelRequest } from "./client.ts";
+import { costUsd } from "./pricing.ts";
 
 export type ModelErrorKind = "rate_limited" | "server" | "transient" | "context_overflow" | "fatal";
 
@@ -84,11 +88,41 @@ export class ModelCaller {
     this.#maxAttempts = options.maxAttempts ?? 10;
   }
 
-  async call(request: ModelRequest, signal: AbortSignal): Promise<CallResult> {
+  /** Seam 4 (spec §7.3): one mt.model.request span covering every retry and the fallback. */
+  call(request: ModelRequest, signal: AbortSignal): Promise<CallResult> {
+    return instrument(
+      SPAN.modelRequest,
+      { [ATTR.modelName]: request.model },
+      async (span) => {
+        const result = await this.#attempts(request, signal, (attempt) =>
+          span.set({ [ATTR.modelAttempts]: attempt }),
+        );
+        const tokens = result.reply.usage;
+        span.set({
+          [ATTR.modelName]: result.model,
+          [ATTR.modelFallback]: result.fallback !== null,
+          [ATTR.tokensInput]: tokens.input,
+          [ATTR.tokensCached]: tokens.cached,
+          [ATTR.tokensOutput]: tokens.output,
+          [ATTR.costUsd]: costUsd(result.model, tokens),
+        });
+        recordModelTokens(result.model, tokens);
+        return result;
+      },
+      { expected: interruptionOf },
+    );
+  }
+
+  async #attempts(
+    request: ModelRequest,
+    signal: AbortSignal,
+    onAttempt: (attempt: number) => void,
+  ): Promise<CallResult> {
     let model = request.model;
     let fallback: CallResult["fallback"] = null;
     let consecutive5xx = 0;
     for (let attempt = 1; ; attempt++) {
+      onAttempt(attempt);
       try {
         return { reply: await this.#client.create({ ...request, model }, signal), model, fallback };
       } catch (error) {
