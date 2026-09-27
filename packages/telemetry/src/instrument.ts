@@ -62,9 +62,13 @@ function productSpan(span: Span): ProductSpan {
       }
     },
     fail: (code) => {
-      const normalized = normalizeCode(code);
-      span.setAttribute(ATTR.errorCode, normalized);
-      span.setStatus({ code: SpanStatusCode.ERROR, message: normalized });
+      try {
+        const normalized = normalizeCode(code);
+        span.setAttribute(ATTR.errorCode, normalized);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: normalized });
+      } catch {
+        // As set(): telemetry never breaks the work it describes.
+      }
     },
   };
 }

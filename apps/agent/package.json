@@ -13,6 +13,7 @@
     "@mastertutor/db": "workspace:*",
     "@mastertutor/sealing": "workspace:*",
     "@mastertutor/storage": "workspace:*",
+    "@mastertutor/telemetry": "workspace:*",
     "@mozilla/readability": "0.6.0",
     "@napi-rs/canvas": "1.0.10",
     "@tesseract.js-data/eng": "1.0.0",
