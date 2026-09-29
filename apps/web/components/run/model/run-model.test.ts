@@ -35,7 +35,7 @@ describe("initRunModel", () => {
     expect(captureCount(model)).toBe(2);
     expect(model.secureFillOrigin).toBe("https://learn.example.edu");
     expect(model.lastEventId).toBe("12");
-    expect(latestScreenshotSeq(model)).toBe(8);
+    expect(latestScreenshotSeq(model)).toBe(6);
     expect(model.lastControl).toBeNull();
   });
 

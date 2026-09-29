@@ -121,9 +121,10 @@ test.describe("Timeline", () => {
     await gotoRun(page);
     await page.getByRole("button", { name: "Replay step: Clicked “Log in”" }).click();
     await expect(frame(page)).toHaveAttribute("data-state", "replay");
-    await expect(page.getByRole("slider", { name: "Replay position" })).toHaveValue("2");
+    // "Log in" replays the screen it was clicked on: the first of the run's two screenshots.
+    await expect(page.getByRole("slider", { name: "Replay position" })).toHaveValue("1");
     await page.getByRole("button", { name: "Play replay" }).click();
-    await expect(page.getByRole("slider", { name: "Replay position" })).toHaveValue("3", {
+    await expect(page.getByRole("slider", { name: "Replay position" })).toHaveValue("2", {
       timeout: 3_000,
     });
     await frame(page).getByRole("button", { name: "Jump to live" }).click();
