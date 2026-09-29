@@ -114,6 +114,24 @@ function decisionLine(outcome: ApprovalOutcome, viewerId: string | null): string
   return outcome.request ? `${lead}: ${requestSummary(outcome.request)}` : lead;
 }
 
+/**
+ * The one step row shown as selected during replay. Rows that share a screenshot (several acts on
+ * one screen) are not all selected: the clicked row is, while its screenshot is on screen; after
+ * the replay moves on, the first row of the shown screenshot is.
+ */
+export function selectedRowSeq(
+  items: readonly TimelineItem[],
+  replaySeq: number | null,
+  clickedSeq: number | null,
+): number | null {
+  if (replaySeq === null) return null;
+  const rows = items.filter(
+    (item): item is Extract<TimelineItem, { kind: "step" }> =>
+      item.kind === "step" && item.shotSeq === replaySeq,
+  );
+  return (rows.find((row) => row.seq === clickedSeq) ?? rows[0])?.seq ?? null;
+}
+
 export function elapsedClock(from: string, at: string): string {
   const seconds = Math.max(0, Math.floor((Date.parse(at) - Date.parse(from)) / 1000));
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
