@@ -83,6 +83,8 @@ export async function startVaultFixtures(options: {
   mail: { smtpHost: string; smtpPort: number; to: string } | null;
   /** Where to listen. Default: an ephemeral port on loopback (in-process tests). */
   listen?: { host: string; port: number };
+  /** A one-time code the test knows (E2E: the person types it into CodeSlots). */
+  fixedOtp?: string;
 }): Promise<VaultFixtures> {
   const { account } = options;
   const reactBundle = await readFile(await buildReactLogin());
@@ -232,6 +234,13 @@ export async function startVaultFixtures(options: {
           ? html(res, page.message("Code accepted"))
           : html(res, page.message("Code rejected"), 401);
       }
+      case "GET /otp-fixed":
+        return html(res, page.fixedOtp());
+      case "POST /otp-fixed":
+        return options.fixedOtp !== undefined &&
+          codesEqual(options.fixedOtp, form.get("code") ?? "")
+          ? html(res, page.message("Code accepted"))
+          : html(res, page.message("Code rejected"), 401);
       case "GET /text-trap":
         return html(res, page.textTrap());
       case "GET /tampered":

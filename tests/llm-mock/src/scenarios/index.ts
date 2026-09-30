@@ -1,4 +1,5 @@
 import type { Scenario } from "../scenario.ts";
+import { E2E_SCENARIOS } from "./e2e.ts";
 
 /** Scenarios served by the standalone mock (Compose E2E, Phase 7). Agent-behaviour tests pass their own. */
 export const SCENARIOS: Scenario[] = [
@@ -27,4 +28,5 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
   },
+  ...E2E_SCENARIOS,
 ];
