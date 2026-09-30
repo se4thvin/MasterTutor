@@ -75,11 +75,15 @@ describe("compose.test.yml E2E stack (one overlay, X2)", () => {
       "backend",
       "edge",
     ]);
+    // Least privilege (review Minor 8): mail travels on its own internal network, so the vault
+    // fixture reaches greenmail but never postgres or garage.
+    expect(stack.networks.mail?.internal).toBe(true);
     expect(Object.keys(stack.services["vault-fixtures"]?.networks ?? {}).sort()).toEqual([
-      "backend",
       "fixtures",
+      "mail",
     ]);
-    expect(Object.keys(stack.services.greenmail?.networks ?? {})).toEqual(["backend"]);
+    expect(Object.keys(stack.services.greenmail?.networks ?? {})).toEqual(["mail"]);
+    expect(Object.keys(stack.services.agent?.networks ?? {})).toContain("mail");
   });
 
   it("runs Playwright inside Traefik's network namespace, on the app's own origin", () => {

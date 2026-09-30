@@ -55,6 +55,8 @@ networks:
     labels: *ci-labels
   fixtures:
     labels: *ci-labels
+  mail:
+    labels: *ci-labels
 
 volumes:
   pgdata:
