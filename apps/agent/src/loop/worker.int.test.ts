@@ -694,6 +694,19 @@ describe("RunWorker + Supervisor", () => {
     const { run } = await queue([{ error: { status: 400, code: "invalid_value" } }]);
     await until(run.id, (r) => r.status === "failed", "failed");
     expect((await row(run.id)).error).toMatchObject({ code: "model_request_rejected" });
+    // The run view learns why a run failed from its stream (fe failureOf): the failure is an
+    // error event, committed with the terminal status (Phase 7 Task 4, D35).
+    const payloads = (
+      await owner.db
+        .select()
+        .from(runEvents)
+        .where(eq(runEvents.runId, run.id))
+        .orderBy(asc(runEvents.id))
+    ).map((e) => e.payload);
+    const failed = payloads.findIndex((e) => e.type === "status" && e.status === "failed");
+    const error = payloads.findIndex((e) => e.type === "error");
+    expect(payloads[error]).toMatchObject({ type: "error", code: "model_request_rejected" });
+    expect(error).toBeLessThan(failed);
   });
 
   it("the sweep notices a takeover whose NOTIFY was lost (M3)", async () => {
