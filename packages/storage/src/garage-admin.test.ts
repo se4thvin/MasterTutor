@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootstrapGarage, GarageAdminError } from "./garage-admin.ts";
+import { bootstrapGarage, GarageAdminError, GarageKeyMismatchError } from "./garage-admin.ts";
 
 const TOKEN = "garage-admin-token-for-tests-0123456789";
 const KEY = {
@@ -10,7 +10,12 @@ const KEY = {
   write: true,
 };
 
-function fakeGarage(state: { layoutVersion: number; buckets: string[]; keys: string[] }) {
+function fakeGarage(state: {
+  layoutVersion: number;
+  buckets: string[];
+  keys: string[];
+  secrets?: Record<string, string>;
+}) {
   const calls: string[] = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -35,6 +40,15 @@ function fakeGarage(state: { layoutVersion: number; buckets: string[]; keys: str
         return json({ id: "id-new" });
       case "ListKeys":
         return json(state.keys.map((id) => ({ id, name: "x" })));
+      case "GetKeyInfo": {
+        const id = url.searchParams.get("id") ?? "";
+        expect(url.searchParams.get("showSecretKey")).toBe("true");
+        return json({
+          accessKeyId: id,
+          name: "x",
+          secretAccessKey: state.secrets?.[id] ?? KEY.secretAccessKey,
+        });
+      }
       default:
         return json({});
     }
@@ -70,6 +84,28 @@ describe("bootstrapGarage", () => {
       "AllowBucketKey",
       "DenyBucketKey",
     ]);
+  });
+
+  it("refuses a rotated secret under an existing key id, without printing either secret (D61)", async () => {
+    const stale = "f".repeat(64);
+    const { calls, fetchImpl } = fakeGarage({
+      layoutVersion: 1,
+      buckets: ["mastertutor"],
+      keys: [KEY.accessKeyId],
+      secrets: { [KEY.accessKeyId]: stale },
+    });
+    const error = await bootstrapGarage({
+      adminUrl: "http://garage:3903",
+      adminToken: TOKEN,
+      bucket: "mastertutor",
+      keys: [KEY],
+      fetchImpl,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GarageKeyMismatchError);
+    expect((error as Error).message).toContain("agent");
+    expect((error as Error).message).not.toContain(stale);
+    expect((error as Error).message).not.toContain(KEY.secretAccessKey);
+    expect(calls).not.toContain("AllowBucketKey");
   });
 
   it("changes nothing structural on an initialized cluster", async () => {

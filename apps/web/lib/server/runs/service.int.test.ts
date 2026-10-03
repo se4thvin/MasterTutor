@@ -2,6 +2,7 @@ import { decodeNotify, type RunEvent } from "@mastertutor/contracts";
 import {
   approvals,
   createDb,
+  downloads,
   emitRunEvent,
   ensureWorkspaceMember,
   folders,
@@ -209,6 +210,55 @@ describe("runs.* on the live router (Task 0A)", () => {
     await expect(client().runs.get({ runId: MISSING })).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
+  });
+
+  it("snapshots the downloads held during control: undecided, this run and workspace only (A11)", async () => {
+    const runId = await seedRun(owner.db, {
+      workspaceId,
+      status: "waiting",
+      waitReason: "takeover",
+    });
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: viewer.id })
+      .where(eq(runs.id, runId));
+    const [held] = await owner.db
+      .insert(downloads)
+      .values({
+        runId,
+        filename: "week-2 report.pdf",
+        bytes: 2_048,
+        approvedBy: viewer.id,
+        pending: true,
+      })
+      .returning({ id: downloads.id });
+    // Already kept (being filed), already filed, and another run's held file: never offered.
+    await owner.db.insert(downloads).values([
+      {
+        runId,
+        filename: "kept.pdf",
+        bytes: 1,
+        approvedBy: viewer.id,
+        pending: true,
+        keptAt: new Date(),
+      },
+      { runId, filename: "filed.pdf", bytes: 1, approvedBy: viewer.id },
+    ]);
+    const stranger = await seedMember(owner.db);
+    const foreign = await seedRun(owner.db, { workspaceId: stranger.workspaceId });
+    await owner.db
+      .insert(downloads)
+      .values({ runId: foreign, filename: "theirs.pdf", bytes: 1, approvedBy: "x", pending: true });
+    const detail = await client().runs.get({ runId });
+    expect(detail.heldDownloads).toEqual([
+      { id: held!.id, filename: "week-2 report.pdf", bytes: 2_048 },
+    ]);
+    // Once control is back with the agent, nothing is held for this person to decide.
+    await owner.db
+      .update(runs)
+      .set({ controller: "agent", controlUserId: null })
+      .where(eq(runs.id, runId));
+    expect((await client().runs.get({ runId })).heldDownloads).toEqual([]);
   });
 
   it("lists steps after a seq, keeping only the StepAction fields", async () => {
