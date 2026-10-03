@@ -234,7 +234,10 @@ describe("secret canary", () => {
   });
 
   it("no masked model screenshot contains a canary (OCR)", async () => {
-    expect(shots.length).toBeGreaterThan(0);
+    expect(
+      shots.length,
+      "the fill test recorded no screenshots; fix that test first",
+    ).toBeGreaterThan(0);
     for (const shot of shots) {
       const text = await ocr.text(shot.png);
       for (const canary of OCR_CANARIES) expect(ocrContains(text, canary), shot.where).toBe(false);
