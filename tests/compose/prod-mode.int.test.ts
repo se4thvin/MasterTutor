@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fillEnv, generateSecrets } from "../../scripts/env-init.ts";
 import { composeConfig } from "./compose-json.ts";
-import { prodModeProblems } from "./prod-mode.ts";
+import { prodModeProblems, resolveForProdCheck } from "./prod-mode.ts";
 
 /**
  * D47: compose.yml's own defaults are production mode; compose.yml + compose.prod.yml is pinned by
@@ -34,10 +34,10 @@ describe("prodModeProblems against the test stack (D47)", () => {
       "agent.AGENT_TEST_MODE: must be 0 (D47)",
       "agent.OPENAI_BASE_URL: must be empty (real OpenAI only, D38/D47)",
       "web.OPENAI_BASE_URL: must be empty (real OpenAI only, D38/D47)",
-      "service llm-mock: test-only, must not run (D47)",
-      "service fixtures: test-only, must not run (D47)",
-      "service vault-fixtures: test-only, must not run (D47)",
-      "service e2e: test-only, must not run (D47)",
+      "service llm-mock: not a production service (D47)",
+      "service fixtures: not a production service (D47)",
+      "service vault-fixtures: not a production service (D47)",
+      "service e2e: not a production service (D47)",
       "browser-1.SLOT_EGRESS_ALLOW_CIDRS: must be empty",
     ])
       expect(problems).toContain(expected);
@@ -47,5 +47,20 @@ describe("prodModeProblems against the test stack (D47)", () => {
 describe("compose.yml alone is production-mode clean (D47)", () => {
   it("has no test mode, no mock model URL, no fixture API and no test-only service", () => {
     expect(prodModeProblems(composeConfig(prodEnv, ["compose.yml"]))).toEqual([]);
+  });
+});
+
+describe("resolveForProdCheck sees every profile (review I2)", () => {
+  it("refuses a test service that only a profile enables", () => {
+    const files = ["compose.yml", "tests/compose/fixtures/profiled-test-service.yml"];
+    // Resolved without profiles, the service is invisible...
+    expect(composeConfig(prodEnv, files).services["model-sidecar"]).toBeUndefined();
+    // ...the production check resolves with every profile, so it is refused.
+    expect(prodModeProblems(resolveForProdCheck(prodEnv, files))).toEqual(
+      expect.arrayContaining([
+        "service model-sidecar: not a production service (D47)",
+        "service model-sidecar: runs a test image (D47)",
+      ]),
+    );
   });
 });

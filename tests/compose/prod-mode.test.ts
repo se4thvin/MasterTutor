@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ComposeConfig } from "./compose-json.ts";
 import { prodModeProblems } from "./prod-mode.ts";
@@ -27,8 +28,8 @@ describe("prodModeProblems (D47)", () => {
     config.services["browser-1"]!.environment!.SLOT_EGRESS_ALLOW_CIDRS = "10.0.0.0/8";
     const problems = prodModeProblems(config);
     expect(problems).toEqual([
-      "service llm-mock: test-only, must not run (D47)",
-      "service fixtures: test-only, must not run (D47)",
+      "service llm-mock: not a production service (D47)",
+      "service fixtures: not a production service (D47)",
       "web.WEB_FIXTURE_API: must be unset (D47)",
       "agent.AGENT_TEST_MODE: must be 0 (D47)",
       "agent.OPENAI_BASE_URL: must be empty (real OpenAI only, D38/D47)",
@@ -51,7 +52,38 @@ describe("prodModeProblems (D47)", () => {
     const config = prodLike();
     config.services["bench-fixtures"] = {};
     expect(prodModeProblems(config)).toEqual([
-      "service bench-fixtures: test-only, must not run (D47)",
+      "service bench-fixtures: not a production service (D47)",
     ]);
+  });
+
+  it("refuses a test service under any name: production is an allowlist (review I2)", () => {
+    const config = prodLike();
+    config.services["model-proxy"] = { image: "nginx:1.30.5-alpine-slim" };
+    expect(prodModeProblems(config)).toEqual([
+      "service model-proxy: not a production service (D47)",
+    ]);
+  });
+
+  it("refuses a test image even under a production service name (review I2)", () => {
+    for (const image of [
+      "mastertutor/test-tools:local",
+      "mastertutor/e2e:local",
+      "registry.example/team/llm-mock:1",
+      "greenmail/standalone:2.1.14",
+    ]) {
+      const config = prodLike();
+      config.services["garage-init"] = { image };
+      expect(prodModeProblems(config), image).toEqual([
+        "service garage-init: runs a test image (D47)",
+      ]);
+    }
+  });
+
+  it("is fed every profile by each production gate: check-env and the prod smoke (review I2)", () => {
+    for (const file of ["../../scripts/deploy/check-env.ts", "../smoke/prod-smoke.ts"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(source, file).toMatch(/prodModeProblems\(\s*resolveForProdCheck\(/);
+      expect(source, file).not.toMatch(/prodModeProblems\(\s*(config|composeConfig)\b/);
+    }
   });
 });

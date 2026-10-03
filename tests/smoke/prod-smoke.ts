@@ -21,8 +21,11 @@ import {
   type CreateRunInput,
 } from "@mastertutor/contracts";
 import { chromium } from "playwright-core";
-import { composeConfig } from "../compose/compose-json.ts";
-import { PROD_LIKE_LOCAL_FILES, prodModeProblems } from "../compose/prod-mode.ts";
+import {
+  PROD_LIKE_LOCAL_FILES,
+  prodModeProblems,
+  resolveForProdCheck,
+} from "../compose/prod-mode.ts";
 
 export interface SmokeOptions {
   base: URL;
@@ -190,7 +193,7 @@ export async function runProdSmoke(options: SmokeOptions): Promise<void> {
     if (!existsSync("/tmp/mt-behaviour.lock")) {
       throw new Error("hold /tmp/mt-behaviour.lock first (one heavy stack at a time)");
     }
-    const mode = prodModeProblems(composeConfig(options.envFiles, PROD_LIKE_LOCAL_FILES));
+    const mode = prodModeProblems(resolveForProdCheck(options.envFiles, PROD_LIKE_LOCAL_FILES));
     if (mode.length > 0) throw new Error(`stack is not production mode:\n${mode.join("\n")}`);
   }
 

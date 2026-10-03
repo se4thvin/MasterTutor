@@ -1,17 +1,41 @@
 // The single definition of "production mode" for a resolved compose config (D47). Used by the
 // compose overlay tests (Task 12), the production env check (Task 14), the real-model smoke
 // (Task 15) and the bench harness preflight (Phase 10). Problems name keys and services only.
-import type { ComposeConfig } from "./compose-json.ts";
+import { composeConfig, type ComposeConfig } from "./compose-json.ts";
 
-/** Services that exist only in test stacks; a production-like stack never runs them. */
-export const TEST_ONLY_SERVICES = [
-  "llm-mock",
-  "fixtures",
-  "vault-fixtures",
-  "bench-fixtures",
-  "greenmail",
-  "e2e",
+/**
+ * The production services (compose.yml + compose.prod.yml), plus the slots (`browser-N`). An
+ * allowlist: anything else is refused, whatever it is called (review I2). docling is B2/B4/B5's
+ * PDF service under the `pdf` profile (D42). A production addition must be listed here.
+ */
+export const PRODUCTION_SERVICES = [
+  "postgres",
+  "garage",
+  "garage-init",
+  "migrate",
+  "web",
+  "agent",
+  "docling",
 ] as const;
+
+/**
+ * Test-only images, refused even under a production service name: the llm-mock and vault-fixture
+ * image, the Playwright runner, the mail fixture, and any image named for a mock, fixture or bench.
+ */
+const TEST_IMAGE_REPOSITORIES = [
+  "mastertutor/test-tools",
+  "mastertutor/e2e",
+  "greenmail/standalone",
+];
+const TEST_IMAGE_NAME = /(llm-?mock|fixture|bench|e2e)/i;
+
+const repositoryOf = (image: string): string => image.replace(/@.*$/, "").replace(/:[^/:]*$/, "");
+
+/** True for an image only the test stacks run. */
+export function isTestImage(image: string): boolean {
+  const repository = repositoryOf(image);
+  return TEST_IMAGE_REPOSITORIES.includes(repository) || TEST_IMAGE_NAME.test(repository);
+}
 
 /** D47's production-like local stack: the production files plus one loopback override (Task 22A). */
 export const PROD_LIKE_LOCAL_FILES = [
@@ -22,11 +46,25 @@ export const PROD_LIKE_LOCAL_FILES = [
 
 const SLOT = /^browser-\d+$/;
 
+/**
+ * The config the production check runs on: every profile enabled (`--profile '*'`), so a test
+ * service behind a profile the deployment happens to enable cannot hide from it (review I2).
+ */
+export function resolveForProdCheck(
+  envFile: string | readonly string[],
+  files: readonly string[],
+): ComposeConfig {
+  return composeConfig(envFile, files, { profiles: ["*"] });
+}
+
 export function prodModeProblems(config: ComposeConfig): string[] {
   const problems: string[] = [];
   const envOf = (service: string) => config.services[service]?.environment ?? {};
-  for (const name of TEST_ONLY_SERVICES) {
-    if (config.services[name]) problems.push(`service ${name}: test-only, must not run (D47)`);
+  for (const [name, service] of Object.entries(config.services)) {
+    if (!SLOT.test(name) && !(PRODUCTION_SERVICES as readonly string[]).includes(name))
+      problems.push(`service ${name}: not a production service (D47)`);
+    if (service.image && isTestImage(service.image))
+      problems.push(`service ${name}: runs a test image (D47)`);
   }
   for (const [name, service] of Object.entries(config.services)) {
     if (service.environment && "WEB_FIXTURE_API" in service.environment) {
