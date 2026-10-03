@@ -10,6 +10,8 @@ import { eventsOf, replayEvents } from "../support/events.ts";
 import { createRun, hasStatus, waitForRun } from "../support/runs.ts";
 import { addSignIn, auditFor, listSignIns, removeSignIn } from "../support/vault.ts";
 
+/** OtpCard's confirmation once the code is on its way (components/run/timeline/otp-card.tsx). */
+const SENT = "Sent to the browser. The agent only saw “code entered”.";
 const auto = { allowedOrigins: [LOGIN], approvalMode: "auto_within_allowlist" as const };
 
 test.describe
@@ -74,11 +76,27 @@ test.describe
     });
     await waitForRun(request, runId, (r) => r.waitReason === "otp", "waiting for a code");
     await page.goto(`/runs/${runId}`);
-    // The card leaves as soon as the run resumes, so the code's delivery is checked on the wire.
-    const submitted = page.waitForResponse((r) => r.url().endsWith("/api/rpc/runs/submitOtp"));
+    // The confirmation shows only briefly (on the card, or as a toast once the run has resumed), so
+    // an observer installed before typing records it, however briefly it is on screen (review M3).
+    await page.evaluate((text) => {
+      const w = window as unknown as { __sawSent?: boolean };
+      w.__sawSent = document.body.textContent?.includes(text) ?? false;
+      new MutationObserver((_, observer) => {
+        if (!document.body.textContent?.includes(text)) return;
+        w.__sawSent = true;
+        observer.disconnect();
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    }, SENT);
     await page.getByLabel("One-time code").pressSequentially(STACK_CANARIES.otp);
-    expect((await submitted).status()).toBe(200);
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __sawSent?: boolean }).__sawSent), {
+        message: `the person saw "${SENT}"`,
+      })
+      .toBe(true);
     await waitForRun(request, runId, hasStatus("completed"), "code accepted"); // doneSeeing("Code accepted")
+    // The lasting record the person can check afterwards: the audit log's "Code received".
+    await page.goto("/settings/audit");
+    await expect(page.getByText("Code received").first()).toBeVisible();
   });
 
   test("an emailed code is read over IMAP without the person", async ({ request }) => {
