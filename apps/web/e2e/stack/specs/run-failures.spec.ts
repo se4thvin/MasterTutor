@@ -6,6 +6,7 @@ import { eventsOf, replayEvents } from "../support/events.ts";
 import { createRun, hasStatus, waitForRun } from "../support/runs.ts";
 
 test("a model that rejects the request fails the run with its own code, not agent_error (D35, B1 M2)", async ({
+  page,
   request,
 }) => {
   const runId = await createRun(request, {
@@ -15,4 +16,7 @@ test("a model that rejects the request fails the run with its own code, not agen
   const codes = eventsOf((await replayEvents(request, runId)).records, "error").map((e) => e.code);
   expect(codes).toContain("model_request_rejected");
   expect(codes).not.toContain("agent_error");
+  // What the fix is for: the person reads why the run failed in the run view (D35, review M4).
+  await page.goto(`/runs/${runId}`);
+  await expect(page.getByText("The model rejected the request.").first()).toBeVisible();
 });

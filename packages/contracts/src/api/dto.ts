@@ -21,6 +21,7 @@ import {
 } from "../enums.ts";
 import { StepAction } from "../events.ts";
 import { NoteBlock } from "../note.ts";
+import { RunError } from "../run.ts";
 import { secretValueProblem } from "../vault.ts";
 import {
   Alias,
@@ -131,6 +132,8 @@ export const RunDetail = RunSummary.extend({
   pendingApprovals: z.array(ApprovalView),
   /** Undecided downloads held while a person has control; empty whenever the agent has it. */
   heldDownloads: z.array(HeldDownloadView),
+  /** Why the run failed or stopped, as stored with its terminal status (D35); null otherwise. */
+  error: RunError.nullable().default(null),
   lastEventId: z
     .string()
     .regex(/^[0-9]+$/)
