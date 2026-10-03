@@ -46,4 +46,12 @@ describe("prodModeProblems (D47)", () => {
     delete config.services.agent!.environment!.AGENT_TEST_MODE;
     expect(prodModeProblems(config)).toEqual(["agent.AGENT_TEST_MODE: must be 0 (D47)"]);
   });
+
+  it("refuses every service of the test stack's profiles, the bench fixture site included", () => {
+    const config = prodLike();
+    config.services["bench-fixtures"] = {};
+    expect(prodModeProblems(config)).toEqual([
+      "service bench-fixtures: test-only, must not run (D47)",
+    ]);
+  });
 });
