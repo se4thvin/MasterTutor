@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canariesFor,
+  collectLogs,
   imageKind,
   scanSources,
   vacuousSources,
@@ -104,5 +105,56 @@ describe("stack canary scan", () => {
     expect((await scanSources(sources, C, async () => "")).hits).toEqual([
       { canary: "imapPassword", where: "logs agent", form: "plain" },
     ]);
+  });
+
+  it("OCRs every screenshot the model was sent, not only stored ones (review M1)", async () => {
+    const request = JSON.stringify({
+      input: [
+        { type: "input_image", image_url: `data:image/png;base64,${PNG.toString("base64")}` },
+      ],
+    });
+    const seen: number[] = [];
+    const { hits, scanned } = await scanSources(
+      [src("model-requests", "llm-mock requests", request)],
+      C,
+      async (image) => {
+        seen.push(image.length);
+        return "Signed in as HERON 3CANARY 9PASSWORD";
+      },
+    );
+    expect(seen).toEqual([PNG.length]);
+    expect(scanned.ocr).toBe(1);
+    expect(hits).toContainEqual({
+      canary: "password",
+      where: "ocr llm-mock requests image 1",
+      form: "ocr",
+    });
+  });
+
+  it("finds an OTP or PIN stored as a value in the DB or logs, but not inside other numbers (review M2)", async () => {
+    const sources = [
+      src("database", "postgres", `run\t${C.otp}\tsealed`),
+      src("logs", "logs agent", `{"msg":"code","code":"${C.pin}"}`),
+      src("logs", "logs web", `at 2026-10-07 18:46:32.${C.pin}+00, took ${C.otp}ms, id=7${C.pin}`),
+    ];
+    const { hits } = await scanSources(sources, C, async () => "");
+    expect(hits.map((h) => `${h.canary}:${h.where}`).sort()).toEqual([
+      "otp:postgres",
+      "pin:logs agent",
+    ]);
+  });
+
+  it("reads the logs of every defined service, exited ones included (review M8)", () => {
+    const calls: string[][] = [];
+    const run = (args: string[]) => {
+      calls.push(args);
+      return Buffer.from(
+        args[0] === "config" ? "migrate\ngarage-init\nweb\n" : `log of ${args.at(-1)}`,
+      );
+    };
+    const logs = collectLogs(run, { greenmail: ["imapPassword"] });
+    expect(calls[0]).toEqual(["config", "--services"]);
+    expect(logs.map((l) => l.where)).toEqual(["logs migrate", "logs garage-init", "logs web"]);
+    expect(logs[0]?.bytes.toString()).toBe("log of migrate");
   });
 });
