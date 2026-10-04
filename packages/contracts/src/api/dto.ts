@@ -14,6 +14,7 @@ import {
   SourceKind,
   StepPhase,
   StepState,
+  ToolProfile,
   TypedSecretField,
   VaultAuditAction,
   VaultSecretField,
@@ -72,6 +73,7 @@ export const CreateRunInput = z
     budget: Budget.optional(),
     targetFolderId: Uuid.nullable().default(null),
     approvalMode: ApprovalMode.default("ask"),
+    toolProfile: ToolProfile.default("browser_use"),
     bypassAcknowledged: BypassAcknowledged,
   })
   .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED);
@@ -90,6 +92,7 @@ export const RunSummary = z.object({
   waitReason: WaitReason.nullable(),
   controller: Controller,
   approvalMode: ApprovalMode,
+  toolProfile: ToolProfile,
   model: z.string(),
   noteId: Uuid.nullable(),
   usage: Usage,
@@ -414,6 +417,7 @@ export const BenchmarkView = z.object({
   task: z.string(),
   allowedOrigins: z.array(Origin),
   approvalMode: ApprovalMode,
+  toolProfile: ToolProfile,
   budget: Budget,
   successCriteria: z.string(),
   createdAt: IsoDateTime,
@@ -426,6 +430,7 @@ export const CreateBenchmarkInput = z
     allowedOrigins: z.array(OriginInput).min(1).max(50),
     approvalMode: ApprovalMode.default("auto_within_allowlist"),
     bypassAcknowledged: BypassAcknowledged,
+    toolProfile: ToolProfile.default("browser_use"),
     budget: Budget.optional(),
     successCriteria: z.string().trim().min(1).max(4_000),
   })
@@ -450,6 +455,7 @@ export const BenchmarkRunView = z.object({
   inputTokens: Count,
   outputTokens: Count,
   durationMs: Count.nullable(),
+  takeovers: Count,
   failureNotes: z.string().nullable(),
   gradedBy: z.string().nullable(),
   startedAt: IsoDateTime,
