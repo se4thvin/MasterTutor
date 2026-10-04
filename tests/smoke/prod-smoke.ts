@@ -188,12 +188,22 @@ async function waitFor<T>(
   }
 }
 
+/** D47 for the local prod-like stack: production mode, plus its loopback Traefik (localIngress). */
+export function localPreflightProblems(
+  envFiles: string | readonly string[],
+  env?: Readonly<Record<string, string>>,
+): string[] {
+  return prodModeProblems(resolveForProdCheck(envFiles, PROD_LIKE_LOCAL_FILES, env), {
+    localIngress: true,
+  });
+}
+
 export async function runProdSmoke(options: SmokeOptions): Promise<void> {
   if (needsLocalPreflight(options.base)) {
     if (!existsSync("/tmp/mt-behaviour.lock")) {
       throw new Error("hold /tmp/mt-behaviour.lock first (one heavy stack at a time)");
     }
-    const mode = prodModeProblems(resolveForProdCheck(options.envFiles, PROD_LIKE_LOCAL_FILES));
+    const mode = localPreflightProblems(options.envFiles);
     if (mode.length > 0) throw new Error(`stack is not production mode:\n${mode.join("\n")}`);
   }
 

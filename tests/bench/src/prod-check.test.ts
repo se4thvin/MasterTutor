@@ -37,6 +37,17 @@ describe("runningModeProblems (D47, running containers)", () => {
     ])
       expect(text).toContain(needle);
   });
+  it("accepts the stack's loopback Traefik only for the local prod-like stack (final review I1)", () => {
+    const withIngress = [...prod, { service: "traefik", env: [], cmd: [] }];
+    expect(runningModeProblems(withIngress, { localIngress: true })).toEqual([]);
+    expect(runningModeProblems(withIngress)).toEqual(["traefik: test-only service is running"]);
+    // The exception names one service: a renamed test service is still refused.
+    expect(
+      runningModeProblems([...prod, { service: "proxy", env: [], cmd: [] }], {
+        localIngress: true,
+      }),
+    ).toEqual(["proxy: test-only service is running"]);
+  });
   it("requires web and agent to be running", () => {
     expect(runningModeProblems([])).toEqual(["web: not running", "agent: not running"]);
   });
