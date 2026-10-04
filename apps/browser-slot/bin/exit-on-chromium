@@ -1,7 +1,11 @@
 #!/bin/bash
 # Supervisor event listener: when Chromium exits, stop supervisord so the container exits
 # and Compose `restart: always` brings the slot back with an empty tmpfs profile (spec §5.2).
+# Docker doubles its restart delay, up to a minute, for a container that ran under 10 s, and only
+# resets it after one that ran longer. Back-to-back short runs would leave the slot restarting for
+# a minute at a time, so the container never exits before MIN_UPTIME_S.
 set -u
+MIN_UPTIME_S=11
 while true; do
   printf 'READY\n'
   read -r header
@@ -9,6 +13,8 @@ while true; do
   payload=$(head -c "${len:-0}")
   case "$payload" in
     *processname:chromium*)
+      uptime_s="$(ps -o etimes= -p 1 | tr -d ' ')"
+      if (( ${uptime_s:-0} < MIN_UPTIME_S )); then sleep "$((MIN_UPTIME_S - ${uptime_s:-0}))"; fi
       supervisord_pid="$(cat /var/run/supervisord.pid)" || { echo "exit-on-chromium: cannot read supervisord pid" >&2; exit 1; }
       kill -TERM "$supervisord_pid" || { echo "exit-on-chromium: cannot signal supervisord" >&2; exit 1; }
       ;;
