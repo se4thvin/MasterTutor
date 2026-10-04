@@ -74,6 +74,12 @@ describe("remote test runner (D45, X4, D48)", () => {
     expect(readme).toContain("scripts/remote-test.sh all");
   });
 
+  it("installs dependencies before e2e: its post-run canary scan runs workspace code (OCR) in Node", () => {
+    expect(host).toMatch(
+      /^ {2}e2e\)\n {4}command="\$install && exec bash scripts\/e2e\.sh \\"\\\$@\\"" ;;$/m,
+    );
+  });
+
   it("handles and documents every suite it offers", () => {
     for (const suite of suites) {
       expect(host, suite).toMatch(new RegExp(`(^|[ (|])${suite}( \\||\\))`, "m"));
