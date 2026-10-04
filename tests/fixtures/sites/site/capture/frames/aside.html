@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Frames outside the content</title>
+  </head>
+  <body>
+    <main>
+      <article>
+        <h1>Frames outside the content</h1>
+        <p>
+          The citric acid cycle oxidises acetyl groups to carbon dioxide and passes the released
+          electrons to carriers that feed the respiratory chain inside the mitochondrion.
+        </p>
+        <p>
+          Each turn of the cycle yields three NADH, one FADH2 and one GTP, and regenerates the
+          oxaloacetate that the next acetyl group joins.
+        </p>
+        <iframe srcdoc="<p>Small frame sentinel text</p>" width="80" height="40"></iframe>
+      </article>
+    </main>
+    <aside class="sidebar">
+      <iframe srcdoc="<p>Sidebar frame sentinel text</p>" width="300" height="200"></iframe>
+    </aside>
+  </body>
+</html>

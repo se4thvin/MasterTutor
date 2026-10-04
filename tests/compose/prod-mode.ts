@@ -15,6 +15,7 @@ export const PRODUCTION_SERVICES = [
   "migrate",
   "web",
   "agent",
+  "pdf-worker",
   "docling",
 ] as const;
 
@@ -57,11 +58,16 @@ export function resolveForProdCheck(
   return composeConfig(envFile, files, { profiles: ["*"] });
 }
 
+/** True for a production service or a slot: anything else must not run in production (review I2). */
+export function isProductionService(name: string): boolean {
+  return SLOT.test(name) || (PRODUCTION_SERVICES as readonly string[]).includes(name);
+}
+
 export function prodModeProblems(config: ComposeConfig): string[] {
   const problems: string[] = [];
   const envOf = (service: string) => config.services[service]?.environment ?? {};
   for (const [name, service] of Object.entries(config.services)) {
-    if (!SLOT.test(name) && !(PRODUCTION_SERVICES as readonly string[]).includes(name))
+    if (!isProductionService(name))
       problems.push(`service ${name}: not a production service (D47)`);
     if (service.image && isTestImage(service.image))
       problems.push(`service ${name}: runs a test image (D47)`);

@@ -16,8 +16,12 @@ import {
   type DbHandle,
 } from "@mastertutor/db";
 import { and, asc, eq, sql } from "drizzle-orm";
+import type { Database } from "@mastertutor/db";
+import type { Storage } from "../../packages/storage/src/index.ts";
 import { createOpenAIModelClient } from "../../apps/agent/src/llm/client.ts";
+import { createOpenAI, type StatelessOpenAI } from "../../apps/agent/src/llm/openai.ts";
 import type { RunHooks } from "../../apps/agent/src/loop/hooks.ts";
+import type { Log } from "../../apps/agent/src/runtime/types.ts";
 import { Supervisor } from "../../apps/agent/src/loop/supervisor.ts";
 import { instantClock, type Clock } from "../../apps/agent/src/runtime/clock.ts";
 import type { RuntimeConfig } from "../../apps/agent/src/runtime/config.ts";
@@ -49,6 +53,14 @@ export interface BehaviourAgent {
   restart(): Promise<void>;
 }
 
+/** What a phase's hooks need to be built against the behaviour stack (capture, video, PDF…). */
+export interface HookDeps {
+  db: Database;
+  storage: Storage;
+  openai: StatelessOpenAI;
+  log: Log;
+}
+
 const slotsIdle = async (owner: DbHandle) =>
   (await owner.db.select().from(browserSlots).where(eq(browserSlots.state, "idle"))).length ===
   BEHAVIOUR_SLOTS.length;
@@ -58,7 +70,11 @@ export async function startBehaviourAgent(
     scenarios?: Scenario[];
     config?: Partial<RuntimeConfig>;
     clock?: Clock;
-    hooks?: Partial<RunHooks>;
+    /**
+     * The phase hook sets under test: as they are, or built on the stack's db, storage and its one
+     * OpenAI client.
+     */
+    hooks?: Partial<RunHooks> | ((deps: HookDeps) => Partial<RunHooks>);
   } = {},
 ): Promise<BehaviourAgent> {
   const env = behaviourEnv();
@@ -70,17 +86,22 @@ export async function startBehaviourAgent(
   const workspaceId = existing?.id ?? (await seedWorkspace(owner.db));
   await owner.db.update(settings).set({ killSwitch: false });
   let agentDb = createDb(env.agentUrl);
-  const make = () =>
-    new Supervisor({
+  const make = () => {
+    // One client per process, as in main.ts; tests point it at the mock.
+    const openai = createOpenAI({ apiKey: "behaviour", baseURL: `${mock.url}/v1` });
+    return new Supervisor({
       db: agentDb,
       storage,
-      model: createOpenAIModelClient({ apiKey: "behaviour", baseURL: `${mock.url}/v1` }),
+      model: createOpenAIModelClient(openai),
+      hooks:
+        typeof options.hooks === "function"
+          ? options.hooks({ db: agentDb.db, storage, openai, log })
+          : options.hooks,
       slots: [...BEHAVIOUR_SLOTS],
       cdpBaseUrl: cdpBaseUrlForTests,
       log,
       testMode: true,
       clock: options.clock ?? instantClock(),
-      hooks: options.hooks,
       config: {
         leaseMs: 3_000,
         heartbeatMs: 1_000,
@@ -91,6 +112,7 @@ export async function startBehaviourAgent(
         ...options.config,
       },
     });
+  };
   const agent: BehaviourAgent = {
     supervisor: make(),
     mock,

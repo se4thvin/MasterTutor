@@ -126,6 +126,19 @@ export const HeldDownloadView = z.object({
 });
 export type HeldDownloadView = z.infer<typeof HeldDownloadView>;
 
+/**
+ * A download stored with the run (an approved agent download, or one the person kept at
+ * hand-back): what download_ready announced, in the snapshot so a reload lists it again.
+ */
+export const StoredDownloadView = z.object({
+  id: Uuid,
+  assetId: Uuid,
+  filename: z.string().max(255),
+  bytes: z.number().int().nonnegative(),
+  at: IsoDateTime,
+});
+export type StoredDownloadView = z.infer<typeof StoredDownloadView>;
+
 export const RunDetail = RunSummary.extend({
   plan: Plan.nullable(),
   allowedOrigins: z.array(Origin),
@@ -137,6 +150,8 @@ export const RunDetail = RunSummary.extend({
   heldDownloads: z.array(HeldDownloadView),
   /** Why the run failed or stopped, as stored with its terminal status (D35); null otherwise. */
   error: RunError.nullable().default(null),
+  /** Stored downloads, oldest first; never a held or discarded one. */
+  downloads: z.array(StoredDownloadView),
   lastEventId: z
     .string()
     .regex(/^[0-9]+$/)

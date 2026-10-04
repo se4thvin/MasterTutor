@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas report</title>
+    <style>
+      body {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="1200" height="700"></canvas>
+    <script>
+      const ctx = document.getElementById("c").getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, 1200, 700);
+      ctx.fillStyle = "#111";
+      ctx.font = "48px sans-serif";
+      ctx.fillText("Quarterly results", 80, 140);
+      ctx.font = "28px sans-serif";
+      ctx.fillText("Revenue rose 12 percent on strong demand.", 80, 220);
+    </script>
+  </body>
+</html>

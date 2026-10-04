@@ -60,6 +60,7 @@ const DETAIL = {
   targetFolderId: null,
   pendingApprovals: [],
   heldDownloads: [],
+  downloads: [],
   lastEventId: "12",
 };
 
