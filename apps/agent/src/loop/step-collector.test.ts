@@ -40,4 +40,10 @@ describe("StepCollector", () => {
     await expect(step.afterCommitted(log)).resolves.toBeUndefined();
     expect(ran).toBe(true);
   });
+  it("reports what the budget still allows after the step's own spend", () => {
+    const step = new StepCollector({ usdLeft: 1 });
+    step.addUsage({ ...EMPTY_USAGE, usd: 0.25 });
+    expect(step.usdLeft()).toBeCloseTo(0.75, 9);
+    expect(new StepCollector().usdLeft()).toBe(Number.POSITIVE_INFINITY);
+  });
 });

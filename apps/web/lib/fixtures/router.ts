@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import {
+  CAPTURED_ORIGINS,
   EMPTY_USAGE,
   MODELS,
   TYPED_SECRET_FIELDS,
   TERMINAL_RUN_STATUSES,
   apiContract,
+  noteFidelity,
   type NoteBlock,
   type RunDetail,
   type RunStatus,
@@ -266,11 +268,16 @@ export const fixtureRouter = os.router({
     markVerified: os.notes.markVerified.handler(({ input, context }) => {
       const { record, block } = findBlock(stateFor(context.ns), input.blockId);
       block.verified = true;
-      if (record.note.fidelity === "needs_review" && record.blocks.every((b) => b.verified)) {
-        record.note.fidelity = (record.note.coverage ?? 1) >= 0.98 ? "verified" : "partial";
-      }
+      // The one rule (packages/contracts noteFidelity), as the server's refreshNoteQuality applies it.
+      const captured = new Set<string>(CAPTURED_ORIGINS);
+      record.note.fidelity = noteFidelity({
+        coverage: record.note.coverage,
+        unverifiedCaptured: record.blocks.filter((b) => captured.has(b.origin) && !b.verified)
+          .length,
+        missingMedia: record.mediaLost ?? 0,
+      });
       record.note.updatedAt = now();
-      return { ...block };
+      return { block: { ...block }, fidelity: record.note.fidelity };
     }),
     move: os.notes.move.handler(({ input, context }) => {
       const state = stateFor(context.ns);

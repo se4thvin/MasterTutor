@@ -281,6 +281,8 @@ export async function startVaultFixtures(options: {
         return html(res, page.offsiteImageSubmitInShadow(`${origin("evil")}/collect`, false));
       case "GET /offsite-image-shadow-outside":
         return html(res, page.offsiteImageSubmitInShadow(`${origin("evil")}/collect`, true));
+      case "GET /password-shadow":
+        return html(res, page.passwordInShadow());
       case "GET /offsite-many":
         return html(res, page.manyDestinations(120));
       case "GET /offsite-split":

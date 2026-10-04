@@ -21,6 +21,7 @@ import {
   WaitReason,
 } from "../enums.ts";
 import { StepAction } from "../events.ts";
+import { MAX_BLOCK_CHARS } from "../markdown.ts";
 import { NoteBlock } from "../note.ts";
 import { RunError } from "../run.ts";
 import { secretValueProblem } from "../vault.ts";
@@ -246,7 +247,15 @@ export const NoteDetail = z.object({
 });
 export type NoteDetail = z.infer<typeof NoteDetail>;
 
-export const UpdateBlockInput = z.object({ blockId: Uuid, markdown: z.string().max(100_000) });
+/** "Mark verified": the block, and the note's fidelity as the one rule (noteFidelity) now gives it. */
+export const MarkVerifiedResult = z.object({ block: NoteBlock, fidelity: Fidelity });
+export type MarkVerifiedResult = z.infer<typeof MarkVerifiedResult>;
+
+/** A person may save any block the agent may store: the one block-size limit (MAX_BLOCK_CHARS). */
+export const UpdateBlockInput = z.object({
+  blockId: Uuid,
+  markdown: z.string().max(MAX_BLOCK_CHARS),
+});
 export type UpdateBlockInput = z.infer<typeof UpdateBlockInput>;
 export const MoveNoteInput = z.object({ noteId: Uuid, folderId: Uuid.nullable() });
 export type MoveNoteInput = z.infer<typeof MoveNoteInput>;

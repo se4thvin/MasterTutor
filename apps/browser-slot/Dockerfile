@@ -53,6 +53,10 @@ RUN set -eux; \
 COPY --from=neko-server /neko /usr/bin/neko
 COPY --from=neko-server /src/LICENSE /usr/share/doc/neko/LICENSE
 COPY --from=neko-server /pion-ice/LICENSE /usr/share/doc/neko/pion-ice.LICENSE
+
+# Keep a pristine copy: the entrypoint regenerates default.pa with the agent-only TCP module each start.
+RUN cp /etc/pulse/default.pa /etc/pulse/default.pa.orig
+
 COPY supervisord/chromium.conf /etc/neko/supervisord/chromium.conf
 COPY policies.json /etc/chromium/policies/managed/policies.json
 COPY --chmod=0755 bin/slot-entrypoint bin/exit-on-chromium bin/slot-health bin/slot-idle-http /usr/local/bin/

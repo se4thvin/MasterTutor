@@ -20,6 +20,7 @@ const agentSource = {
   S3_SECRET_ACCESS_KEY: "0974bfbf76eb6fb9faf77bf05f5b21d703c85dbd797421167285185ae7ff3568",
   BROWSER_SLOTS: "browser-1, browser-2",
   PDF_WORKER_URL: "http://pdf-worker:5002",
+  AUDIO_CAPTURE_URL: "http://audio-capture:5003",
 };
 
 describe("parseEnv", () => {
@@ -64,6 +65,12 @@ describe("parseEnv", () => {
     expect(() => parseEnv(AgentEnv, { ...agentSource, PDF_WORKER_URL: undefined })).toThrow(
       EnvError,
     );
+    expect(() => parseEnv(AgentEnv, { ...agentSource, AUDIO_CAPTURE_URL: undefined })).toThrow(
+      EnvError,
+    );
+    expect(() =>
+      parseEnv(AgentEnv, { ...agentSource, AUDIO_CAPTURE_URL: "file:///tmp/x" }),
+    ).toThrow(EnvError);
   });
 
   it("parses boolean flags", () => {

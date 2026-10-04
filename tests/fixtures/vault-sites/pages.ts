@@ -336,6 +336,16 @@ export const offsiteImageSubmitInShadow = (formAction: string, outside: boolean)
   );
 };
 
+/** A sign-in form that posts home, built inside an open shadow root (focused target, QA-071). */
+export const passwordInShadow = () => {
+  const inner = `<form method="post" action="/password"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password"><button id="submit" type="submit">Sign in</button></form>`;
+  return layout(
+    "Sign in",
+    `<div id="host"></div>
+     <script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(inner)};</script>`,
+  );
+};
+
 /** A reveal toggle next to the field, and an unrelated "Show details" button nearby (M6). */
 export const showDetails = () =>
   layout(

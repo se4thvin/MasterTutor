@@ -71,7 +71,7 @@ These close the open questions in `STATE.md`:
 | Service | Image / runtime | Role | Networks | Exposed |
 |---|---|---|---|---|
 | `web` | Next.js 16 (Node) | UI, Better Auth, oRPC, SSE run events, presigned URLs, vault **encryption only**, ForwardAuth endpoint, server-side n.eko login, TURN credentials | `edge`, `backend`, `cdp` (n.eko API on 8080 only) | Traefik `https://<domain>/` |
-| `agent` | Node worker + ffmpeg (no browser) | Run loop, slot leasing, Playwright over CDP, capture, video, vault **decryption**, control lock | `backend`, `cdp` | Nothing |
+| `agent` | Node worker + ffmpeg (no browser) (superseded: no ffmpeg anywhere; audio is recorded by `parec` in the `audio-capture` service, see §8) | Run loop, slot leasing, Playwright over CDP, capture, video, vault **decryption**, control lock | `backend`, `cdp` | Nothing |
 | `browser-1..N` | Slot image: n.eko + headed Chromium + Xvfb + PulseAudio + `socat` | One browser per leased run | `cdp`, `egress` | Signaling via Traefik `/live/:runId`; media on `590NN` UDP+TCP |
 | `postgres` | `pgvector/pgvector:pg17` | Database, queue, LISTEN/NOTIFY bus | `backend` | Internal only |
 | `garage` | `dxflrs/garage` v2 | S3 objects | `backend` | Internal only |
@@ -271,7 +271,7 @@ The phases:
 | Budgets | Defaults per run are `{maxSteps: 150, maxUsd: 5, maxActiveMinutes: 60}`. Hitting one → `waiting(approval)` of kind `budget`, with Extend +50% / Finish now / Cancel. Budgets never fail a run. |
 | Domain allowlist | `page.route` on top-level documents: an origin not in `allowed_origins` → approval kind `new_origin`. Requests to loopback, RFC1918, link-local and Docker ranges are blocked. `fixtures` is allowed only when `AGENT_TEST_MODE=1`. Network topology (§3.1) is the second layer. |
 | Approval list | Approval is required for: <br>• a click whose accessible name or form-submit text matches `RISKY_ACTION` (buy, pay, order, checkout, delete, remove, send, post, publish, submit, confirm, subscribe, unsubscribe, transfer); <br>• submitting a form other than login or search; <br>• any download; <br>• first credential use per alias+origin; <br>• a new origin; <br>• a budget hit. |
-| Loop detection | The same action on the same screenshot pHash 3 times, or 8 steps with no URL, DOM or note change → `waiting(takeover)` with reason `stuck`. |
+| Loop detection | The same action on the same screenshot pHash 3 times, or 8 steps with no URL, DOM or note change → `waiting(takeover)` with reason `stuck`. (Superseded with B4: "the same screenshot" uses the perceptual metric in §8, a DCT-coefficient mean absolute difference, not pHash bits.) |
 | Untrusted content | Page-derived strings are wrapped in `<untrusted_page_content origin="…">`. Enforcement never relies on the prompt. |
 | Kill switch | `settings.kill_switch=true` sends `run_wake` with reason `kill`. Within 1s the agents abort every `AbortController`, cancel all non-terminal runs, release their slots and refuse claims until the switch is cleared. Every run also has its own Cancel. |
 | CAPTCHA | The model reports `captcha`, or a reCAPTCHA, hCaptcha or Turnstile iframe is detected → `waiting(captcha)` and the user is prompted to take over. |
@@ -342,6 +342,21 @@ Based on D15 and `orchestration/runs/2026-10-05-02-research-web-capture/report.m
 - The user moves notes by drag-and-drop or a **Move to…** sheet, which sets `filed_by='user'`.
 
 ## 8. Video
+
+> **Superseded in part (B4 rulings; b4-review M1, I6, I7 and b4-rereview m4).** As built in B4:
+> - **Audio capture uses `parec`, not ffmpeg.** A separate `audio-capture` service, never `agent`,
+>   runs `parec --server=<slot Pulse TCP> --device=audio_output.monitor --raw --format=s16le` and
+>   writes WAV chunks. It reaches the slots over its own `pulse` network, off `cdp`. Debian's
+>   ffmpeg would add about 570 MB; `pulseaudio-utils` adds about 13 MB. Step 2 of `transcribe`
+>   below reads this way.
+> - **Frames are compared by a DCT-coefficient distance, not pHash bits.** A frame's fingerprint
+>   is the 63 low-frequency AC coefficients of the DCT of a 32×32 grey thumbnail. Two frames are
+>   "the same" when the mean absolute difference of those coefficients is at most
+>   `PERCEPTUAL_SAME` (3.5). This replaces "Hamming distance ≤ 6" in `keyframes`.
+>   - Why: the 64-bit median hash flipped up to 26 bits within one static slide.
+>   - Calibration: on real VP8 encodes of flat slides (`tests/fixtures/phash`), frames of one slide
+>     stay ≤ 1.4 apart and different slides are ≥ 8.6 apart.
+>   - The same metric serves loop detection (§5.5).
 
 Based on `orchestration/runs/2026-10-05-03-research-video-extraction/report.md` and D8. Video runs only in the slot's real player. There is no yt-dlp in production and no stored media.
 

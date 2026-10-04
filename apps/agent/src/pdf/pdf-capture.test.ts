@@ -7,6 +7,8 @@ import { StepCollector } from "../loop/step-collector.ts";
 import type { AssetInput, AssetStore } from "../notes/assets.ts";
 import { startTestPdfWorker } from "../testing/pdf-worker.ts";
 import { testLog } from "../testing/tool-context.ts";
+import { createOcrModel } from "../capture/opaque.ts";
+import { createDoclingClient } from "./docling.ts";
 import { buildPdfCapture, type PdfCaptureDeps } from "./pdf-capture.ts";
 import { MAX_PDF_BLOCKS } from "./protocol.ts";
 
@@ -354,5 +356,51 @@ describe("buildPdfCapture with a huge pdf.js layout (re-review N-1)", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
     expect(capture.blocks).toHaveLength(MAX_PDF_BLOCKS);
     expect(capture).toMatchObject({ blocksTruncated: true, mediaLost: 1 });
+  });
+});
+
+describe("buildPdfCapture keeps to the run's budget (final review I6)", () => {
+  it("stops OCR when the budget is spent and counts the scanned page as lost", async () => {
+    let calls = 0;
+    const ocr = createOcrModel({
+      responses: {
+        create: async () => {
+          throw new Error("unused");
+        },
+        parse: async () => {
+          calls++;
+          return {
+            parsed: { markdown: "Scanned page text" } as never,
+            model: "gpt-6-astra",
+            tokens: { input: 1, cached: 0, output: 1 },
+          };
+        },
+      },
+    });
+    const capture = await buildPdfCapture(
+      deps({ ocr }),
+      { ...ctx(), step: new StepCollector({ usdLeft: 0 }) },
+      await fixture(),
+      "https://x.test/p.pdf",
+    );
+    expect(calls).toBe(0);
+    expect(capture.mediaLost).toBe(1);
+  });
+});
+
+describe("buildPdfCapture with docling down (final review I7)", () => {
+  it("falls back to pdf.js when docling cannot be reached", async () => {
+    // Nothing listens on port 9: what a docling container that is down or loading looks like.
+    const capture = await buildPdfCapture(
+      deps({
+        docling: createDoclingClient("http://127.0.0.1:9"),
+        ocr: { transcribe: async () => "Scanned page text" },
+      }),
+      ctx(),
+      await fixture(),
+      "https://x.test/paper.pdf",
+    );
+    expect(capture.engine).toBe("pdfjs");
+    expect(capture.coverage).toBeGreaterThanOrEqual(0.98);
   });
 });

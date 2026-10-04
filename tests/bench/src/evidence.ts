@@ -14,6 +14,7 @@ import {
   summaryMayReachPage,
   unwrapUntrusted,
   type ActionEffect,
+  type ActionTarget,
 } from "@mastertutor/contracts";
 import { z } from "zod";
 
@@ -64,10 +65,16 @@ export interface TraceStep {
   tool: ToolName | null;
   /** Any action in the step reached the page (P10b-7, N1); navigation, scroll, move, wait and screenshot do not (N2). */
   interaction: boolean;
+  /** Each executed action of a computer step: what it did and, for page input, where (I3). */
+  actions: TraceAction[];
   readPage: ReadPageResult | null;
   credentialError: string | null;
 }
 export type TraceApproval = z.infer<typeof RawApproval>;
+export interface TraceAction {
+  effect: ActionEffect;
+  target: ActionTarget | null;
+}
 export interface RunTrace {
   runId: string;
   status: RunStatus;
@@ -81,11 +88,13 @@ export interface RunTrace {
  * What each action of a computer step did. Rows that recorded no effects (older rows, calls that
  * never ran) fall back to the summary, strictly: a batch ("(+n more)") may hide a click (N1).
  */
-function effectsOf(summary: string, result: unknown): ActionEffect[] {
+function actionsOf(summary: string, result: unknown): TraceAction[] {
   const parsed = CallResult.safeParse(result);
-  if (parsed.success && parsed.data.kind === "computer" && parsed.data.effects)
-    return parsed.data.effects;
-  return [summaryMayReachPage(summary) ? "input" : "passive"];
+  if (parsed.success && parsed.data.kind === "computer" && parsed.data.effects) {
+    const targets = parsed.data.targets ?? [];
+    return parsed.data.effects.map((effect, i) => ({ effect, target: targets[i] ?? null }));
+  }
+  return [{ effect: summaryMayReachPage(summary) ? "input" : "passive", target: null }];
 }
 
 /**
@@ -94,7 +103,7 @@ function effectsOf(summary: string, result: unknown): ActionEffect[] {
  * sequence ends in the ENTER that landed on the typed URL, within or across steps; a sequence
  * that is broken off or never lands is input.
  */
-function interactions(steps: readonly { done: boolean; effects: ActionEffect[] }[]): boolean[] {
+function interactions(steps: readonly { done: boolean; actions: TraceAction[] }[]): boolean[] {
   const result = steps.map(() => false);
   let pending: number[] = [];
   const flush = () => {
@@ -103,7 +112,7 @@ function interactions(steps: readonly { done: boolean; effects: ActionEffect[] }
   };
   steps.forEach((step, index) => {
     if (!step.done) return;
-    for (const effect of step.effects) {
+    for (const { effect } of step.actions) {
       if (effect === "address_bar") pending.push(index);
       else if (effect === "address_bar_landed") pending = [];
       else {
@@ -170,7 +179,7 @@ export function parseTrace(runId: string, json: unknown): RunTrace {
   };
   const computer = raw.data.steps.map((step) => ({
     done: step.phase === "act" && step.state === "done" && step.action?.tool === "computer",
-    effects: step.action?.tool === "computer" ? effectsOf(step.action.summary, step.result) : [],
+    actions: step.action?.tool === "computer" ? actionsOf(step.action.summary, step.result) : [],
   }));
   const changed = interactions(computer);
   const steps = raw.data.steps.map((step, index): TraceStep => {
@@ -188,6 +197,7 @@ export function parseTrace(runId: string, json: unknown): RunTrace {
       caption: step.caption,
       tool,
       interaction: changed[index]!,
+      actions: computer[index]!.actions,
       readPage: done && tool === "read_page" ? readPageOf(step.seq, step.result) : null,
       credentialError: done && tool === "fill_credential" ? credentialErrorOf(step.result) : null,
     };

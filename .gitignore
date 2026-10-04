@@ -19,6 +19,5 @@ apps/web/e2e/.out/
 tests/security/.out/
 .env.bench
 .env.bench-account
-orchestration/benchmarks/.raw/
 tests/bench/.out/
 orchestration/runs/*/artifacts/shots/

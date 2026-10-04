@@ -8,8 +8,9 @@ describe("fixtures suite", () => {
     expect(suite.benchmarks.map((b) => `${b.key}@${b.toolProfile}`)).toEqual([
       "activities@browser_use",
       "activities@computer_use",
+      "readings@browser_use",
     ]);
-    for (const b of suite.benchmarks) {
+    for (const b of suite.benchmarks.filter((x) => x.key === "activities")) {
       expect(b.mockScenarios).toEqual({
         main: `bench-activities-${b.toolProfile}`,
         verify: `bench-verify-${b.toolProfile}`,
@@ -18,6 +19,20 @@ describe("fixtures suite", () => {
       expect(b.task).toMatch(/cookie/i);
       expect(b.budget.maxUsd).toBeLessThanOrEqual(3);
     }
+  });
+
+  it("grades the library by discovering its readings and sections, read-only (run 1's shape)", async () => {
+    const readings = fixturesSuite().benchmarks.find((b) => b.key === "readings")!;
+    expect(readings.criterion).toMatchObject({ kind: "discovered_readings", readings: [1, 2, 3] });
+    expect(readings.verify!.signInUrl).toBe(`${BENCH_ORIGIN}/signin`);
+    expect(readings.verify!.task).toMatch(/address bar/);
+    const { SCENARIOS } = await import("../../../llm-mock/src/scenarios/index.ts");
+    const { main, verify } = readings.mockScenarios!;
+    for (const name of [main, verify!])
+      expect(
+        SCENARIOS.some((s) => s.name === name),
+        name,
+      ).toBe(true);
   });
 
   it("keeps the real-model worst case under the $10 fixtures cap", () => {

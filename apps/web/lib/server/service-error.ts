@@ -4,7 +4,7 @@ type ServiceErrorCode =
   "not_found" | "conflict" | "invalid" | "unauthorized" | "forbidden" | "too_many";
 
 /**
- * Thrown by web services (runs, settings, and the library through LibraryError). Services never
+ * Thrown by web services (runs, settings, the library). Services never
  * import oRPC; `served` maps the code to an ORPCError 1:1. Messages are user-facing and never
  * carry secrets or page text.
  */
