@@ -5,7 +5,7 @@
 # tests/e2e/compose.remote.yml: CI labels, the slot AppArmor profile, no published media ports.
 # The project is named per worktree (mt-<worktree dir>), so one worktree's `down -v` never removes
 # another's kept stack. A name the caller set wins: the remote runner sets its per-run project.
-# Stacks still cannot run side by side (fixed subnets and the Traefik port): the lock stays.
+# Locally stacks still cannot run side by side (fixed subnets and the Traefik port): the lock stays.
 worktree="$(basename "$PWD" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_\n-' '-')"
 : "${COMPOSE_PROJECT_NAME:=mt-${worktree}}"
 # Not exported: DC carries it (-p), and a shell that sourced this must not move other compose
@@ -19,8 +19,8 @@ stack_base_url() {
   echo "http://localhost:${port:-18080}"
 }
 
-# One heavy stack at a time on a laptop (D46): the same lock as the behaviour suite. The CI host
-# serialises full-stack suites with its own lock (~/mt-ci/.runs/stack.lock, run-on-host.sh).
+# One heavy stack at a time on a laptop (D46): the same lock as the behaviour suite. On the CI host
+# each run instead holds a stack slot with its own subnets and ports (scripts/remote-test/slots.sh).
 LOCAL_STACK_LOCK=/tmp/mt-behaviour.lock
 STACK_LOCK_HELD=0
 

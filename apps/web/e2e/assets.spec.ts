@@ -17,7 +17,7 @@ test("inline asset figures and links in block Markdown load from the app's own o
   await expectCleanScreen(page);
 });
 
-test("assets are session-only and served inert", async ({ page }) => {
+test("assets are session-only and served inert", async ({ page, baseURL }) => {
   const res = await page.request.get(`/api/assets/${ids.asset(1)}`);
   expect(res.status()).toBe(200);
   expect(res.headers()["x-content-type-options"]).toBe("nosniff");
@@ -25,6 +25,6 @@ test("assets are session-only and served inert", async ({ page }) => {
   expect((await page.request.get("/api/assets/not-a-uuid")).status()).toBe(404);
   await page
     .context()
-    .addCookies([{ name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: "http://localhost:3100" }]);
+    .addCookies([{ name: FIXTURE_AUTH_COOKIE, value: "signed-out", url: baseURL! }]);
   expect((await page.request.get(`/api/assets/${ids.asset(1)}`)).status()).toBe(401);
 });
