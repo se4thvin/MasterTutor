@@ -6,6 +6,7 @@ import {
   pointerOf,
   type FunctionToolName,
   type StepAction,
+  summarizeComputerActions,
 } from "@mastertutor/contracts";
 import type { ResponseInputItem } from "./openai.ts";
 
@@ -160,27 +161,6 @@ export function userMessage(
   };
 }
 
-function summarizeAction(action: ComputerAction): string {
-  switch (action.type) {
-    case "click":
-    case "double_click":
-    case "move":
-      return `${action.type.replace("_", " ")} (${action.x}, ${action.y})`;
-    case "drag":
-      return `drag ${action.path.length} points`;
-    case "scroll":
-      return `scroll ${action.scroll_y > 0 ? "down" : action.scroll_y < 0 ? "up" : "sideways"}`;
-    case "keypress":
-      return `press ${action.keys.join("+")}`.slice(0, 80);
-    case "type":
-      return `type "${action.text.slice(0, 40)}${action.text.length > 40 ? "…" : ""}"`;
-    case "wait":
-      return "wait";
-    case "screenshot":
-      return "look at the screen";
-  }
-}
-
 /** What the timeline shows; the point (CSS pixels) drives the overlay cursor. */
 export function describeCall(call: PendingCall, scale: number): StepAction | null {
   if (call.kind === "function")
@@ -189,13 +169,12 @@ export function describeCall(call: PendingCall, scale: number): StepAction | nul
       : null;
   const first = call.actions[0];
   if (!first) return null;
-  const more = call.actions.length > 1 ? ` (+${call.actions.length - 1} more)` : "";
   const point =
     "x" in first ? { x: Math.round(first.x / scale), y: Math.round(first.y / scale) } : null;
   const pointer = pointerOf(first);
   return {
     tool: "computer",
-    summary: `${summarizeAction(first)}${more}`.slice(0, 300),
+    summary: summarizeComputerActions(call.actions),
     point,
     ...(pointer ? { pointer } : {}),
   };

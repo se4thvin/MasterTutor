@@ -151,8 +151,9 @@ export async function checkProductionEnv(envFile: string): Promise<string[]> {
   }
   // D47 is judged with every profile enabled, so no test service can hide behind one (review I2).
   problems.push(...prodModeProblems(resolveForProdCheck(envFile, PRODUCTION_FILES)));
-  // B5's docling (profile pdf) is not merged yet: once compose.prod.yml pins DOCLING_URL, add
-  // `agent.DOCLING_URL: must be set` here (Task 14 Step 11, deferred with Task 12's docling pin).
+  if (!config.services.agent?.environment?.DOCLING_URL) {
+    problems.push("agent.DOCLING_URL: must be set (docling, D42)");
+  }
   return problems;
 }
 

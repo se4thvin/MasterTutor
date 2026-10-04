@@ -29,3 +29,18 @@ export async function restartSlot(slotName: string): Promise<void> {
     { label: `${slotName} back after restart`, timeoutMs: 90_000, intervalMs: 500 },
   );
 }
+
+/** The slot container's last exit and current start, as Docker records them. */
+export async function containerTimes(
+  slotName: string,
+): Promise<{ finishedAt: number; startedAt: number }> {
+  const id = (await compose("ps", "-a", "-q", slotName)).trim();
+  const out = await run("docker", [
+    "inspect",
+    "-f",
+    "{{.State.FinishedAt}} {{.State.StartedAt}}",
+    id,
+  ]);
+  const [finished, started] = out.stdout.trim().split(" ");
+  return { finishedAt: Date.parse(finished!), startedAt: Date.parse(started!) };
+}

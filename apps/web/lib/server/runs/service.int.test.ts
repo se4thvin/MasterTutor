@@ -1,6 +1,7 @@
 import { decodeNotify, type RunEvent } from "@mastertutor/contracts";
 import {
   approvals,
+  assets,
   createDb,
   downloads,
   emitRunEvent,
@@ -208,6 +209,90 @@ describe("runs.* on the live router (Task 0A)", () => {
       code: "NOT_FOUND",
     });
     await expect(client().runs.get({ runId: MISSING })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("snapshots the run's stored downloads: filed only, cleaned, this run and workspace only", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "completed" });
+    const asset = async (sha256: string, ws = workspaceId) =>
+      (
+        await owner.db
+          .insert(assets)
+          .values({
+            workspaceId: ws,
+            sha256,
+            bucket: "b",
+            key: `k/${sha256}`,
+            mime: "application/pdf",
+            bytes: 1,
+          })
+          .returning({ id: assets.id })
+      )[0]!.id;
+    const agentAsset = await asset("a1");
+    const keptAsset = await asset("a2");
+    const [agentDl] = await owner.db
+      .insert(downloads)
+      .values({
+        runId,
+        filename: "../week-2\u202Ereport.pdf",
+        bytes: 2_048,
+        approvedBy: viewer.id,
+        assetId: agentAsset,
+      })
+      .returning({ id: downloads.id, createdAt: downloads.createdAt });
+    const [keptDl] = await owner.db
+      .insert(downloads)
+      .values({
+        runId,
+        filename: "slides.pptx",
+        bytes: 9,
+        approvedBy: viewer.id,
+        assetId: keptAsset,
+        byUser: true,
+        keptAt: new Date(),
+      })
+      .returning({ id: downloads.id, createdAt: downloads.createdAt });
+    // Discarded at hand-back, still held, and filed with its asset since deleted: never shown.
+    await owner.db.insert(downloads).values([
+      {
+        runId,
+        filename: "discarded.pdf",
+        bytes: 1,
+        approvedBy: viewer.id,
+        byUser: true,
+        discardedAt: new Date(),
+      },
+      { runId, filename: "held.pdf", bytes: 1, approvedBy: viewer.id, byUser: true, pending: true },
+      { runId, filename: "gone.pdf", bytes: 1, approvedBy: viewer.id },
+    ]);
+    const stranger = await seedMember(owner.db);
+    const foreign = await seedRun(owner.db, { workspaceId: stranger.workspaceId });
+    await owner.db.insert(downloads).values({
+      runId: foreign,
+      filename: "theirs.pdf",
+      bytes: 1,
+      approvedBy: "x",
+      assetId: await asset("a3", stranger.workspaceId),
+    });
+    const detail = await client().runs.get({ runId });
+    expect(detail.downloads).toEqual([
+      {
+        id: agentDl!.id,
+        assetId: agentAsset,
+        filename: "week-2_report.pdf",
+        bytes: 2_048,
+        at: agentDl!.createdAt.toISOString(),
+      },
+      {
+        id: keptDl!.id,
+        assetId: keptAsset,
+        filename: "slides.pptx",
+        bytes: 9,
+        at: keptDl!.createdAt.toISOString(),
+      },
+    ]);
+    await expect(client().runs.get({ runId: foreign })).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
   });

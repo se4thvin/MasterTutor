@@ -4,6 +4,7 @@ import {
   type ComputerAction,
   type FunctionToolName,
   type ScrollPosition,
+  type ActionEffect,
 } from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
@@ -12,7 +13,7 @@ import type { CollectedStorage } from "../browser/storage-state.ts";
 import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
-import type { CallApproval } from "../tools/types.ts";
+import type { CallApproval, StepWriter } from "../tools/types.ts";
 
 export const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
@@ -38,6 +39,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   captcha = false;
   phash = 1n;
   png: Buffer = TINY_PNG;
+  /** Why this step's screenshot is withheld (a black frame is sent instead), or null. */
+  withheld: string | null = null;
   scroll: ScrollPosition = { x: 0, y: 0 };
   readonly targets = new Map<string, TargetDescription>();
   /** What has keyboard focus, for keypress/type targets at act time (null: PLAIN_TARGET). */
@@ -85,7 +88,15 @@ export class FakeLoopBrowser implements LoopBrowser {
       title: this.title,
       origin: new URL(this.url).origin,
       domHash: this.domHash,
-      screenshot: { png: this.png, width: 1, height: 1, scale: 1, masked: 0, dropped: false },
+      screenshot: {
+        png: this.png,
+        width: 1,
+        height: 1,
+        scale: 1,
+        masked: 0,
+        dropped: this.withheld !== null,
+        withheld: this.withheld,
+      },
       phash: this.phash,
       captcha: this.captcha,
       scroll: { ...this.scroll },
@@ -110,6 +121,13 @@ export class FakeLoopBrowser implements LoopBrowser {
     gate: ActionGate,
   ): Promise<ComputerRun> {
     let executed = 0;
+    // A fake executor routes nothing to the address bar: page actions are input, the rest passive.
+    const effects = (n: number): ActionEffect[] =>
+      actions
+        .slice(0, n)
+        .map((a) =>
+          ["move", "scroll", "wait", "screenshot"].includes(a.type) ? "passive" : "input",
+        );
     for (const action of actions) {
       const verdict = await gate(action);
       this.verdicts.push(verdict);
@@ -117,6 +135,7 @@ export class FakeLoopBrowser implements LoopBrowser {
         return {
           executed,
           notes: ["Stopped before an action: it needs approval."],
+          effects: effects(executed),
           handOver: null,
         };
       // The executor's own hold at the moment it presses (B1 round 5): allowed, yet not run.
@@ -124,15 +143,27 @@ export class FakeLoopBrowser implements LoopBrowser {
         return {
           executed,
           notes: ["Stopped before an action: its target changed."],
+          effects: effects(executed),
           handOver: null,
         };
       // The executor's own refusal at the press (its note), as a real executor would return it.
       const refusal = this.refuseWith?.(action) ?? null;
-      if (refusal) return { executed: executed + 1, notes: [refusal], handOver: null };
+      if (refusal)
+        return {
+          executed: executed + 1,
+          notes: [refusal],
+          effects: effects(executed + 1),
+          handOver: null,
+        };
       // A page the executor cannot act on safely even with approval (B1 breaker fix 2).
       const handOver = this.handOverOn?.(action) ?? null;
       if (handOver)
-        return { executed: executed + 1, notes: ["Nothing was clicked: handed over."], handOver };
+        return {
+          executed: executed + 1,
+          notes: ["Nothing was clicked: handed over."],
+          effects: effects(executed + 1),
+          handOver,
+        };
       this.guard?.assertAgent(signal);
       if (verdict !== true && verdict.allowDownload)
         this.allowedDownloads.push(verdict.allowDownload);
@@ -142,28 +173,38 @@ export class FakeLoopBrowser implements LoopBrowser {
     }
     this.computerRuns.push([...actions]);
     await this.computerHook?.(actions, signal);
-    return { executed, notes: [], handOver: null };
+    return { executed, notes: [], effects: effects(executed), handOver: null };
   }
 
   /** The approval request a function call raises in the approve phase (none by default). */
   functionApproval: (name: FunctionToolName, args: unknown) => Promise<ApprovalRequest | null> =
     async () => null;
 
+  /** Lets a test stage step writes, or answer as a failed tool; returning nothing uses functionOutput. */
+  functionHook:
+    | ((name: FunctionToolName, step: StepWriter, signal: AbortSignal) => Promise<ToolRun | void>)
+    | null = null;
+
   async runFunction(
     name: FunctionToolName,
     args: unknown,
     signal: AbortSignal,
     approval: CallApproval | null,
+    step: StepWriter,
   ): Promise<ToolRun> {
     signal.throwIfAborted();
     this.functionRuns.push({ name, args });
     this.functionApprovals.push(approval);
-    return {
-      output: this.functionOutput(name),
-      notesChanged: false,
-      wait: this.functionWait(name),
-      handOver: this.functionHandOver(name),
-    };
+    const custom = await this.functionHook?.(name, step, signal);
+    return (
+      custom ?? {
+        output: this.functionOutput(name),
+        notesChanged: false,
+        failed: false,
+        wait: this.functionWait(name),
+        handOver: this.functionHandOver(name),
+      }
+    );
   }
 
   /** Runs inside navigate, e.g. to block a restore navigation until it is aborted. */

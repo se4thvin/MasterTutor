@@ -1,12 +1,12 @@
 "use client";
 
 import type { NoteDetail } from "@mastertutor/contracts";
+import { archiveFileName } from "@mastertutor/contracts/export";
 import { useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { api } from "@/lib/api/client.ts";
 import { safeDownloadUrl } from "@/lib/export/download-url.ts";
-import { exportFileName } from "@/lib/export/note-markdown.ts";
 
 export function ExportButton({ detail }: { detail: NoteDetail }) {
   const toast = useToast();
@@ -19,7 +19,7 @@ export function ExportButton({ detail }: { detail: NoteDetail }) {
       if (!href) throw new Error("unsafe download URL");
       const a = document.createElement("a");
       a.href = href;
-      a.download = exportFileName(detail.note.title);
+      a.download = archiveFileName(detail.note.title);
       a.click();
     } catch {
       toast({ title: "Couldn't export the note.", icon: "needsReview", tone: "danger" });
@@ -33,9 +33,9 @@ export function ExportButton({ detail }: { detail: NoteDetail }) {
       onClick={() => void run()}
       disabled={pending}
       // The name always contains the visible text (WCAG 2.5.3); compact widths show the icon only.
-      aria-label="Export .md"
+      aria-label="Export"
     >
-      <span className="hidden md:inline">Export .md</span>
+      <span className="hidden md:inline">Export</span>
     </Button>
   );
 }

@@ -14,7 +14,7 @@ import type { BrowserSession } from "../browser/session.ts";
 import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
-import type { CallApproval } from "../tools/types.ts";
+import type { CallApproval, StepWriter } from "../tools/types.ts";
 import type { RunSnapshot } from "./run-state.ts";
 
 export interface Observation {
@@ -52,6 +52,8 @@ export interface LoopBrowser {
     args: unknown,
     signal: AbortSignal,
     approval: CallApproval | null,
+    /** The act's staged writes; a function tool's note writes join its commit (B2 seam F2). */
+    step: StepWriter,
   ): Promise<ToolRun>;
   navigate(url: string, signal: AbortSignal): Promise<boolean>;
   restoreView(view: { scroll: ScrollPosition | null; videoTime: number | null }): Promise<void>;

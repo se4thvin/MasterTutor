@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Log B</title>
+  </head>
+  <body>
+    <p>Tab B</p>
+    <script>
+      setTimeout(
+        () => void fetch("/capture/data.json?tab=b&token=secret-token-123").then((r) => r.text()),
+        300,
+      );
+    </script>
+  </body>
+</html>
