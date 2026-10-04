@@ -28,6 +28,17 @@ describe("scripts/lib/test-stack.sh compose project (review: per-worktree names)
     expect(dcFrom("My Worktree.v2").slice(2, 4)).toEqual(["-p", "mt-my-worktree-v2"]);
   });
 
+  it("never exports the name: other compose tools run from the same shell keep their own (behaviour stack)", () => {
+    const root = join(base, "no-export");
+    mkdirSync(root, { recursive: true });
+    const seen = execFileSync(
+      "bash",
+      ["-c", `source "${script}" && bash -c 'echo "\${COMPOSE_PROJECT_NAME:-unset}"'`],
+      { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "" } },
+    ).trim();
+    expect(seen).toBe("unset");
+  });
+
   it("keeps a name the caller set (the remote runner's per-run project)", () => {
     expect(
       dcFrom("houndshark-p7g2", { COMPOSE_PROJECT_NAME: "mt-run-abc123" }).slice(2, 4),
