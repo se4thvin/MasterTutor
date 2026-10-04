@@ -1,0 +1,153 @@
+diff --git a/tcp_mux.go b/tcp_mux.go
+index a7a956a..07a8431 100644
+--- a/tcp_mux.go
++++ b/tcp_mux.go
+@@ -131,11 +131,18 @@ func (m *TCPMuxDefault) GetConnByUfrag(ufrag string, isIPv6 bool, local net.IP)
+ 
+ 	if conn, ok := m.getConn(ufrag, isIPv6, local); ok {
+ 		conn.ClearAliveTimer()
++		conn.agentOwned.Store(true)
+ 
+ 		return conn, nil
+ 	}
+ 
+-	return m.createConn(ufrag, isIPv6, local, false)
++	conn, err := m.createConn(ufrag, isIPv6, local, false)
++	if err != nil {
++		return nil, err
++	}
++	conn.agentOwned.Store(true)
++
++	return conn, nil
+ }
+ 
+ func (m *TCPMuxDefault) createConn(ufrag string, isIPv6 bool, local net.IP, fromStun bool) (*tcpPacketConn, error) {
+@@ -289,6 +296,13 @@ func (m *TCPMuxDefault) handleConn(conn net.Conn) { //nolint:cyclop
+ 	m.mu.Lock()
+ 
+ 	packetConn, ok := m.getConn(ufrag, isIPv6, localAddr.IP)
++	if !ok {
++		// With 1:1 NAT several local addresses map to one advertised address, so the agent keeps
++		// one passive candidate and closes the duplicates: the conn it reads from may be keyed by
++		// another local address than the one this connection arrived on. Hand the connection to
++		// it rather than to a new conn nobody reads.
++		packetConn, ok = m.getConnAnyLocal(ufrag, isIPv6)
++	}
+ 	if !ok {
+ 		packetConn, err = m.createConn(ufrag, isIPv6, localAddr.IP, true)
+ 		if err != nil {
+@@ -406,6 +420,21 @@ func (m *TCPMuxDefault) removeConnByUfragAndLocalHost(ufrag string, localIPAddr
+ 	}
+ }
+ 
++// getConnAnyLocal returns a conn the agent created for ufrag, whatever its local address.
++func (m *TCPMuxDefault) getConnAnyLocal(ufrag string, isIPv6 bool) (*tcpPacketConn, bool) {
++	conns := m.connsIPv4[ufrag]
++	if isIPv6 {
++		conns = m.connsIPv6[ufrag]
++	}
++	for _, conn := range conns {
++		if !conn.fromStun() {
++			return conn, true
++		}
++	}
++
++	return nil, false
++}
++
+ func (m *TCPMuxDefault) getConn(ufrag string, isIPv6 bool, local net.IP) (val *tcpPacketConn, ok bool) {
+ 	var conns map[ipAddr]*tcpPacketConn
+ 	if isIPv6 {
+diff --git a/tcp_mux_nat_test.go b/tcp_mux_nat_test.go
+new file mode 100644
+index 0000000..35a2c3b
+--- /dev/null
++++ b/tcp_mux_nat_test.go
+@@ -0,0 +1,62 @@
++// SPDX-FileCopyrightText: 2026 The Pion community <https://pion.ly>
++// SPDX-License-Identifier: MIT
++
++package ice
++
++import (
++	"net"
++	"testing"
++	"time"
++
++	"github.com/pion/logging"
++	"github.com/pion/stun/v3"
++	"github.com/stretchr/testify/require"
++)
++
++// With 1:1 NAT every local address maps to the one advertised address: the agent keeps a single
++// passive candidate, whose conn may be keyed by another local address than the one the remote's
++// connection arrives on. That connection must still reach the agent's conn.
++func TestTCPMux_InboundReachesAgentConnKeyedByAnotherLocalAddress(t *testing.T) {
++	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: 0})
++	require.NoError(t, err)
++	defer func() { _ = listener.Close() }()
++
++	tcpMux := NewTCPMuxDefault(TCPMuxParams{
++		Listener:       listener,
++		Logger:         logging.NewDefaultLoggerFactory().NewLogger("ice"),
++		ReadBufferSize: 20,
++	})
++	defer func() { _ = tcpMux.Close() }()
++
++	// The agent gathered on another interface (10.0.0.1); its duplicate on 127.0.0.1 was closed.
++	agentConn, err := tcpMux.GetConnByUfrag("myufrag", false, net.IP{10, 0, 0, 1})
++	require.NoError(t, err)
++	defer func() { _ = agentConn.Close() }()
++
++	conn, err := net.DialTCP("tcp", nil, tcpMux.LocalAddr().(*net.TCPAddr)) //nolint:forcetypeassert
++	require.NoError(t, err)
++	defer func() { _ = conn.Close() }()
++
++	msg := stun.New()
++	msg.Type = stun.MessageType{Method: stun.MethodBinding, Class: stun.ClassRequest}
++	msg.Add(stun.AttrUsername, []byte("myufrag:otherufrag"))
++	msg.Encode()
++	_, err = writeStreamingPacket(conn, msg.Raw)
++	require.NoError(t, err)
++
++	received := make(chan []byte, 1)
++	go func() {
++		buf := make([]byte, 512)
++		n, _, readErr := agentConn.ReadFrom(buf)
++		if readErr == nil {
++			received <- buf[:n]
++		}
++	}()
++
++	select {
++	case got := <-received:
++		require.Equal(t, msg.Raw, got)
++	case <-time.After(2 * time.Second):
++		t.Fatal("the inbound STUN never reached the agent's conn")
++	}
++}
+diff --git a/tcp_packet_conn.go b/tcp_packet_conn.go
+index 388b4d1..8ab37c5 100644
+--- a/tcp_packet_conn.go
++++ b/tcp_packet_conn.go
+@@ -91,6 +91,9 @@ type tcpPacketConn struct {
+ 	closedChan chan struct{}
+ 	closeOnce  sync.Once
+ 	aliveTimer *time.Timer
++	// agentOwned: an agent gathered with this conn (it reads from it), as opposed to a conn the
++	// mux created for an inbound connection that no agent has claimed yet.
++	agentOwned atomic.Bool
+ }
+ 
+ type streamingPacket struct {
+@@ -127,6 +130,10 @@ func newTCPPacketConn(params tcpPacketParams) *tcpPacketConn {
+ 	return packet
+ }
+ 
++func (t *tcpPacketConn) fromStun() bool {
++	return !t.agentOwned.Load()
++}
++
+ func (t *tcpPacketConn) ClearAliveTimer() {
+ 	t.mu.Lock()
+ 	if t.aliveTimer != nil {
