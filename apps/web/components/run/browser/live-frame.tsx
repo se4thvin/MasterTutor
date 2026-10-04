@@ -5,8 +5,17 @@ import { api } from "@/lib/api/client.ts";
 import { errorCode } from "@/lib/api/errors.ts";
 import { reconnectDelayMs } from "../stream/run-events.ts";
 import { liveFailure } from "./live-policy.ts";
+import { watchVideo } from "./live-video.ts";
 
-export type LiveStatus = "off" | "connecting" | "live" | "retrying" | "in_use" | "unavailable";
+export type LiveStatus =
+  | "off"
+  | "connecting"
+  | "live"
+  | "retrying"
+  | "in_use"
+  | "unavailable"
+  /** The embed's session decoded no video in time (I1): the frame offers Retry. */
+  | "no_video";
 
 interface LiveFrameProps {
   runId: string;
@@ -17,6 +26,9 @@ interface LiveFrameProps {
   interactive: boolean;
   onStatus(status: LiveStatus): void;
 }
+
+/** A Retry may find the closed session still connected in n.eko for a moment (CONFLICT). */
+const RETRY_CONFLICT_RETRIES = 3;
 
 /**
  * n.eko's client in an iframe (spec §10.2). runs.openLive sets the HttpOnly cookies for
@@ -34,6 +46,14 @@ export function LiveFrame({
   onStatus,
 }: LiveFrameProps) {
   const [embed, setEmbed] = useState<string | null>(null);
+  // Bumped by Retry: a fresh n.eko session (openLive logs in again; a session ends with its
+  // websocket). Never automatic: fresh sessions do not recover a stuck slot (I1).
+  const [retry, setRetry] = useState(0);
+  // I1: the session decoded no video in time. The notice stays until a frame arrives.
+  const [noVideo, setNoVideo] = useState(false);
+  // Every load of the embed is a new session, including one the embed starts itself (n.eko's
+  // client reconnecting): each is watched for video.
+  const [loads, setLoads] = useState(0);
   const ref = useRef<HTMLIFrameElement>(null);
   const report = useEffectEvent(onStatus);
 
@@ -56,7 +76,8 @@ export function LiveFrame({
       } catch (error) {
         if (cancelled) return;
         const next = liveFailure(errorCode(error));
-        if (next === "retry") {
+        const closing = next === "in_use" && retry > 0 && attempt < RETRY_CONFLICT_RETRIES;
+        if (next === "retry" || closing) {
           report("retrying");
           timer = setTimeout(() => void open(), reconnectDelayMs(attempt++));
           return;
@@ -70,7 +91,34 @@ export function LiveFrame({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [runId, slotName, epoch]);
+  }, [runId, slotName, epoch, retry]);
+
+  // Each session gets NO_VIDEO_MS to decode a frame; after that the notice shows until one does.
+  useEffect(() => {
+    if (!embed) return undefined;
+    setNoVideo(false);
+    let stopLate: (() => void) | undefined;
+    const stop = watchVideo(
+      () => ref.current,
+      (result) => {
+        if (result === "video") return;
+        setNoVideo(true);
+        report("no_video");
+        stopLate = watchVideo(
+          () => ref.current,
+          () => {
+            setNoVideo(false);
+            report("live");
+          },
+          Infinity,
+        );
+      },
+    );
+    return () => {
+      stop();
+      stopLate?.();
+    };
+  }, [embed, loads]);
 
   useEffect(() => {
     if (interactive) ref.current?.focus();
@@ -78,15 +126,35 @@ export function LiveFrame({
 
   if (!embed) return null;
   return (
-    <div className="run-live" inert={!interactive}>
-      <iframe
-        ref={ref}
-        src={embed}
-        title={title}
-        allow="autoplay; clipboard-read; clipboard-write"
-        referrerPolicy="same-origin"
-        tabIndex={interactive ? 0 : -1}
-      />
-    </div>
+    <>
+      <div className="run-live" inert={!interactive}>
+        <iframe
+          ref={ref}
+          onLoad={() => setLoads((n) => n + 1)}
+          src={embed}
+          title={title}
+          allow="autoplay; clipboard-read; clipboard-write"
+          referrerPolicy="same-origin"
+          tabIndex={interactive ? 0 : -1}
+        />
+      </div>
+      {noVideo && (
+        <div className="run-reconnect glass" role="status">
+          <span>
+            <b>Live view unavailable</b> · Showing the last screenshot
+          </span>
+          <button
+            type="button"
+            className="btn btn-gray run-banner-btn"
+            onClick={() => {
+              setEmbed(null);
+              setRetry((n) => n + 1);
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+    </>
   );
 }
