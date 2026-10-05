@@ -1,22 +1,30 @@
 import { createRequire } from "node:module";
 import path from "node:path";
+import sharp from "sharp";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { abortable } from "../runtime/abortable.ts";
 import { containsSecret, type Box, type MaskSources } from "./masking.ts";
 
 /** One OCR'd line: its words in reading order, each with its box in image pixels. */
 export interface OcrLine {
-  words: Array<{ text: string; box: Box }>;
+  /** `confidence` is tesseract's 0–100 (absent from fakes: read as sure). */
+  words: Array<{ text: string; box: Box; confidence?: number }>;
 }
 
-/** Self-hosted OCR (tesseract, offline English model): reads pixels without sending them anywhere. */
+/**
+ * Self-hosted OCR (tesseract, offline English model): reads pixels without sending them anywhere.
+ * An `urgent` read (the agent loop's screenshot screen) always runs before every queued capture
+ * read (images, PDF pages, page.png and opaque tiles), so a step never waits behind a long
+ * capture (QA-092).
+ */
 export interface LocalOcr {
   text(png: Uint8Array): Promise<string>;
-  words(png: Uint8Array): Promise<OcrLine[]>;
+  words(png: Uint8Array, options?: { urgent?: boolean }): Promise<OcrLine[]>;
 }
 
 interface TesseractWord {
   text: string;
+  confidence: number;
   bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 interface TesseractBlock {
@@ -33,7 +41,6 @@ const START_BACKOFF_MS = { first: 1_000, max: 60_000 };
  */
 export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
   let worker: Promise<Worker> | undefined;
-  let queue: Promise<unknown> = Promise.resolve();
   let backoff = START_BACKOFF_MS.first;
   let retryAt = 0;
   const ready = (): Promise<Worker> => {
@@ -72,14 +79,25 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
     await created.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
     return created;
   };
-  const serial = <T>(work: (ready: Worker) => Promise<T>): Promise<T> => {
-    const run = queue.then(async () => work(await ready()));
-    queue = run.catch(() => undefined);
-    return run;
+  // One recognition at a time; loop screens (`first`) are taken before any queued capture read.
+  const first: Array<() => void> = [];
+  const later: Array<() => void> = [];
+  let busy = false;
+  const next = () => {
+    const job = first.shift() ?? later.shift();
+    busy = job !== undefined;
+    job?.();
   };
+  const serial = <T>(work: (ready: Worker) => Promise<T>, urgent = false): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      (urgent ? first : later).push(() => {
+        ready().then(work).then(resolve, reject).finally(next);
+      });
+      if (!busy) next();
+    });
   return {
     text: (png) => serial(async (ready) => (await ready.recognize(Buffer.from(png))).data.text),
-    words: (png) =>
+    words: (png, options) =>
       serial(async (ready) => {
         const { data } = await ready.recognize(Buffer.from(png), {}, { blocks: true });
         const blocks = (data.blocks ?? []) as unknown as TesseractBlock[];
@@ -88,6 +106,7 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
             paragraph.lines.map((line) => ({
               words: line.words.map((word) => ({
                 text: word.text,
+                confidence: word.confidence,
                 box: {
                   x: word.bbox.x0,
                   y: word.bbox.y0,
@@ -98,7 +117,7 @@ export function createLocalOcr(): LocalOcr & { close(): Promise<void> } {
             })),
           ),
         );
-      }),
+      }, options?.urgent ?? false),
     async close() {
       const current = worker;
       worker = undefined;
@@ -115,27 +134,27 @@ export function sharedLocalOcr(): LocalOcr {
   return shared;
 }
 
+/** True while the run has anything the pixel screens look for: secrets, or filled one-time codes. */
+export const screensPixels = (secrets: MaskSources) =>
+  secrets.hasSecrets() || (secrets.hasOneTimeCodes?.() ?? false);
+
+/** A filled one-time code shows as an exact whole token (edge punctuation aside). */
+export const isCode = (secrets: MaskSources, word: string) =>
+  secrets.isOneTimeCode?.(word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")) ?? false;
+
 /**
  * True when pixels may be stored or sent to OpenAI (CLAUDE.md: secrets never reach the model).
  * Without registered secrets there is nothing to find. With them, local OCR must read the pixels
  * and find no secret; a hit or an OCR failure withholds them (A-M1, A-M2). The run's signal
  * cancels the wait at once (the kill switch never waits for a long read).
  */
-/** True while the run has anything the pixel screens look for: secrets, or filled one-time codes. */
-const screens = (secrets: MaskSources) =>
-  secrets.hasSecrets() || (secrets.hasOneTimeCodes?.() ?? false);
-
-/** A filled one-time code shows as an exact whole token (edge punctuation aside). */
-const isCode = (secrets: MaskSources, word: string) =>
-  secrets.isOneTimeCode?.(word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")) ?? false;
-
 export async function pixelsAreClean(
   ocr: Pick<LocalOcr, "text">,
   secrets: MaskSources,
   png: Uint8Array,
   signal: AbortSignal,
 ): Promise<boolean> {
-  if (!screens(secrets)) return true;
+  if (!screensPixels(secrets)) return true;
   let text: string;
   try {
     text = await abortable(ocr.text(png), signal);
@@ -143,55 +162,44 @@ export async function pixelsAreClean(
     signal.throwIfAborted();
     return false;
   }
-  return !containsSecret(secrets, text) && !text.split(/\s+/).some((word) => isCode(secrets, word));
+  return (
+    !containsSecret(secrets, text) &&
+    !(secrets.inOcrText?.(text) ?? false) &&
+    !text.split(/\s+/).some((word) => isCode(secrets, word))
+  );
 }
 
-export type PixelScreen = { kind: "clean" } | { kind: "hit"; boxes: Box[] } | { kind: "failed" };
-
-/** Longest run of OCR words one secret is matched across (a secret OCR split into pieces). */
-const MAX_WORDS = 6;
+/** page.png tiles: about two viewports each, overlapping so no line of text is cut in two. */
+const TILE = { height: 1_600, overlap: 120 };
 
 /**
- * Where registered secrets show in an image (I-1): the boxes of the words that hold one. The
- * vault registers only secret-class values (passwords, PINs), never usernames or emails, so a
- * page showing the account's email is left as it is. A secret OCR reads across lines, or a read
- * that fails, is `failed`: the caller withholds the image.
+ * pixelsAreClean over a tall image read in overlapping tiles (QA-092): each tile is its own queued
+ * read, so a loop screenshot screen waits for one tile at most, never the whole page.
  */
-export async function screenPixels(
-  ocr: LocalOcr,
+export async function tallPixelsAreClean(
+  ocr: Pick<LocalOcr, "text">,
   secrets: MaskSources,
   png: Uint8Array,
   signal: AbortSignal,
-): Promise<PixelScreen> {
-  if (!screens(secrets)) return { kind: "clean" };
-  let lines: OcrLine[];
+): Promise<boolean> {
+  if (!screensPixels(secrets)) return true;
+  let height: number;
+  let width: number;
   try {
-    lines = await abortable(ocr.words(png), signal);
+    const meta = await sharp(png).metadata();
+    height = meta.height ?? 0;
+    width = meta.width ?? 0;
   } catch {
-    signal.throwIfAborted();
-    return { kind: "failed" };
+    return false;
   }
-  const boxes: Box[] = [];
-  const holds = (words: OcrLine["words"]) =>
-    containsSecret(secrets, words.map((word) => word.text).join(" ")) ||
-    containsSecret(secrets, words.map((word) => word.text).join(""));
-  for (const { words } of lines) {
-    for (const word of words) if (isCode(secrets, word.text)) boxes.push(word.box);
-    // The shortest window ending at each word: growing backwards from `end` finds the words
-    // that hold the secret and no neighbours ("pw" before a password stays readable).
-    let from = 0;
-    for (let end = 0; end < words.length; end++) {
-      for (let start = end; start >= Math.max(from, end - MAX_WORDS + 1); start--) {
-        const window = words.slice(start, end + 1);
-        if (!holds(window)) continue;
-        boxes.push(...window.map((word) => word.box));
-        from = end + 1;
-        break;
-      }
-    }
+  if (height <= TILE.height) return pixelsAreClean(ocr, secrets, png, signal);
+  for (let top = 0; top < height; top += TILE.height - TILE.overlap) {
+    const tile = await sharp(png)
+      .extract({ left: 0, top, width, height: Math.min(TILE.height, height - top) })
+      .png()
+      .toBuffer();
+    if (!(await pixelsAreClean(ocr, secrets, new Uint8Array(tile), signal))) return false;
+    if (top + TILE.height >= height) break;
   }
-  if (boxes.length > 0) return { kind: "hit", boxes };
-  // A secret only the whole text holds (split across lines) has no box to fill.
-  const all = lines.flatMap((line) => line.words);
-  return holds(all) ? { kind: "failed" } : { kind: "clean" };
+  return true;
 }

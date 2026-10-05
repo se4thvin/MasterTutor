@@ -4,8 +4,8 @@ Audit every UI motion for QA run **{{RUN_ID}}**. Do not edit product code. Save 
 `orchestration/runs/{{RUN_ID}}/artifacts/`; your final reply is the report (no report files).
 
 ## Inputs
-- `apps/web/e2e/motion/catalog.ts` lists every motion; `apps/web/styles/compositor.test.ts` covers
-  every CSS @keyframes and transition statically.
+- `apps/web/e2e/motion/catalog.ts` lists every motion; stylelint's motion rules (`stylelint.config.mjs`,
+  run by `pnpm lint`) cover every CSS @keyframes and transition statically.
 - Tokens (`apps/web/lib/motion-tokens.ts`, the only source; `styles/motion.css` is generated):
   `springs.spring` (stiffness 400, damping 30, about 455 ms), `springs.springSoft` (260/30, sheets and the
   PiP), `durations.press` 90, `micro` 120, `base` 200, `panel` 300, `cursorMin`–`cursorMax`

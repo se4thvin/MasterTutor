@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Embed</title>
+  </head>
+  <body style="margin: 0">
+    <script>
+      const params = new URLSearchParams(location.search);
+      // ?child: a frame of a third site at this document's top left, loading slowly (the test
+      // holds its request), whose navigation starts as soon as this document runs.
+      if (params.has("child")) {
+        const child = document.createElement("iframe");
+        child.src = "http://ads.fixtures-hung.test/widget.html?loading";
+        child.style.cssText = "display: block; border: 0; width: 100px; height: 100px";
+        document.body.append(child);
+      }
+      // ?leave: this document navigates itself at once (to a page the test holds).
+      if (params.has("leave")) location.href = "/widget.html?held";
+    </script>
+  </body>
+</html>

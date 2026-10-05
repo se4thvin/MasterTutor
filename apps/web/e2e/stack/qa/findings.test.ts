@@ -178,12 +178,14 @@ describe("findings ledger (Phase 8 Task 9)", () => {
       theme: "light" | "dark",
       layout: string[],
       axe: string[] = [],
+      errors: string[] = [],
     ) => ({
       screen: "settings",
       width,
       theme,
       layout,
       axe,
+      errors,
     });
     const nav = (h: number) => `target smaller than 44px (223×${h}): a.nav-item "Library"`;
 
@@ -211,6 +213,22 @@ describe("findings ledger (Phase 8 Task 9)", () => {
         `orchestration/runs/${RUN_A}/artifacts/shots/settings/w1180-light.png`,
       ]);
       expect(contrast).toMatchObject({ width: 390, theme: "dark", category: "contrast" });
+    });
+
+    it("files a screen that did not open, a 5xx and a page error, citing the shot's JSON (QA-041)", () => {
+      const found = autoFindings("G4", RUN_A, [
+        shot(1440, "light", [], [], ["did not open: locator.waitFor: Timeout 15000ms exceeded."]),
+        shot(390, "dark", [], [], ["server error: HTTP 502 POST /api/rpc/notes/list"]),
+        shot(390, "light", [], [], ["page error: TypeError: x is undefined"]),
+      ]);
+      expect(found.map((f) => [f.category, f.severity, f.width, f.selector])).toEqual([
+        ["other", "blocker", 1440, "did not open: locator.waitFor: Timeout 15000ms exceeded."],
+        ["other", "major", 390, "server error: HTTP 502 POST /api/rpc/notes/list"],
+        ["other", "major", 390, "page error: TypeError: x is undefined"],
+      ]);
+      expect(found[0]!.evidence).toEqual([
+        `orchestration/runs/${RUN_A}/artifacts/shots/settings/w1440-light.json`,
+      ]);
     });
 
     it("gives a later round the same key, so a fixed finding re-reported is a regression", () => {

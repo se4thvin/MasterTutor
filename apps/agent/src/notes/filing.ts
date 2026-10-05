@@ -16,9 +16,10 @@ import {
   notes,
   resolveFolderPath,
   emitRunEvent,
+  findSibling,
   runs,
 } from "@mastertutor/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { StatelessOpenAI } from "../llm/openai.ts";
 import { usageDelta } from "../llm/pricing.ts";
 import type { Log } from "../runtime/types.ts";
@@ -41,16 +42,26 @@ const INSTRUCTIONS =
 
 const strip = (value: string) => value.replace(/[<>]/g, "").slice(0, 1_000);
 
+/** Folder paths per filing prompt (D38 data minimisation, cost): the shallowest are kept. */
+export const MAX_FILING_PATHS = 300;
+
+/**
+ * Folder names are data too: the model created earlier leaves from page text (QA-081), so the
+ * list sits in its own wrapper, stripped like the note.
+ */
 export function filingPrompt(input: {
   folders: string[][];
   title: string;
   lede: string | null;
 }): string {
-  const paths = input.folders.length
-    ? input.folders.map((path) => `- ${path.join(" / ")}`).join("\n")
-    : "(no folders yet)";
+  const kept = [...input.folders]
+    .sort((a, b) => a.length - b.length)
+    .slice(0, MAX_FILING_PATHS)
+    .map((path) => `- ${path.map(strip).join(" / ")}`);
   return [
-    `Existing folders:\n${paths}`,
+    kept.length
+      ? `Existing folders:\n${wrapUntrusted("folders", kept.join("\n"))}`
+      : "Existing folders: (no folders yet)",
     wrapUntrusted("note", `Title: ${strip(input.title)}\nLede: ${strip(input.lede ?? "")}`),
   ].join("\n\n");
 }
@@ -119,24 +130,44 @@ export interface FilingServices {
   log: Log;
 }
 
-/** The leaf inside the completion transaction; a same-name sibling created meanwhile is reused. */
+/**
+ * The leaf inside the completion transaction. A sibling created meanwhile under the same name, by
+ * resolveFolderPath's rule (case- and width-insensitive), is reused rather than duplicated.
+ */
 async function leafIn(
   tx: DbTx,
   workspaceId: string,
   parentId: string | null,
   name: string,
 ): Promise<string> {
+  const existing = async () =>
+    findSibling(
+      await tx
+        .select({
+          id: folders.id,
+          parentId: folders.parentId,
+          name: folders.name,
+          sort: folders.sort,
+        })
+        .from(folders)
+        .where(
+          and(
+            eq(folders.workspaceId, workspaceId),
+            parentId === null ? isNull(folders.parentId) : eq(folders.parentId, parentId),
+          ),
+        ),
+      parentId,
+      name,
+    )?.id;
+  const found = await existing();
+  if (found) return found;
   try {
     return (
       await tx.transaction((savepoint) => createFolder(savepoint, workspaceId, { name, parentId }))
     ).id;
   } catch (error) {
-    const rows = await tx
-      .select({ id: folders.id, parentId: folders.parentId })
-      .from(folders)
-      .where(and(eq(folders.workspaceId, workspaceId), eq(folders.name, name)));
-    const hit = rows.find((row) => row.parentId === parentId);
-    if (hit) return hit.id;
+    const raced = await existing();
+    if (raced) return raced;
     throw error;
   }
 }

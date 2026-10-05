@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lesson with an embed</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      #go {
+        position: absolute;
+        left: 0;
+        top: 50px;
+        width: 200px;
+        height: 40px;
+      }
+      #embed {
+        position: absolute;
+        width: 150px;
+        height: 150px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="go" onclick="window.__clicked = this.id">Continue</button>
+    <iframe id="embed" title="Embed"></iframe>
+    <script>
+      // A frame from another site (nest-a.html, its query from ?inner=). ?at=near: its content
+      // starts 4 px right of the button's right edge (x 204, y 50); otherwise far away.
+      // &border=N: it has an N px top border (its border box starts N px above its content).
+      const params = new URLSearchParams(location.search);
+      const embed = document.getElementById("embed");
+      const border = Number(params.get("border") ?? 0);
+      const [x, y] = params.get("at") === "near" ? [204, 50] : [600, 400];
+      embed.style.left = `${x}px`;
+      embed.style.top = `${y - border}px`;
+      embed.style.borderTop = `${border}px solid #ccc`;
+      embed.src = `http://other.fixtures-isolated.test/nest-a.html?${params.get("inner") ?? ""}`;
+    </script>
+  </body>
+</html>

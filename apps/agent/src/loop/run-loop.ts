@@ -640,7 +640,7 @@ export class RunLoop {
       return CONTINUE;
     }
     const turn = parsed.turn;
-    if (turn?.status === "done") return this.#complete();
+    if (turn?.status === "done") return this.#complete(signal);
     if (turn?.status === "need_human")
       return this.#wait(
         turn.needHuman === "captcha" ? "captcha" : "takeover",
@@ -720,7 +720,7 @@ export class RunLoop {
       }
       let previous: TargetDescription | null = null;
       for (const [index, action] of call.actions.entries()) {
-        const target = await this.#deps.browser.targetFor(action, previous);
+        const target = await this.#deps.browser.targetFor(action, previous, signal);
         if (action.type === "click" || action.type === "double_click") previous = target;
         const need = needsApproval(action, target);
         if (need)
@@ -905,7 +905,7 @@ export class RunLoop {
           refusals.push(`Action ${index + 1} (${action.type}): ${decision.note ?? DENIED}`);
           return false;
         }
-        const target = await this.#deps.browser.targetFor(action, null);
+        const target = await this.#deps.browser.targetFor(action, null, signal);
         const need = needsApproval(action, target);
         // An approval covers what was approved, not the batch index: the same kind and label on
         // the same element (M10), and on the same record: an approval for Alice's row never
@@ -1163,9 +1163,14 @@ export class RunLoop {
 
   /* --------------------------------- endings --------------------------------- */
 
-  async #complete(): Promise<StepOutcome> {
+  async #complete(signal: AbortSignal): Promise<StepOutcome> {
     const step = new StepCollector();
-    const result = await this.#deps.hooks.onComplete({ run: this.#run, log: this.#deps.log, step });
+    const result = await this.#deps.hooks.onComplete({
+      run: this.#run,
+      log: this.#deps.log,
+      step,
+      signal,
+    });
     if (!result.ok) {
       await this.#discard(step);
       this.#notes.push(`Executor: the run cannot finish yet: ${result.reason}`);
@@ -1260,7 +1265,7 @@ export class RunLoop {
           steps: [step, approveStep("done")],
           transition: TO_RUNNING,
         });
-        return this.#complete();
+        return this.#complete(signal);
       }
       this.#run = { ...this.#run, budget: extendBudget(this.#run.budget) };
       if (instruction) this.#notes.push(`Message from the user: ${instruction}`);

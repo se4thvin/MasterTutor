@@ -43,7 +43,8 @@ test.describe("press feedback", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/settings");
     const result = await pressed(page, page.getByRole("link", { name: "Usage" }));
-    expect(result.scale).toBe("none");
+    // Scale 1 at rest and when pressed: no scaling, and no transform added or removed (QA-015).
+    expect(result.scale).toBe("1");
     expect(Number(result.opacity)).toBeLessThan(1);
   });
 });

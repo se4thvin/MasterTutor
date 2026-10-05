@@ -1,17 +1,16 @@
 "use client";
 
 import type { NoteSummary } from "@mastertutor/contracts";
-import { useQuery } from "@tanstack/react-query";
 import { Sheet } from "@/components/ui/sheet.tsx";
-import { orpc } from "@/lib/api/client.ts";
 import { buildFolderTree, flattenAll } from "@/lib/folders/tree.ts";
 import { FolderPickList } from "./folder-pick-list.tsx";
+import { useFolders } from "./use-folders.ts";
 import { useMoveNote } from "./use-move-note.ts";
 
 export function MoveSheet({ note, onClose }: { note: NoteSummary | null; onClose: () => void }) {
-  const { data } = useQuery(orpc.folders.tree.queryOptions({ input: {} }));
+  const folders = useFolders();
   const move = useMoveNote();
-  const rows = flattenAll(buildFolderTree(data?.folders ?? []));
+  const rows = flattenAll(buildFolderTree(folders));
   return (
     <Sheet
       open={note !== null}

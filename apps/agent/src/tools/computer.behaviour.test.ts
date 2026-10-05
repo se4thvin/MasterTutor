@@ -6,8 +6,9 @@ import { OTHER, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts"
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { captureModelScreenshot } from "../browser/screenshot.ts";
+import { settle } from "../browser/settle.ts";
 import { BrowserSession } from "../browser/session.ts";
-import { ARM_BUDGET_MS, markUnguarded } from "../browser/input-guard.ts";
+import { ARM_BUDGET_MS, markStillUnguarded, markUnguarded } from "../browser/input-guard.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { waitFor } from "../testing/wait.ts";
@@ -15,6 +16,7 @@ import {
   ComputerExecutor,
   FOCUS_MOVED_REFUSAL,
   PAGE_CHANGED_REFUSAL,
+  PAGE_SETTLING_REFUSAL,
   SECRET_FIELD_REFUSAL,
   PAGE_TOO_COMPLEX,
   PAGE_TOO_COMPLEX_REFUSAL,
@@ -469,6 +471,7 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     expect(await executor.execute(click(code), signal)).toBe(UNGUARDED_CLICK_REFUSAL);
     const target = (await hitTest(s, code)).target;
     expect(markUnguarded(s, target)?.opaqueFrame).toBe(true); // so the loop asks a person
+    // Approved, it runs: the hung advert is not near the point, so it cannot take the press.
     expect(
       await executor.execute(click(code), signal, {
         target: markUnguarded(s, target),
@@ -477,6 +480,115 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     ).toBeNull();
     return { s, executor };
   }
+
+  /** The advert in hung-frame.html answers again (its hang is over). */
+  const advertAnswers = (s: BrowserSession) =>
+    waitFor(
+      () =>
+        s.page
+          .frames()
+          .find((frame) => frame.url().includes("hang.html"))
+          ?.evaluate(() => true)
+          .catch(() => false),
+      { label: "advert answers" },
+    );
+  const approvedAt = async (s: BrowserSession, at: { x: number; y: number }) => ({
+    target: markUnguarded(s, (await hitTest(s, at)).target),
+    personApproved: true,
+  });
+
+  it("an unarmed frame next to the point holds an approved click back until it answers", async () => {
+    // The hung advert's box starts 6 px right of the point (within the 8 px margin).
+    const { s, executor } = await setup("/hung-frame.html?ms=2500&ad=248");
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+    const code = { x: 242, y: 35 };
+    const started = Date.now();
+    expect(await executor.execute(click(code), signal, await approvedAt(s, code))).toBe(
+      PAGE_SETTLING_REFUSAL,
+    );
+    const waited = Date.now() - started;
+    console.info(JSON.stringify({ metric: "settling_refusal_ms", waited }));
+    // About 1 s of re-arming, each try bounded by the budget (arm and disarm).
+    expect(waited).toBeLessThan(ARM_BUDGET_MS * 8 + 1_000);
+    expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
+    await advertAnswers(s);
+    expect(await executor.execute(click(code), signal, await approvedAt(s, code))).toBeNull();
+    expect(await s.page.evaluate(() => document.activeElement?.id)).toBe("code");
+  });
+
+  it("an unarmed frame that slides under the point after arming: the approved click is refused (0/5 pressed)", async () => {
+    let refused = 0;
+    for (let i = 0; i < 5; i++) {
+      // 100 ms after the pointer enters Code (the arm is under way), the hung advert covers it.
+      const { s, executor } = await setup("/hung-frame.html?ms=3000&slide=100");
+      await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+      await s.page.mouse.move(600, 500); // off Code, so the executor's move enters it
+      const code = { x: 100, y: 35 };
+      const note = await executor.execute(click(code), signal, await approvedAt(s, code));
+      if (note === PAGE_SETTLING_REFUSAL || note === TARGET_MOVED_REFUSAL) refused += 1;
+      expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
+      await session?.close();
+      session = undefined;
+    }
+    expect(refused).toBe(5);
+  });
+
+  it("an unarmed frame that slides under the point while the press-time checks run is refused: the geometry is the last check (I2)", async () => {
+    // The advert does not hang (ms=0): it answers input. Its arm is held back past the budget
+    // (its first arm command is slow), so the guard is incomplete with the advert unarmed.
+    const { s, executor } = await setup("/hung-frame.html?ms=0");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const [advert] = [...(await s.outOfProcessFrames()).values()];
+    const advertSend = advert!.cdp.send.bind(advert!.cdp) as (
+      method: string,
+      params?: object,
+    ) => Promise<unknown>;
+    (advert!.cdp as { send: typeof advertSend }).send = async (method, params) => {
+      if (method === "Page.addScriptToEvaluateOnNewDocument")
+        await new Promise((resolve) => setTimeout(resolve, 2 * ARM_BUDGET_MS));
+      return advertSend(method, params);
+    };
+    // The page-changed flush (the guard's last round trip before the geometry) slides the
+    // advert over Code, as a page could at that moment, and it is painted before the press.
+    const worlds = await s.worlds();
+    const evaluate = worlds.evaluate.bind(worlds);
+    (worlds as { evaluate: typeof evaluate }).evaluate = (async (
+      ...args: Parameters<typeof evaluate>
+    ) => {
+      if (String(args[0]).replace(/\s/g, "") === "()=>0") {
+        await s.page.evaluate(() => {
+          const ad = document.getElementById("ad")!;
+          ad.style.cssText += "; left: 40px; top: 20px; width: 200px; height: 30px";
+        });
+        await new Promise((resolve) => setTimeout(resolve, 150)); // within the flush budget
+      }
+      return evaluate(...args);
+    }) as typeof evaluate;
+    const code = { x: 100, y: 35 };
+    expect(await executor.execute(click(code), signal, await approvedAt(s, code))).toBe(
+      TARGET_MOVED_REFUSAL,
+    );
+    expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
+  });
+
+  it("a page whose frame recovered stops asking for approval: a complete arm clears the mark", async () => {
+    const { s, executor } = await setup("/hung-frame.html?ms=1500");
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+    const code = { x: 100, y: 35 };
+    expect(await executor.execute(click(code), signal)).toBe(UNGUARDED_CLICK_REFUSAL);
+    const target = (await hitTest(s, code)).target;
+    expect(markUnguarded(s, target)?.opaqueFrame).toBe(true);
+    // While it still hangs, the loop's classification keeps asking a person...
+    expect((await markStillUnguarded(s, target, signal))?.opaqueFrame).toBe(true);
+    await advertAnswers(s);
+    // ...and once every document arms again, it no longer does: the click runs unapproved.
+    const fresh = await markStillUnguarded(s, (await hitTest(s, code)).target, signal);
+    expect(fresh?.opaqueFrame).toBeFalsy();
+    expect(
+      await executor.execute(click(code), signal, { target: fresh, personApproved: false }),
+    ).toBeNull();
+    expect(await s.page.evaluate(() => document.activeElement?.id)).toBe("code");
+  });
 
   it.each([
     [{ type: "type", text: "hello" }, "hello"],
@@ -700,6 +812,111 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
       expect(hits.delete).toBe(0);
     },
   );
+
+  it("on a host too slow to arm the guard in time, a person-approved click is refused, not pressed unguarded: 0/10 reach Delete", async () => {
+    const { s, executor } = await setup();
+    // A loaded host: the arm's CDP round trips on the page's session take longer than the budget,
+    // so its frame hold and new-document script land only after the guard settled (incomplete).
+    const cdp = (await s.worlds()).cdp;
+    const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
+    (cdp as { send: typeof send }).send = async (method, params) => {
+      if (method === "Page.addScriptToEvaluateOnNewDocument" || method === "Target.setAutoAttach")
+        await new Promise((resolve) => setTimeout(resolve, ARM_BUDGET_MS * 0.6));
+      return send(method, params);
+    };
+    // ...and the panel swaps to another site's Delete in the gap before the press lands (on a
+    // loaded host that gap is tens of milliseconds wide).
+    let swapOnPress = false;
+    const down = s.page.mouse.down.bind(s.page.mouse);
+    s.page.mouse.down = async (options) => {
+      if (swapOnPress) {
+        swapOnPress = false;
+        await s.page.evaluate((url) => {
+          (document.getElementById("panel") as HTMLIFrameElement).src = url;
+        }, "http://other.fixtures-isolated.test/widget.html?only=delete");
+        await waitFor(
+          () =>
+            s.page
+              .frames()[1]
+              ?.evaluate(
+                () => document.readyState === "complete" && !!document.getElementById("delete"),
+              )
+              .catch(() => false),
+          { label: "swapped" },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+      }
+      return down(options);
+    };
+    const hits = { cancel: 0, delete: 0, refused: 0 };
+    for (let i = 0; i < 10; i++) {
+      await s.goto(`${SITE}/frame-swap.html`, signal);
+      await waitFor(
+        () =>
+          s.page
+            .frames()[1]
+            ?.evaluate(
+              () => document.readyState === "complete" && !!document.getElementById("cancel"),
+            )
+            .catch(() => false),
+        { label: "panel" },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+      // A person approved Cancel (the loop's gate binds the approval to that element).
+      const gate = async () => {
+        const target = markUnguarded(s, (await hitTest(s, at)).target);
+        if (target?.label !== "Cancel") return false;
+        swapOnPress = true;
+        return { target, personApproved: true };
+      };
+      const run = await executor.run([click(at)], signal, gate);
+      if (run.notes.includes(PAGE_SETTLING_REFUSAL)) hits.refused += 1;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const reached = await clicked(s);
+      if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+    }
+    console.info(JSON.stringify({ metric: "slow_arm_approved_clicks", ...hits }));
+    expect(hits).toEqual({ cancel: 0, delete: 0, refused: 10 });
+  });
+
+  it("a frame whose move to another site commits late is still pending when an approved click runs: 0/5 reach Delete", async () => {
+    const { s, executor } = await setup();
+    // The other site's renderer is kept busy 1.5 s, so the panel's Delete document commits late;
+    // on a loaded host the press can land after it (here: 1.8 s after the last check).
+    const down = s.page.mouse.down.bind(s.page.mouse);
+    s.page.mouse.down = async (options) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_800));
+      return down(options);
+    };
+    const panel = () => s.page.frames().find((frame) => frame.url().includes("widget.html"));
+    const hits = { cancel: 0, delete: 0, refused: 0 };
+    for (let i = 0; i < 5; i++) {
+      await s.goto(`${SITE}/frame-swap.html?after=0&busy=1500`, signal);
+      await waitFor(
+        () =>
+          panel()
+            ?.evaluate(
+              () => document.readyState === "complete" && !!document.getElementById("cancel"),
+            )
+            .catch(() => false),
+        { label: "panel" },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+      await s.page.mouse.move(600, 500); // off the panel, so the executor's move enters it
+      // A person approved Cancel (the loop's gate binds the approval to that element).
+      const gate = async () => {
+        const target = markUnguarded(s, (await hitTest(s, at)).target);
+        return target?.label === "Cancel" ? { target, personApproved: true } : false;
+      };
+      const run = await executor.run([click(at)], signal, gate);
+      if (run.executed === 1 && run.notes.length > 0) hits.refused += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1_800)); // past the late commit
+      const reached = await clicked(s);
+      if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+    }
+    console.info(JSON.stringify({ metric: "late_commit_approved_clicks", ...hits }));
+    expect(hits).toEqual({ cancel: 0, delete: 0, refused: 5 });
+  });
 
   it.each([
     ["src", "unapproved"],
@@ -1000,6 +1217,253 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
           .evaluate(() => (window as { __deleted?: boolean }).__deleted),
       ).toBe(true);
     }
+  });
+});
+
+describe("ComputerExecutor with frames navigating away from the point (ruling 3)", () => {
+  /** loading-frames.html: Continue spans x 0–200, y 50–90; this point is 4 px from its right edge. */
+  const edge = { x: 196, y: 70 };
+  const centre = { x: 100, y: 70 };
+  /** Holds every slow page's request (`?loading`, `?held`) until the test ends. */
+  async function holdSlowPages(s: BrowserSession) {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await s.page.route(
+      (url) => /[?&](loading|held)\b/.test(url.search),
+      async (route) => {
+        await Promise.race([held, new Promise((resolve) => setTimeout(resolve, 20_000))]);
+        await route.fallback().catch(() => undefined);
+      },
+    );
+    return release;
+  }
+  async function loadingPage(query: string, page = "loading-frames.html") {
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/${page}?${query}`, signal);
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the frames' requests are out
+    expect(s.navigationPending()).toBe(true);
+    return { s, executor, release };
+  }
+  const verdict = async (s: BrowserSession, at: { x: number; y: number }, approved: boolean) => ({
+    target: markUnguarded(s, (await hitTest(s, at)).target),
+    personApproved: approved,
+  });
+  const clickedGo = (s: BrowserSession) =>
+    s.page.evaluate(() => {
+      const holder = window as { __clicked?: string };
+      const value = holder.__clicked;
+      holder.__clicked = undefined;
+      return value;
+    });
+
+  it.each([false, true])(
+    "still-loading frames away from the button do not hold the click back (approved: %s): 5/5 clicked",
+    async (approved) => {
+      const { s, executor, release } = await loadingPage("ads=3");
+      for (let i = 0; i < 5; i++) {
+        expect(
+          await executor.execute(click(centre), signal, await verdict(s, centre, approved)),
+        ).toBeNull();
+        expect(await clickedGo(s)).toBe("go");
+      }
+      expect(s.navigationPending()).toBe(true); // they were loading all along
+      release();
+    },
+  );
+
+  it.each([false, true])(
+    "a loading frame 4 px from the point refuses the click (approved: %s)",
+    async (approved) => {
+      const { s, executor, release } = await loadingPage("near");
+      expect(await executor.execute(click(edge), signal, await verdict(s, edge, approved))).toBe(
+        PAGE_SETTLING_REFUSAL,
+      );
+      expect(await clickedGo(s)).toBeUndefined();
+      release();
+    },
+  );
+
+  it("a loading frame that grows next to the point between the checks and the press refuses the click: 5/5", async () => {
+    let refused = 0;
+    for (let i = 0; i < 5; i++) {
+      // 50 ms after the pointer enters Continue, the far frame grows to end 4 px from the point.
+      const { s, executor, release } = await loadingPage("grow=50");
+      // The arm's round trips take 60 ms each (well within the budget), so the growth lands after
+      // the first checks (the settle wait and the hit test) and before the press.
+      const cdp = (await s.worlds()).cdp;
+      const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
+      (cdp as { send: typeof send }).send = async (method, params) => {
+        if (method === "Page.addScriptToEvaluateOnNewDocument" || method === "Target.setAutoAttach")
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        return send(method, params);
+      };
+      await s.page.mouse.move(600, 200); // off Continue, so the executor's move enters it
+      const note = await executor.execute(click(edge), signal, await verdict(s, edge, false));
+      if (note === TARGET_MOVED_REFUSAL && (await clickedGo(s)) === undefined) refused += 1;
+      release();
+      await session?.close();
+      session = undefined;
+    }
+    expect(refused).toBe(5);
+  });
+
+  it.each([false, true])(
+    "a main-frame navigation refuses the click wherever it is (approved: %s)",
+    async (approved) => {
+      const { s, executor } = await setup();
+      const release = await holdSlowPages(s);
+      await s.goto(`${SITE}/loading-frames.html?leave`, signal);
+      await s.page.mouse.move(600, 200); // off Continue, so the executor's move enters it
+      // Refused while it is seen in the settle wait, or else at the press (before any press; the
+      // held page is not read, as reading it waits for its navigation).
+      expect([PAGE_SETTLING_REFUSAL, TARGET_MOVED_REFUSAL]).toContain(
+        await executor.execute(click(centre), signal, await verdict(s, centre, approved)),
+      );
+      release();
+    },
+  );
+
+  it("a main-frame navigation that starts after the settle wait is still caught at the press (T1)", async () => {
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/loading-frames.html`, signal);
+    // During the guard's last round trips before the press (the page-changed flush), the page
+    // navigates itself (held): only the press-time check can see it.
+    const worlds = await s.worlds();
+    const evaluate = worlds.evaluate.bind(worlds);
+    let started = false;
+    (worlds as { evaluate: typeof evaluate }).evaluate = (async (
+      ...args: Parameters<typeof evaluate>
+    ) => {
+      if (!started && String(args[0]).replace(/\s/g, "") === "()=>0") {
+        started = true;
+        await s.page.evaluate(() => {
+          setTimeout(() => (location.href = "/interactive.html?held"));
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100)); // its start is reported
+      }
+      return evaluate(...args);
+    }) as typeof evaluate;
+    await s.page.mouse.move(600, 200);
+    expect(await executor.execute(click(centre), signal, await verdict(s, centre, false))).toBe(
+      TARGET_MOVED_REFUSAL,
+    );
+    expect(started).toBe(true); // refused before any press (the page itself is held)
+    release();
+  });
+
+  it.each([
+    ["near", PAGE_SETTLING_REFUSAL],
+    ["far", null],
+  ] as const)(
+    "a frame nested in a bordered cross-site frame, navigating since load (%s): T2",
+    async (at, expected) => {
+      // The cross-site frame has a 300 px top border, so its content (where the nested frame
+      // is) lies 300 px below its border box's top left.
+      const { s, executor, release } = await loadingPage(
+        `at=${at}&border=300&inner=child`,
+        "nested-frames.html",
+      );
+      const note = await executor.execute(click(edge), signal, await verdict(s, edge, false));
+      expect(note).toBe(expected);
+      expect(await clickedGo(s)).toBe(expected === null ? "go" : undefined);
+      release();
+    },
+  );
+
+  it.each([
+    ["near", PAGE_SETTLING_REFUSAL],
+    ["far", null],
+  ] as const)("a navigation inside an existing cross-site frame (%s): T3", async (at, expected) => {
+    const { s, executor, release } = await loadingPage(
+      `at=${at}&inner=leave`,
+      "nested-frames.html",
+    );
+    expect(await executor.execute(click(edge), signal, await verdict(s, edge, true))).toBe(
+      expected,
+    );
+    expect(await clickedGo(s)).toBe(expected === null ? "go" : undefined);
+    release();
+  });
+
+  it("a navigating frame whose box cannot be read in time fails closed, within the bounded wait (T4)", async () => {
+    // A loading frame far from the point, but reading any frame box takes 300 ms (over the 250 ms
+    // check budget): it counts as near, and the click is refused once the settle wait is over.
+    const { s, executor, release } = await loadingPage("ads=1");
+    const cdp = (await s.worlds()).cdp;
+    const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
+    (cdp as { send: typeof send }).send = async (method, params) => {
+      if (method === "DOM.getBoxModel") await new Promise((resolve) => setTimeout(resolve, 300));
+      return send(method, params);
+    };
+    const started = Date.now();
+    expect(await executor.execute(click(centre), signal, await verdict(s, centre, false))).toBe(
+      PAGE_SETTLING_REFUSAL,
+    );
+    const waited = Date.now() - started;
+    console.info(JSON.stringify({ metric: "unreadable_box_refusal_ms", waited }));
+    expect(waited).toBeLessThan(1_500);
+    expect(await clickedGo(s)).toBeUndefined();
+    release();
+  });
+
+  /** Starts a navigation of the page itself to a page whose answer the test holds back. */
+  const leaveForHeldPage = (s: BrowserSession) =>
+    s.page.evaluate(() => {
+      setTimeout(() => (location.href = "/interactive.html?held"));
+    });
+
+  it("a click while the page's own document waits on a navigation that never answers is refused promptly, not stalled", async () => {
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/loading-frames.html`, signal);
+    await leaveForHeldPage(s);
+    await new Promise((resolve) => setTimeout(resolve, 300)); // under way (Chromium now answers nothing about the page)
+    const started = Date.now();
+    expect(await executor.execute(click(centre), signal)).toBe(PAGE_SETTLING_REFUSAL);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    release();
+  });
+
+  it.each(["takeover", "kill"] as const)(
+    "a %s ends a click held up by the page's own navigation that never answers, at once",
+    async (reason) => {
+      const { s, executor } = await setup();
+      const release = await holdSlowPages(s);
+      await s.goto(`${SITE}/loading-frames.html`, signal);
+      await leaveForHeldPage(s);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const controller = new AbortController();
+      const clicking = executor.execute(click(centre), controller.signal);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const abortedAt = Date.now();
+      controller.abort(new Interrupted(reason));
+      await expect(clicking).rejects.toBeInstanceOf(Interrupted);
+      const latency = Date.now() - abortedAt;
+      console.info(JSON.stringify({ metric: "held_navigation_click_abort_ms", reason, latency }));
+      expect(latency).toBeLessThan(300);
+      release();
+    },
+  );
+
+  it("a navigation that never answers does not stall the agent: settling stops it, and the page answers and clicks again", async () => {
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/loading-frames.html`, signal);
+    await leaveForHeldPage(s);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const started = Date.now();
+    await settle(s, signal, { navigationTimeoutMs: 1_000 });
+    const shot = await captureModelScreenshot(s, NO_MASK_SOURCES, signal);
+    const elapsed = Date.now() - started;
+    console.info(JSON.stringify({ metric: "stuck_navigation_settle_ms", elapsed }));
+    expect(elapsed).toBeLessThan(8_000);
+    expect(shot.png.length).toBeGreaterThan(0);
+    expect(s.page.url()).toContain("loading-frames.html"); // the old document stayed
+    expect(await executor.execute(click(centre), signal)).toBeNull();
+    expect(await clickedGo(s)).toBe("go");
+    release();
   });
 });
 
