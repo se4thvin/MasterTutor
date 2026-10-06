@@ -7,7 +7,7 @@ import type { IconName } from "@/components/ui/icon.tsx";
 import { hasSessionEnded } from "@/lib/auth/session-end.ts";
 import { transitions } from "@/lib/motion-tokens.ts";
 
-export interface ToastInput {
+interface ToastInput {
   title: string;
   description?: string;
   icon?: IconName;

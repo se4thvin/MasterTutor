@@ -2,7 +2,7 @@
 export const NOTE_DRAG_TYPE = "application/x-mastertutor-note";
 export const FOLDER_DRAG_TYPE = "application/x-mastertutor-folder";
 
-export type DraggedItem = { kind: "note"; id: string } | { kind: "folder"; id: string };
+type DraggedItem = { kind: "note"; id: string } | { kind: "folder"; id: string };
 
 let current: DraggedItem | null = null;
 export const setDragged = (item: DraggedItem | null) => {

@@ -4,7 +4,7 @@ import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { useRef, type ReactNode } from "react";
 import { cx } from "@/lib/cx.ts";
 
-export interface ConfirmDialogProps {
+interface ConfirmDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;

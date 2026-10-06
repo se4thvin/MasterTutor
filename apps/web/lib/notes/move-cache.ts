@@ -3,7 +3,7 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { orpc } from "@/lib/api/client.ts";
 import { patchNoteDetail, patchNoteLists } from "./cache.ts";
 
-export interface NoteCacheSnapshot {
+interface NoteCacheSnapshot {
   lists: Array<[QueryKey, unknown]>;
   detail: NoteDetail | undefined;
 }

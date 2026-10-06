@@ -4,7 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import type { ReactNode, RefObject } from "react";
 import { Icon } from "./icon.tsx";
 
-export interface SheetProps {
+interface SheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
