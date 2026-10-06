@@ -95,6 +95,9 @@ importers:
       '@mastertutor/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@mastertutor/sealing':
+        specifier: workspace:*
+        version: link:../../packages/sealing
       '@orpc/client':
         specifier: 1.15.4
         version: 1.15.4

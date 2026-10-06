@@ -33,6 +33,7 @@ async function expectNoCanary(page: Page, consoleText: string[]): Promise<void> 
 
 test("adds a sign-in without the secret persisting anywhere client-side (Review Focus 2)", async ({
   page,
+  baseURL,
 }) => {
   forbidNativeDialogs(page);
   const consoleText: string[] = [];
@@ -58,7 +59,10 @@ test("adds a sign-in without the secret persisting anywhere client-side (Review 
 
   await expectNoCanary(page, consoleText);
   // page.request shares the test's fixture namespace cookie, so this reads the same store.
-  const list = await page.request.post("/api/rpc/vault/list", { data: { json: {} } });
+  const list = await page.request.post("/api/rpc/vault/list", {
+    data: { json: {} },
+    headers: { origin: new URL(baseURL!).origin },
+  });
   expect(list.ok()).toBe(true);
   const listed = await list.text();
   expect(listed).toContain("zybooks");
