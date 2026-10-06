@@ -370,7 +370,10 @@ export async function containsSecretText(
       .catch(() => null);
     if (nodes === null || hasSecretText(nodes, sources)) return true;
   }
-  const frames = [...(await session.outOfProcessFrames())];
+  const { outOfProcess, unattached } = await session.frameCoverage();
+  // A live frame that could not be attached at all may be out of process: unreadable (N1).
+  if (unattached > 0) return true;
+  const frames = [...outOfProcess];
   const leaks = await anyLimited(frames, OOPIF_READ_CONCURRENCY, ([frameId, worlds]) =>
     outOfProcessFrameLeaks(session, frameId, worlds.cdp, sources, signal),
   );
