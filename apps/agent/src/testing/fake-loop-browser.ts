@@ -56,6 +56,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   blocked: BlockedNavigation[] = [];
   /** Runs after each single action, e.g. to change what lies under a later action of the batch. */
   actionHook: ((action: ComputerAction) => void | Promise<void>) | null = null;
+  /** True for an action the gate allowed but the executor still refuses when it presses. */
+  dispatchHold: ((action: ComputerAction) => boolean) | null = null;
   /** The worker's control guard, checked before every input and screenshot like the real session. */
   guard: ControlGuard | null = null;
   /** How often the storage-state restore script was removed again. */
@@ -101,6 +103,9 @@ export class FakeLoopBrowser implements LoopBrowser {
       const verdict = await gate(action);
       this.verdicts.push(verdict);
       if (!verdict) return { executed, notes: ["Stopped before an action: it needs approval."] };
+      // The executor's own hold at the moment it presses (B1 round 5): allowed, yet not run.
+      if (this.dispatchHold?.(action))
+        return { executed, notes: ["Stopped before an action: its target changed."] };
       this.guard?.assertAgent(signal);
       this.executed.push(action);
       executed += 1;

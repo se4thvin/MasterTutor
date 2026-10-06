@@ -301,8 +301,7 @@ export class RunWorker {
         await this.#deps.hooks.control.onAgentControl(slot, this.runId);
         this.#guard.release();
         this.#abort = new AbortController();
-        await this.#loop!.markHandBack();
-        return CONTINUE;
+        return this.#loop!.markHandBack();
       }
     }
   }

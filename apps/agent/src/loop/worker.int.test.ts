@@ -791,4 +791,25 @@ describe("RunWorker + Supervisor", () => {
     expect(browser.computerRuns).toEqual([]);
     expect(await controlEvents(run.id)).toEqual(["user", "agent"]);
   });
+
+  it("a takeover during waiting(otp) hands back into the code wait, which a code then ends (M7)", async () => {
+    const { clock } = gatedClock();
+    await start({}, clock);
+    const { run } = await queue([fillOtp, done], "ask", needsCode);
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "otp", "waiting(otp)");
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), { label: "held" });
+    await handBackTo(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).at(-1) === "agent", {
+      label: "handed back",
+    });
+    await until(
+      run.id,
+      (r) => r.status === "waiting" && r.waitReason === "otp",
+      "waiting(otp) again",
+    );
+    await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([4])})`;
+    await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
+    await until(run.id, (r) => r.status === "completed", "completed after the code");
+  });
 });
