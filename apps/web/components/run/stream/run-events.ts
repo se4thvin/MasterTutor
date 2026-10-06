@@ -4,6 +4,7 @@ import {
   runEventsPath,
   type RunEventRecord,
 } from "@mastertutor/contracts";
+import { errorCode } from "@/lib/api/errors.ts";
 import type { Connection } from "../model/browser-state.ts";
 
 /** A blip shorter than this never flashes "Reconnecting". */
@@ -11,6 +12,8 @@ export const LOST_GRACE_MS = 1_500;
 
 /** After this many refused reopens in a row, ask the RPC link whether the run is still there. */
 const PROBE_AFTER_CLOSED = 3;
+/** runs.get answers that end the stream for good (401, 403, 404). */
+const PERMANENT: ReadonlySet<string> = new Set(["UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND"]);
 
 export function reconnectDelayMs(attempt: number): number {
   return Math.min(8_000, 500 * 2 ** attempt);
@@ -25,7 +28,7 @@ interface RunEventsOptions {
   /**
    * runs.get through the RPC link. A refused stream (401, 403, 404) closes without a reason, so
    * after PROBE_AFTER_CLOSED attempts this tells us why: the link's UNAUTHORIZED interceptor
-   * ends the session, and any other rejection ends the stream (onFailure).
+   * ends the session; 401, 403 and 404 end the stream (onFailure); a 5xx keeps retrying.
    */
   probe(): Promise<unknown>;
   onFailure(error: unknown): void;
@@ -91,7 +94,10 @@ export function connectRunEvents(options: RunEventsOptions): { close(): void } {
             if (!closed) retryTimer = setTimeout(open, delay);
           },
           (error: unknown) => {
-            if (!closed) options.onFailure(error);
+            if (closed) return;
+            // Only "you may not / it is gone" is final; a 5xx or network error (a deploy) retries.
+            if (PERMANENT.has(errorCode(error) ?? "")) options.onFailure(error);
+            else retryTimer = setTimeout(open, delay);
           },
         );
       }
