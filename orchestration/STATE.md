@@ -53,6 +53,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 | D37 | The agent loop uses `store: false` on the Responses API and never sends `previous_response_id`. Every request rebuilds model input from our own `run_transcript` (with compaction), so OpenAI holds no conversation state. | User |
 | D38 | Minimise data stored at OpenAI: binding policy in `orchestration/briefs/openai-data-policy.md`. store:false everywhere, stateless endpoints only (no Files, vector stores, Assistants, Conversations or Batch), no metadata/user/safety identifiers, minimal masked and windowed content, a single OpenAI client factory that enforces this, and a test guard. Account-level ZDR is an optional request for the user to make. | User |
 | D39 | No additional OpenAI tools. Beyond Responses (our function tools + computer tool), embeddings and transcription, we adopt no other OpenAI tool or API (hosted web_search, file_search, code_interpreter, image gen, Agents SDK, Realtime, etc.). Every such capability is **built in-house, properly**: a top-of-the-line architecture that follows CLAUDE.md, has a full TDD plan and is reviewed. No permanent stubs. Each need is tracked in `orchestration/BUILD-OURSELVES.md` and scheduled as real work. Current mapping: web search is done by the agent's own browser; file/semantic search uses our pgvector hybrid search. | User |
+| D40 | Every subagent runs on Opus 5.5 (`model: "opus"`), whatever its role. | User |
 
 ## Proposals awaiting user answer
 
