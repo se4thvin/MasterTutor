@@ -6,6 +6,7 @@ const target = (overrides: Partial<TargetDescription>): TargetDescription => ({
   label: "",
   tag: "button",
   path: "button",
+  context: "ctx",
   isFormSubmit: false,
   formKind: null,
   isSecretField: false,
@@ -59,6 +60,51 @@ describe("needsApproval (spec §5.5)", () => {
       needsApproval({ type: "keypress", keys: ["SPACE"] }, target({ label: "Check" })),
     ).toBeNull();
     expect(needsApproval({ type: "keypress", keys: ["A"] }, risky)).toBeNull();
+  });
+  it("treats Enter or Space with any modifiers on a submit control like a click (R29-2)", () => {
+    const save = target({ label: "Save", isFormSubmit: true, formKind: "other" });
+    for (const keys of [
+      ["SPACE"],
+      ["SHIFT", "SPACE"],
+      ["CTRL", "SPACE"],
+      ["ALT", "SPACE"],
+      ["META", "SPACE"],
+      ["SHIFT", "ENTER"],
+      ["ENTER"],
+    ])
+      expect(needsApproval({ type: "keypress", keys }, save)).toMatchObject({
+        kind: "form_submit",
+      });
+    // Click parity: login and search submits stay ungated.
+    for (const formKind of ["login", "search"] as const)
+      expect(
+        needsApproval(
+          { type: "keypress", keys: ["SPACE"] },
+          target({ label: "Go", isFormSubmit: true, formKind }),
+        ),
+      ).toBeNull();
+    // A space in a text field is text, not an activation.
+    const field = target({ editable: true, formKind: "other", tag: "input" });
+    expect(needsApproval({ type: "keypress", keys: ["SPACE"] }, field)).toBeNull();
+    expect(needsApproval({ type: "type", text: "hello world" }, field)).toBeNull();
+    // Enter anywhere in an 'other' form submits it, with modifiers too.
+    expect(needsApproval({ type: "keypress", keys: ["CTRL", "ENTER"] }, field)).toMatchObject({
+      kind: "form_submit",
+    });
+  });
+  it("fails closed on an embedded page that could not be inspected (R29-1)", () => {
+    const opaque = target({ tag: "iframe", label: "", opaqueFrame: true });
+    for (const action of [
+      click,
+      { type: "double_click" as const, x: 1, y: 1 },
+      { type: "keypress" as const, keys: ["ENTER"] },
+      { type: "keypress" as const, keys: ["SPACE"] },
+      { type: "keypress" as const, keys: ["SHIFT", "SPACE"] },
+      { type: "type" as const, text: "ok\n" },
+    ])
+      expect(needsApproval(action, opaque)).toMatchObject({ kind: "form_submit" });
+    expect(needsApproval({ type: "type", text: "plain text" }, opaque)).toBeNull();
+    expect(needsApproval({ type: "keypress", keys: ["A"] }, opaque)).toBeNull();
   });
   it("builds contract-valid approval requests", () => {
     const need = needsApproval(click, target({ label: "Pay now" }));

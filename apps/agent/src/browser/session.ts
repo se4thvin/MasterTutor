@@ -50,6 +50,8 @@ export class BrowserSession {
   #page: Page;
   #cdp: Promise<CDPSession> | null = null;
   #worlds: Promise<IsolatedWorlds> | null = null;
+  /** Isolated worlds of out-of-process frames, by CDP frame id (R29-1). */
+  readonly #frameWorlds = new Map<string, IsolatedWorlds>();
   #blocked: BlockedNavigation[] = [];
   #privateHits: PrivateConnection[] = [];
   #policy: NetworkPolicy | null = null;
@@ -116,6 +118,33 @@ export class BrowserSession {
       });
     }
     return this.#cdp;
+  }
+
+  /**
+   * The isolated worlds of an out-of-process frame (site isolation), found through its own CDP
+   * session; null when no such frame exists. In-process frames are reached through worlds() with
+   * their frame id instead (Playwright refuses a separate session for them).
+   */
+  async frameWorlds(frameId: string): Promise<IsolatedWorlds | null> {
+    const cached = this.#frameWorlds.get(frameId);
+    if (cached) return cached;
+    for (const frame of this.#page.frames()) {
+      if (frame === this.#page.mainFrame()) continue;
+      const cdp = await this.#context.newCDPSession(frame).catch(() => null);
+      if (!cdp) continue;
+      const tree = await cdp.send("Page.getFrameTree").catch(() => null);
+      if (tree?.frameTree.frame.id === frameId) {
+        const worlds = new IsolatedWorlds(cdp);
+        this.#frameWorlds.set(frameId, worlds);
+        return worlds;
+      }
+      await cdp.detach().catch(() => undefined);
+    }
+    return null;
+  }
+
+  forgetFrame(frameId: string): void {
+    this.#frameWorlds.delete(frameId);
   }
 
   worlds(): Promise<IsolatedWorlds> {
@@ -187,6 +216,7 @@ export class BrowserSession {
     this.#page = page;
     this.#cdp = null;
     this.#worlds = null;
+    this.#frameWorlds.clear();
     this.navigations.attach(page);
     page.once("close", () => this.#onClose(page));
     void page.bringToFront().catch(() => undefined);

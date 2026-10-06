@@ -37,6 +37,11 @@ export class IsolatedWorlds {
     this.#cdp = cdp;
   }
 
+  /** The CDP session these worlds live on (for DOM.describeNode / DOM.getBoxModel on handles). */
+  get cdp(): CDPSession {
+    return this.#cdp;
+  }
+
   async mainFrameId(): Promise<string> {
     if (this.#mainFrameId === null) {
       const { frameTree } = await this.#cdp.send("Page.getFrameTree");

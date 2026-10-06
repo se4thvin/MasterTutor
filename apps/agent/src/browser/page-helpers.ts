@@ -10,6 +10,14 @@ export interface TargetDescription {
    * bind to it, so a same-label element elsewhere (another row's "Delete") is not approved.
    */
   path: string;
+  /**
+   * The record the element acts on: in the page, the visible text of its nearest record container
+   * and of the main area (live regions left out) plus the URL; the browser module replaces it with
+   * a sha256 digest before it leaves (R29-3). Approvals bind to it.
+   */
+  context: string;
+  /** An embedded page that could not be inspected: activating it always needs approval (R29-1). */
+  opaqueFrame?: boolean;
   isFormSubmit: boolean;
   formKind: "login" | "search" | "other" | null;
   isSecretField: boolean;
@@ -132,10 +140,32 @@ export function describeTarget(el: Element): TargetDescription {
     steps.unshift(same.length > 1 ? `${name}:${same.indexOf(current) + 1}` : name);
     node = parent;
   }
+  const LIVE =
+    "[aria-live], [role=status], [role=timer], [role=log], [role=marquee], [role=alert], time, script, style, noscript, template";
+  const RECORD =
+    "tr, [role=row], li, [role=listitem], article, [role=article], dialog, [role=dialog], fieldset, form, section, [role=region], [aria-selected=true]";
+  const textOf = (root: Element | null): string => {
+    if (!root) return "";
+    const parts: string[] = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node && parts.length < 4_000; node = walker.nextNode()) {
+      if (node.parentElement?.closest(LIVE)) continue;
+      const text = clean(node.textContent);
+      if (text) parts.push(text);
+    }
+    return parts.join(" ").slice(0, 16_000);
+  };
+  const doc = target.ownerDocument;
+  const context = [
+    textOf(target.closest(RECORD)),
+    textOf(doc.querySelector("main, [role=main]") ?? doc.body),
+    doc.location?.href ?? "",
+  ].join("\n");
   return {
     label: label.slice(0, 200),
     tag,
     path: steps.join(">").slice(0, 1_000),
+    context,
     isFormSubmit,
     formKind,
     isSecretField: isSecretField(target),

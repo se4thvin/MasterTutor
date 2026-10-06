@@ -15,6 +15,7 @@ export const PLAIN_TARGET: TargetDescription = {
   label: "",
   tag: "div",
   path: "div",
+  context: "page",
   isFormSubmit: false,
   formKind: null,
   isSecretField: false,
@@ -32,6 +33,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   png: Buffer = TINY_PNG;
   scroll: ScrollPosition = { x: 0, y: 0 };
   readonly targets = new Map<string, TargetDescription>();
+  /** What has keyboard focus, for keypress/type targets at act time (null: PLAIN_TARGET). */
+  focused: TargetDescription | null = null;
   /** Batches that ran to the end (every action passed the gate). */
   readonly computerRuns: ComputerAction[][] = [];
   /** Every single action that passed the gate, including those of a batch stopped later. */
@@ -71,7 +74,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   ): Promise<TargetDescription | null> {
     if (action.type === "click" || action.type === "double_click")
       return this.targets.get(`${action.x},${action.y}`) ?? PLAIN_TARGET;
-    if (action.type === "type" || action.type === "keypress") return previous ?? PLAIN_TARGET;
+    if (action.type === "type" || action.type === "keypress")
+      return previous ?? this.focused ?? PLAIN_TARGET;
     return null;
   }
 

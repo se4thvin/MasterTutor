@@ -73,10 +73,11 @@ const doneExpecting = (text: string): MockTurn => ({
     if (!JSON.stringify(r.body.input).includes(text)) throw new Error(`no "${text}" in the input`);
   },
 });
-const risky = (label: string, path = `button:${label}`) => ({
+const risky = (label: string, path = `button:${label}`, context = "page") => ({
   label,
   tag: "button",
   path,
+  context,
   isFormSubmit: false,
   formKind: null,
   isSecretField: false,
@@ -677,6 +678,100 @@ describe("RunLoop (spec §5.3)", () => {
       expect(input).toContain("continues from a summary");
       expect(input).toContain(note);
     }
+  });
+
+  describe("external review run 29", () => {
+    const key = (...keys: string[]) => ({ type: "keypress" as const, keys });
+    const batch = (...actions: Array<Record<string, unknown>>): MockTurn => ({
+      outputs: [{ type: "computer", actions }],
+    });
+    const save = {
+      ...risky("Save", "form>button"),
+      isFormSubmit: true,
+      formKind: "other" as const,
+    };
+    const field = {
+      ...risky("Title", "form>input"),
+      tag: "input",
+      editable: true,
+      formKind: "other" as const,
+    };
+    const opaque = {
+      ...risky("", "iframe@opaque"),
+      label: "Embedded page that could not be inspected",
+      tag: "iframe",
+      opaqueFrame: true,
+    };
+
+    it("stops Space at act time once Tab has moved focus onto a submit button (R29-2)", async () => {
+      const { browser, loop } = await setup([
+        batch(
+          { type: "click", x: 10, y: 20, button: "left" },
+          { type: "type", text: "a b" },
+          key("TAB"),
+          key("SPACE"),
+        ),
+        doneExpecting("needs approval"),
+      ]);
+      browser.targets.set("10,20", field);
+      browser.actionHook = (action) => {
+        if (action.type === "keypress" && action.keys[0] === "TAB") browser.focused = save;
+      };
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.executed.map((action) => action.type)).toEqual(["click", "type", "keypress"]);
+    });
+
+    it("asks before Space on a focused submit button, and runs it only once approved (R29-2)", async () => {
+      const { run, browser, loop, reload } = await setup([batch(key("SHIFT", "SPACE")), done()]);
+      browser.focused = save;
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect(browser.executed).toEqual([]);
+      await decideApproval(run.id, "approved");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.executed).toEqual([key("SHIFT", "SPACE")]);
+    });
+
+    it("asks before a click, Enter or Space into an embedded page it could not inspect (R29-1)", async () => {
+      const { run, browser, loop, reload } = await setup([
+        batch({ type: "click", x: 10, y: 20, button: "left" }, key("ENTER"), key("SPACE")),
+        doneExpecting("denied"),
+      ]);
+      browser.targets.set("10,20", opaque);
+      browser.focused = opaque;
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect((await approvalRows(run.id))[0]).toMatchObject({ kind: "form_submit" });
+      await decideApproval(run.id, "denied");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.executed).toEqual([]);
+    });
+
+    it("binds an approval to its record: a delete approved on Alice is refused on Bobby (R29-3)", async () => {
+      const { run, browser, loop, reload } = await setup([click(), doneExpecting("page changed")]);
+      browser.targets.set("10,20", risky("Delete", "html>body>button", "h(Alice)"));
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      // Same button, label, path, URL and DOM hash: only the record it acts on changed.
+      browser.targets.set("10,20", risky("Delete", "html>body>button", "h(Bobby)"));
+      await decideApproval(run.id, "approved");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.executed).toEqual([]);
+    });
+
+    it("runs an approved action when its record is unchanged (R29-3 control)", async () => {
+      const { run, browser, loop, reload } = await setup([click(), done()]);
+      browser.targets.set("10,20", risky("Delete", "html>body>button", "h(Alice)"));
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      await decideApproval(run.id, "approved");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.executed).toHaveLength(1);
+    });
   });
 
   it("tells the model about every blocked navigation, not only the first", async () => {

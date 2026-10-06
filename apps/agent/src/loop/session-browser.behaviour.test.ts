@@ -1,6 +1,7 @@
 import { createLogger } from "@mastertutor/contracts/server";
+import { chromium } from "playwright-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { SITE, cdpBaseUrlForTests } from "../../../../tests/behaviour/constants.ts";
+import { SITE, SLOT_CDP, cdpBaseUrlForTests } from "../../../../tests/behaviour/constants.ts";
 import { ControlGuard } from "../browser/guard.ts";
 import { needsApproval } from "../guardrails/policy.ts";
 import { instantClock } from "../runtime/clock.ts";
@@ -112,5 +113,114 @@ describe("SessionLoopBrowser", () => {
     expect(needsApproval(mouseBack, await browser.targetFor(mouseBack, null))?.kind).toBe(
       "form_submit",
     );
+  });
+
+  it("classifies clicks, Enter and Space inside cross-origin frames, in and out of process (R29-1)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/frame-host.html`, signal);
+    await browser.observe(signal);
+    const frames = [
+      { origin: "http://other.fixtures.test", top: 40 },
+      { origin: "http://other.fixtures-isolated.test", top: 200 },
+    ];
+    const paths: string[] = [];
+    for (const frame of frames) {
+      const click = { type: "click" as const, x: 140, y: frame.top + 40, button: "left" as const };
+      const target = await browser.targetFor(click, null);
+      expect(target).toMatchObject({ label: "Delete account", tag: "button" });
+      // The path names the frame element and its origin before the element inside it.
+      expect(target!.path).toMatch(/iframe(:\d+)?@/);
+      expect(target!.path).toContain(`@${frame.origin}>`);
+      paths.push(target!.path);
+      expect(needsApproval(click, target)?.kind).toBe("risky_click");
+      // Focus the in-frame button (a click focuses it; the fixture's handler is harmless).
+      await browser.runComputer([click], signal, async () => true);
+      for (const keys of [["ENTER"], ["SPACE"]]) {
+        const key = { type: "keypress" as const, keys };
+        const focused = await browser.targetFor(key, null);
+        expect(focused).toMatchObject({ label: "Delete account" });
+        expect(needsApproval(key, focused)?.kind).toBe("risky_click");
+      }
+    }
+    // An approval for one frame's button cannot transfer to the other's.
+    expect(paths[0]).not.toBe(paths[1]);
+  });
+
+  it("fails closed when a frame chain is too deep to inspect (R29-1)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/nest.html?d=2`, signal);
+    await browser.observe(signal);
+    const reachable = {
+      type: "click" as const,
+      x: 10 * 2 + 85,
+      y: 10 * 2 + 30,
+      button: "left" as const,
+    };
+    expect(await browser.targetFor(reachable, null)).toMatchObject({ label: "Delete account" });
+    await browser.navigate(`${SITE}/nest.html?d=6`, signal);
+    await browser.observe(signal);
+    const deep = {
+      type: "click" as const,
+      x: 10 * 6 + 85,
+      y: 10 * 6 + 30,
+      button: "left" as const,
+    };
+    const target = await browser.targetFor(deep, null);
+    expect(target).toMatchObject({ opaqueFrame: true });
+    expect(needsApproval(deep, target)?.kind).toBe("form_submit");
+  });
+
+  it("finds Space's real target after Tab, for every modifier (R29-2)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/save-form.html`, signal);
+    await browser.observe(signal);
+    await browser.runComputer(
+      [
+        { type: "click", x: 80, y: 30, button: "left" },
+        { type: "keypress", keys: ["TAB"] },
+      ],
+      signal,
+      async () => true,
+    );
+    for (const keys of [["SPACE"], ["SHIFT", "SPACE"], ["CTRL", "SPACE"], ["ALT", "SPACE"]]) {
+      const key = { type: "keypress" as const, keys };
+      const target = await browser.targetFor(key, null);
+      expect(target).toMatchObject({
+        label: "Save",
+        tag: "button",
+        isFormSubmit: true,
+        formKind: "other",
+      });
+      expect(needsApproval(key, target)?.kind).toBe("form_submit");
+    }
+  });
+
+  it("binds a target to its record and URL, which the DOM hash does not see (R29-3)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/record.html`, signal);
+    const before = await browser.observe(signal);
+    const click = { type: "click" as const, x: 100, y: 120, button: "left" as const };
+    const alice = await browser.targetFor(click, null);
+    expect(alice).toMatchObject({ label: "Delete" });
+    const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
+    const page = remote
+      .contexts()[0]!
+      .pages()
+      .find((p) => p.url().includes("record.html"))!;
+    // A live clock ticking does not change the record context.
+    await page.evaluate(() => {
+      document.querySelector("time")!.textContent = "12:01";
+    });
+    expect((await browser.targetFor(click, null))?.context).toBe(alice!.context);
+    await page.evaluate(() => {
+      document.getElementById("record")!.textContent = "Bobby";
+    });
+    const after = await browser.observe(signal);
+    const bobby = await browser.targetFor(click, null);
+    await remote.close();
+    expect(after.domHash).toBe(before.domHash);
+    expect(bobby!.path).toBe(alice!.path);
+    expect(bobby!.context).not.toBe(alice!.context);
+    expect(bobby!.context).toMatch(/^[0-9a-f]{64}$/);
   });
 });

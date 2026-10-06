@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { pageExpression } from "./isolated-world.ts";
 import type { PageHelpers, TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
 
@@ -5,6 +7,13 @@ export interface HitTest {
   target: TargetDescription | null;
   /** A better click point when the point missed every interactive element but one is within the radius. */
   snap: { x: number; y: number } | null;
+}
+
+/** One frame's view: either a target, or "the point/focus is inside a frame I cannot read". */
+export interface FrameScan extends HitTest {
+  origin: string;
+  /** The path of the cross-origin frame element the scan stopped at; null when it did not stop. */
+  opaqueFrame: string | null;
 }
 
 export interface ScrollState {
@@ -15,7 +24,7 @@ export interface ScrollState {
 export function hitTestScript(
   arg: { x: number; y: number; radius: number },
   h: PageHelpers,
-): HitTest {
+): FrameScan {
   const SELECTOR =
     "a[href], button, input, select, textarea, summary, label, [role=button], [role=link], [role=checkbox], [role=radio], [role=tab], [role=menuitem], [role=option], [role=switch], [onclick]";
   const deep = (x: number, y: number): Element | null => {
@@ -49,10 +58,22 @@ export function hitTestScript(
     }
     return found;
   };
+  const origin = location.origin;
   const hit = deep(arg.x, arg.y);
-  if (!hit) return { target: null, snap: null };
+  if (!hit) return { target: null, snap: null, origin, opaqueFrame: null };
+  // A cross-origin frame the page script cannot read: the agent looks inside it over CDP (R29-1).
+  if (hit.tagName === "IFRAME" || hit.tagName === "FRAME") {
+    let readable: boolean;
+    try {
+      readable = (hit as HTMLIFrameElement).contentDocument !== null;
+    } catch {
+      readable = false;
+    }
+    if (!readable)
+      return { target: null, snap: null, origin, opaqueFrame: h.describeTarget(hit).path };
+  }
   const target = h.describeTarget(hit);
-  if (target.interactive) return { target, snap: null };
+  if (target.interactive) return { target, snap: null, origin, opaqueFrame: null };
   // cursor:pointer elements count as interactive (matching read_page), where the pointer starts.
   const candidates = [...document.querySelectorAll("*")].filter((el) => {
     if (el.matches(SELECTOR)) return true;
@@ -71,37 +92,100 @@ export function hitTestScript(
       arg.y <= r.bottom + arg.radius
     );
   });
-  if (near.length !== 1) return { target, snap: null };
+  if (near.length !== 1) return { target, snap: null, origin, opaqueFrame: null };
   const only = near[0]!;
   const r = only.getBoundingClientRect();
   const center = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   const check = deep(center.x, center.y);
-  if (!check || (check !== only && !only.contains(check))) return { target, snap: null };
-  return { target: h.describeTarget(only), snap: center };
+  if (!check || (check !== only && !only.contains(check)))
+    return { target, snap: null, origin, opaqueFrame: null };
+  return { target: h.describeTarget(only), snap: center, origin, opaqueFrame: null };
 }
 
-export function focusScript(_arg: null, h: PageHelpers): TargetDescription | null {
+/** The cross-origin frame element at the point (same walk as hitTestScript), for a CDP handle. */
+export function frameAtPointScript(arg: { x: number; y: number }): Element | null {
+  let root: Document | ShadowRoot = document;
+  let ox = 0;
+  let oy = 0;
+  let found: Element | null = null;
+  for (let depth = 0; depth < 10; depth++) {
+    const hit: Element | null = root.elementFromPoint(arg.x - ox, arg.y - oy);
+    if (!hit || hit === found) break;
+    found = hit;
+    if (hit.shadowRoot) {
+      root = hit.shadowRoot;
+      continue;
+    }
+    if (hit.tagName !== "IFRAME" && hit.tagName !== "FRAME") break;
+    let doc: Document | null;
+    try {
+      doc = (hit as HTMLIFrameElement).contentDocument;
+    } catch {
+      doc = null;
+    }
+    if (!doc) return hit;
+    const r = hit.getBoundingClientRect();
+    ox += r.left + (hit as HTMLElement).clientLeft;
+    oy += r.top + (hit as HTMLElement).clientTop;
+    root = doc;
+  }
+  return null;
+}
+
+/** The focused cross-origin frame element (same walk as focusScript), for a CDP handle. */
+export function focusedFrameScript(): Element | null {
   let active: Element | null = document.activeElement;
   for (let depth = 0; depth < 10 && active; depth++) {
     if (active.shadowRoot?.activeElement) {
       active = active.shadowRoot.activeElement;
       continue;
     }
-    if (active.tagName === "IFRAME") {
+    if (active.tagName !== "IFRAME" && active.tagName !== "FRAME") return null;
+    let doc: Document | null;
+    try {
+      doc = (active as HTMLIFrameElement).contentDocument;
+    } catch {
+      doc = null;
+    }
+    if (!doc) return active;
+    active = doc.activeElement;
+  }
+  return null;
+}
+
+export function focusScript(_arg: null, h: PageHelpers): FrameScan {
+  let active: Element | null = document.activeElement;
+  for (let depth = 0; depth < 10 && active; depth++) {
+    if (active.shadowRoot?.activeElement) {
+      active = active.shadowRoot.activeElement;
+      continue;
+    }
+    if (active.tagName === "IFRAME" || active.tagName === "FRAME") {
+      let doc: Document | null;
       try {
-        const inner = (active as HTMLIFrameElement).contentDocument?.activeElement;
-        if (inner && inner.tagName !== "BODY") {
-          active = inner;
-          continue;
-        }
+        doc = (active as HTMLIFrameElement).contentDocument;
       } catch {
-        // Cross-origin focus is opaque.
+        doc = null;
+      }
+      // Focus inside a cross-origin frame: the agent looks inside it over CDP (R29-1).
+      if (!doc)
+        return {
+          target: null,
+          snap: null,
+          origin: location.origin,
+          opaqueFrame: h.describeTarget(active).path,
+        };
+      const inner = doc.activeElement;
+      if (inner && inner.tagName !== "BODY") {
+        active = inner;
+        continue;
       }
     }
     break;
   }
-  if (!active || active === document.body || active === document.documentElement) return null;
-  return h.describeTarget(active);
+  const none = { target: null, snap: null, origin: location.origin, opaqueFrame: null };
+  if (!active || active === document.body || active === document.documentElement) return none;
+  return { ...none, target: h.describeTarget(active) };
 }
 
 export function scrollStateScript(arg: { x: number; y: number }): ScrollState {
@@ -182,15 +266,108 @@ export function scrollStateScript(arg: { x: number; y: number }): ScrollState {
   return { chain };
 }
 
-export async function hitTest(
+const MAX_FRAME_DEPTH = 4;
+export const OPAQUE_FRAME_LABEL = "Embedded page that could not be inspected";
+
+/** The record context leaves the browser module only as a digest (R29-3). */
+function digest(...parts: string[]): string {
+  return createHash("sha256").update(parts.join("\u0000")).digest("hex");
+}
+
+function opaqueTarget(path: string, topUrl: string): TargetDescription {
+  return {
+    label: OPAQUE_FRAME_LABEL,
+    tag: "iframe",
+    path: `${path}>opaque`,
+    context: digest(path, "opaque", topUrl),
+    isFormSubmit: false,
+    formKind: null,
+    isSecretField: false,
+    editable: false,
+    interactive: true,
+    opaqueFrame: true,
+  };
+}
+
+/**
+ * Classifies the element at a point, or with focus, through cross-origin frames (R29-1): the page
+ * script stops at a frame it cannot read, and the same script runs again inside that frame over
+ * CDP (the parent session with the frame id when in process, the frame's own session when out of
+ * process). The path carries the frame chain with origins; any failure yields an opaque target
+ * that needs approval (fail closed). Same-origin pages pay nothing extra.
+ */
+async function resolve(
+  session: BrowserSession,
+  point: { x: number; y: number } | null,
+): Promise<HitTest> {
+  const topUrl = session.page.url();
+  let worlds = await session.worlds();
+  let frameId: string | undefined;
+  let base = point; // the point in the coordinates of the current CDP session's root frame
+  let local = point; // the point in the coordinates of the current frame
+  let chain = "";
+  for (let depth = 0; ; depth++) {
+    const scan: FrameScan = local
+      ? await worlds.evaluate(hitTestScript, { ...local, radius: 12 }, frameId)
+      : await worlds.evaluate(focusScript, null, frameId);
+    if (depth > 0) chain += `@${scan.origin}>`;
+    if (scan.opaqueFrame === null) {
+      const target = scan.target && {
+        ...scan.target,
+        path: `${chain}${scan.target.path}`,
+        context: digest(chain, scan.target.context, topUrl),
+      };
+      // A snap point is only meaningful in the top frame's coordinates.
+      return { target, snap: depth === 0 ? scan.snap : null };
+    }
+    chain += scan.opaqueFrame;
+    if (depth >= MAX_FRAME_DEPTH) return { target: opaqueTarget(chain, topUrl), snap: null };
+    let child: string | undefined;
+    try {
+      const expression = local
+        ? pageExpression(frameAtPointScript, local)
+        : pageExpression(focusedFrameScript, null);
+      const objectId = await worlds.evaluateHandle(expression, frameId);
+      if (!objectId) throw new Error("frame element gone");
+      const { node } = await worlds.cdp.send("DOM.describeNode", { objectId });
+      child = node.frameId;
+      if (!child) throw new Error("no content frame");
+      let inner = local;
+      if (base) {
+        const { model } = await worlds.cdp.send("DOM.getBoxModel", { objectId });
+        inner = { x: base.x - model.content[0]!, y: base.y - model.content[1]! };
+      }
+      const inProcess = await worlds
+        .evaluate(() => true, null, child)
+        .then(() => true)
+        .catch(() => false);
+      if (inProcess) {
+        frameId = child;
+        local = inner;
+      } else {
+        const own = await session.frameWorlds(child);
+        if (!own) throw new Error("no session for the frame");
+        worlds = own;
+        frameId = undefined;
+        base = inner;
+        local = inner;
+      }
+    } catch {
+      if (child) session.forgetFrame(child);
+      return { target: opaqueTarget(chain, topUrl), snap: null };
+    }
+  }
+}
+
+export function hitTest(
   session: BrowserSession,
   point: { x: number; y: number },
 ): Promise<HitTest> {
-  return (await session.worlds()).evaluate(hitTestScript, { ...point, radius: 12 });
+  return resolve(session, point);
 }
 
 export async function focusTarget(session: BrowserSession): Promise<TargetDescription | null> {
-  return (await session.worlds()).evaluate(focusScript, null);
+  return (await resolve(session, null)).target;
 }
 
 export async function scrollState(
