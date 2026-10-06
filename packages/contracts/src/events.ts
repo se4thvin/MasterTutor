@@ -89,6 +89,7 @@ export const RunEvent = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("download_ready"),
     downloadId: Uuid,
+    assetId: Uuid,
     filename: z.string().max(255),
     bytes: z.number().int().nonnegative(),
   }),
