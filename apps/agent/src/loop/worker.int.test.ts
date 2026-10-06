@@ -695,4 +695,51 @@ describe("RunWorker + Supervisor", () => {
     await handBackTo(run.id);
     await until(run.id, (r) => r.status === "completed", "completed");
   });
+
+  const fillOtp = {
+    outputs: [
+      {
+        type: "function" as const,
+        name: "fill_credential",
+        args: { alias: "site", field: "otp", target: "e1" },
+      },
+    ],
+  };
+  const needsCode = (browser: FakeLoopBrowser) => {
+    browser.functionWait = (name) => (name === "fill_credential" ? "otp" : null);
+    browser.functionOutput = () => JSON.stringify({ error: "otp_unavailable" });
+  };
+
+  it("an awake run waiting for a code ignores otp_ready until a code exists, then continues (F5, F6)", async () => {
+    const { clock } = gatedClock();
+    await start({}, clock);
+    const { run } = await queue(
+      [fillOtp, { ...done, check: expectInput("otp_unavailable") }],
+      "ask",
+      needsCode,
+    );
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "otp", "waiting(otp)");
+    await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect((await row(run.id)).status).toBe("waiting");
+    await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([1, 2])})`;
+    await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
+    await until(run.id, (r) => r.status === "completed", "completed after the code");
+  });
+
+  it("a sleeping run waiting for a code is woken by the code submit (otp_ready + wake request)", async () => {
+    await start();
+    const { run } = await queue([fillOtp, done], "ask", needsCode);
+    await until(run.id, (r) => r.status === "sleeping" && r.slotName === null, "asleep");
+    await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect((await row(run.id)).status).toBe("sleeping");
+    await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([3])})`;
+    await owner.db
+      .update(runs)
+      .set({ wakeRequestedAt: sql`now()` })
+      .where(eq(runs.id, run.id));
+    await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
+    await until(run.id, (r) => r.status === "completed", "completed after wake");
+  });
 });

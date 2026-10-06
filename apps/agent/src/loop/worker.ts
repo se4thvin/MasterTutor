@@ -266,7 +266,8 @@ export class RunWorker {
         if (run.controller === "user") return this.#holdForUser();
         if (!woke) break;
         const changed = run.status !== entry?.status || run.waitReason !== entry?.waitReason;
-        if (changed || (await this.#loop!.hasNews())) return this.#loop!.resume(this.#abort.signal);
+        if (changed || (await this.#loop!.hasNews(run.waitReason)))
+          return this.#loop!.resume(this.#abort.signal);
       }
       await this.#release({
         transition: {

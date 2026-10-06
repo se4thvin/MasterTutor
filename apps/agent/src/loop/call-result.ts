@@ -26,3 +26,5 @@ export function notRun(call: PendingCall, text: string): CallResult {
     ? { kind: "computer", notes: [text], acknowledged: [] }
     : { kind: "function", output: JSON.stringify({ error: "not_run", detail: text }) };
 }
+
+export const OTP_PENDING = "Not run: the run is waiting for a one-time code from the user.";

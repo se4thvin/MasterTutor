@@ -1,13 +1,15 @@
 import { toOrigin, type FunctionToolName } from "@mastertutor/contracts";
-import { wrapUntrusted } from "./untrusted.ts";
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import type { RegisteredTool, ToolContext } from "./types.ts";
+import { wrapUntrusted } from "./untrusted.ts";
 
 export interface ToolRun {
   output: string;
   /** True when the tool wrote note blocks (capture, annotate, video), which counts as progress. */
   notesChanged: boolean;
+  /** The tool asked the loop to wait for the user (spec §9: a one-time code), else null. */
+  wait: "otp" | null;
 }
 
 function wroteBlocks(result: unknown): boolean {
@@ -28,21 +30,33 @@ export class ToolRegistry {
     this.#log = log;
   }
 
-  async run(name: FunctionToolName, args: unknown, ctx: ToolContext): Promise<ToolRun> {
+  async run(
+    name: FunctionToolName,
+    args: unknown,
+    ctx: Omit<ToolContext, "requestWait">,
+  ): Promise<ToolRun> {
     const tool = this.#tools.get(name);
     if (!tool)
-      return { output: JSON.stringify({ error: "tool_unavailable" }), notesChanged: false };
+      return {
+        output: JSON.stringify({ error: "tool_unavailable" }),
+        notesChanged: false,
+        wait: null,
+      };
+    let wait: "otp" | null = null;
+    const requestWait = (reason: "otp") => {
+      wait = reason;
+    };
     try {
-      const result = await tool.invoke(ctx, args);
+      const result = await tool.invoke({ ...ctx, requestWait }, args);
       const text = JSON.stringify(result);
       const output = tool.untrusted ? wrapUntrusted(toOrigin(ctx.session.page.url()), text) : text;
-      return { output, notesChanged: wroteBlocks(result) };
+      return { output, notesChanged: wroteBlocks(result), wait };
     } catch (error) {
       if (interruptionOf(error) !== null || ctx.signal.aborted) throw error;
       if (error instanceof StaleRef)
-        return { output: JSON.stringify({ error: "stale_ref" }), notesChanged: false };
+        return { output: JSON.stringify({ error: "stale_ref" }), notesChanged: false, wait: null };
       this.#log.warn({ runId: ctx.runId, tool: name, errorCode: "tool_failed" }, "tool failed");
-      return { output: JSON.stringify({ error: "tool_failed" }), notesChanged: false };
+      return { output: JSON.stringify({ error: "tool_failed" }), notesChanged: false, wait: null };
     }
   }
 }

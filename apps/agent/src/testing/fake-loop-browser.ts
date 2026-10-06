@@ -6,6 +6,7 @@ import type { BrowserStorageState } from "../browser/storage-state.ts";
 import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
+import type { CallApproval } from "../tools/types.ts";
 
 export const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
@@ -40,6 +41,10 @@ export class FakeLoopBrowser implements LoopBrowser {
   /** Every single action that passed the gate, including those of a batch stopped later. */
   readonly executed: ComputerAction[] = [];
   readonly functionRuns: Array<{ name: string; args: unknown }> = [];
+  /** The approval each function call was run with (F4). */
+  readonly functionApprovals: Array<CallApproval | null> = [];
+  /** A wait a function call asks for, e.g. "otp" for fill_credential without a code. */
+  functionWait: (name: FunctionToolName) => "otp" | null = () => null;
   readonly navigations: string[] = [];
   blocked: BlockedNavigation[] = [];
   /** Runs after each single action, e.g. to change what lies under a later action of the batch. */
@@ -98,10 +103,20 @@ export class FakeLoopBrowser implements LoopBrowser {
     return { executed, notes: [] };
   }
 
-  async runFunction(name: FunctionToolName, args: unknown, signal: AbortSignal): Promise<ToolRun> {
+  async runFunction(
+    name: FunctionToolName,
+    args: unknown,
+    signal: AbortSignal,
+    approval: CallApproval | null,
+  ): Promise<ToolRun> {
     signal.throwIfAborted();
     this.functionRuns.push({ name, args });
-    return { output: this.functionOutput(name), notesChanged: false };
+    this.functionApprovals.push(approval);
+    return {
+      output: this.functionOutput(name),
+      notesChanged: false,
+      wait: this.functionWait(name),
+    };
   }
 
   /** Runs inside navigate, e.g. to block a restore navigation until it is aborted. */
