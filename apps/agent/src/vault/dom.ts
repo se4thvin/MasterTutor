@@ -70,7 +70,21 @@ const INSPECT_FN = `function () {
   const buttonType = getter(HTMLButtonElement.prototype, "type");
   const inputType = getter(HTMLInputElement.prototype, "type");
   const hasAttr = (x, name) => Element.prototype.hasAttribute.call(x, name);
-  const controls = scope instanceof HTMLFormElement ? Array.from(elementsOf.call(scope)) : [];
+  // elements leaves out image buttons (HTML spec): those submitting this form, inside it or
+  // linked by form=, are found through their own form getter (final review I1), searched in the
+  // form's own tree, which is a shadow root when the form lives in one (final re-review I1).
+  const formOf = getter(HTMLInputElement.prototype, "form");
+  const treeOf = (form) => {
+    const root = Node.prototype.getRootNode.call(form);
+    const proto = root instanceof Document ? Document.prototype : DocumentFragment.prototype;
+    return Array.from(proto.querySelectorAll.call(root, "input"));
+  };
+  const imageSubmitters = scope instanceof HTMLFormElement
+    ? treeOf(scope).filter((x) => inputType.call(x) === "image" && formOf.call(x) === scope)
+    : [];
+  const controls = scope instanceof HTMLFormElement
+    ? [...Array.from(elementsOf.call(scope)), ...imageSubmitters]
+    : [];
   const isSubmitter = (x) =>
     (x instanceof HTMLButtonElement && buttonType.call(x) === "submit") ||
     (x instanceof HTMLInputElement && ["submit", "image"].includes(inputType.call(x)));
@@ -338,26 +352,4 @@ export async function releaseTargets(cdp: CDPSession): Promise<void> {
   await cdp
     .send("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP })
     .catch(() => undefined);
-}
-
-/** Runs `fn` with `args` in the vault world of the main frame (no element needed). */
-export async function callInMainFrame<T>(
-  cdp: CDPSession,
-  fn: string,
-  args: readonly unknown[],
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const worlds = worldsOf(cdp);
-  const { result, exceptionDetails } = await worlds.inContext(
-    await worlds.mainFrameId(),
-    (executionContextId) =>
-      cdp.send("Runtime.callFunctionOn", {
-        executionContextId,
-        functionDeclaration: fn,
-        arguments: args.map((value) => ({ value })),
-        returnByValue: true,
-      }),
-  );
-  if (exceptionDetails) throw new Error("vault main-frame call failed");
-  return schema.parse(result.value);
 }

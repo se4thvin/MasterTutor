@@ -6,8 +6,8 @@ import {
   startVaultFixtures,
   type VaultFixtures,
 } from "../../../../tests/fixtures/vault-sites/server.ts";
-import { StoredPasskey, createPasskeys } from "./passkeys.ts";
-import { withItemSecret } from "./secrets.ts";
+import { StoredPasskey, createPasskeys, mergeStoredPasskey } from "./passkeys.ts";
+import { NOT_STORED, withItemSecret } from "./secrets.ts";
 import {
   humanApproval,
   launchTestBrowser,
@@ -313,5 +313,31 @@ describe("passkeys", () => {
     expect(await passkeys.use(ctx, { alias: "broken" })).toEqual({ error: "ceremony_failed" });
     expect(sent).toContain("WebAuthn.addVirtualAuthenticator");
     expect(sent.at(-1)).toBe("WebAuthn.removeVirtualAuthenticator");
+  });
+
+  it("keeps every credential when two runs update one item at once (final review minor 4)", async () => {
+    await env.seedItem({ alias: "shared", origin: login, secrets: {} });
+    const item = (await findVaultItemByAlias(env.agent.db, env.workspaceId, "shared"))!;
+    const credential = (id: string) => ({
+      credentialId: id,
+      isResidentCredential: true,
+      rpId: new URL(login).hostname,
+      privateKey: "cHJpdmF0ZQ",
+      userHandle: "dXNlcg",
+      signCount: 1,
+    });
+    const ids = ["one", "two", "three", "four"];
+    await Promise.all(
+      ids.map((id) => mergeStoredPasskey(env.deps(), env.workspaceId, item, credential(id))),
+    );
+    const stored = await withItemSecret(
+      env.deps(),
+      env.workspaceId,
+      item,
+      "passkey",
+      async (text) =>
+        (JSON.parse(text) as Array<{ credentialId: string }>).map((entry) => entry.credentialId),
+    );
+    expect(stored === NOT_STORED ? [] : [...stored].sort()).toEqual([...ids].sort());
   });
 });

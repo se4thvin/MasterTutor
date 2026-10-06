@@ -1,4 +1,5 @@
 import {
+  BYPASS_DECIDER,
   POLICY_DECIDER,
   TERMINAL_RUN_STATUSES,
   encodeNotify,
@@ -6,7 +7,7 @@ import {
   type VaultAuditAction,
   type VaultSecretField,
 } from "@mastertutor/contracts";
-import { and, desc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "../client.ts";
 import {
   browserSessions,
@@ -498,6 +499,12 @@ export async function consumeOtpCode(db: DbExecutor, runId: string): Promise<Uin
 
 /* --------------------------------- grants --------------------------------- */
 
+/**
+ * A grant only a person can make: auto-mode and bypass decisions authorise one call and are never
+ * read as a grant, whatever the table's CHECK already refuses (D44, B3 final review).
+ */
+const humanApprover = notInArray(vaultGrants.approvedBy, [POLICY_DECIDER, BYPASS_DECIDER]);
+
 export async function getVaultGrantApprover(
   db: DbExecutor,
   itemId: string,
@@ -506,7 +513,7 @@ export async function getVaultGrantApprover(
   const [row] = await db
     .select({ approvedBy: vaultGrants.approvedBy })
     .from(vaultGrants)
-    .where(and(eq(vaultGrants.itemId, itemId), eq(vaultGrants.origin, origin)))
+    .where(and(eq(vaultGrants.itemId, itemId), eq(vaultGrants.origin, origin), humanApprover))
     .limit(1);
   return row?.approvedBy ?? null;
 }
@@ -593,7 +600,7 @@ export async function loadBrowserSessions(
         and(
           eq(vaultGrants.itemId, vaultItems.id),
           eq(vaultGrants.origin, browserSessions.origin),
-          ne(vaultGrants.approvedBy, POLICY_DECIDER),
+          humanApprover,
         ),
       )
       .where(
@@ -607,7 +614,7 @@ export async function loadBrowserSessions(
   );
 }
 
-/** True when a person (not the auto-mode policy) granted this alias on this origin. */
+/** True when a person (not the auto or bypass policy) granted this alias on this origin. */
 export async function hasHumanVaultGrant(
   db: DbExecutor,
   input: { workspaceId: string; alias: string; origin: string },
@@ -622,7 +629,7 @@ export async function hasHumanVaultGrant(
         eq(vaultItems.alias, input.alias),
         eq(vaultItems.origin, input.origin),
         eq(vaultGrants.origin, input.origin),
-        ne(vaultGrants.approvedBy, POLICY_DECIDER),
+        humanApprover,
       ),
     )
     .limit(1);
@@ -656,4 +663,12 @@ export async function listRunCredentialUses(
 export async function runCreatedAt(db: DbExecutor, runId: string): Promise<Date | null> {
   const [row] = await db.select({ createdAt: runs.createdAt }).from(runs).where(eq(runs.id, runId));
   return row?.createdAt ?? null;
+}
+
+/**
+ * Serialises read-modify-write of one item's sealed values for the rest of the transaction (a
+ * transaction-scoped advisory lock: no row privileges needed, released at commit or rollback).
+ */
+export async function lockVaultItemSecrets(tx: DbExecutor, itemId: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${itemId}, 0))`);
 }
