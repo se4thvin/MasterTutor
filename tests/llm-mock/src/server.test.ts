@@ -20,6 +20,63 @@ async function post(body: unknown) {
 const userInput = (text: string) => [{ role: "user", content: [{ type: "input_text", text }] }];
 
 describe("llm-mock", () => {
+  it("lets click_named carry the model's pending safety checks", async () => {
+    mock = await startLlmMock({
+      scenarios: [
+        {
+          name: "warn",
+          turns: [
+            {
+              outputs: [
+                {
+                  type: "function",
+                  name: "read_page",
+                  args: { mode: "interactive", sinceHash: null },
+                },
+              ],
+            },
+            {
+              outputs: [
+                {
+                  type: "click_named",
+                  name: "Continue",
+                  safetyChecks: [
+                    { id: "sc_1", code: "malicious_instructions", message: "Injected text" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const first = await post({ model: "gpt-6-astra", input: userInput("[scenario:warn] go") });
+    const read = (first.body.output as Array<Record<string, unknown>>)[0]!;
+    const page = JSON.stringify({
+      hash: "a".repeat(64),
+      url: "http://x/",
+      title: "T",
+      elements: [
+        { ref: "e1", tag: "a", role: "link", name: "Continue", attrs: {}, point: { x: 5, y: 6 } },
+      ],
+    });
+    const second = await post({
+      model: "gpt-6-astra",
+      input: [
+        ...userInput("[scenario:warn] go"),
+        read,
+        { type: "function_call_output", call_id: read.call_id, output: page },
+      ],
+    });
+    expect((second.body.output as Array<Record<string, unknown>>)[0]).toMatchObject({
+      type: "computer_call",
+      actions: [{ type: "click", x: 5, y: 6, button: "left" }],
+      pending_safety_checks: [
+        { id: "sc_1", code: "malicious_instructions", message: "Injected text" },
+      ],
+    });
+  });
+
   it("answers fill_named with a fill_credential call on the named element's ref", async () => {
     mock = await startLlmMock({
       scenarios: [

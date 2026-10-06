@@ -5,7 +5,13 @@ export type MockOutput =
       safetyChecks?: Array<{ id: string; code: string; message: string }>;
     }
   /** A click on the element read_page named, then any further actions in the same call. */
-  | { type: "click_named"; name: string; then?: Array<Record<string, unknown>> }
+  | {
+      type: "click_named";
+      name: string;
+      then?: Array<Record<string, unknown>>;
+      /** The model's own warnings on this call (e.g. malicious_instructions). */
+      safetyChecks?: Array<{ id: string; code: string; message: string }>;
+    }
   /** A computer_call in the single-`action` shape some model versions emit instead of `actions`. */
   | { type: "computer_single"; action: Record<string, unknown> }
   /** A reasoning item, as returned when reasoning effort is above none. */
