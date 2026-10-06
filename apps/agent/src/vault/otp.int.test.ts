@@ -100,15 +100,15 @@ describe("TOTP", () => {
 describe("OTP from IMAP", () => {
   it("reads the newest emailed code, fills the split boxes and the site accepts it", async () => {
     await tb.page.goto(`${login}/email-otp`);
+    const deps = env.deps({ resolveRef: refs.resolve, otpImapWaitMs: 10_000 });
+    // The code is sent once this sign-in is under way, as on a real site.
+    const filling = fillCredential(deps, ctx(), {
+      alias: "mailbox",
+      field: "otp",
+      target: await refs.ref("#otp0"),
+    });
     await sendCode();
-    const deps = env.deps({ resolveRef: refs.resolve });
-    expect(
-      await fillCredential(deps, ctx(), {
-        alias: "mailbox",
-        field: "otp",
-        target: await refs.ref("#otp0"),
-      }),
-    ).toEqual({ ok: true });
+    expect(await filling).toEqual({ ok: true });
     await tb.page.click("#submit");
     await expect.poll(status).toBe("Code accepted");
     const audit = await env.owner
@@ -178,6 +178,44 @@ describe("OTP from IMAP", () => {
     const [received] = await env.owner.sql`
       select outcome from vault_audit where run_id = ${runId} and action = 'otp_received'`;
     expect(received?.outcome).toBe("code_box");
+  });
+});
+
+describe("OTP sources are trusted only for this sign-in (review)", () => {
+  it("never uses a code emailed before this sign-in started", async () => {
+    await tb.page.goto(`${login}/email-otp`);
+    await sendCode();
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    const deps = env.deps({ resolveRef: refs.resolve, otpImapWaitMs: 1_500 });
+    expect(
+      await fillCredential(deps, ctx(), {
+        alias: "mailbox",
+        field: "otp",
+        target: await refs.ref("#otp0"),
+      }),
+    ).toEqual({ error: "otp_unavailable" });
+  });
+
+  it("answers fill_failed, audited, when a typed code cannot be opened during the inbox wait", async () => {
+    await tb.page.goto(`${login}/email-otp`);
+    const deps = env.deps({ resolveRef: refs.resolve, otpImapWaitMs: 20_000 });
+    const filling = fillCredential(deps, ctx(), {
+      alias: "watched",
+      field: "otp",
+      target: await refs.ref("#otp0"),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    // Sealed for another run: it can never open under this run's binding.
+    const foreign = await sealValue(
+      env.keys.publicKey,
+      { kind: "otp", workspaceId: env.workspaceId, runId: "00000000-0000-4000-8000-00000000abcd" },
+      "135790",
+    );
+    await submitOtpCode(env.web.db, { workspaceId: env.workspaceId, runId, sealed: foreign });
+    expect(await filling).toEqual({ error: "fill_failed" });
+    const [row] = await env.owner.sql`
+      select action, outcome from vault_audit where run_id = ${runId} order by at desc limit 1`;
+    expect(row).toMatchObject({ action: "fill", outcome: "binding_mismatch" });
   });
 });
 

@@ -16,16 +16,58 @@ export class ImapBlocked extends Error {
   }
 }
 
+/** Text past this is never looked at: a code sits near the top of any real message (I2). */
+const MAX_TEXT_CHARS = 64 * 1024;
+
+/**
+ * Markup removed in one pass with indexOf only (I2): no regex backtracks over hostile HTML.
+ * <style> and <script> are skipped to their closing tag, or to the end when there is none; an
+ * unclosed tag drops the rest.
+ */
+function stripHtml(body: string): string {
+  const lower = body.toLowerCase();
+  let out = "";
+  let at = 0;
+  while (at < body.length && out.length < MAX_TEXT_CHARS) {
+    const open = body.indexOf("<", at);
+    if (open < 0) {
+      out += body.slice(at);
+      break;
+    }
+    out += `${body.slice(at, open)} `;
+    const raw = lower.startsWith("<style", open)
+      ? "style"
+      : lower.startsWith("<script", open)
+        ? "script"
+        : null;
+    const end = raw ? lower.indexOf(`</${raw}`, open) : body.indexOf(">", open + 1);
+    if (end < 0) break;
+    const close = raw ? body.indexOf(">", end) : end;
+    if (close < 0) break;
+    at = close + 1;
+  }
+  return out;
+}
+
+/** Numeric and &nbsp; entities decoded; invisible format characters (zero-width) removed. */
+function decodeText(text: string): string {
+  return text
+    .replace(/&#(\d{1,7});/g, (_, code: string) => codePoint(Number(code)))
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_, code: string) => codePoint(Number.parseInt(code, 16)))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\p{Cf}/gu, "");
+}
+
+function codePoint(code: number): string {
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : " ";
+}
+
 /** Picks the 4–8 digit code from a message: the one after a code keyword, or the only number. */
 export function extractOtpCode(body: string, isHtml: boolean): string | null {
-  const text = (
-    isHtml
-      ? body
-          .replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/&nbsp;/g, " ")
-      : body
-  ).replace(/\s+/g, " ");
+  const text = decodeText((isHtml ? stripHtml(body) : body).slice(0, MAX_TEXT_CHARS)).replace(
+    /\s+/g,
+    " ",
+  );
   const candidates = [...text.matchAll(/(?<![\d-])(\d{4,8})(?![\d-])/g)];
   const near = candidates.find((m) =>
     CODE_KEYWORD.test(text.slice(Math.max(0, (m.index ?? 0) - 60), m.index)),
@@ -37,11 +79,17 @@ export function extractOtpCode(body: string, isHtml: boolean): string | null {
 export interface ImapCodeRequest {
   config: ImapConfig;
   password: string;
-  itemId: string;
+  /** The run reading: a message is used at most once per run, whichever alias watches the inbox. */
+  runId: string;
+  /**
+   * Only mail that arrived after this sign-in attempt started counts (no stale codes from earlier
+   * attempts). Senders are matched on the From header, which mail can forge: the code still has
+   * to be accepted by the site the agent is on, and the window is minutes.
+   */
   notBefore: Date;
   timeoutMs: number;
   signal: AbortSignal;
-  /** Messages already used (Review Focus 5); mutated on success. */
+  /** Messages already used (Review Focus 5), keyed by run, mailbox and uid; mutated on success. */
   used: Set<string>;
   testMode: boolean;
   /** Checked before every inbox look (S7): a code the user typed into CodeSlots wins at once. */
@@ -110,16 +158,23 @@ async function readText(client: ImapFlow, uid: number, part: string): Promise<st
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function newestCode(client: ImapFlow, request: ImapCodeRequest): Promise<string | null> {
+async function newestCode(
+  client: ImapFlow,
+  request: ImapCodeRequest,
+  parsed: Set<string>,
+): Promise<string | null> {
   const uids = await client.search(
     { from: request.config.senderFilter, since: request.notBefore },
     { uid: true },
   );
   if (!uids || uids.length === 0) return null;
   const validity = client.mailbox ? String(client.mailbox.uidValidity) : "0";
+  const mailbox = `${request.config.host}:${request.config.port}:${request.config.user}`;
   for (const uid of [...uids].sort((a, b) => b - a)) {
-    const key = `${request.itemId}:${validity}:${uid}`;
-    if (request.used.has(key)) continue;
+    const key = `${request.runId}|${mailbox}|${validity}|${uid}`;
+    // A message read once without a code is not read again on the next recheck (I2).
+    if (request.used.has(key) || parsed.has(key)) continue;
+    parsed.add(key);
     const message = await client.fetchOne(
       String(uid),
       { internalDate: true, bodyStructure: true },
@@ -180,23 +235,30 @@ export async function waitForImapCode(
     auth: { user: request.config.user, pass: request.password },
     tls: IMAP_TLS,
     logger: false,
+    // Connecting and the greeting count against the same wait (a slow server cannot stretch it).
+    connectionTimeout: request.timeoutMs,
+    greetingTimeout: request.timeoutMs,
   });
-  await client.connect();
-  const lock = await client.getMailboxLock("INBOX");
   const deadline = Date.now() + request.timeoutMs;
+  const parsed = new Set<string>();
+  await client.connect();
   try {
-    for (;;) {
-      request.signal.throwIfAborted();
-      const typed = await request.codeBox();
-      if (typed) return { code: typed, source: "code_box" };
-      const code = await newestCode(client, request);
-      if (code) return { code, source: "imap" };
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return null;
-      await waitForMail(client, Math.min(remaining, RECHECK_MS), request.signal);
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      for (;;) {
+        request.signal.throwIfAborted();
+        const typed = await request.codeBox();
+        if (typed) return { code: typed, source: "code_box" };
+        const code = await newestCode(client, request, parsed);
+        if (code) return { code, source: "imap" };
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return null;
+        await waitForMail(client, Math.min(remaining, RECHECK_MS), request.signal);
+      }
+    } finally {
+      lock.release();
     }
   } finally {
-    lock.release();
     await client.logout().catch(() => undefined);
   }
 }

@@ -112,6 +112,8 @@ export async function startVaultTestEnv(): Promise<VaultTestEnv> {
         logins: { noteLogin: () => undefined },
         imapUsed: new Set(),
         offsiteForms: new Map(),
+        signInStarted: new Map(),
+        totpSteps: new Map(),
         otpImapWaitMs: 3_000,
         testMode: true,
         now: () => Date.now(),

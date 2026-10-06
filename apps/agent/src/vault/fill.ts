@@ -25,7 +25,7 @@ import { approvedBy, credentialApproval } from "./grants.ts";
 import type { ToolContext } from "./runtime.ts";
 import { obtainOtp } from "./otp.ts";
 import { NOT_STORED, withItemSecret } from "./secrets.ts";
-import { msUntilFreshWindow, totpCode } from "./totp.ts";
+import { msUntilFreshWindow, totpCode, totpStep } from "./totp.ts";
 
 /** Refusals that are policy decisions (audited as `denied`); the rest are `fill` failures. */
 const DENIALS: ReadonlySet<CredentialErrorCode> = new Set([
@@ -40,7 +40,18 @@ const DENIALS: ReadonlySet<CredentialErrorCode> = new Set([
 /** Stored secrets a page might echo; usernames and one-time codes are masked by box only (deviation 7, S5). */
 const SECRET_FIELDS: ReadonlySet<CredentialField> = new Set(["password", "pin"]);
 
-const offsiteKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
+/** Per-run, per-alias fill state lives in VaultDeps maps under this key. */
+const runAliasKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
+
+/** Drops a finished run's fill state (RunHooks.onReleased, Task 13). */
+export function forgetFillState(
+  deps: Pick<VaultDeps, "offsiteForms" | "signInStarted" | "totpSteps">,
+  runId: string,
+): void {
+  const prefix = `${runId}\u0000`;
+  for (const map of [deps.offsiteForms, deps.signInStarted, deps.totpSteps])
+    for (const key of map.keys()) if (key.startsWith(prefix)) map.delete(key);
+}
 
 /**
  * RunHooks.functionApproval for fill_credential (spec §5.5 credential_first_use). A fill refused
@@ -55,7 +66,7 @@ export async function fillApproval(
 ): Promise<ApprovalRequest | null> {
   const item = await findVaultItemByAlias(deps.db, run.workspaceId, args.alias);
   if (!item) return null;
-  const postsTo = deps.offsiteForms.get(offsiteKey(run.id, item.alias));
+  const postsTo = deps.offsiteForms.get(runAliasKey(run.id, item.alias));
   if (postsTo !== undefined && toOrigin(url) === item.origin)
     return { kind: "credential_first_use", alias: item.alias, origin: item.origin, postsTo };
   return credentialApproval(deps, url, item);
@@ -113,17 +124,25 @@ async function withCredentialValue(
         item,
         "totp",
         async (seed): Promise<FillOutcome | CredentialErrorCode> => {
-          const wait = msUntilFreshWindow(seed, deps.now());
+          // Never the code this sign-in already typed: the next time step instead (RFC 6238 §5.2).
+          const key = runAliasKey(ctx.runId, item.alias);
+          const wait = msUntilFreshWindow(seed, deps.now(), deps.totpSteps.get(key));
           if (wait === null) return "fill_failed";
           if (wait > 0) await deps.sleep(wait, ctx.signal);
-          const code = totpCode(seed, deps.now());
-          return code === null ? "fill_failed" : use(code);
+          const now = deps.now();
+          const code = totpCode(seed, now);
+          const step = totpStep(seed, now);
+          if (code === null || step === null) return "fill_failed";
+          const outcome = await use(code);
+          if (outcome === "ok") deps.totpSteps.set(key, step);
+          return outcome;
         },
       );
       return result === NOT_STORED ? "field_not_stored" : result;
     }
     case "otp": {
-      const otp = await obtainOtp(deps, ctx, item);
+      const started = deps.signInStarted.get(runAliasKey(ctx.runId, item.alias)) ?? deps.now();
+      const otp = await obtainOtp(deps, ctx, item, started);
       if (!otp) {
         // Task 0 seam: the loop enters waiting(otp) once this act commits; CodeSlots appears.
         ctx.requestWait("otp");
@@ -176,6 +195,9 @@ export async function fillCredential(
   // Spec §5.3 and M8: a held or aborted run never reaches a decryption.
   ctx.session.guard.assertAgent(ctx.signal);
   if (!item) return refuse("unknown_alias");
+  // This sign-in started at its first fill: one-time codes mailed earlier never count.
+  const signIn = runAliasKey(ctx.runId, item.alias);
+  if (!deps.signInStarted.has(signIn)) deps.signInStarted.set(signIn, deps.now());
   if (toOrigin(ctx.session.page.url()) !== item.origin) return refuse("origin_mismatch");
   const ref = await deps.resolveRef(ctx.session, args.target);
   if (!ref) return refuse("fill_failed", "target_not_found");
@@ -193,13 +215,18 @@ export async function fillCredential(
       .flatMap((box) => box.info.formOrigins)
       .find((origin) => origin !== item.origin);
     if (postsTo !== undefined) {
-      if (
-        ctx.approval?.kind === "credential_first_use" &&
-        ctx.approval.decidedBy === POLICY_DECIDER
-      )
+      const approval = ctx.approval?.kind === "credential_first_use" ? ctx.approval : null;
+      if (approval?.decidedBy === POLICY_DECIDER) {
+        ctx.requestHandOver(
+          `This sign-in form sends the credential to ${postsTo}, not ${item.origin}: a person must decide.`,
+        );
         return refuse("needs_human", "form_action_offsite");
-      if (ctx.approval?.kind !== "credential_first_use") {
-        deps.offsiteForms.set(offsiteKey(ctx.runId, item.alias), postsTo);
+      }
+      // A person's approval clears the pin only for the destination their card named (I1); a
+      // first approval, or a destination changed since, is asked again naming the current one.
+      const shown = deps.offsiteForms.get(signIn);
+      if (approval === null || shown !== postsTo) {
+        deps.offsiteForms.set(signIn, postsTo);
         return refuse("approval_required", "form_action_offsite");
       }
     }
@@ -228,7 +255,7 @@ export async function fillCredential(
       default:
         return refuse(outcome);
     }
-    deps.offsiteForms.delete(offsiteKey(ctx.runId, item.alias));
+    deps.offsiteForms.delete(runAliasKey(ctx.runId, item.alias));
     await record("fill", "ok", approver);
     deps.logins.noteLogin(ctx.runId, item.alias, item.origin);
     deps.log.info({ alias: item.alias, field: args.field }, "fill_credential ok");

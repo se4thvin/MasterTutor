@@ -52,6 +52,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   readonly functionApprovals: Array<CallApproval | null> = [];
   /** A wait a function call asks for, e.g. "otp" for fill_credential without a code. */
   functionWait: (name: FunctionToolName) => "otp" | null = () => null;
+  /** A hand-over a function call asks for (the reason shown), e.g. fill_credential's needs_human. */
+  functionHandOver: (name: FunctionToolName) => string | null = () => null;
   readonly navigations: string[] = [];
   blocked: BlockedNavigation[] = [];
   /** Runs after each single action, e.g. to change what lies under a later action of the batch. */
@@ -144,6 +146,7 @@ export class FakeLoopBrowser implements LoopBrowser {
       output: this.functionOutput(name),
       notesChanged: false,
       wait: this.functionWait(name),
+      handOver: this.functionHandOver(name),
     };
   }
 

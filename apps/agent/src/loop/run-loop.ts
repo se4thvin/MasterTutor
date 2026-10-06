@@ -933,7 +933,8 @@ export class RunLoop {
       result: { kind: "function", output: run.output },
       ran: true,
       wait: run.wait,
-      handOver: null,
+      // fill_credential's needs_human: a form only a person may approve (T10-12 review).
+      handOver: run.handOver,
     };
   }
 

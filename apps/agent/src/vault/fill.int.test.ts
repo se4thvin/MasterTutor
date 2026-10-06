@@ -4,7 +4,7 @@ import {
   startVaultFixtures,
   type VaultFixtures,
 } from "../../../../tests/fixtures/vault-sites/server.ts";
-import { fillApproval, fillCredential } from "./fill.ts";
+import { fillApproval, fillCredential, forgetFillState } from "./fill.ts";
 import { generateVaultKeyPair, vaultKeyPairFromPrivate } from "@mastertutor/sealing/open";
 import { readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry } from "../tools/registry.ts";
@@ -316,10 +316,12 @@ describe("fill_credential", () => {
   });
 
   it("asks again when the form posts off the item's origin, by action or by submit button (M4)", async () => {
+    // One vault for the whole run, as in production: it remembers the destination it asked about.
+    const d = deps();
     for (const path of ["/offsite-form", "/offsite-button"]) {
       await tb.page.goto(`${login}${path}`);
       expect(
-        await fillCredential(deps(), ctx(), {
+        await fillCredential(d, ctx(), {
           alias: "site",
           field: "password",
           target: await refs.ref("#password"),
@@ -331,7 +333,7 @@ describe("fill_credential", () => {
         .sql`select action, outcome from vault_audit where run_id = ${runId} order by at desc limit 1`;
       expect(row).toMatchObject({ action: "denied", outcome: "form_action_offsite" });
       expect(
-        await fillCredential(deps(), ctx(humanApproval(env.userId)), {
+        await fillCredential(d, ctx(humanApproval(env.userId)), {
           alias: "site",
           field: "password",
           target: await refs.ref("#password"),
@@ -425,5 +427,78 @@ describe("fill_credential", () => {
     ).toEqual({ error: "fill_failed" });
     expect(d.fingerprints.forRun(runId).nodeIds(await tb.session.cdp())).toEqual([]);
     expect(d.fingerprints.forRun(runId).hasSecrets()).toBe(false);
+  });
+
+  it("a first-use approval that never named the destination does not clear an off-origin form (I1)", async () => {
+    await env.seedItem({ alias: "fresh", origin: login, secrets: { password: account.password } });
+    await tb.page.goto(`${login}/offsite-form`);
+    const d = deps();
+    const run = { id: runId, workspaceId: env.workspaceId };
+    const call = async () =>
+      fillCredential(d, ctx(humanApproval(env.userId)), {
+        alias: "fresh",
+        field: "password",
+        target: await refs.ref("#password"),
+      });
+    // The first card was a plain first use: no destination on it.
+    expect(
+      await fillApproval(d, run, tb.page.url(), {
+        alias: "fresh",
+        field: "password",
+        target: "e1",
+      }),
+    ).toEqual({
+      kind: "credential_first_use",
+      alias: "fresh",
+      origin: login,
+    });
+    expect(await call()).toEqual({ error: "approval_required" });
+    expect(await tb.page.inputValue("#password")).toBe("");
+    const ask = () =>
+      fillApproval(d, run, tb.page.url(), { alias: "fresh", field: "password", target: "e1" });
+    expect(await ask()).toMatchObject({ postsTo: fx.origin("evil") });
+    // The page swaps the destination after the card named it: asked again, naming the new one.
+    const other = fx.origin("other");
+    await tb.page.evaluate(
+      (to) => document.querySelector("form")!.setAttribute("action", `${to}/collect`),
+      other,
+    );
+    expect(await call()).toEqual({ error: "approval_required" });
+    expect(
+      await fillApproval(d, run, tb.page.url(), {
+        alias: "fresh",
+        field: "password",
+        target: "e1",
+      }),
+    ).toMatchObject({ postsTo: other });
+    expect(await call()).toEqual({ ok: true });
+  });
+
+  it("in auto mode hands the page to a person, naming where the form posts (needs_human)", async () => {
+    await tb.page.goto(`${login}/offsite-form`);
+    const auto = ctx(policyApproval());
+    expect(
+      await fillCredential(deps(), auto, {
+        alias: "site",
+        field: "password",
+        target: await refs.ref("#password"),
+      }),
+    ).toEqual({ error: "needs_human" });
+    expect(auto.handOvers).toHaveLength(1);
+    expect(auto.handOvers[0]).toContain(fx.origin("evil"));
+  });
+
+  it("forgets a finished run's fill state", async () => {
+    await tb.page.goto(`${login}/offsite-form`);
+    const d = deps();
+    await fillCredential(d, ctx(), {
+      alias: "site",
+      field: "password",
+      target: await refs.ref("#password"),
+    });
+    expect(d.offsiteForms.size).toBe(1);
+    expect(d.signInStarted.size).toBe(1);
+    forgetFillState(d, runId);
+    expect([d.offsiteForms.size, d.signInStarted.size, d.totpSteps.size]).toEqual([0, 0, 0]);
   });
 });

@@ -1,4 +1,5 @@
 import { consumeOtpCode, type VaultItemRecord } from "@mastertutor/db";
+import { SealError } from "@mastertutor/sealing";
 import { withOpenedText } from "@mastertutor/sealing/open";
 import type { VaultDeps } from "./context.ts";
 import { ImapBlocked, waitForImapCode } from "./imap.ts";
@@ -6,6 +7,8 @@ import type { ToolContext } from "./runtime.ts";
 import { NOT_STORED, withItemSecret } from "./secrets.ts";
 
 export const OTP_LOOKBACK_MS = 5 * 60_000;
+/** IMAP receipt times have one-second resolution: a message from the same second still counts. */
+const RECEIPT_SLACK_MS = 1_000;
 const OTP_PATTERN = /^[0-9]{4,8}$/;
 
 /**
@@ -16,6 +19,7 @@ export async function obtainOtp(
   deps: VaultDeps,
   ctx: ToolContext,
   item: VaultItemRecord,
+  signInStartedAt: number,
 ): Promise<{ code: string; source: "code_box" | "imap" } | null> {
   const codeBox = async (): Promise<string | null> => {
     const sealed = await consumeOtpCode(deps.db, ctx.runId);
@@ -37,8 +41,11 @@ export async function obtainOtp(
       waitForImapCode({
         config: imap,
         password,
-        itemId: item.id,
-        notBefore: new Date(deps.now() - OTP_LOOKBACK_MS),
+        runId: ctx.runId,
+        // Mail from before this sign-in started is never a code for it (and never older than 5 min).
+        notBefore: new Date(
+          Math.max(signInStartedAt - RECEIPT_SLACK_MS, deps.now() - OTP_LOOKBACK_MS),
+        ),
         timeoutMs: deps.otpImapWaitMs,
         signal: ctx.signal,
         used: deps.imapUsed,
@@ -49,6 +56,9 @@ export async function obtainOtp(
     return found === NOT_STORED ? null : found;
   } catch (error) {
     ctx.signal.throwIfAborted();
+    // A typed code that cannot be opened is reported like any other sealed value (F16), whether
+    // it was read before or during the inbox wait.
+    if (error instanceof SealError) throw error;
     // Never log server text: it can echo credentials. The reason code is enough.
     deps.log.warn(
       { alias: item.alias, reason: error instanceof ImapBlocked ? "imap_blocked" : "imap_failed" },
