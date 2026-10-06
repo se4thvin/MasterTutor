@@ -14,7 +14,7 @@ export class PageScriptError extends Error {
 
 /** Builds `(() => { helpers; return (fn)(arg, h); })()` so helpers resolve lexically. */
 export function pageExpression<A, R>(fn: PageFunction<A, R>, arg: A): string {
-  return `(() => {\n${PAGE_HELPERS_SOURCE}\nconst h = { isSecretField, describeTarget };\nreturn (${fn.toString()})(${JSON.stringify(arg ?? null)}, h);\n})()`;
+  return `(() => {\n${PAGE_HELPERS_SOURCE}\nconst h = { isSecretField, describeTarget, frameIsPlain };\nreturn (${fn.toString()})(${JSON.stringify(arg ?? null)}, h);\n})()`;
 }
 
 function isStaleContext(error: unknown): boolean {
