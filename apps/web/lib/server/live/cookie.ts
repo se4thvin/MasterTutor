@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { SlotName, livePath } from "@mastertutor/contracts";
 
-export interface LiveSlotClaim {
+interface LiveSlotClaim {
   slotName: string;
   runId: string;
   userId: string;
