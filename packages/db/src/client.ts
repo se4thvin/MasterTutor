@@ -1,0 +1,21 @@
+import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import postgres, { type Sql } from "postgres";
+import * as schema from "./schema/index.ts";
+
+export type Database = PostgresJsDatabase<typeof schema>;
+
+export interface DbHandle {
+  readonly db: Database;
+  readonly sql: Sql;
+  close(): Promise<void>;
+}
+
+export interface CreateDbOptions {
+  max?: number;
+}
+
+export function createDb(databaseUrl: string, options: CreateDbOptions = {}): DbHandle {
+  const sql = postgres(databaseUrl, { max: options.max ?? 10, onnotice: () => undefined });
+  const db = drizzle({ client: sql, schema });
+  return { db, sql, close: () => sql.end({ timeout: 5 }) };
+}
