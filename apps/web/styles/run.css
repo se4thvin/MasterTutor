@@ -1372,4 +1372,11 @@
       white-space: nowrap;
     }
   }
+  /* Callouts exist only at lg; so does their toggle (Task 16). */
+  .run-callout-toggle {
+    display: none;
+    @variant lg {
+      display: inline-flex;
+    }
+  }
 }
