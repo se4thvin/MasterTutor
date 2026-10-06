@@ -164,6 +164,14 @@ export class BrowserSession {
     return { id: info.targetInfo.targetId, worlds: new IsolatedWorlds(cdp) };
   }
 
+  /**
+   * The CDP session of an out-of-process frame (site isolation), by CDP frame id; null when the
+   * frame is in process or gone. In-process frames are reached through the page session instead.
+   */
+  async frameCdp(frameId: string): Promise<CDPSession | null> {
+    return (await this.outOfProcessFrames()).get(frameId)?.cdp ?? null;
+  }
+
   /** The worlds of one out-of-process frame; null when the frame is in process or gone. */
   async frameWorlds(frameId: string): Promise<IsolatedWorlds | null> {
     return (await this.outOfProcessFrames()).get(frameId) ?? null;

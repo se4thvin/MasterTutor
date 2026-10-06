@@ -16,6 +16,11 @@ export interface TargetDescription {
    * a sha256 digest before it leaves (R29-3). Approvals bind to it.
    */
   context: string;
+  /**
+   * The record's visible text, clipped (≤ 240), for the approval card only (run view A3a). Never
+   * sent to the model; the loop browser redacts vault secrets from it. Absent for opaque frames.
+   */
+  excerpt?: string;
   /** An embedded page that could not be inspected: activating it always needs approval (R29-1). */
   opaqueFrame?: boolean;
   isFormSubmit: boolean;
@@ -179,6 +184,7 @@ export function describeTarget(el: Element): TargetDescription {
     tag,
     path: steps.join(">").slice(0, 1_000),
     context,
+    excerpt: recordText.slice(0, 240),
     isFormSubmit,
     formKind,
     isSecretField: isSecretField(target),

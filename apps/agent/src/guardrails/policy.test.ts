@@ -1,6 +1,7 @@
+import { ApprovalRequest } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import { approvalRequestFor, needsApproval } from "./policy.ts";
+import { approvalExcerpt, approvalRequestFor, needsApproval } from "./policy.ts";
 
 const target = (overrides: Partial<TargetDescription>): TargetDescription => ({
   label: "",
@@ -134,14 +135,31 @@ describe("needsApproval (spec §5.5)", () => {
         kind: "form_submit",
       });
   });
-  it("builds contract-valid approval requests", () => {
+  it("builds contract-valid approval requests with the action and a clean record excerpt", () => {
     const need = needsApproval(click, target({ label: "Pay now" }));
-    expect(approvalRequestFor(need!, "https://a.com/x", null)).toEqual({
+    expect(approvalRequestFor(need!, "https://a.com/x", null, null)).toEqual({
       kind: "risky_click",
       action: click,
       label: "Pay now",
       url: "https://a.com/x",
       screenshotKey: null,
+      context: null,
     });
+    const enter = { type: "keypress" as const, keys: ["ENTER"] };
+    const form = needsApproval(enter, target({ editable: true, formKind: "other", tag: "input" }));
+    const request = approvalRequestFor(
+      form!,
+      "https://a.com/x",
+      null,
+      approvalExcerpt("Bob‮  Row\n 7"),
+    );
+    expect(ApprovalRequest.parse(request)).toMatchObject({
+      kind: "form_submit",
+      action: enter,
+      context: "Bob Row 7",
+    });
+    expect(approvalExcerpt("x".repeat(500))).toHaveLength(240);
+    expect(approvalExcerpt("  ​ ")).toBeNull();
+    expect(approvalExcerpt(undefined)).toBeNull();
   });
 });

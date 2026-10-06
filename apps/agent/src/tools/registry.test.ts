@@ -8,6 +8,7 @@ import { createLogger } from "@mastertutor/contracts/server";
 import { describe, expect, it } from "vitest";
 import type { BrowserSession } from "../browser/session.ts";
 import { Interrupted, StaleRef } from "../runtime/errors.ts";
+import { SECRET_REDACTION, type MaskSources } from "../browser/masking.ts";
 import { ToolRegistry } from "./registry.ts";
 import { register, type CallApproval, type ToolContext } from "./types.ts";
 
@@ -91,5 +92,28 @@ describe("ToolRegistry", () => {
       wait: "otp",
     });
     expect(seen).toEqual(approval);
+  });
+
+  it("redacts registered secret values from every tool result (M13)", async () => {
+    const mask: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text) => text.replaceAll("hunter2-secret", SECRET_REDACTION),
+    };
+    const registry = new ToolRegistry(
+      [
+        fakeReadPage(async () => ({
+          hash: "a".repeat(64),
+          url: "https://a.com/x",
+          title: "Your password is hunter2-secret",
+          text: "echo: hunter2-secret.",
+        })),
+      ],
+      log,
+      mask,
+    );
+    const { output } = await registry.run("read_page", readArgs, ctx());
+    expect(output).not.toContain("hunter2-secret");
+    expect(output).toContain(`Your password is ${SECRET_REDACTION}`);
   });
 });

@@ -150,8 +150,9 @@ export class SessionLoopBrowser implements LoopBrowser {
   }
 
   observe(signal: AbortSignal): Promise<Observation> {
+    // The URL and title reach the model as the page header: a secret in them is redacted (M13).
     return observeOnOnePage(
-      () => this.#session.page.url(),
+      () => this.#mask.redact(this.#session.page.url()),
       (url) => this.#capture(url, signal),
     );
   }
@@ -163,7 +164,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     const state = await (await session.worlds()).evaluate(pageStateScript, null);
     return {
       url,
-      title: state.title,
+      title: this.#mask.redact(state.title),
       origin: toOrigin(url),
       domHash: "hash" in page ? page.hash : "",
       screenshot,
@@ -175,6 +176,14 @@ export class SessionLoopBrowser implements LoopBrowser {
   }
 
   async targetFor(
+    action: ComputerAction,
+    previous: TargetDescription | null,
+  ): Promise<TargetDescription | null> {
+    const target = await this.#classify(action, previous);
+    return target?.excerpt ? { ...target, excerpt: this.#mask.redact(target.excerpt) } : target;
+  }
+
+  async #classify(
     action: ComputerAction,
     previous: TargetDescription | null,
   ): Promise<TargetDescription | null> {
@@ -282,15 +291,17 @@ export function slotBrowserConnector(options: {
         clock: options.clock,
         waitActionMs: options.config.waitActionMs,
       });
+      const mask = options.hooks.maskSources(run().id);
       const registry = new ToolRegistry(
         [register(readPageTool), ...options.hooks.functionTools],
         options.log,
+        mask,
       );
       const browser = new SessionLoopBrowser({
         session,
         executor,
         registry,
-        mask: options.hooks.maskSources(run().id),
+        mask,
         run,
         log: options.log,
       });

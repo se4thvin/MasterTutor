@@ -8,7 +8,8 @@ import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { SlotPool } from "../slots/pool.ts";
 import { waitFor } from "../testing/wait.ts";
-import { withHooks } from "./hooks.ts";
+import { SECRET_REDACTION, type MaskSources } from "../browser/masking.ts";
+import { withHooks, type RunHooks } from "./hooks.ts";
 import type { AttachedBrowser } from "./loop-browser.ts";
 import type { RunSnapshot } from "./run-state.ts";
 import { slotBrowserConnector } from "./session-browser.ts";
@@ -21,7 +22,7 @@ afterEach(async () => {
   attached = undefined;
 });
 
-async function connect() {
+async function connect(hooks: RunHooks = withHooks()) {
   const pool = new SlotPool({
     store: {
       markIdle: async () => true,
@@ -36,7 +37,7 @@ async function connect() {
   const connector = slotBrowserConnector({
     cdpBaseUrl: cdpBaseUrlForTests,
     pool,
-    hooks: withHooks(),
+    hooks,
     clock: instantClock(),
     config: runtimeConfig(),
     testMode: true,
@@ -456,5 +457,29 @@ describe("SessionLoopBrowser", () => {
     });
     await remote.close();
     expect((await browser.targetFor(click, null))!.context).not.toBe(alice!.context);
+  });
+
+  it("redacts registered secrets from the page title, read_page and the record excerpt (M13, A3a)", async () => {
+    const mask: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text) =>
+        text.replaceAll("Alice", SECRET_REDACTION).replaceAll("User record", SECRET_REDACTION),
+    };
+    const browser = await connect(withHooks({ maskSources: () => mask }));
+    await browser.navigate(`${SITE}/record.html`, signal);
+    expect((await browser.observe(signal)).title).toBe(SECRET_REDACTION);
+    const { output } = await browser.runFunction(
+      "read_page",
+      { mode: "text", sinceHash: null },
+      signal,
+      null,
+    );
+    expect(output).not.toContain("Alice");
+    expect(output).toContain(SECRET_REDACTION);
+    const target = await browser.targetFor({ type: "click", x: 100, y: 120, button: "left" }, null);
+    expect(target?.label).toBe("Delete");
+    expect(target?.excerpt).toContain(SECRET_REDACTION);
+    expect(target?.excerpt).not.toContain("Alice");
   });
 });

@@ -89,13 +89,9 @@ export async function captureModelScreenshot(
     session.guard.assertAgent(signal);
     await session.page.bringToFront();
     layout = await session.layout();
-    const secrets = sources.secretValues();
-    // While secrets are registered, inputs inside cross-origin frames cannot be scanned or boxed
-    // from this target, so any such frame makes the screenshot undeliverable.
-    if (
-      (secrets.length > 0 || sources.nodeIds().length > 0) &&
-      (await hasCrossOriginFrames(session))
-    ) {
+    // While vault-filled fields are on this page, inputs inside cross-origin frames cannot be
+    // boxed from this target, so any such frame makes the screenshot undeliverable (R-E5).
+    if (sources.nodeIds(await session.cdp()).length > 0 && (await hasCrossOriginFrames(session))) {
       return drop();
     }
     const before = await collectMaskBoxes(session, sources);
@@ -123,7 +119,7 @@ export async function captureModelScreenshot(
     ) {
       continue;
     }
-    if (secrets.length > 0 && (await containsSecretText(session, secrets))) return drop();
+    if (await containsSecretText(session, sources)) return drop();
     const shot = await finalize(raw, layout, after.boxes);
     session.lastScale = shot.scale;
     return shot;

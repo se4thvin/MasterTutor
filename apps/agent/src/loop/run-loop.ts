@@ -16,7 +16,12 @@ import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
-import { approvalRequestFor, needsApproval, type ApprovalNeed } from "../guardrails/policy.ts";
+import {
+  approvalExcerpt,
+  approvalRequestFor,
+  needsApproval,
+  type ApprovalNeed,
+} from "../guardrails/policy.ts";
 import type { CallApproval } from "../tools/types.ts";
 import { wrapUntrusted } from "../tools/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
@@ -659,6 +664,7 @@ export class RunLoop {
             url: url.slice(0, 4_096),
             screenshotKey: this.#screenshotKey,
             safetyChecks: checks.slice(0, 20),
+            context: null,
           },
           safetyChecks: checks,
           target: null,
@@ -675,7 +681,12 @@ export class RunLoop {
             item: actionItem(call.callId, index),
             callId: call.callId,
             index,
-            request: approvalRequestFor(need, url, this.#screenshotKey),
+            request: approvalRequestFor(
+              need,
+              url,
+              this.#screenshotKey,
+              approvalExcerpt(target?.excerpt),
+            ),
             safetyChecks: null,
             target: target?.path ?? null,
             context: target?.context ?? null,

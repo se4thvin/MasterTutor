@@ -10,13 +10,42 @@ export interface Box {
   height: number;
 }
 
-/** Extra mask targets owned by the vault (B3): elements it filled, and the secret values themselves. */
+/**
+ * Extra mask targets owned by the vault (B3). Plaintext never crosses this seam: the vault keeps
+ * only keyed digests and answers with node ids and a redactor.
+ */
 export interface MaskSources {
-  nodeIds(): readonly number[];
-  secretValues(): readonly string[];
+  /** backendNodeIds, in `cdp`'s target, of fields the vault filled in documents still loaded. */
+  nodeIds(cdp: CDPSession): readonly number[];
+  /** True while the run has secret values registered (the text scan runs only then). */
+  hasSecrets(): boolean;
+  /** `text` with every registered secret value replaced by SECRET_REDACTION; `text` itself when none occurs. */
+  redact(text: string): string;
 }
 
-export const NO_MASK_SOURCES: MaskSources = { nodeIds: () => [], secretValues: () => [] };
+export const SECRET_REDACTION = "[secret]";
+
+export const NO_MASK_SOURCES: MaskSources = {
+  nodeIds: () => [],
+  hasSecrets: () => false,
+  redact: (text) => text,
+};
+
+export function containsSecret(sources: MaskSources, text: string): boolean {
+  return sources.redact(text) !== text;
+}
+
+/** Every string inside a tool result (JSON data) with registered secrets redacted (M13). */
+export function redactDeep(value: unknown, sources: MaskSources): unknown {
+  if (!sources.hasSecrets()) return value;
+  if (typeof value === "string") return sources.redact(value);
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item, sources));
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactDeep(item, sources)]),
+    );
+  return value;
+}
 
 /** Isolated-world scan for secret inputs across same-origin frames and open shadow roots. Read-only. */
 export function secretFieldBoxesScript(_arg: null, h: PageHelpers): Box[] {
@@ -76,14 +105,22 @@ const NODE_STATE_SCRIPT = `function () {
   return "visible";
 }`;
 
+/** A node whose document was replaced (a navigation) still describes, but no longer resolves (F8). */
+const GONE_DOCUMENT = /does not belong to the document/i;
+
 /** True only when the node is provably not on screen; any doubt (other target, error, visible) is false. */
 async function provablyNotShown(cdp: CDPSession, backendNodeId: number): Promise<boolean> {
   try {
     await cdp.send("DOM.describeNode", { backendNodeId });
-    const { object } = await cdp.send("DOM.resolveNode", { backendNodeId });
-    if (!object.objectId) return false;
+    let resolved;
+    try {
+      resolved = await cdp.send("DOM.resolveNode", { backendNodeId });
+    } catch (error) {
+      return error instanceof Error && GONE_DOCUMENT.test(error.message);
+    }
+    if (!resolved.object.objectId) return false;
     const result = await cdp.send("Runtime.callFunctionOn", {
-      objectId: object.objectId,
+      objectId: resolved.object.objectId,
       functionDeclaration: NODE_STATE_SCRIPT,
       returnByValue: true,
     });
@@ -101,7 +138,7 @@ export async function collectMaskBoxes(
   const boxes = await worlds.evaluate(secretFieldBoxesScript, null);
   const cdp = await session.cdp();
   let unverifiable = 0;
-  for (const backendNodeId of sources.nodeIds()) {
+  for (const backendNodeId of sources.nodeIds(cdp)) {
     try {
       const { model } = await cdp.send("DOM.getBoxModel", { backendNodeId });
       boxes.push(quadToBox(model.border));
@@ -160,15 +197,6 @@ export async function drawMasks(
   return sharp(png).composite(overlays).png().toBuffer();
 }
 
-/**
- * Secrets of 1-3 characters that are all digits match almost every number on a page, so they are
- * not scanned for (their fields are still masked by box). Everything else is scanned, including
- * short non-numeric secrets: over-dropping a frame is the safe failure.
- */
-export function isScannableSecret(secret: string): boolean {
-  return secret.length > 0 && !(secret.length < 4 && /^\d+$/.test(secret));
-}
-
 interface FrameNode {
   frame: { id: string; url?: string; securityOrigin?: string };
   childFrames?: FrameNode[];
@@ -180,41 +208,81 @@ function flattenFrames(node: FrameNode, out: FrameNode["frame"][] = []): FrameNo
   return out;
 }
 
-/** True when any frame is on a different origin from the main frame (its inputs are another CDP target). */
+/**
+ * True when any frame is on a different origin from the main frame (its inputs are another CDP
+ * target). Out-of-process frames are missing from the page target's frame tree, so they are
+ * counted separately: site isolation only moves cross-site, hence cross-origin, frames.
+ */
 export async function hasCrossOriginFrames(session: BrowserSession): Promise<boolean> {
   const { frameTree } = await (await session.cdp()).send("Page.getFrameTree");
   const frames = flattenFrames(frameTree as FrameNode);
   const main = frames[0]?.securityOrigin;
   // about:srcdoc and about:blank frames inherit the parent's origin (Chromium reports "://" for them).
-  return frames
-    .slice(1)
-    .some((frame) => !frame.url?.startsWith("about:") && frame.securityOrigin !== main);
+  if (
+    frames
+      .slice(1)
+      .some((frame) => !frame.url?.startsWith("about:") && frame.securityOrigin !== main)
+  )
+    return true;
+  return (await session.outOfProcessFrames()).size > 0;
+}
+
+type AxText = { name?: { value?: unknown }; value?: { value?: unknown } };
+
+/** One frame's accessibility tree; out-of-process frames through their own target (R-E5). */
+async function frameAxNodes(
+  session: BrowserSession,
+  cdp: CDPSession,
+  frameId: string,
+): Promise<readonly AxText[] | null> {
+  try {
+    return (await cdp.send("Accessibility.getFullAXTree", { frameId })).nodes;
+  } catch {
+    const own = await session.frameCdp(frameId).catch(() => null);
+    if (!own) return null;
+    try {
+      return (await own.send("Accessibility.getFullAXTree", {})).nodes;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function hasSecretText(nodes: readonly AxText[], sources: MaskSources): boolean {
+  return nodes.some((node) =>
+    [node.name?.value, node.value?.value].some(
+      (value) => typeof value === "string" && containsSecret(sources, value),
+    ),
+  );
 }
 
 /**
  * Final check (spec §9): any accessibility-tree name or value, in every frame, containing a
- * secret drops the frame. A frame whose tree cannot be read (e.g. out-of-process) fails closed.
+ * registered secret drops the frame. A frame whose tree cannot be read either way fails closed.
+ * The page target's frame tree omits out-of-process frames, so each of those targets (and the
+ * frames it hosts) is scanned through its own CDP session.
  */
 export async function containsSecretText(
   session: BrowserSession,
-  secrets: readonly string[],
+  sources: MaskSources,
 ): Promise<boolean> {
-  const candidates = secrets.filter(isScannableSecret);
-  if (candidates.length === 0) return false;
+  if (!sources.hasSecrets()) return false;
   const cdp = await session.cdp();
   const { frameTree } = await cdp.send("Page.getFrameTree");
   for (const frame of flattenFrames(frameTree as FrameNode)) {
-    let nodes;
-    try {
-      ({ nodes } = await cdp.send("Accessibility.getFullAXTree", { frameId: frame.id }));
-    } catch {
-      return true;
-    }
-    for (const node of nodes) {
-      for (const value of [node.name?.value, node.value?.value]) {
-        if (typeof value === "string" && candidates.some((secret) => value.includes(secret)))
-          return true;
-      }
+    const nodes = await frameAxNodes(session, cdp, frame.id);
+    if (nodes === null || hasSecretText(nodes, sources)) return true;
+  }
+  for (const worlds of (await session.outOfProcessFrames()).values()) {
+    const own = worlds.cdp;
+    const tree = await own.send("Page.getFrameTree").catch(() => null);
+    if (!tree) return true;
+    for (const frame of flattenFrames(tree.frameTree as FrameNode)) {
+      const nodes = await own
+        .send("Accessibility.getFullAXTree", { frameId: frame.id })
+        .then((result) => result.nodes)
+        .catch(() => null);
+      if (nodes === null || hasSecretText(nodes, sources)) return true;
     }
   }
   return false;
