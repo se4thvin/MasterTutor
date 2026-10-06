@@ -5,7 +5,33 @@ import {
   OriginInput,
   type VaultSecretField,
 } from "@mastertutor/contracts";
+import type { InputHTMLAttributes } from "react";
 import type { IconName } from "@/components/ui/icons.ts";
+
+type InputAttrs = InputHTMLAttributes<HTMLInputElement> &
+  Record<"data-1p-ignore" | "data-lpignore", string>;
+
+/** Never autofilled from the browser or the user's password manager, never spell-checked. */
+const NO_ASSIST = {
+  spellCheck: false,
+  maxLength: 4_096,
+  "data-1p-ignore": "true",
+  "data-lpignore": "true",
+} as const;
+
+/**
+ * Attributes every secret input carries: masked, `new-password` so nothing is offered, no
+ * spellcheck (which can send text to a spelling service). Inputs are uncontrolled and never
+ * pre-filled.
+ */
+export const SECRET_INPUT: InputAttrs = {
+  ...NO_ASSIST,
+  type: "password",
+  autoComplete: "new-password",
+};
+
+/** A non-secret vault value (the username): visible while typed, but still never autofilled. */
+export const PLAIN_VAULT_INPUT: InputAttrs = { ...NO_ASSIST, type: "text", autoComplete: "off" };
 
 export const FIELD_META: Record<
   VaultSecretField,

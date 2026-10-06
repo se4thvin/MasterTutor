@@ -13,8 +13,13 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import { TextField } from "@/components/ui/text-field.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
-import { FIELD_META, isValidPin, normalizeTotpSeed } from "@/lib/vault/fields.ts";
-import { SECRET_INPUT } from "./add-sign-in-sheet.tsx";
+import {
+  FIELD_META,
+  PLAIN_VAULT_INPUT,
+  SECRET_INPUT,
+  isValidPin,
+  normalizeTotpSeed,
+} from "@/lib/vault/fields.ts";
 
 /** The value to send for a field, or null when it is not valid. Never returns a partial echo. */
 function normalize(field: TypedSecretField, value: string): string | null {
@@ -43,7 +48,8 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
   const qc = useQueryClient();
   const toast = useToast();
   const [field, setField] = useState<TypedSecretField>(
-    TYPED_SECRET_FIELDS.find((f) => item.fields.includes(f)) ?? "password",
+    // Opens on a secret the item has (the username is rarely what needs replacing).
+    TYPED_SECRET_FIELDS.find((f) => FIELD_META[f].secret && item.fields.includes(f)) ?? "password",
   );
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
@@ -147,7 +153,7 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
             key={field}
             label="New value"
             name="value"
-            {...SECRET_INPUT}
+            {...(FIELD_META[field].secret ? SECRET_INPUT : PLAIN_VAULT_INPUT)}
             inputMode={field === "pin" ? "numeric" : undefined}
             error={error}
           />
