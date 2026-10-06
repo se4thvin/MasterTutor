@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import type { RunEvent } from "@mastertutor/contracts";
+import { Uuid, type RunEvent } from "@mastertutor/contracts";
 import {
   emitRunEvent,
   findAssetBySha,
@@ -80,6 +80,7 @@ interface Attached {
 }
 
 const BLOCKED = "Downloads need you in control: take over, then download it.";
+const NOT_STORED = "could not be saved. Download it again in a moment.";
 
 async function sha256Of(file: string): Promise<string> {
   const hash = createHash("sha256");
@@ -148,6 +149,9 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
       }
       const sha256 = await sha256Of(file);
       const mime = downloadMime(approved.filename);
+      // Assets are unique per workspace and sha256 (assets_workspace_sha256_uq), so identical
+      // content reuses the first run's object (downloads/<thatRunId>/…). Deleting a run's
+      // objects must therefore never delete an object an asset row still references.
       const existing = await findAssetBySha(deps.db, slot.workspaceId, sha256);
       const key =
         existing?.key ??
@@ -196,6 +200,11 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
       const onBegin = (event: { guid: string; url: string; suggestedFilename: string }) => {
         // Under the agent, the download is B1's gate's to deny or approve.
         if (!entry.userMode) return;
+        // The id names a file under the run's folder: only a UUID may (defence in depth).
+        if (!Uuid.safeParse(event.guid).success) {
+          void cdp.send("Browser.cancelDownload", { guid: event.guid }).catch(() => undefined);
+          return;
+        }
         decisions.set(
           event.guid,
           decide(entry, event.guid, event.url, event.suggestedFilename).catch((error) => {
@@ -212,11 +221,18 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
         if (event.state === "inProgress" || !decision) return;
         decisions.delete(event.guid);
         void decision
-          .then((approved) =>
-            event.state === "completed" && approved
-              ? ingest(slot, event.guid, approved)
-              : removeFile(slot.runId, event.guid),
-          )
+          .then(async (approved) => {
+            if (event.state !== "completed" || !approved) return removeFile(slot.runId, event.guid);
+            await ingest(slot, event.guid, approved).catch(async (error: unknown) => {
+              failed(slot.runId, "download_ingest_failed")(error);
+              // The user downloaded it: say it was not kept rather than drop it silently.
+              await emit(slot.runId, {
+                type: "error",
+                code: "download_failed",
+                message: `${approved.filename} ${NOT_STORED}`.slice(0, 500),
+              });
+            });
+          })
           .catch(failed(slot.runId, "download_ingest_failed"));
       };
       cdp.on("Browser.downloadWillBegin", onBegin);

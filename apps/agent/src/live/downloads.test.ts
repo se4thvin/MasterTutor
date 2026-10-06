@@ -90,6 +90,22 @@ describe("DownloadIngestor and B1's download gate (spec §9, §10.2.9)", () => {
     expect(sent.map((call) => call.method)).not.toContain("Browser.cancelDownload");
   });
 
+  it("cancels a download whose id is not a UUID before it can name a path (defence in depth)", async () => {
+    const { ingestor, slot, sent, emit } = await setup();
+    await ingestor.attach(slot);
+    await ingestor.userControl(RUN, true);
+    emit("Browser.downloadWillBegin", {
+      guid: "../../etc/passwd",
+      url: "https://x.test/a.pdf",
+      suggestedFilename: "a.pdf",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent.at(-1)).toEqual({
+      method: "Browser.cancelDownload",
+      params: { guid: "../../etc/passwd" },
+    });
+  });
+
   it("allows downloads into the run's folder only while the user holds control, then denies again", async () => {
     const { ingestor, slot, sent, drained } = await setup();
     await ingestor.attach(slot);

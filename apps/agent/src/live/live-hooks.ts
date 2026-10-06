@@ -193,10 +193,9 @@ export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
         }
         // Handed back before n.eko was touched: nothing to give; B1 hands back next.
         if (userId === null) return { ok: true };
-        if (!(await give(slotName, runId, userId, afterRestore ? restoreWaitMs : 0))) {
-          await seatAgent(slotName, runId, "neko_take_failed");
-          return FAILED;
-        }
+        // A failed give returns takeover_failed; B1's revert then calls onAgentControl, which
+        // takes the host back fail-closed, so nothing is retaken here.
+        if (!(await give(slotName, runId, userId, afterRestore ? restoreWaitMs : 0))) return FAILED;
         await deps.liveView
           .setClipboardAccess({ name: slotName }, true)
           .catch(() => deps.log.warn({ runId, errorCode: "clipboard_on_failed" }, "clipboard off"));
@@ -237,6 +236,10 @@ export function createLiveHooks(deps: LiveHooksDeps): LiveHooks {
       // A run cancelled during a takeover still seals what the user enrolled (before Browser.close).
       await finishEnrolment(slot.runId);
       leases.delete(slot.runId);
+      // Deny downloads again even though the slot restarts (the next lease's gate denies too).
+      await withTimeout(deps.downloads.userControl(slot.runId, false), nekoTimeoutMs).catch(() =>
+        deps.log.warn({ runId: slot.runId, errorCode: "downloads_off_failed" }, "downloads"),
+      );
       await deps.downloads.detach(slot.runId).catch(() => undefined);
       // S12: a released run must not leave the user with X input until the container restarts.
       if (slot.slotReleased) await seatAgent(slot.slotName, slot.runId, "neko_release_failed");
