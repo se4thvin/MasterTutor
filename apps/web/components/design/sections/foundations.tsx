@@ -1,6 +1,18 @@
 const COLORS = [
-  "bg", "bg-2", "elevated", "label", "label-2", "hairline", "fill", "tint", "tint-text",
-  "signal", "navy", "ok", "warn", "danger",
+  "bg",
+  "bg-2",
+  "elevated",
+  "label",
+  "label-2",
+  "hairline",
+  "fill",
+  "tint",
+  "tint-text",
+  "signal",
+  "navy",
+  "ok",
+  "warn",
+  "danger",
 ] as const;
 const TYPE = [
   ["t-large", "Large title"],
@@ -23,7 +35,10 @@ const SHADOWS = [
 export function FoundationsSection() {
   return (
     <div className="grid gap-10">
-      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7" aria-label="Colour tokens">
+      <ul
+        className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7"
+        aria-label="Colour tokens"
+      >
         {COLORS.map((name) => (
           <li key={name} className="grid gap-1.5">
             <span className="h-12 rounded-md shadow-e1" style={{ background: `var(--${name})` }} />
@@ -40,7 +55,11 @@ export function FoundationsSection() {
       </ul>
       <ul className="flex flex-wrap gap-4" aria-label="Radii and elevation">
         {RADII.map((r) => (
-          <li key={r} className="grid size-20 place-items-center bg-elevated shadow-e1" style={{ borderRadius: `var(--r-${r})` }}>
+          <li
+            key={r}
+            className="grid size-20 place-items-center bg-elevated shadow-e1"
+            style={{ borderRadius: `var(--r-${r})` }}
+          >
             <span className="mono">{r}</span>
           </li>
         ))}
@@ -53,7 +72,9 @@ export function FoundationsSection() {
       <div className="design-glass-demo rounded-xl p-6">
         <div className="glass rounded-lg p-4">
           <p className="t-title3">Glass</p>
-          <p className="t-callout text-label-2">saturate(180%) blur(24px) at 72% fill. Opaque with reduced transparency.</p>
+          <p className="t-callout text-label-2">
+            saturate(180%) blur(24px) at 72% fill. Opaque with reduced transparency.
+          </p>
         </div>
       </div>
     </div>

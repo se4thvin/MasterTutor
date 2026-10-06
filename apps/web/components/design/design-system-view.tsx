@@ -20,11 +20,22 @@ export function DesignSystemView() {
   return (
     <div className="mx-auto max-w-5xl px-4 pb-24 md:px-6 lg:px-10">
       <h1 className="t-large pt-10 lg:pt-16">
-        Design system<span className="period" aria-hidden="true">.</span>
+        Design system
+        <span className="period" aria-hidden="true">
+          .
+        </span>
       </h1>
-      <p className="mt-3 max-w-xl text-label-2">Every token and shared component, at every breakpoint.</p>
+      <p className="mt-3 max-w-xl text-label-2">
+        Every token and shared component, at every breakpoint.
+      </p>
       {SECTIONS.map(({ id, title, Section }) => (
-        <section key={id} id={id} data-qa="design-section" aria-labelledby={`${id}-title`} className="mt-12">
+        <section
+          key={id}
+          id={id}
+          data-qa="design-section"
+          aria-labelledby={`${id}-title`}
+          className="mt-12"
+        >
           <h2 id={`${id}-title`} className="t-title2 mb-4">
             {title}
           </h2>
