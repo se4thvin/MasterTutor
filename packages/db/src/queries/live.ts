@@ -1,9 +1,11 @@
 import {
   TERMINAL_RUN_STATUSES,
+  WAITS_KEPT_THROUGH_TAKEOVER,
   encodeNotify,
   type Controller,
   type MemberRole,
   type RunStatus,
+  type WaitReason,
 } from "@mastertutor/contracts";
 import { and, eq, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
@@ -74,6 +76,7 @@ export type ControlRequestResult =
 
 interface LockedRun {
   status: RunStatus;
+  waitReason: WaitReason | null;
   controller: Controller;
   controlUserId: string | null;
   /** The requesting member's role in the run's workspace. */
@@ -84,6 +87,7 @@ async function lockMemberRun(tx: DbTx, runId: string, userId: string): Promise<L
   const [row] = await tx
     .select({
       status: runs.status,
+      waitReason: runs.waitReason,
       controller: runs.controller,
       controlUserId: runs.controlUserId,
       role: workspaceMembers.role,
@@ -127,13 +131,18 @@ export async function requestTakeover(
       );
       return { ok: true, via: "wake" };
     }
+    // A code or CAPTCHA wait stays on the row (B3 M7): only control changes hands, and hand-back
+    // re-observes whether the page still asks for it.
+    const keepWait =
+      run.status === "waiting" &&
+      run.waitReason !== null &&
+      WAITS_KEPT_THROUGH_TAKEOVER.includes(run.waitReason);
     await tx
       .update(runs)
       .set({
         controller: "user",
         controlUserId: input.userId,
-        status: "waiting",
-        waitReason: "takeover",
+        ...(keepWait ? {} : { status: "waiting" as const, waitReason: "takeover" as const }),
         lastActivityAt: sql`now()`,
       })
       .where(eq(runs.id, input.runId));

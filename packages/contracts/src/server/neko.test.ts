@@ -75,4 +75,17 @@ describe("loginNeko", () => {
     expect((error as NekoLoginError).status).toBe(422);
     expect((error as Error).message).not.toContain("p4ss");
   });
+
+  it("never re-sends the password to a redirect target", async () => {
+    const hits: string[] = [];
+    server = createServer((req, res) => {
+      hits.push(req.url ?? "");
+      if (req.url === "/api/login") res.writeHead(307, { location: "/elsewhere" }).end();
+      else res.writeHead(200, { "set-cookie": "NEKO_SESSION=stolen; Path=/" }).end();
+    });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    await expect(loginNeko({ baseUrl, username: "user", password: "p4ss" })).rejects.toThrow();
+    expect(hits).toEqual(["/api/login"]);
+  });
 });

@@ -41,6 +41,10 @@ export interface WorkerDeps {
 const CONTINUE: StepOutcome = { kind: "continue" };
 const NON_TERMINAL: readonly RunStatus[] = ["queued", "running", "waiting", "sleeping"];
 type Next = StepOutcome | "slept";
+const CONTROL_RESTORE_FAILED = {
+  code: "control_restore_failed",
+  message: "The live view could not hand the browser back to the agent, so the run stopped.",
+};
 
 /** Holds one run's leases and drives its loop until it ends, sleeps or loses its lease. */
 export class RunWorker {
@@ -322,9 +326,23 @@ export class RunWorker {
     }
   }
 
-  /** The user's live view could not take the browser (F3): the agent keeps control and goes on. */
+  /**
+   * The user's live view could not take the browser (F3): the agent keeps control and goes on.
+   * The give may have moved n.eko's host before it failed, so the host is taken back first, as on
+   * hand-back, while the guard still holds. If that fails nothing may act again: the guard stays
+   * held and the run ends, so the user and the agent never both hold input.
+   */
   async #revertTakeover(): Promise<StepOutcome> {
     this.#deps.log.warn({ runId: this.runId, errorCode: "takeover_failed" }, "takeover reverted");
+    try {
+      await this.#deps.hooks.control.onAgentControl(this.#claim.slotName, this.runId);
+    } catch {
+      this.#deps.log.error(
+        { runId: this.runId, errorCode: "control_restore_failed" },
+        "could not take the live view back",
+      );
+      return { kind: "failed", error: CONTROL_RESTORE_FAILED };
+    }
     await this.#loop!.revertTakeover();
     this.#guard.release();
     this.#abort = new AbortController();

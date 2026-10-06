@@ -1034,3 +1034,121 @@ describe("B6 seams (A2)", () => {
     expect(browser.computerRuns).toEqual([]);
   });
 });
+
+describe("B6 seams, fix round 1", () => {
+  const eventsOf = async (id: string) =>
+    (
+      await owner.db
+        .select()
+        .from(runEvents)
+        .where(eq(runEvents.runId, id))
+        .orderBy(asc(runEvents.id))
+    ).map((e) => e.payload);
+  /** Every act and control hook in order: the agent never acts between a give and the take back. */
+  const recorder = (calls: string[]) => (browser: FakeLoopBrowser, hangFirst: boolean) => {
+    let first = hangFirst;
+    browser.computerHook = (_actions, signal) => {
+      calls.push("act");
+      if (!first) return Promise.resolve();
+      first = false;
+      return new Promise<never>((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      );
+    };
+  };
+
+  it("a give that moved the host and then threw is taken back before the agent acts again", async () => {
+    const calls: string[] = [];
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async () => {
+            calls.push("give");
+            throw new Error("n.eko granted host, then the session check failed");
+          },
+          onAgentControl: async () => {
+            calls.push("take back");
+          },
+        },
+      },
+    });
+    const { run, browser } = await queue([click, click, done], "ask", (b) =>
+      recorder(calls)(b, true),
+    );
+    await waitFor(async () => calls.includes("act"), { label: "acting" });
+    await takeOver(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after the revert");
+    expect(calls).toEqual(["act", "give", "take back", "act"]);
+    expect(await row(run.id)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(browser.computerRuns).toHaveLength(2);
+  });
+
+  it("if the host cannot be taken back, the run ends with the guard held: no agent input after", async () => {
+    const calls: string[] = [];
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async () => {
+            calls.push("give");
+            return { ok: false, code: "takeover_failed" };
+          },
+          onAgentControl: async () => {
+            calls.push("take back");
+            throw new Error("n.eko unreachable");
+          },
+        },
+      },
+    });
+    const { run, browser } = await queue([click, click, done], "ask", (b) =>
+      recorder(calls)(b, true),
+    );
+    await waitFor(async () => calls.includes("act"), { label: "acting" });
+    await takeOver(run.id);
+    await until(run.id, (r) => r.status === "failed", "failed closed");
+    expect(calls).toEqual(["act", "give", "take back"]);
+    expect(browser.computerRuns).toHaveLength(1);
+    expect((await row(run.id)).error).toMatchObject({ code: "control_restore_failed" });
+  });
+
+  it("a failed takeover after a sleeping run is woken returns control and runs on (afterRestore)", async () => {
+    const seen: Array<{ afterRestore: boolean }> = [];
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async (_slot, _runId, context) => {
+            seen.push(context);
+            return { ok: false, code: "takeover_failed" };
+          },
+          onAgentControl: async () => undefined,
+        },
+      },
+    });
+    const name = `w${++counter}`;
+    mock.setScenarios([{ name, turns: [done] }]);
+    const run = await insertRun(owner.db, {
+      workspaceId,
+      goal: `[scenario:${name}] task`,
+      status: "sleeping",
+      controller: "user",
+    });
+    browsers.set(run.id, new FakeLoopBrowser());
+    await owner.db
+      .update(runs)
+      .set({ wakeRequestedAt: sql`now()` })
+      .where(eq(runs.id, run.id));
+    await owner.sql.notify(
+      "run_wake",
+      encodeNotify("run_wake", { runId: run.id, reason: "takeover" }),
+    );
+    await until(run.id, (r) => r.status === "completed", "completed without a hand back");
+    expect(seen).toEqual([{ afterRestore: true }]);
+    const events = await eventsOf(run.id);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "takeover_failed" }),
+    );
+    expect(events.filter((e) => e.type === "control")).toEqual([
+      { type: "control", holder: "agent" },
+    ]);
+    expect(await row(run.id)).toMatchObject({ controller: "agent", controlUserId: null });
+  });
+});

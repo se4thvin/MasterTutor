@@ -4,12 +4,14 @@ import {
   approvals,
   createDb,
   emitRunEvent,
+  requestHandBack,
+  requestTakeover,
   runEvents,
   runSteps,
   runs,
   type DbHandle,
 } from "@mastertutor/db";
-import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import { seedMember, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { MockTurn } from "../../../../tests/llm-mock/src/scenario.ts";
@@ -1408,6 +1410,31 @@ describe("RunLoop (spec §5.3)", () => {
     expect(browser.executed).toEqual([]);
   });
 
+  it("a takeover revert announces control{agent} only when it took control back (B6 A2)", async () => {
+    const controlEvents = async (runId: string) =>
+      (await owner.db.select().from(runEvents).where(eq(runEvents.runId, runId)))
+        .map((e) => e.payload)
+        .filter((p) => p.type === "control" || p.type === "error");
+    const held = await setup([done()]);
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: "test-user" })
+      .where(eq(runs.id, held.run.id));
+    await held.loop.revertTakeover();
+    expect((await controlEvents(held.run.id)).map((e) => e.type).sort()).toEqual([
+      "control",
+      "error",
+    ]);
+    // The user handed back first (the web already wrote controller='agent'): no second control{agent}.
+    const handedBack = await setup([done()]);
+    await handedBack.loop.revertTakeover();
+    expect((await controlEvents(handedBack.run.id)).map((e) => e.type)).toEqual(["error"]);
+    expect(await status(handedBack.run.id)).toMatchObject({
+      controller: "agent",
+      status: "running",
+    });
+  });
+
   describe("one-time code and CAPTCHA waits (M6, M7)", () => {
     const fillOtp: MockTurn = {
       outputs: [
@@ -1423,8 +1450,20 @@ describe("RunLoop (spec §5.3)", () => {
       ctx.browser.functionWait = (name) => (name === "fill_credential" ? "otp" : null);
       return ctx;
     };
-    const control = (runId: string, patch: Partial<typeof runs.$inferInsert>) =>
-      owner.db.update(runs).set(patch).where(eq(runs.id, runId));
+    // Takeover and hand-back go through the web's real writes (B6 A4), not a fixture update.
+    let member: { userId: string };
+    beforeAll(async () => {
+      member = await seedMember(owner.db, { workspaceId });
+    });
+    const takeOver = async (runId: string) =>
+      expect(await requestTakeover(owner.db, { runId, userId: member.userId })).toEqual({
+        ok: true,
+        via: "control",
+      });
+    const handBack = async (runId: string) =>
+      expect(await requestHandBack(owner.db, { runId, userId: member.userId, note: null })).toEqual(
+        { ok: true, via: "control" },
+      );
 
     it("a new origin blocked in the same act does not discard the code wait (M6)", async () => {
       const { run, browser, loop } = await waitingForCode();
@@ -1440,12 +1479,12 @@ describe("RunLoop (spec §5.3)", () => {
     it("a takeover keeps waiting(otp); hand-back re-observes and runs on, so a code typed on the page counts (M7, F1)", async () => {
       const { run, browser, loop } = await waitingForCode();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
-      await control(run.id, { controller: "user", controlUserId: "test-user" });
+      await takeOver(run.id);
       await loop.markTakeover();
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
       // The person typed the code into the page themselves: no otp_codes row exists.
       browser.functionWait = () => null;
-      await control(run.id, { controller: "agent", controlUserId: null });
+      await handBack(run.id);
       await loop.markHandBack();
       expect(await status(run.id)).toMatchObject({ status: "running" });
       expect(await drive(loop)).toEqual({ kind: "completed" });
@@ -1455,9 +1494,9 @@ describe("RunLoop (spec §5.3)", () => {
       const { run, browser, loop } = await setup([fillOtp, fillOtp, done()]);
       browser.functionWait = (name) => (name === "fill_credential" ? "otp" : null);
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
-      await control(run.id, { controller: "user", controlUserId: "test-user" });
+      await takeOver(run.id);
       await loop.markTakeover();
-      await control(run.id, { controller: "agent", controlUserId: null });
+      await handBack(run.id);
       await loop.markHandBack();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
       expect(browser.functionRuns.map((call) => call.name)).toEqual([
@@ -1469,10 +1508,10 @@ describe("RunLoop (spec §5.3)", () => {
     it("hand-back runs on when a code was submitted during the takeover (M7)", async () => {
       const { run, loop } = await waitingForCode();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
-      await control(run.id, { controller: "user", controlUserId: "test-user" });
+      await takeOver(run.id);
       await loop.markTakeover();
       await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([1])})`;
-      await control(run.id, { controller: "agent", controlUserId: null });
+      await handBack(run.id);
       await loop.markHandBack();
       expect(await status(run.id)).toMatchObject({ status: "running" });
       expect(await drive(loop)).toEqual({ kind: "completed" });
@@ -1482,10 +1521,10 @@ describe("RunLoop (spec §5.3)", () => {
       const { run, browser, loop } = await setup([done()]);
       browser.captcha = true;
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "captcha" });
-      await control(run.id, { controller: "user", controlUserId: "test-user" });
+      await takeOver(run.id);
       await loop.markTakeover();
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });
-      await control(run.id, { controller: "agent", controlUserId: null });
+      await handBack(run.id);
       await loop.markHandBack();
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "captcha" });
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "captcha" });

@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
-import { assets, downloads } from "../schema/index.ts";
+import { assets, downloads, runs } from "../schema/index.ts";
 
 export async function findAssetBySha(
   db: Database,
@@ -33,6 +33,13 @@ export async function recordDownload(
   tx: DbTx,
   input: DownloadRecordInput,
 ): Promise<{ downloadId: string; assetId: string }> {
+  // Defence in depth: the asset is deduped per workspace, so the run must belong to that workspace.
+  const [run] = await tx
+    .select({ workspaceId: runs.workspaceId })
+    .from(runs)
+    .where(eq(runs.id, input.runId));
+  if (run?.workspaceId !== input.workspaceId)
+    throw new Error("download run is not in the given workspace");
   const [inserted] = await tx
     .insert(assets)
     .values({

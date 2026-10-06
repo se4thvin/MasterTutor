@@ -2,7 +2,7 @@ import { decodeNotify } from "@mastertutor/contracts";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
-import { runEvents, runs } from "../schema/index.ts";
+import { downloads, runEvents, runs } from "../schema/index.ts";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -87,6 +87,38 @@ describe("takeover and hand back (web role)", () => {
       controller: "user",
       controlUserId: member.userId,
     });
+  });
+
+  it("keeps a code or CAPTCHA wait on the row and moves an approval wait to takeover (M7)", async () => {
+    for (const waitReason of ["otp", "captcha"] as const) {
+      const runId = await seedRun(owner.db, {
+        workspaceId: member.workspaceId,
+        status: "waiting",
+        waitReason,
+      });
+      const payload = await nextNotification(owner.sql, "run_control", async () => {
+        expect(await requestTakeover(web.db, { runId, userId: member.userId })).toEqual({
+          ok: true,
+          via: "control",
+        });
+      });
+      expect(decodeNotify("run_control", payload)).toEqual({ runId });
+      const row = await runRow(runId);
+      expect(row).toMatchObject({
+        status: "waiting",
+        waitReason,
+        controller: "user",
+        controlUserId: member.userId,
+      });
+      expect(row.lastActivityAt).not.toBeNull();
+    }
+    const approvalRun = await seedRun(owner.db, {
+      workspaceId: member.workspaceId,
+      status: "waiting",
+      waitReason: "approval",
+    });
+    await requestTakeover(web.db, { runId: approvalRun, userId: member.userId });
+    expect(await runRow(approvalRun)).toMatchObject({ status: "waiting", waitReason: "takeover" });
   });
 
   it("wakes a sleeping run with reason takeover", async () => {
@@ -241,5 +273,26 @@ describe("download records (agent role)", () => {
       id: first.assetId,
       key: input.key,
     });
+  });
+
+  it("refuses a download whose run belongs to another workspace", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const input = {
+      runId,
+      workspaceId: outsider.workspaceId,
+      filename: "b.pdf",
+      sha256: "b".repeat(64),
+      bucket: "mastertutor",
+      key: `downloads/${runId}/bbbbbbbbbbbb-b.pdf`,
+      mime: "application/pdf",
+      bytes: 3,
+      sourceUrl: "https://example.com/b.pdf",
+      approvedBy: member.userId,
+    };
+    await expect(agent.db.transaction((tx) => recordDownload(tx, input))).rejects.toThrow(
+      /workspace/,
+    );
+    expect(await findAssetBySha(agent.db, outsider.workspaceId, input.sha256)).toBeNull();
+    expect(await owner.db.select().from(downloads).where(eq(downloads.runId, runId))).toEqual([]);
   });
 });

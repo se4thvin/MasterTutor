@@ -12,8 +12,9 @@ import {
   type RunEvent,
   type Usage,
   type WaitReason,
+  WAITS_KEPT_THROUGH_TAKEOVER,
 } from "@mastertutor/contracts";
-import { returnControlToAgent, type Database } from "@mastertutor/db";
+import { emitRunEvent, returnControlToAgent, type Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
@@ -152,7 +153,10 @@ const TAKEOVER_FAILED =
 const downloadBlockedNote = (url: string) =>
   `Executor: a download of ${downloadUrlForCard(url)} was blocked: nothing was saved. Downloads need the user's approval.`;
 /** Waits a takeover leaves on the row (M7): hand-back re-observes whether they still hold. */
-const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = ["takeover", "otp", "captcha"];
+const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = [
+  "takeover",
+  ...WAITS_KEPT_THROUGH_TAKEOVER,
+];
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
 
 /** What an approval was for; an approved action only runs while its target still classifies the same. */
@@ -1343,10 +1347,7 @@ export class RunLoop {
   async revertTakeover(): Promise<void> {
     const pending = this.#pending;
     await this.#deps.store.commit({
-      events: [
-        { type: "error", code: "takeover_failed", message: TAKEOVER_FAILED },
-        { type: "control", holder: "agent" },
-      ],
+      events: [{ type: "error", code: "takeover_failed", message: TAKEOVER_FAILED }],
       // A takeover that interrupted waiting(approval) returns there: the approval was never
       // superseded (markTakeover did not run), so the sheet stays and the decision still counts.
       transition: pending
@@ -1357,8 +1358,10 @@ export class RunLoop {
             reason: pending.request.kind,
           } as Transition)
         : TO_RUNNING,
+      // control{agent} only if this write took control back: a concurrent hand-back already did.
       extra: async (tx) => {
-        await returnControlToAgent(tx, this.#run.id);
+        if (await returnControlToAgent(tx, this.#run.id))
+          await emitRunEvent(tx, this.#run.id, { type: "control", holder: "agent" });
       },
     });
     if (!pending) this.reobserve();

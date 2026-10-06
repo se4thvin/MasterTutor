@@ -20,6 +20,11 @@ export const TERMINAL_RUN_STATUSES = [
 export const WAIT_REASONS = ["approval", "takeover", "captcha", "otp"] as const;
 export const WaitReason = z.enum(WAIT_REASONS);
 export type WaitReason = z.infer<typeof WaitReason>;
+/**
+ * Waits a takeover leaves on the run row (B3 M7/F1): the person may type the code or solve the
+ * CAPTCHA themselves, and hand-back re-observes. Shared by the web's takeover write and the agent.
+ */
+export const WAITS_KEPT_THROUGH_TAKEOVER: readonly WaitReason[] = ["otp", "captcha"];
 
 export const CONTROLLERS = ["agent", "user"] as const;
 export const Controller = z.enum(CONTROLLERS);
