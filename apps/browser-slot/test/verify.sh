@@ -115,8 +115,9 @@ for setting in NEKO_LEGACY=true NEKO_SESSION_COOKIE_ENABLED=true NEKO_SESSION_CO
   grep -qx "$setting" <<<"$neko_environ" || fail "n.eko runs without $setting"
 done
 pass "n.eko legacy, cookie, hosting, upload and chat settings"
-[[ "$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080/ws")" != "404" ]] \
-  || fail "legacy client endpoint /ws missing (NEKO_LEGACY)"
+# 400: the endpoint exists and wants a websocket upgrade (404 without NEKO_LEGACY; 000 if unreachable).
+ws_code="$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080/ws")"
+[[ "$ws_code" == "400" ]] || fail "legacy client endpoint /ws missing (NEKO_LEGACY): HTTP $ws_code"
 from_ip "$PREFIX.11" -o /dev/null -D - -X POST -H 'Content-Type: application/json' \
   -d "{\"username\":\"user\",\"password\":\"$(hmac "$MEMBER_SECRET")\"}" \
   "http://$PREFIX.20:8080/api/login" | grep -qi '^set-cookie: NEKO_SESSION=' \
@@ -124,8 +125,9 @@ from_ip "$PREFIX.11" -o /dev/null -D - -X POST -H 'Content-Type: application/jso
 pass "legacy /ws endpoint and cookie auth enabled"
 # S5: the legacy side endpoints never answer without credentials.
 for path in /stats /screenshot.jpg /file; do
+  # Exactly 403: a failed request (000) or a wrong path must not pass this check.
   code="$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080$path")"
-  [[ "$code" != "200" ]] || fail "n.eko $path answers 200 without credentials"
+  [[ "$code" == "403" ]] || fail "n.eko $path without credentials answered HTTP $code, not 403"
 done
 pass "legacy side endpoints need credentials"
 
