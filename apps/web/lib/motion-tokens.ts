@@ -24,6 +24,15 @@ export const durations = {
   receive: 450,
   /** How long a finished run's outcome shows on the Runs nav item. */
   flash: 2400,
+  /** Agent cursor travel: 250–450ms by distance, on easings.cursor (run 13 §6). */
+  cursorMin: 250,
+  cursorMax: 450,
+  /** Click ring 24→44px. */
+  clickPulse: 400,
+  /** The idle cursor's drift loop while the agent thinks. */
+  drift: 2600,
+  /** One turn of the Reconnecting spinner (the only spinner, spec §11.4). */
+  spin: 1000,
 } as const;
 
 export const easings = {

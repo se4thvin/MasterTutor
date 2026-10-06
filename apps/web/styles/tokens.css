@@ -49,6 +49,13 @@
   --art-shadow-soft: drop-shadow(0 6px 12px rgb(0 0 0 / 0.08));
   --scrim: rgb(0 0 0 / 0.18);
   --ambient: rgb(0 113 227 / 0.16);
+  /* Agent cursor over remote web content: dark arrow, white outline, in either theme. */
+  --cursor: #111111;
+  --cursor-outline: #ffffff;
+  /* 3D hero art palette (run 16). components/hero only. */
+  --hero-aqua: #e4f5f3;
+  --hero-aqua-deep: #a9dcd8;
+  --hero-bondi: #1f8f96;
   /* Folder tiles (FolderFloat): a light blue manila, Apple-folder tinted; ink meets AA on the flap. */
   --folder-back: #74aeeb;
   --folder-front: #8fc1f3;
@@ -76,6 +83,7 @@
   --r-frame: 0.875rem;
   --hit: 2.75rem;
   --z-scrim: 90;
+  --z-pip: 80;
   --z-sheet: 100;
   --z-toast: 110;
   --z-popover: 120;

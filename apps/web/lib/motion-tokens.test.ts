@@ -69,4 +69,18 @@ describe("motion tokens", () => {
       expect(motionReact, name).toHaveProperty(name);
     }
   });
+
+  it("has the F3 agent cursor and spinner durations (run 13 §6)", () => {
+    expect(durations).toMatchObject({
+      cursorMin: 250,
+      cursorMax: 450,
+      clickPulse: 400,
+      drift: 2600,
+      spin: 1000,
+    });
+    const css = renderMotionCss();
+    for (const name of ["cursor-min", "cursor-max", "click-pulse", "drift", "spin"]) {
+      expect(css).toContain(`--motion-dur-${name}:`);
+    }
+  });
 });
