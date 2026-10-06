@@ -1,5 +1,10 @@
 import { AgentTurn, CompactionSummary } from "@mastertutor/contracts";
-import { createOpenAI, zodTextFormat, type ResponseInputItem } from "./openai.ts";
+import {
+  createOpenAI,
+  zodTextFormat,
+  type ResponseInputItem,
+  type StatelessOpenAI,
+} from "./openai.ts";
 import type { TokenUsage } from "./pricing.ts";
 import { agentTools } from "./tools.ts";
 
@@ -28,11 +33,11 @@ const FORMATS = {
   compaction_summary: zodTextFormat(CompactionSummary, "compaction_summary"),
 };
 
-export function createOpenAIModelClient(options: {
-  apiKey: string;
-  baseURL?: string;
-}): ModelClient {
-  const client = createOpenAI(options);
+/** One stateless client per process: pass the shared client; the options form remains for tests. */
+export function createOpenAIModelClient(
+  source: StatelessOpenAI | { apiKey: string; baseURL?: string },
+): ModelClient {
+  const client = "responses" in source ? source : createOpenAI(source);
   return {
     async create(request, signal) {
       const response = await client.responses.create(

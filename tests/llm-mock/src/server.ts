@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { hashEmbedding } from "@mastertutor/contracts/testing";
+import { FORBIDDEN_FIELDS } from "./policy.ts";
 import type { MockOutput, MockRequestBody, RecordedRequest, Scenario } from "./scenario.ts";
 
 export interface LlmMock {
@@ -8,6 +10,8 @@ export interface LlmMock {
   failures: string[];
   setScenarios(list: readonly Scenario[]): void;
   requestsFor(name: string): RecordedRequest[];
+  /** Answers structured Responses calls with json_schema `name` (OCR, filing) with `answer(body)`. */
+  setStructured(name: string, answer: (body: MockRequestBody) => unknown): void;
   close(): Promise<void>;
 }
 
@@ -16,14 +20,6 @@ interface ScenarioState {
   elements: Array<{ ref: string; name: string; point: { x: number; y: number } | null }>;
 }
 
-const FORBIDDEN_FIELDS = [
-  "previous_response_id",
-  "metadata",
-  "user",
-  "safety_identifier",
-  "conversation",
-  "background",
-];
 const TAG = /\[scenario:([a-z0-9_-]+)\]/i;
 
 async function readJson(request: IncomingMessage): Promise<MockRequestBody> {
@@ -255,16 +251,117 @@ export async function startLlmMock(
     return null;
   };
 
+  /** Structured Responses calls (OCR, filing) carry no scenario tag; they route on text.format.name. */
+  const structured = new Map<string, (body: MockRequestBody) => unknown>([
+    ["ocr_text", () => ({ markdown: "" })],
+    ["filing_decision", () => ({ path: ["Inbox"], createLeaf: true })],
+  ]);
+
+  const refuse = (
+    response: ServerResponse,
+    path: string,
+    body: MockRequestBody,
+    problem: string,
+  ) => {
+    requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
+    failures.push(`${path}: ${problem}`);
+    send(response, 400, { error: { message: problem, type: "invalid_request_error" } });
+  };
+
+  const handleEmbeddings = async (request: IncomingMessage, response: ServerResponse) => {
+    const path = "/v1/embeddings";
+    const body = await readJson(request);
+    const field = FORBIDDEN_FIELDS.find((name) => name in body);
+    if (field) return refuse(response, path, body, `${field} must not be sent.`);
+    const input = typeof body.input === "string" ? [body.input] : body.input;
+    if (
+      !Array.isArray(input) ||
+      input.length === 0 ||
+      input.some((text) => typeof text !== "string")
+    )
+      return refuse(response, path, body, "input must be a non-empty string array.");
+    requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
+    send(response, 200, {
+      object: "list",
+      model: body.model ?? "mock",
+      data: (input as string[]).map((text, index) => ({
+        object: "embedding",
+        index,
+        embedding: hashEmbedding(text),
+      })),
+      usage: { prompt_tokens: input.length, total_tokens: input.length },
+    });
+  };
+
+  const handleTranscriptions = async (request: IncomingMessage, response: ServerResponse) => {
+    const path = "/v1/audio/transcriptions";
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    const form = await new Response(Buffer.concat(chunks), {
+      headers: { "content-type": request.headers["content-type"] ?? "" },
+    }).formData();
+    const body: MockRequestBody = {};
+    for (const [key, value] of form.entries())
+      body[key] = typeof value === "string" ? value : `<${value.size} bytes>`;
+    const field = FORBIDDEN_FIELDS.find((name) => name in body);
+    if (field) return refuse(response, path, body, `${field} must not be sent.`);
+    requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
+    send(response, 200, {
+      task: "transcribe",
+      duration: 6,
+      text: "Welcome to the lecture. Today we study photosynthesis.",
+      segments: [
+        {
+          id: "seg_0",
+          type: "transcript.text.segment",
+          start: 0,
+          end: 3,
+          speaker: "A",
+          text: "Welcome to the lecture.",
+        },
+        {
+          id: "seg_1",
+          type: "transcript.text.segment",
+          start: 3,
+          end: 6,
+          speaker: "B",
+          text: "Today we study photosynthesis.",
+        },
+      ],
+    });
+  };
+
   const server = createServer((request, response) => {
     void (async () => {
       if (request.method === "GET" && request.url === "/__mock/requests")
         return send(response, 200, requests);
       const path = request.url ?? "";
+      if (request.method === "POST" && path === "/v1/embeddings")
+        return handleEmbeddings(request, response);
+      if (request.method === "POST" && path === "/v1/audio/transcriptions")
+        return handleTranscriptions(request, response);
       if (request.method !== "POST" || path !== "/v1/responses") {
         requests.push({ scenario: null, turn: null, body: {}, at: Date.now(), path });
         return send(response, 404, { error: { message: "not found" } });
       }
       const body = await readJson(request);
+      const format = body.text?.format?.name;
+      const answer = format ? structured.get(format) : undefined;
+      if (answer) {
+        const policy = policyProblem(body);
+        if (policy) return refuse(response, path, body, policy);
+        requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
+        return respond(response, body, null, [
+          {
+            type: "message",
+            id: nextId("msg"),
+            role: "assistant",
+            status: "completed",
+            content: [{ type: "output_text", annotations: [], text: JSON.stringify(answer(body)) }],
+          },
+        ]);
+      }
+
       // Routing: the [scenario:x] tag of the goal (first user message) or of a compaction seed.
       const name = TAG.exec(JSON.stringify(body.input ?? ""))?.[1] ?? null;
       const scenario = name ? scenarios.get(name) : undefined;
@@ -367,6 +464,7 @@ export async function startLlmMock(
     failures,
     setScenarios,
     requestsFor: (name) => requests.filter((entry) => entry.scenario === name),
+    setStructured: (name, answer) => void structured.set(name, answer),
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

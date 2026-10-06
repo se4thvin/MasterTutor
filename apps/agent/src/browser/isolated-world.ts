@@ -5,6 +5,13 @@ export type PageFunction<A, R> = (arg: A, h: PageHelpers) => R | Promise<R>;
 
 const WORLD_NAME = "mastertutor";
 
+export interface WorldOptions {
+  /** The CDP world name. Owners keep separate worlds (the vault's, capture's library globals). */
+  name?: string;
+  /** Source run once in every new execution context of this world, before its first use. */
+  prelude?: () => Promise<string>;
+}
+
 export class PageScriptError extends Error {
   constructor(message: string) {
     super(`page script failed: ${message}`);
@@ -31,13 +38,15 @@ function isStaleContext(error: unknown): boolean {
 export class IsolatedWorlds {
   readonly #cdp: CDPSession;
   readonly #worldName: string;
+  readonly #prelude: (() => Promise<string>) | null;
   readonly #contexts = new Map<string, { id: number; document: string | undefined }>();
   #mainFrameId: string | null = null;
 
-  /** `worldName` separates owners: the vault keeps its own world apart from B1's page helpers. */
-  constructor(cdp: CDPSession, worldName: string = WORLD_NAME) {
+  /** `name` separates owners: the vault keeps its own world apart from B1's page helpers. */
+  constructor(cdp: CDPSession, options: WorldOptions = {}) {
     this.#cdp = cdp;
-    this.#worldName = worldName;
+    this.#worldName = options.name ?? WORLD_NAME;
+    this.#prelude = options.prelude ?? null;
   }
 
   /** The CDP session these worlds live on (for DOM.describeNode / DOM.getBoxModel on handles). */
@@ -67,6 +76,18 @@ export class IsolatedWorlds {
       worldName: this.#worldName,
       grantUniveralAccess: false,
     });
+    if (this.#prelude) {
+      const result = await this.#cdp.send("Runtime.evaluate", {
+        expression: await this.#prelude(),
+        contextId: executionContextId,
+        returnByValue: true,
+      });
+      if (result.exceptionDetails) {
+        throw new PageScriptError(
+          result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+        );
+      }
+    }
     this.#contexts.set(frameId, { id: executionContextId, document });
     return executionContextId;
   }
@@ -95,6 +116,35 @@ export class IsolatedWorlds {
     document?: string,
   ): Promise<T> {
     return this.#withContext(frameId, work, document);
+  }
+
+  /** `inContext` for the main frame by default: CDP work that needs this world's context id. */
+  inWorld<T>(work: (contextId: number) => Promise<T>, frameId?: string): Promise<T> {
+    return this.#withContext(frameId, work);
+  }
+
+  /** Calls a self-contained page function with JSON arguments; no helper prelude is injected. */
+  async call<A extends unknown[], R>(
+    fn: (...args: A) => R,
+    args: A,
+    frameId?: string,
+  ): Promise<Awaited<R>> {
+    const value = await this.#withContext(frameId, async (contextId): Promise<unknown> => {
+      const result = await this.#cdp.send("Runtime.callFunctionOn", {
+        functionDeclaration: fn.toString(),
+        executionContextId: contextId,
+        arguments: args.map((value) => ({ value })),
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      if (result.exceptionDetails) {
+        throw new PageScriptError(
+          result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+        );
+      }
+      return result.result.value;
+    });
+    return value as Awaited<R>;
   }
 
   async evaluate<A, R>(fn: PageFunction<A, R>, arg: A, frameId?: string): Promise<R> {

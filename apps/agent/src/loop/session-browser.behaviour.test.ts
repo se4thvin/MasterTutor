@@ -22,6 +22,7 @@ import { withHooks, type RunHooks } from "./hooks.ts";
 import type { AttachedBrowser } from "./loop-browser.ts";
 import type { RunSnapshot } from "./run-state.ts";
 import { slotBrowserConnector } from "./session-browser.ts";
+import { StepCollector } from "./step-collector.ts";
 
 const log = createLogger({ service: "test", level: "silent" });
 const signal = new AbortController().signal;
@@ -83,6 +84,7 @@ describe("SessionLoopBrowser", () => {
       { mode: "interactive", sinceHash: null },
       signal,
       null,
+      new StepCollector(),
     );
     expect(output.startsWith('<untrusted_page_content origin="http://site.fixtures.test">')).toBe(
       true,
@@ -103,6 +105,7 @@ describe("SessionLoopBrowser", () => {
           { scope: "page", selector: null, kind: null },
           signal,
           null,
+          new StepCollector(),
         )
       ).output,
     ).toBe('{"error":"tool_unavailable"}');
@@ -295,6 +298,7 @@ describe("SessionLoopBrowser", () => {
       { mode: "interactive", sinceHash: null },
       signal,
       null,
+      new StepCollector(),
     );
     const json = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1)) as {
       elements: Array<{ name: string; point: { x: number; y: number } | null }>;
@@ -487,6 +491,7 @@ describe("SessionLoopBrowser", () => {
       { mode: "text", sinceHash: null },
       signal,
       null,
+      new StepCollector(),
     );
     expect(output).not.toContain("Alice");
     expect(output).toContain(SECRET_REDACTION);
