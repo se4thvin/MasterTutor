@@ -1,12 +1,11 @@
 import { encodeNotify } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
-import { createDb, runEvents, type DbHandle } from "@mastertutor/db";
+import { createDb, emitRunEvent, runEvents, type DbHandle } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { waitFor } from "../testing/wait.ts";
-import { emitRunEvent } from "./emit.ts";
 import { listenForAgentNotifications } from "./listen.ts";
 
 let database: TestDatabase;

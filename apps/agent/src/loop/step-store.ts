@@ -13,11 +13,10 @@ import {
   type Usage,
   type WaitReason,
 } from "@mastertutor/contracts";
-import { runSteps, runTranscript, runs, type Database } from "@mastertutor/db";
+import { emitRunEvents, runSteps, runTranscript, runs, type Database } from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
 import { and, eq, gt, inArray, max, sql } from "drizzle-orm";
 import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
-import { emitRunEvents } from "../events/emit.ts";
 import { LeaseLost, RunChanged } from "../runtime/errors.ts";
 import type { Tx } from "../runtime/types.ts";
 import { externalizeImages, inJsonbOrder, type TranscriptEntry } from "./transcript.ts";
