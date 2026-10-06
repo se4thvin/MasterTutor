@@ -14,3 +14,4 @@ export * from "./asset-uri.ts";
 export * from "./env.ts";
 export * from "./api/dto.ts";
 export * from "./api/contract.ts";
+export * from "./vault.ts";

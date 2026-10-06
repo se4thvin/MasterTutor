@@ -123,3 +123,20 @@ export function parseEnv<S extends z.ZodType>(
   }
   return result.data;
 }
+
+/**
+ * vault:rotate CLI (agent image only; never set on a running service). Re-seals every vault row
+ * from VAULT_PRIVATE_KEY's pair to VAULT_NEXT_PRIVATE_KEY's pair (spec §9 key rotation).
+ */
+export const VaultRotateEnv = z
+  .object({
+    ...Common,
+    DATABASE_URL: PostgresUrl,
+    VAULT_PRIVATE_KEY: Base64Key32,
+    VAULT_NEXT_PRIVATE_KEY: Base64Key32,
+  })
+  .refine((env) => env.VAULT_PRIVATE_KEY !== env.VAULT_NEXT_PRIVATE_KEY, {
+    path: ["VAULT_NEXT_PRIVATE_KEY"],
+    message: "must differ from VAULT_PRIVATE_KEY",
+  });
+export type VaultRotateEnv = z.infer<typeof VaultRotateEnv>;

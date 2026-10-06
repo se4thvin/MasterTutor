@@ -20,6 +20,7 @@ import {
 } from "../enums.ts";
 import { StepAction } from "../events.ts";
 import { NoteBlock } from "../note.ts";
+import { secretValueProblem } from "../vault.ts";
 import {
   Alias,
   FolderName,
@@ -255,21 +256,40 @@ export const VaultItemView = z.object({
 export type VaultItemView = z.infer<typeof VaultItemView>;
 
 const SecretValue = z.string().min(1).max(4_096);
-export const CreateVaultItemInput = z.object({
-  alias: Alias,
-  origin: OriginInput,
-  label: z.string().trim().min(1).max(120),
-  secrets: z.partialRecord(TypedSecretField, SecretValue),
-  imap: ImapConfig.nullable().default(null),
-});
+export const CreateVaultItemInput = z
+  .object({
+    alias: Alias,
+    origin: OriginInput,
+    label: z.string().trim().min(1).max(120),
+    secrets: z.partialRecord(TypedSecretField, SecretValue),
+    imap: ImapConfig.nullable().default(null),
+  })
+  .superRefine((input, ctx) => {
+    for (const field of TypedSecretField.options) {
+      const value = input.secrets[field];
+      const problem = value === undefined ? null : secretValueProblem(field, value);
+      if (problem) ctx.addIssue({ code: "custom", path: ["secrets", field], message: problem });
+    }
+    if (input.secrets.imap_password !== undefined && input.imap === null)
+      ctx.addIssue({
+        code: "custom",
+        path: ["imap"],
+        message: "An email-code password needs mail settings.",
+      });
+  });
 export type CreateVaultItemInput = z.infer<typeof CreateVaultItemInput>;
 export const VaultItemRef = z.object({ itemId: Uuid });
 export type VaultItemRef = z.infer<typeof VaultItemRef>;
-export const SetSecretInput = z.object({
-  itemId: Uuid,
-  field: TypedSecretField,
-  value: SecretValue,
-});
+export const SetSecretInput = z
+  .object({
+    itemId: Uuid,
+    field: TypedSecretField,
+    value: SecretValue,
+  })
+  .superRefine((input, ctx) => {
+    const problem = secretValueProblem(input.field, input.value);
+    if (problem) ctx.addIssue({ code: "custom", path: ["value"], message: problem });
+  });
 export type SetSecretInput = z.infer<typeof SetSecretInput>;
 export const RemoveSecretInput = z.object({ itemId: Uuid, field: VaultSecretField });
 export type RemoveSecretInput = z.infer<typeof RemoveSecretInput>;

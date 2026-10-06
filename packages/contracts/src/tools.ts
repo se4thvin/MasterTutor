@@ -143,6 +143,7 @@ export const CREDENTIAL_ERROR_CODES = [
   "field_type_mismatch",
   "approval_required",
   "otp_unavailable",
+  "field_not_stored",
   "fill_failed",
 ] as const;
 export const CredentialErrorCode = z.enum(CREDENTIAL_ERROR_CODES);
@@ -159,6 +160,7 @@ export type FillCredentialResult = z.infer<typeof FillCredentialResult>;
 export const PASSKEY_ERROR_CODES = [
   "unknown_alias",
   "origin_mismatch",
+  "approval_required",
   "no_passkey",
   "ceremony_failed",
 ] as const;

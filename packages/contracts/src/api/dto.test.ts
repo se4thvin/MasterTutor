@@ -5,6 +5,7 @@ import {
   CreateVaultItemInput,
   GradeBenchmarkRunInput,
   ListNotesInput,
+  SetSecretInput,
   SubmitOtpInput,
   UsageInput,
 } from "./dto.ts";
@@ -72,5 +73,39 @@ describe("other inputs", () => {
   });
   it("orders usage ranges", () => {
     expect(UsageInput.safeParse({ from: "2026-10-05", to: "2026-10-01" }).success).toBe(false);
+  });
+});
+
+describe("vault secret validation in the DTOs (E3, E4)", () => {
+  const item = { alias: "site", origin: "https://a.com", label: "A" };
+  it("keeps an otpauth link whole, so digits, period and algorithm survive", () => {
+    const link =
+      "otpauth://totp/ACME:me?secret=JBSWY3DPEHPK3PXP&digits=8&period=60&algorithm=SHA256";
+    expect(CreateVaultItemInput.parse({ ...item, secrets: { totp: link } }).secrets.totp).toBe(
+      link,
+    );
+  });
+  it("rejects a bad key and a bad PIN by path, without echoing either", () => {
+    const bad = CreateVaultItemInput.safeParse({
+      ...item,
+      secrets: { totp: "nope-key-value", pin: "12a" },
+    });
+    expect(bad.success).toBe(false);
+    expect(bad.error?.issues.map((issue) => issue.path.join(".")).sort()).toEqual([
+      "secrets.pin",
+      "secrets.totp",
+    ]);
+    expect(JSON.stringify(bad.error?.issues)).not.toContain("nope-key-value");
+  });
+  it("needs mail settings for an email-code password", () => {
+    expect(
+      CreateVaultItemInput.safeParse({ ...item, secrets: { imap_password: "x" } }).success,
+    ).toBe(false);
+  });
+  it("validates a replaced secret the same way", () => {
+    const itemId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+    expect(SetSecretInput.safeParse({ itemId, field: "pin", value: "1234" }).success).toBe(true);
+    expect(SetSecretInput.safeParse({ itemId, field: "pin", value: "12" }).success).toBe(false);
+    expect(SetSecretInput.safeParse({ itemId, field: "totp", value: "bad" }).success).toBe(false);
   });
 });
