@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { AgentEnv, EnvError, GarageInitEnv, MigrateEnv, WebEnv, parseEnv } from "./env.ts";
+import {
+  AgentEnv,
+  EnvError,
+  GarageInitEnv,
+  MigrateEnv,
+  VaultRotateEnv,
+  WebEnv,
+  parseEnv,
+} from "./env.ts";
 
 const agentSource = {
   DATABASE_URL: "postgres://agent_role:pw@postgres:5432/mastertutor",
@@ -96,5 +104,28 @@ describe("least privilege per service (spec §13)", () => {
       ].sort(),
     );
     expect(keys(GarageInitEnv)).not.toContain("DATABASE_URL");
+  });
+});
+
+describe("VaultRotateEnv", () => {
+  const source = {
+    DATABASE_URL: "postgres://agent:x@postgres:5432/mastertutor",
+    VAULT_PRIVATE_KEY: "kCNZsvnP2oSO4FaU/yZoEi4TCPUK/EKw1zn4wI/5s1c=",
+    VAULT_NEXT_PRIVATE_KEY: "y5DgMx35MF/R/d3MSLtIufXczYHJAqVtEIEMLY/Qf3M=",
+  };
+  it("parses the current and next private keys", () => {
+    expect(parseEnv(VaultRotateEnv, source).VAULT_NEXT_PRIVATE_KEY).toBe(
+      source.VAULT_NEXT_PRIVATE_KEY,
+    );
+  });
+  it("refuses a no-op rotation without echoing the key", () => {
+    try {
+      parseEnv(VaultRotateEnv, { ...source, VAULT_NEXT_PRIVATE_KEY: source.VAULT_PRIVATE_KEY });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(EnvError);
+      expect(String((error as EnvError).problems)).not.toContain(source.VAULT_PRIVATE_KEY);
+      expect((error as EnvError).problems.join(" ")).toContain("VAULT_NEXT_PRIVATE_KEY");
+    }
   });
 });

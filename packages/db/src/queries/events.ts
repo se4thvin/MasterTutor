@@ -1,13 +1,14 @@
 import { RunEvent, encodeNotify } from "@mastertutor/contracts";
-import { runEvents } from "@mastertutor/db";
 import { sql } from "drizzle-orm";
-import type { Tx } from "../runtime/types.ts";
+import type { DbTx } from "../client.ts";
+import { runEvents } from "../schema/index.ts";
 
 /**
  * Appends one RunEvent and NOTIFYs run_event {runId, eventId} (spec §6). Inside a transaction the
  * notification is delivered on commit only, so the SSE route never sees an uncommitted event.
+ * The single implementation for agent and web (principle 6).
  */
-export async function emitRunEvent(tx: Tx, runId: string, event: RunEvent): Promise<string> {
+export async function emitRunEvent(tx: DbTx, runId: string, event: RunEvent): Promise<string> {
   const payload = RunEvent.parse(event);
   const [row] = await tx
     .insert(runEvents)
@@ -22,7 +23,7 @@ export async function emitRunEvent(tx: Tx, runId: string, event: RunEvent): Prom
 }
 
 export async function emitRunEvents(
-  tx: Tx,
+  tx: DbTx,
   runId: string,
   events: readonly RunEvent[],
 ): Promise<string[]> {

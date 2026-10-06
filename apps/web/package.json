@@ -17,6 +17,7 @@
     "@base-ui/react": "1.8.0",
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
+    "@mastertutor/sealing": "workspace:*",
     "@orpc/client": "1.15.4",
     "@orpc/contract": "1.15.4",
     "@orpc/server": "1.15.4",

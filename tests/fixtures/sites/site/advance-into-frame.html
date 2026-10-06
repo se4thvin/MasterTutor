@@ -32,10 +32,27 @@
     ></iframe>
     <script>
       // ?into=pw|note: after 4 characters, a page script moves focus into the frame mid-typing.
-      const into = new URLSearchParams(location.search).get("into") ?? "pw";
+      // ?into=new: it creates a new frame with a password field and focuses that instead.
+      // ?frames=N: N tiny frames come first (many documents to arm).
+      const params = new URLSearchParams(location.search);
+      const into = params.get("into") ?? "pw";
+      for (let i = 0; i < Number(params.get("frames") ?? 0); i++) {
+        const tiny = document.createElement("iframe");
+        tiny.srcdoc = "x";
+        tiny.style.cssText = "position: static; width: 4px; height: 4px";
+        document.body.append(tiny);
+      }
       document.getElementById("code").addEventListener("input", (event) => {
-        if (event.target.value.length >= 4)
+        if (event.target.value.length !== 4) return;
+        if (into !== "new") {
           document.querySelector("iframe").contentDocument.getElementById(into).focus();
+          return;
+        }
+        const frame = document.createElement("iframe");
+        document.body.append(frame);
+        frame.contentDocument.body.innerHTML = '<input id="pw" type="password">';
+        frame.contentDocument.getElementById("pw").focus();
+        window.__leaked = () => frame.contentDocument.getElementById("pw").value;
       });
     </script>
   </body>

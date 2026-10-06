@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Article with embeds</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      iframe {
+        display: block;
+        width: 220px;
+        height: 160px;
+        border: 0;
+        margin-top: 400px;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="more" style="width: 160px; height: 40px">Load embed</button>
+    <output id="count">0</output>
+    <!-- Cross-site embeds that load only when scrolled near (out of process). -->
+    <iframe
+      loading="lazy"
+      title="Embed 1"
+      src="http://other.fixtures-isolated.test/widget.html"
+    ></iframe>
+    <iframe
+      loading="lazy"
+      title="Embed 2"
+      src="http://other.fixtures-isolated.test/widget.html"
+    ></iframe>
+    <iframe loading="lazy" title="Embed 3" src="http://ads.fixtures-hung.test/widget.html"></iframe>
+    <script>
+      // A click that adds a cross-site embed while the click is still being guarded.
+      document.getElementById("more").addEventListener("click", () => {
+        const count = document.getElementById("count");
+        count.textContent = String(Number(count.textContent) + 1);
+        const embed = document.createElement("iframe");
+        embed.id = "added";
+        embed.title = "Added embed";
+        embed.src = "http://other.fixtures-isolated.test/widget.html";
+        document.body.prepend(embed);
+        embed.style.marginTop = "0";
+      });
+    </script>
+  </body>
+</html>

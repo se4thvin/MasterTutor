@@ -20,13 +20,23 @@ export const TERMINAL_RUN_STATUSES = [
 export const WAIT_REASONS = ["approval", "takeover", "captcha", "otp"] as const;
 export const WaitReason = z.enum(WAIT_REASONS);
 export type WaitReason = z.infer<typeof WaitReason>;
+/**
+ * Waits a takeover leaves on the run row (B3 M7/F1): the person may type the code or solve the
+ * CAPTCHA themselves, and hand-back re-observes. Shared by the web's takeover write and the agent.
+ */
+export const WAITS_KEPT_THROUGH_TAKEOVER: readonly WaitReason[] = ["otp", "captcha"];
 
 export const CONTROLLERS = ["agent", "user"] as const;
 export const Controller = z.enum(CONTROLLERS);
 export type Controller = z.infer<typeof Controller>;
 
-/** Benchmark mode: auto still records every decision (decided_by='policy') and still blocks new origins. */
-export const APPROVAL_MODES = ["ask", "auto_within_allowlist"] as const;
+/**
+ * ask: a person decides. auto_within_allowlist (benchmark): the policy decides, records every
+ * decision (decided_by='policy') and still blocks new origins and downloads. bypass (D44, explicit
+ * per-run opt-in): the policy approves every action approval (decided_by='bypass'); the hard
+ * invariants still hold (see BYPASS_DECISIONS).
+ */
+export const APPROVAL_MODES = ["ask", "auto_within_allowlist", "bypass"] as const;
 export const ApprovalMode = z.enum(APPROVAL_MODES);
 export type ApprovalMode = z.infer<typeof ApprovalMode>;
 

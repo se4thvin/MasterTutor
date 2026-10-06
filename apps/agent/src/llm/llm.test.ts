@@ -13,7 +13,7 @@ import {
 } from "./client.ts";
 import { goalText } from "./instructions.ts";
 import { callSignature, describeCall, parseModelOutput } from "./items.ts";
-import { addUsage, costUsd, usageDelta } from "./pricing.ts";
+import { MODEL_PRICES, addUsage, costUsd, usageDelta } from "./pricing.ts";
 
 const request: ModelRequest = {
   model: MODELS.agentPrimary,
@@ -25,7 +25,7 @@ const reply: ModelReply = {
   id: "resp_1",
   model: MODELS.agentPrimary,
   output: [],
-  usage: { input: 10, cached: 0, output: 1 },
+  usage: { input: 10, cached: 0, cacheWrite: 0, output: 1 },
 };
 const apiError = (status: number, code?: string) =>
   APIError.generate(status, { error: { message: "x", code } }, "x", new Headers());
@@ -49,21 +49,48 @@ const caller = (client: ModelClient) =>
 
 describe("pricing", () => {
   it("prices gpt-6-astra and doubles input above 272K", () => {
-    expect(costUsd(MODELS.agentPrimary, { input: 1_000_000, cached: 0, output: 0 })).toBeCloseTo(
-      20,
+    const at = (input: number, cached: number, output: number) =>
+      costUsd(MODELS.agentPrimary, { input, cached, cacheWrite: 0, output });
+    expect(at(1_000_000, 0, 0)).toBeCloseTo(20);
+    expect(at(100_000, 100_000, 10_000)).toBeCloseTo(0.6);
+    expect(at(300_000, 0, 0)).toBeCloseTo(6);
+    expect(
+      addUsage(
+        EMPTY_USAGE,
+        usageDelta(MODELS.agentPrimary, { input: 10, cached: 2, cacheWrite: 0, output: 3 }),
+      ),
+    ).toMatchObject({ steps: 1, inputTokens: 10, cachedInputTokens: 2, outputTokens: 3 });
+  });
+
+  it("prices cache-write tokens at the cache-write rate, never below the input rate (run 30)", () => {
+    const price = MODEL_PRICES[MODELS.agentPrimary]!;
+    expect(price.cacheWritePerM).toBeGreaterThanOrEqual(price.inputPerM);
+    const tokens = { input: 100_000, cached: 20_000, cacheWrite: 30_000, output: 0 };
+    expect(costUsd(MODELS.agentPrimary, tokens)).toBeCloseTo(
+      (50_000 * price.inputPerM + 20_000 * price.cachedPerM + 30_000 * price.cacheWritePerM) / 1e6,
     );
+  });
+});
+
+describe("describeCall pointer (run view A1)", () => {
+  const computerCall = (action: Record<string, unknown>) =>
+    parseModelOutput([
+      {
+        type: "computer_call",
+        id: "cu_1",
+        call_id: "call_1",
+        status: "completed",
+        actions: [action],
+        pending_safety_checks: [],
+      },
+    ]).calls[0]!;
+  it("sets the pointer kind for pointer actions and nothing for keys", () => {
     expect(
-      costUsd(MODELS.agentPrimary, { input: 100_000, cached: 100_000, output: 10_000 }),
-    ).toBeCloseTo(0.6);
-    expect(costUsd(MODELS.agentPrimary, { input: 300_000, cached: 0, output: 0 })).toBeCloseTo(6);
-    expect(
-      addUsage(EMPTY_USAGE, usageDelta(MODELS.agentPrimary, { input: 10, cached: 2, output: 3 })),
-    ).toMatchObject({
-      steps: 1,
-      inputTokens: 10,
-      cachedInputTokens: 2,
-      outputTokens: 3,
-    });
+      describeCall(computerCall({ type: "click", x: 10, y: 20, button: "left" }), 1),
+    ).toMatchObject({ tool: "computer", point: { x: 10, y: 20 }, pointer: "click" });
+    expect(describeCall(computerCall({ type: "keypress", keys: ["ENTER"] }), 1)).not.toHaveProperty(
+      "pointer",
+    );
   });
 });
 
@@ -133,6 +160,7 @@ describe("parseModelOutput", () => {
       tool: "computer",
       summary: "click (5, 6) (+1 more)",
       point: { x: 10, y: 12 },
+      pointer: "click",
     });
     const same = parseModelOutput([
       {
@@ -270,6 +298,31 @@ describe("OpenAI client against llm-mock", () => {
     });
     for (const field of ["previous_response_id", "metadata", "user", "safety_identifier"])
       expect(body).not.toHaveProperty(field);
+  });
+
+  it("reads cache_write_tokens into the reply usage (run 30)", async () => {
+    mock = await startLlmMock({
+      scenarios: [
+        {
+          name: "cache",
+          turns: [
+            {
+              outputs: [{ type: "turn", status: "done", reason: "ok" }],
+              usage: { input: 2_000, cached: 500, cacheWrite: 700, output: 10 },
+            },
+          ],
+        },
+      ],
+    });
+    const client = createOpenAIModelClient({ apiKey: "test-key", baseURL: `${mock.url}/v1` });
+    const result = await client.create(
+      {
+        ...request,
+        input: [{ role: "user", content: [{ type: "input_text", text: "[scenario:cache] go" }] }],
+      },
+      signal(),
+    );
+    expect(result.usage).toEqual({ input: 2_000, cached: 500, cacheWrite: 700, output: 10 });
   });
 });
 

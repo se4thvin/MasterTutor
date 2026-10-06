@@ -129,7 +129,10 @@ describe("StepStore.commit (spec §5.3)", () => {
       store.commit({
         steps: [{ seq: store.nextSeq(), phase: "act", state: "done" }],
         run: { currentUrl: "http://rolled.back/" },
-        storage: { cookies: [], origins: [] },
+        storage: {
+          state: { cookies: [], origins: [] },
+          page: { origin: "http://rolled.back", passwordFieldVisible: false },
+        },
       }),
     ).rejects.toThrow("seal failed");
     expect(saved).toEqual(["x"]);

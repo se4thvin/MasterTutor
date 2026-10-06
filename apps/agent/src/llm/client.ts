@@ -57,6 +57,7 @@ export function createOpenAIModelClient(options: {
         usage: {
           input: response.usage?.input_tokens ?? 0,
           cached: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+          cacheWrite: response.usage?.input_tokens_details?.cache_write_tokens ?? 0,
           output: response.usage?.output_tokens ?? 0,
         },
       };

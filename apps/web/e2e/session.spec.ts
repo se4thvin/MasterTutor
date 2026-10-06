@@ -114,10 +114,26 @@ test.describe("signed out", () => {
     await expect(page).toHaveURL(/localhost:3100\/library$/);
   });
 
-  test("the API refuses a signed-out caller with a typed UNAUTHORIZED error", async ({ page }) => {
-    const res = await page.request.post("/api/rpc/settings/get", { data: { json: {} } });
+  test("the API refuses a signed-out caller with a typed UNAUTHORIZED error", async ({
+    page,
+    baseURL,
+  }) => {
+    const res = await page.request.post("/api/rpc/settings/get", {
+      data: { json: {} },
+      headers: { origin: new URL(baseURL!).origin },
+    });
     expect(res.status()).toBe(401);
     expect(JSON.stringify(await res.json())).toContain("UNAUTHORIZED");
+  });
+
+  test("the API refuses a write that is not from our own pages: no Origin, or another one (E2)", async ({
+    page,
+  }) => {
+    const cases: Array<Record<string, string>> = [{}, { origin: "https://evil.example" }];
+    for (const headers of cases) {
+      const res = await page.request.post("/api/rpc/settings/get", { data: { json: {} }, headers });
+      expect(res.status()).toBe(403);
+    }
   });
 });
 

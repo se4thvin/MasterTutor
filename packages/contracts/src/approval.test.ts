@@ -5,6 +5,8 @@ import {
   AUTO_MODE_DECISIONS,
   decideByPolicy,
   decideSafetyChecks,
+  isPersonDecider,
+  policyDecider,
   isRiskyLabel,
 } from "./approval.ts";
 import { APPROVAL_KINDS, type ApprovalKind } from "./enums.ts";
@@ -76,6 +78,35 @@ describe("decideByPolicy", () => {
   });
 });
 
+describe("bypass mode (D44)", () => {
+  it("approves every action approval, records it as bypass, and still asks at a budget hit", () => {
+    for (const kind of APPROVAL_KINDS)
+      expect(decideByPolicy("bypass", kind)).toBe(kind === "budget" ? "ask" : "approved");
+    expect(policyDecider("bypass")).toBe("bypass");
+    expect(policyDecider("auto_within_allowlist")).toBe("policy");
+  });
+  it("is never a person's decision", () => {
+    expect(isPersonDecider("bypass")).toBe(false);
+    expect(isPersonDecider("policy")).toBe(false);
+    expect(isPersonDecider(null)).toBe(false);
+    expect(isPersonDecider("6f2c8a3e-0000-4000-8000-000000000000")).toBe(true);
+  });
+  it("clears domain checks on any origin, never a prompt-injection, unknown or empty check", () => {
+    const checks = (...codes: Array<string | null>) => codes.map((code) => ({ code }));
+    expect(
+      decideSafetyChecks("bypass", checks("irrelevant_domain", "sensitive_domain"), false),
+    ).toBe("approved");
+    for (const list of [
+      checks("malicious_instructions"),
+      checks("irrelevant_domain", "malicious_instructions"),
+      checks("something_new"),
+      checks(null),
+      [],
+    ])
+      expect(decideSafetyChecks("bypass", list, true)).toBe("ask");
+  });
+});
+
 describe("decideSafetyChecks", () => {
   const checks = (...codes: Array<string | null>) => codes.map((code) => ({ code }));
   it("always asks in ask mode", () => {
@@ -129,5 +160,39 @@ describe("ApprovalDecisionInput", () => {
     expect(
       ApprovalDecisionInput.parse({ approvalId, decision: "approved" }).budgetChoice,
     ).toBeNull();
+  });
+});
+
+describe("approval request display fields (run view A2, A3a)", () => {
+  const click = { type: "click", x: 1, y: 2, button: "left" } as const;
+  const risky = {
+    kind: "risky_click",
+    action: click,
+    label: "Delete",
+    url: "https://a.com/",
+    screenshotKey: null,
+  } as const;
+  it("carries an optional record excerpt on risky clicks, capped at 240 characters", () => {
+    expect(ApprovalRequest.parse({ ...risky, context: "Alice" })).toMatchObject({
+      context: "Alice",
+    });
+    expect(ApprovalRequest.parse(risky)).not.toHaveProperty("context");
+    expect(ApprovalRequest.safeParse({ ...risky, context: "x".repeat(241) }).success).toBe(false);
+  });
+  it("lets a form submit name the action that triggers it, and keeps old rows valid", () => {
+    const form = {
+      kind: "form_submit",
+      url: "https://a.com/",
+      formSummary: "Press Enter in a form",
+      screenshotKey: null,
+    } as const;
+    expect(
+      ApprovalRequest.parse({
+        ...form,
+        action: { type: "keypress", keys: ["ENTER"] },
+        context: null,
+      }),
+    ).toMatchObject({ action: { type: "keypress" }, context: null });
+    expect(ApprovalRequest.safeParse(form).success).toBe(true);
   });
 });

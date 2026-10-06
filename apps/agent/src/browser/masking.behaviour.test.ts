@@ -3,7 +3,7 @@ import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import { SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts";
 import { ControlHeld } from "../runtime/errors.ts";
-import { NO_MASK_SOURCES, type MaskSources } from "./masking.ts";
+import { NO_MASK_SOURCES, SECRET_REDACTION, type MaskSources } from "./masking.ts";
 import { captureModelScreenshot } from "./screenshot.ts";
 import { BrowserSession } from "./session.ts";
 
@@ -108,12 +108,14 @@ describe("model screenshots (spec §9, §12 masking tests)", () => {
     expect(await centerIsBlack(shot.png, box, shot.scale)).toBe(true);
   });
 
+  const secrets = (values: string[]): MaskSources => ({
+    nodeIds: () => [],
+    hasSecrets: () => values.length > 0,
+    redact: (text) => values.reduce((out, value) => out.split(value).join(SECRET_REDACTION), text),
+  });
+
   it("drops the frame when a registered secret value is visible in the page, in any frame", async () => {
     const s = await open("/masking-reveal.html");
-    const secrets = (values: string[]): MaskSources => ({
-      nodeIds: () => [],
-      secretValues: () => values,
-    });
     expect((await captureModelScreenshot(s, secrets(["s3cret-memo"]), signal)).dropped).toBe(true);
     expect((await captureModelScreenshot(s, secrets(["inner-secret"]), signal)).dropped).toBe(true);
     expect((await captureModelScreenshot(s, secrets(["not-on-the-page"]), signal)).dropped).toBe(
@@ -121,12 +123,17 @@ describe("model screenshots (spec §9, §12 masking tests)", () => {
     );
   });
 
-  it("masks an element registered by node id", async () => {
-    const s = await open("/masking.html");
+  async function plainNode(s: BrowserSession): Promise<number> {
     const worlds = await s.worlds();
     const objectId = await worlds.evaluateHandle("document.getElementById('plain')");
     const { node } = await (await s.cdp()).send("DOM.describeNode", { objectId: objectId! });
-    const registered: MaskSources = { nodeIds: () => [node.backendNodeId], secretValues: () => [] };
+    return node.backendNodeId;
+  }
+
+  it("masks an element registered by node id", async () => {
+    const s = await open("/masking.html");
+    const id = await plainNode(s);
+    const registered: MaskSources = { ...secrets([]), nodeIds: () => [id] };
     const shot = await captureModelScreenshot(s, registered, signal);
     expect(shot.dropped).toBe(false);
     expect(shot.masked).toBe(10);
@@ -137,15 +144,77 @@ describe("model screenshots (spec §9, §12 masking tests)", () => {
     expect(await centerIsBlack(shot.png, box, shot.scale)).toBe(true);
   });
 
-  it("drops the frame when a cross-origin iframe is present and secrets are registered", async () => {
+  it("stays sighted after the filled page navigates: the node's document is gone (F8)", async () => {
+    const s = await open("/masking.html");
+    const id = await plainNode(s);
+    const registered: MaskSources = { ...secrets([]), nodeIds: () => [id] };
+    await s.goto(`${SITE}/page2.html`, signal);
+    expect((await captureModelScreenshot(s, registered, signal)).dropped).toBe(false);
+  });
+
+  it("drops for a cross-origin iframe only while filled nodes are registered (R-E5)", async () => {
     const s = await open("/masking-xorigin.html");
     await s.page.waitForSelector("iframe");
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect((await captureModelScreenshot(s, NO_MASK_SOURCES, signal)).dropped).toBe(false);
-    const registered: MaskSources = {
-      nodeIds: () => [],
-      secretValues: () => ["some-secret-value"],
+    expect((await captureModelScreenshot(s, secrets(["some-secret-value"]), signal)).dropped).toBe(
+      false,
+    );
+    const id = await plainNode(s);
+    const filled: MaskSources = { ...secrets([]), nodeIds: () => [id] };
+    expect((await captureModelScreenshot(s, filled, signal)).dropped).toBe(true);
+  });
+
+  async function openOopif(): Promise<BrowserSession> {
+    const s = await open("/masking-oopif.html");
+    await expect
+      .poll(() => s.page.frames().some((frame) => frame.url().endsWith("/echo.html")))
+      .toBe(true);
+    const frame = s.page.frames().find((candidate) => candidate.url().endsWith("/echo.html"))!;
+    await frame.waitForSelector("#echo");
+    return s;
+  }
+
+  it("reads an out-of-process frame's tree: delivered when clean, dropped when it echoes a secret (R-E5)", async () => {
+    const s = await openOopif();
+    expect((await captureModelScreenshot(s, secrets(["absent-value-9"]), signal)).dropped).toBe(
+      false,
+    );
+    expect((await captureModelScreenshot(s, secrets(["oopif-secret-42"]), signal)).dropped).toBe(
+      true,
+    );
+  });
+
+  it("an unrelated cross-site frame does not drop a page with filled fields, which stay masked (I1)", async () => {
+    const s = await openOopif();
+    const id = await plainNode(s);
+    const pageCdp = await s.cdp();
+    const filled: MaskSources = { ...secrets([]), nodeIds: (cdp) => (cdp === pageCdp ? [id] : []) };
+    const shot = await captureModelScreenshot(s, filled, signal);
+    expect(shot.dropped).toBe(false);
+    expect(shot.masked).toBe(1);
+    const box = await s.page.evaluate(() => {
+      const r = document.getElementById("plain")!.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    expect(await centerIsBlack(shot.png, box, shot.scale)).toBe(true);
+  });
+
+  it("drops the page when the vault filled a field inside the out-of-process frame (I1)", async () => {
+    const s = await openOopif();
+    const [inFrame] = [...(await s.outOfProcessFrames()).values()];
+    const own = inFrame!.cdp;
+    await own.send("DOM.enable");
+    const { root } = await own.send("DOM.getDocument", { depth: -1 });
+    const { nodeId } = await own.send("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector: "#echo",
+    });
+    const { node } = await own.send("DOM.describeNode", { nodeId });
+    const filled: MaskSources = {
+      ...secrets([]),
+      nodeIds: (cdp) => (cdp === own ? [node.backendNodeId] : []),
     };
-    expect((await captureModelScreenshot(s, registered, signal)).dropped).toBe(true);
+    expect((await captureModelScreenshot(s, filled, signal)).dropped).toBe(true);
   });
 });

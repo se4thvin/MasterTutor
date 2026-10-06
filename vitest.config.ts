@@ -21,7 +21,12 @@ export default defineConfig({
             "scripts/**/*.test.ts",
             "tests/**/*.test.ts",
           ],
-          exclude: [...exclude, "**/*.int.test.ts", "**/*.behaviour.test.ts"],
+          exclude: [
+            ...exclude,
+            "**/*.int.test.ts",
+            "**/*.behaviour.test.ts",
+            "**/*.security.test.ts",
+          ],
         },
       },
       {
@@ -29,6 +34,16 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["packages/**/*.int.test.ts", "apps/**/*.int.test.ts", "tests/**/*.int.test.ts"],
+          exclude,
+          testTimeout: 120_000,
+          hookTimeout: 300_000,
+          fileParallelism: false,
+        },
+      },
+      {
+        test: {
+          name: "security",
+          include: ["apps/**/*.security.test.ts", "tests/**/*.security.test.ts"],
           exclude,
           testTimeout: 120_000,
           hookTimeout: 300_000,

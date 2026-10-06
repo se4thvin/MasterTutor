@@ -68,3 +68,13 @@ export async function ensureWorkspaceMember(
     return { workspaceId: created.id, role: "owner" };
   });
 }
+
+/** The workspace a signed-in user belongs to, or null (D4: one workspace in v1). */
+export async function workspaceIdOf(db: Database, userId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ workspaceId: workspaceMembers.workspaceId })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.userId, userId))
+    .limit(1);
+  return row?.workspaceId ?? null;
+}

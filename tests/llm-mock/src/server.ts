@@ -13,7 +13,7 @@ export interface LlmMock {
 
 interface ScenarioState {
   cursor: number;
-  elements: Array<{ name: string; point: { x: number; y: number } | null }>;
+  elements: Array<{ ref: string; name: string; point: { x: number; y: number } | null }>;
 }
 
 const FORBIDDEN_FIELDS = [
@@ -100,8 +100,29 @@ export async function startLlmMock(
             id: nextId("cu"),
             call_id: nextId("call"),
             status: "completed",
-            actions: [{ type: "click", x: element.point.x, y: element.point.y, button: "left" }],
-            pending_safety_checks: [],
+            actions: [
+              { type: "click", x: element.point.x, y: element.point.y, button: "left" },
+              ...(output.then ?? []),
+            ],
+            pending_safety_checks: output.safetyChecks ?? [],
+          };
+        }
+        case "fill_named": {
+          const element = state.elements.find((candidate) =>
+            candidate.name.startsWith(output.name),
+          );
+          if (!element) throw new Error(`fill_named: no element named "${output.name}"`);
+          return {
+            type: "function_call",
+            id: nextId("fc"),
+            call_id: nextId("call"),
+            name: "fill_credential",
+            arguments: JSON.stringify({
+              alias: output.alias,
+              field: output.field,
+              target: element.ref,
+            }),
+            status: "completed",
           };
         }
         case "computer_single":
@@ -156,7 +177,7 @@ export async function startLlmMock(
     body: MockRequestBody,
     name: string | null,
     output: unknown[],
-    usage: { input?: number; cached?: number; output?: number } = {},
+    usage: { input?: number; cached?: number; cacheWrite?: number; output?: number } = {},
   ) => {
     const id = nextId("resp");
     void name;
@@ -184,7 +205,10 @@ export async function startLlmMock(
       top_p: null,
       usage: {
         input_tokens: input,
-        input_tokens_details: { cached_tokens: usage.cached ?? 0, cache_write_tokens: 0 },
+        input_tokens_details: {
+          cached_tokens: usage.cached ?? 0,
+          cache_write_tokens: usage.cacheWrite ?? 0,
+        },
         output_tokens: out,
         output_tokens_details: { reasoning_tokens: 0 },
         total_tokens: input + out,

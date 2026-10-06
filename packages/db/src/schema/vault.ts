@@ -1,4 +1,4 @@
-import type { ImapConfig } from "@mastertutor/contracts";
+import { BYPASS_DECIDER, POLICY_DECIDER, type ImapConfig } from "@mastertutor/contracts";
 import { sql } from "drizzle-orm";
 import { check, index, jsonb, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
 import { bytea, createdAt, id, tstz, updatedAt } from "./columns.ts";
@@ -58,7 +58,15 @@ export const vaultGrants = pgTable(
     approvedAt: tstz("approved_at").notNull().defaultNow(),
     createdAt: createdAt(),
   },
-  (t) => [unique("vault_grants_item_origin_uq").on(t.itemId, t.origin)],
+  (t) => [
+    unique("vault_grants_item_origin_uq").on(t.itemId, t.origin),
+    // A lasting grant is a person's decision; neither the auto-mode policy nor bypass mode ever
+    // writes one (R-E7, S11, D44).
+    check(
+      "vault_grants_human_approver",
+      sql`${t.approvedBy} NOT IN (${sql.raw(`'${POLICY_DECIDER}', '${BYPASS_DECIDER}'`)})`,
+    ),
+  ],
 );
 
 export const otpCodes = pgTable("otp_codes", {

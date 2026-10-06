@@ -4,12 +4,21 @@ export type MockOutput =
       actions: Array<Record<string, unknown>>;
       safetyChecks?: Array<{ id: string; code: string; message: string }>;
     }
-  | { type: "click_named"; name: string }
+  /** A click on the element read_page named, then any further actions in the same call. */
+  | {
+      type: "click_named";
+      name: string;
+      then?: Array<Record<string, unknown>>;
+      /** The model's own warnings on this call (e.g. malicious_instructions). */
+      safetyChecks?: Array<{ id: string; code: string; message: string }>;
+    }
   /** A computer_call in the single-`action` shape some model versions emit instead of `actions`. */
   | { type: "computer_single"; action: Record<string, unknown> }
   /** A reasoning item, as returned when reasoning effort is above none. */
   | { type: "reasoning"; text?: string }
   | { type: "function"; name: string; args: Record<string, unknown> }
+  /** A fill_credential call whose target is the ref of the first read_page element named `name…`. */
+  | { type: "fill_named"; alias: string; field: string; name: string }
   | {
       type: "turn";
       status: "continue" | "done" | "need_human";
@@ -42,7 +51,7 @@ export interface RecordedRequest {
 export interface MockTurn {
   outputs?: MockOutput[];
   error?: { status: number; code?: string; message?: string };
-  usage?: { input?: number; cached?: number; output?: number };
+  usage?: { input?: number; cached?: number; cacheWrite?: number; output?: number };
   /** Assertions on the request that reached this turn; a throw becomes a 418 and a recorded failure. */
   check?(request: RecordedRequest): void;
   /** Delays the answer, for example to take over while the model "thinks". */

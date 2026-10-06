@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Advert</title>
+  </head>
+  <body>
+    ad
+    <script>
+      // Hangs this document's main thread once loaded, for ?ms= milliseconds (default 15 s).
+      const ms = Number(new URLSearchParams(location.search).get("ms") ?? 15000);
+      addEventListener("load", () =>
+        setTimeout(() => {
+          const until = Date.now() + ms;
+          while (Date.now() < until);
+        }),
+      );
+    </script>
+  </body>
+</html>

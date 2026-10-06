@@ -169,6 +169,16 @@ describe("fixture vault (Review Focus 2)", () => {
     const { items } = await api.vault.list({});
     expect(items.find((i) => i.alias === "github")?.sessionSaved).toBe(false);
   });
+  it("forgets idempotently: a session that is not saved is still ok (E6)", async () => {
+    const { api } = client();
+    await api.vault.forgetSession({ alias: "github", origin: "https://github.com" });
+    await expect(
+      api.vault.forgetSession({ alias: "github", origin: "https://github.com" }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      api.vault.forgetSession({ alias: "nothing", origin: "https://nothing.example" }),
+    ).resolves.toEqual({ ok: true });
+  });
 });
 
 describe("fixture settings and isolation", () => {

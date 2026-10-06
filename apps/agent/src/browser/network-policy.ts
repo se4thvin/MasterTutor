@@ -100,8 +100,9 @@ export function isPrivateAddress(rawIp: string): boolean {
 }
 
 export function isFixtureHost(host: string): boolean {
-  // fixtures-isolated.test is a second site, for out-of-process (site-isolated) frames.
-  return /(^|\.)fixtures(-isolated)?\.test$/i.test(host);
+  // fixtures-isolated.test and fixtures-hung.test are other sites, for out-of-process frames (the
+  // second for a frame that hangs, so it never shares a process with the others).
+  return /(^|\.)fixtures(-isolated|-hung)?\.test$/i.test(host);
 }
 
 const DNS_CACHE_MAX = 500;

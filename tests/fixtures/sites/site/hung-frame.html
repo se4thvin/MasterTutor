@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Notes with an advert</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      #code {
+        position: absolute;
+        left: 40px;
+        top: 20px;
+        width: 200px;
+        height: 30px;
+      }
+      #notes {
+        position: absolute;
+        left: 40px;
+        top: 260px;
+        width: 400px;
+        height: 100px;
+      }
+      #widget {
+        position: absolute;
+        left: 40px;
+        top: 80px;
+        width: 400px;
+        height: 150px;
+        border: 0;
+      }
+      #ad {
+        position: absolute;
+        left: 500px;
+        top: 20px;
+        width: 50px;
+        height: 50px;
+      }
+    </style>
+  </head>
+  <body>
+    <input id="code" aria-label="Code" />
+    <iframe id="widget" title="Note" srcdoc='<input id="note" aria-label="Note">'></iframe>
+    <textarea id="notes" aria-label="Notes"></textarea>
+    <script>
+      // An advert from another site whose document hangs (for(;;)), for ?ms= milliseconds.
+      const ad = document.createElement("iframe");
+      ad.id = "ad";
+      ad.title = "Advert";
+      ad.src = `http://ads.fixtures-hung.test/hang.html?ms=${new URLSearchParams(location.search).get("ms") ?? 15000}`;
+      document.body.append(ad);
+    </script>
+  </body>
+</html>

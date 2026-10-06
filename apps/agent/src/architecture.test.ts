@@ -22,3 +22,28 @@ describe("module boundaries (CLAUDE.md principle 5: no circular dependencies)", 
     );
   });
 });
+
+describe("approval modes reach only the approval decisions (D44 hard invariants)", () => {
+  it("the browser, network policy, masking, vault, tools and guardrails never read the approval mode", async () => {
+    const readers: string[] = [];
+    for (const dir of ["browser", "vault", "tools", "guardrails", "slots", "runtime"]) {
+      const walk = async (path: string): Promise<void> => {
+        for (const entry of await readdir(join(SRC, path), { withFileTypes: true })) {
+          const child = join(path, entry.name);
+          if (entry.isDirectory()) await walk(child);
+          else if (entry.name.endsWith(".ts") && !entry.name.includes(".test."))
+            if (
+              /approvalMode|ApprovalMode|BYPASS_DECI|decideByPolicy|policyDecider|decideSafetyChecks|AUTO_MODE_DECISIONS/.test(
+                await readFile(join(SRC, child), "utf8"),
+              )
+            )
+              readers.push(child);
+        }
+      };
+      await walk(dir);
+    }
+    // So bypass mode cannot switch off the network policy, the sandbox, secret masking, the
+    // vault's origin pinning, the kill switch or takeover: none of them can see the mode.
+    expect(readers).toEqual([]);
+  });
+});

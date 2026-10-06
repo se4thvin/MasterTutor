@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import {
   toOrigin,
+  Uuid,
   type ComputerAction,
   type FunctionToolName,
   type ScrollPosition,
@@ -11,15 +13,18 @@ import type { MaskSources } from "../browser/masking.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash } from "../browser/phash.ts";
 import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
+import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
+import { markUnguarded } from "../browser/input-guard.ts";
 import {
   applyStorageState,
   collectStorageState,
+  type CollectedStorage,
   type BrowserStorageState,
 } from "../browser/storage-state.ts";
 import { isCaptchaFrameUrl, isChallengePage } from "../guardrails/captcha.ts";
-import { HISTORY_TAG } from "../guardrails/policy.ts";
+import { HISTORY_TAG, downloadRequest, redactedExcerpt } from "../guardrails/policy.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
@@ -28,7 +33,7 @@ import { matchAccelerator } from "../tools/accelerators.ts";
 import { ComputerExecutor, type ActionGate } from "../tools/computer.ts";
 import { readPage, readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry } from "../tools/registry.ts";
-import { register } from "../tools/types.ts";
+import { register, type CallApproval } from "../tools/types.ts";
 import type { RunHooks } from "./hooks.ts";
 import type { ConnectBrowser, LoopBrowser, Observation } from "./loop-browser.ts";
 import type { RunSnapshot } from "./run-state.ts";
@@ -149,8 +154,9 @@ export class SessionLoopBrowser implements LoopBrowser {
   }
 
   observe(signal: AbortSignal): Promise<Observation> {
+    // The URL and title reach the model as the page header: a secret in them is redacted (M13).
     return observeOnOnePage(
-      () => this.#session.page.url(),
+      () => this.#mask.redact(this.#session.page.url()),
       (url) => this.#capture(url, signal),
     );
   }
@@ -162,7 +168,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     const state = await (await session.worlds()).evaluate(pageStateScript, null);
     return {
       url,
-      title: state.title,
+      title: this.#mask.redact(state.title),
       origin: toOrigin(url),
       domHash: "hash" in page ? page.hash : "",
       screenshot,
@@ -177,6 +183,18 @@ export class SessionLoopBrowser implements LoopBrowser {
     action: ComputerAction,
     previous: TargetDescription | null,
   ): Promise<TargetDescription | null> {
+    const target = await this.#classify(action, previous);
+    if (target?.excerpt === undefined) return target;
+    // Redacted before it is capped for the approval card (M13), so no part of a secret shows.
+    const { excerpt, ...rest } = target;
+    const redacted = redactedExcerpt(excerpt, (text) => this.#mask.redact(text));
+    return redacted === null ? rest : { ...rest, excerpt: redacted };
+  }
+
+  async #classify(
+    action: ComputerAction,
+    previous: TargetDescription | null,
+  ): Promise<TargetDescription | null> {
     const history =
       action.type === "keypress"
         ? matchAccelerator(action.keys)
@@ -187,10 +205,14 @@ export class SessionLoopBrowser implements LoopBrowser {
       return historyTarget(this.#session, history);
     if (action.type === "click" || action.type === "double_click") {
       const point = await this.#executor.toPage(action.x, action.y);
-      return point ? (await hitTest(this.#session, point)).target : null;
+      // While some document of the page could not be armed (a frame that hangs, or too many),
+      // clicking and typing count as acting inside an uninspectable page: they need approval.
+      return point
+        ? markUnguarded(this.#session, (await hitTest(this.#session, point)).target)
+        : null;
     }
     if (action.type === "type" || action.type === "keypress")
-      return previous ?? (await focusTarget(this.#session));
+      return markUnguarded(this.#session, previous ?? (await focusTarget(this.#session)));
     return null;
   }
 
@@ -198,7 +220,23 @@ export class SessionLoopBrowser implements LoopBrowser {
     return this.#executor.run(actions, signal, gate);
   }
 
-  runFunction(name: FunctionToolName, args: unknown, signal: AbortSignal) {
+  functionApproval(name: FunctionToolName, args: unknown, signal: AbortSignal) {
+    const run = this.#run();
+    return this.#registry.approval(name, args, {
+      runId: run.id,
+      workspaceId: run.workspaceId,
+      session: this.#session,
+      signal,
+      log: this.#log,
+    });
+  }
+
+  runFunction(
+    name: FunctionToolName,
+    args: unknown,
+    signal: AbortSignal,
+    approval: CallApproval | null,
+  ) {
     const run = this.#run();
     return this.#registry.run(name, args, {
       runId: run.id,
@@ -206,6 +244,7 @@ export class SessionLoopBrowser implements LoopBrowser {
       session: this.#session,
       signal,
       log: this.#log,
+      approval,
     });
   }
 
@@ -231,11 +270,32 @@ export class SessionLoopBrowser implements LoopBrowser {
       .catch(() => undefined);
   }
 
+  /** Blocked URLs reach the new_origin approval card: a secret in them is redacted (M13). */
   drainBlockedNavigations() {
-    return this.#session.drainBlockedNavigations();
+    return this.#session
+      .drainBlockedNavigations()
+      .map((blocked) => ({ ...blocked, url: this.#mask.redact(blocked.url) }));
   }
 
-  collectStorage(): Promise<BrowserStorageState> {
+  /** Download URLs reach the approval card too: a secret in them is redacted (M13). */
+  drainBlockedDownloads() {
+    return this.#session.downloads
+      .drainBlocked()
+      .map((blocked) => ({ ...blocked, url: this.#mask.redact(blocked.url) }));
+  }
+
+  allowDownload(card: { url: string; filename: string | null }): Promise<void> {
+    // The card was made from the redacted URL and the suggested name: a download matches when it
+    // makes the same card. A script's blob or data download gets a new URL each time: for those
+    // the same kind (blob origin, data type) and the same name are enough (I4).
+    return this.#session.downloads.allowOnce((url, filename) => {
+      const made = downloadRequest(this.#mask.redact(url), filename);
+      if (made.kind !== "download" || made.filename !== card.filename) return false;
+      return made.url === card.url || sameScriptDownload(made.url, card.url);
+    });
+  }
+
+  collectStorage(): Promise<CollectedStorage> {
     return collectStorageState(this.#session);
   }
 
@@ -262,6 +322,10 @@ export function slotBrowserConnector(options: {
       testMode: options.testMode,
       log: options.log,
       guard,
+      downloads: {
+        slotPath: slotDownloadPath(run().id),
+        localPath: join(options.config.downloadsDir, Uuid.parse(run().id)),
+      },
     });
     try {
       await options.pool.rememberBrowser(slotName, baseUrl);
@@ -269,23 +333,41 @@ export function slotBrowserConnector(options: {
         clock: options.clock,
         waitActionMs: options.config.waitActionMs,
       });
+      const mask = options.hooks.maskSources(run().id);
       const registry = new ToolRegistry(
         [register(readPageTool), ...options.hooks.functionTools],
         options.log,
+        mask,
       );
       const browser = new SessionLoopBrowser({
         session,
         executor,
         registry,
-        mask: options.hooks.maskSources(run().id),
+        mask,
         run,
         log: options.log,
       });
-      return { browser, close: () => session.close() };
+      return {
+        browser,
+        session,
+        browserCdp: () => session.browserCdp(),
+        close: () => session.close(),
+      };
     } catch (error) {
       // Do not leak the CDP connection when setup after connect fails.
       await session.close();
       throw error;
     }
   };
+}
+
+/** Two script-made downloads (blob or data URLs) of the same kind: same blob origin, or same data type. */
+function sameScriptDownload(a: string, b: string): boolean {
+  const kind = (url: string) =>
+    url.startsWith("blob:")
+      ? `blob:${url.slice(5, url.lastIndexOf("/"))}`
+      : url.startsWith("data:")
+        ? url.split(",")[0]
+        : null;
+  return kind(a) !== null && kind(a) === kind(b);
 }

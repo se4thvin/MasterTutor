@@ -1,6 +1,13 @@
+import { ApprovalRequest } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import { approvalRequestFor, needsApproval } from "./policy.ts";
+import {
+  approvalExcerpt,
+  approvalRequestFor,
+  downloadRequest,
+  needsApproval,
+  redactedExcerpt,
+} from "./policy.ts";
 
 const target = (overrides: Partial<TargetDescription>): TargetDescription => ({
   label: "",
@@ -134,14 +141,85 @@ describe("needsApproval (spec §5.5)", () => {
         kind: "form_submit",
       });
   });
-  it("builds contract-valid approval requests", () => {
+  it("builds contract-valid approval requests with the action and a clean record excerpt", () => {
     const need = needsApproval(click, target({ label: "Pay now" }));
-    expect(approvalRequestFor(need!, "https://a.com/x", null)).toEqual({
+    expect(approvalRequestFor(need!, "https://a.com/x", null, null)).toEqual({
       kind: "risky_click",
       action: click,
       label: "Pay now",
       url: "https://a.com/x",
       screenshotKey: null,
+      context: null,
+    });
+    const enter = { type: "keypress" as const, keys: ["ENTER"] };
+    const form = needsApproval(enter, target({ editable: true, formKind: "other", tag: "input" }));
+    const request = approvalRequestFor(
+      form!,
+      "https://a.com/x",
+      null,
+      approvalExcerpt("Bob‮  Row\n 7"),
+    );
+    expect(ApprovalRequest.parse(request)).toMatchObject({
+      kind: "form_submit",
+      action: enter,
+      context: "Bob Row 7",
+    });
+    expect(approvalExcerpt("x".repeat(500))).toHaveLength(240);
+    expect(approvalExcerpt("  ​ ")).toBeNull();
+    expect(approvalExcerpt(undefined)).toBeNull();
+  });
+});
+
+describe("approval card excerpt (review M2, M3)", () => {
+  const LONE_SURROGATE = /\p{Cs}/u;
+  it("is safe for jsonb: no control characters and no split surrogate pair", () => {
+    expect(approvalExcerpt("a\u0000b\u0007c")).toBe("abc");
+    const emoji = approvalExcerpt(`${"x".repeat(239)}\u{1F600}`)!;
+    expect(emoji.length).toBeLessThanOrEqual(240);
+    expect(LONE_SURROGATE.test(emoji)).toBe(false);
+    expect(LONE_SURROGATE.test(approvalExcerpt("a\ud83d b")!)).toBe(false);
+    expect(() => JSON.parse(JSON.stringify(approvalExcerpt("q\u0000\ud83d")))).not.toThrow();
+  });
+
+  it("redacts after cleaning and before capping, so no part of a secret survives", () => {
+    const redact = (text: string) => text.replaceAll("hunter2-secret", "[secret]");
+    // Straddles the 240 cap: capping first would leave "hunter2-se" on the card.
+    const straddling = redactedExcerpt(`${"x ".repeat(117)}hunter2-secret tail`, redact)!;
+    expect(straddling).not.toContain("hunt");
+    expect(straddling.length).toBeLessThanOrEqual(240);
+    // Full-width characters only match once NFKC has normalised them.
+    expect(redactedExcerpt("pw: ｈｕｎｔｅｒ２-secret", redact)).toBe("pw: [secret]");
+    expect(redactedExcerpt(undefined, redact)).toBeNull();
+  });
+});
+
+describe("downloads (spec §9)", () => {
+  const download = { url: "https://a.test/files/r.csv", filename: "r.csv" };
+
+  it("needs a download approval to activate a download link, by click or by Enter", () => {
+    const link = target({ tag: "a", label: "Delete report", download });
+    for (const action of [click, { type: "keypress" as const, keys: ["ENTER"] }]) {
+      const need = needsApproval(action, link);
+      expect(need).toMatchObject({ kind: "download", ...download });
+      const request = approvalRequestFor(need!, "https://a.test/", null, null);
+      expect(ApprovalRequest.parse(request)).toEqual({ kind: "download", ...download });
+    }
+  });
+
+  it("cleans the URL and name for the card: no credentials, no payload, no path or controls", () => {
+    expect(downloadRequest("https://u:p@a.test/f.csv", "../../etc/pass\u202ewd")).toEqual({
+      kind: "download",
+      url: "https://a.test/f.csv",
+      filename: "_.._etc_passwd",
+    });
+    expect(downloadRequest("data:text/csv;base64,c2VjcmV0", null)).toEqual({
+      kind: "download",
+      url: "data:text/csv,...",
+      filename: null,
+    });
+    expect(downloadRequest("blob:https://a.test/0b1c", ". . .")).toMatchObject({ filename: null });
+    expect(downloadRequest("https://a.test/f", "x".repeat(300))).toMatchObject({
+      filename: "x".repeat(255),
     });
   });
 });

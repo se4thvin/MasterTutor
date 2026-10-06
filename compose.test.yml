@@ -36,3 +36,12 @@ services:
     profiles: !override ["extra-slots"]
   browser-6:
     profiles: !override ["extra-slots"]
+
+  # Test mailbox for email OTP (B3). IMAP greenmail:3143 and SMTP greenmail:3025 on backend only;
+  # GREENMAIL_OPTS is the Testcontainers helper's greenmailOpts() verbatim.
+  greenmail:
+    image: greenmail/standalone:2.1.14
+    environment:
+      GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=otp:KESTREL4IMAP9CANARY@mail.test"
+    networks:
+      backend: {}
