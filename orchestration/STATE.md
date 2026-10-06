@@ -55,10 +55,11 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 | D39 | No additional OpenAI tools. Beyond Responses (our function tools + computer tool), embeddings and transcription, we adopt no other OpenAI tool or API (hosted web_search, file_search, code_interpreter, image gen, Agents SDK, Realtime, etc.). Every such capability is **built in-house, properly**: a top-of-the-line architecture that follows CLAUDE.md, has a full TDD plan and is reviewed. No permanent stubs. Each need is tracked in `orchestration/BUILD-OURSELVES.md` and scheduled as real work. Current mapping: web search is done by the agent's own browser; file/semantic search uses our pgvector hybrid search. | User |
 | D40 | Every subagent runs on Opus 5.5 (`model: "opus"`), whatever its role. | User |
 | D41 | Deploy target (run 28): Dokploy v0.30.5 single host (shared; YUMMI "DO NOT TOUCH"). Compose type `docker-compose` (not stack), on-server GitHub build, auto-deploy off, `-p <app> -f compose.yml -f compose.prod.yml`. Phase 9 amendments: external `mastertutor-cdp` network; ForwardAuth by static IP `.11` (not `web`); Dokploy DB/volume backups replace `pgbackups`; drop `OPENAI_EMBEDDINGS_KEY` check (D36); `firewall.sh` must never enable ufw on the shared host; AppArmor sysctl needs user approval. No host or Dokploy writes without user approval. | Orchestrator (run 28) |
+| D42 | v1 includes the docling PDF container (compose profile `pdf`). coturn is not in v1. Deploys are manual (Dokploy auto-deploy off, no CI webhook). The real deploy and its inputs (domain, repo, router, AppArmor, backup target) are deferred until after the zyBooks benchmarks succeed. Phase 9 still prepares deploy-readiness files. | User |
 
 ## Proposals awaiting user answer
 
-- Deploy inputs (run 28 §10): domain (suggest notes.sethvin.dev), private GitHub repo + Dokploy app access, router forwarding 59001-59006 UDP and TCP, static IP?, AppArmor sysctl approval, self-hosted S3 backup target, coturn and docling for v1?, manual vs CI deploys. They block only the real deploy, not the build or the benchmark.
+- Deploy inputs (run 28 §10: domain, repo, router, AppArmor, backups) are deferred until after successful benchmarks (D42).
 
 ## Open questions
 
