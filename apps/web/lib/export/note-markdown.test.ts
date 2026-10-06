@@ -106,21 +106,31 @@ describe("Obsidian export", () => {
     expect(md).not.toMatch(/<!--\s*mt:block id=(forged|x)\b/i);
   });
 
-  it("only hands http(s), blob or Markdown data URLs to the download link", () => {
-    expect(safeDownloadUrl("https://cdn.example/x.zip")).toBe("https://cdn.example/x.zip");
-    expect(safeDownloadUrl("http://localhost:3000/x.zip")).toBe("http://localhost:3000/x.zip");
-    expect(safeDownloadUrl("blob:https://app.example/1234")).toBe("blob:https://app.example/1234");
-    expect(safeDownloadUrl("data:text/markdown;charset=utf-8,%23")).toBe(
+  it("only hands same-origin, https, blob or Markdown data URLs to the download link", () => {
+    const origin = "https://app.example";
+    // Phase 7's notes.export answers with a same-origin relative path.
+    expect(safeDownloadUrl("/api/notes/n1/export", origin)).toBe(
+      "https://app.example/api/notes/n1/export",
+    );
+    expect(safeDownloadUrl("relative/x.zip", origin)).toBe("https://app.example/relative/x.zip");
+    expect(safeDownloadUrl("http://localhost:3000/x.zip", "http://localhost:3000")).toBe(
+      "http://localhost:3000/x.zip",
+    );
+    expect(safeDownloadUrl("https://cdn.example/x.zip", origin)).toBe("https://cdn.example/x.zip");
+    expect(safeDownloadUrl("blob:https://app.example/1234", origin)).toBe(
+      "blob:https://app.example/1234",
+    );
+    expect(safeDownloadUrl("data:text/markdown;charset=utf-8,%23", origin)).toBe(
       "data:text/markdown;charset=utf-8,%23",
     );
     for (const bad of [
       "javascript:alert(1)",
       "data:text/html,<script>1</script>",
       "file:///etc/passwd",
-      "/relative",
-      "not a url",
+      // Cross-origin plain http would downgrade the download.
+      "http://evil.example/x.zip",
     ]) {
-      expect(safeDownloadUrl(bad), bad).toBeNull();
+      expect(safeDownloadUrl(bad, origin), bad).toBeNull();
     }
   });
 

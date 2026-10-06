@@ -15,7 +15,7 @@ export function ExportButton({ detail }: { detail: NoteDetail }) {
     setPending(true);
     try {
       const { downloadUrl } = await api.notes.export({ noteId: detail.note.id });
-      const href = safeDownloadUrl(downloadUrl);
+      const href = safeDownloadUrl(downloadUrl, window.location.origin);
       if (!href) throw new Error("unsafe download URL");
       const a = document.createElement("a");
       a.href = href;
