@@ -2,12 +2,13 @@
 
 import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { AnimatePresence, m } from "motion/react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
+import { LayoutMotion } from "@/components/motion/layout-motion.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
@@ -158,6 +159,7 @@ export function LibraryView() {
   const deleteNote = useDeleteNote();
   const [moving, setMoving] = useState<NoteSummary | null>(null);
   const [deleting, setDeleting] = useState<NoteSummary | null>(null);
+  const reduceMotion = useReducedMotion();
   const dropNote = (noteId: string, folderId: string | null) => {
     const note = items.find((n) => n.id === noteId);
     if (note) void moveNote(noteId, folderId, note.folderId);
@@ -253,27 +255,33 @@ export function LibraryView() {
             }
           />
         ) : (
-          <div className="notes" data-view={params.view}>
-            {/* A card that leaves (moved or deleted) fades and settles out instead of vanishing. */}
-            <AnimatePresence initial={false}>
-              {items.map((note, i) => (
-                <m.div
-                  key={note.id}
-                  className="card-slot"
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={transitions.exit}
-                >
-                  <NoteCard
-                    note={note}
-                    view={params.view}
-                    index={i}
-                    onMove={setMoving}
-                    onDelete={setDeleting}
-                  />
-                </m.div>
-              ))}
-            </AnimatePresence>
-          </div>
+          <LayoutMotion>
+            <div className="notes" data-view={params.view}>
+              {/* A card that leaves fades and settles out; the cards after it glide into place
+                  (layout, parked item). popLayout takes the leaver out of flow at once. Under
+                  reduced motion layout is off: motion's instant layout transition would still
+                  paint one frame at the old place. */}
+              <AnimatePresence initial={false} mode="popLayout">
+                {items.map((note, i) => (
+                  <m.div
+                    key={note.id}
+                    layout={reduceMotion ? false : "position"}
+                    className="card-slot"
+                    exit={{ opacity: 0, scale: 0.96 }}
+                    transition={{ ...transitions.exit, layout: transitions.spring }}
+                  >
+                    <NoteCard
+                      note={note}
+                      view={params.view}
+                      index={i}
+                      onMove={setMoving}
+                      onDelete={setDeleting}
+                    />
+                  </m.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </LayoutMotion>
         )}
         <MoveSheet note={moving} onClose={() => setMoving(null)} />
         <ConfirmDialog

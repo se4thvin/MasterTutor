@@ -84,6 +84,8 @@
     border-bottom: 1px solid var(--sep);
   }
   .notes {
+    /* popLayout positions a leaving card absolutely against this box. */
+    position: relative;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr));
     gap: 2.5rem 1.5rem;
