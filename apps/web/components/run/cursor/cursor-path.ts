@@ -1,7 +1,7 @@
 import { VIEWPORT } from "@mastertutor/contracts";
 import { durations } from "@/lib/motion-tokens.ts";
 
-interface Point {
+export interface Point {
   x: number;
   y: number;
 }
