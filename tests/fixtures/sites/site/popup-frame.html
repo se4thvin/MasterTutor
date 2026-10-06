@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Account panel (new tab)</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      a,
+      iframe {
+        position: absolute;
+        left: 0;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- The link opens this page again in a new tab (?open marks the opener). -->
+    <a
+      id="open"
+      href="/popup-frame.html"
+      target="_blank"
+      style="top: 300px; width: 200px; height: 40px"
+      >Open panel</a
+    >
+    <!-- In the new tab only: a frame whose navigation starts at once, and a slow parser-blocking
+         script that holds back the page's DOMContentLoaded (the test serves both slowly). -->
+    <script>
+      if (!location.search.includes("open"))
+        document.write(
+          '<iframe id="panel" title="Account" style="top: 0; width: 220px; height: 160px"' +
+            ' src="http://other.fixtures-isolated.test/widget.html?only=delete"></iframe>' +
+            '<script src="/slow.js"></scr' +
+            "ipt>",
+        );
+    </script>
+  </body>
+</html>
