@@ -116,7 +116,26 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
         const box = parent.getBoundingClientRect();
         const scrollable = /(auto|scroll)/.test(`${ps.overflowX} ${ps.overflowY}`);
         const ellipsisOk = ps.textOverflow === "ellipsis" && isTextOnly(el);
-        if (scrollable || ellipsisOk || box.width <= TOL || box.height <= TOL) break;
+        if (scrollable) {
+          // Scrolling can reveal content past the end, never content before the start: an element
+          // that begins left of or above the container's padding edge at scroll 0 is unreachable.
+          const r = el.getBoundingClientRect();
+          const unreachableX =
+            /(auto|scroll)/.test(ps.overflowX) &&
+            parent.scrollLeft === 0 &&
+            r.left < box.left + parent.clientLeft - TOL;
+          const unreachableY =
+            /(auto|scroll)/.test(ps.overflowY) &&
+            parent.scrollTop === 0 &&
+            r.top < box.top + parent.clientTop - TOL;
+          if (unreachableX || unreachableY) {
+            issues.push(
+              `starts before its scroll container's start: ${describe(el)} in ${describe(parent)}`,
+            );
+          }
+          break;
+        }
+        if (ellipsisOk || box.width <= TOL || box.height <= TOL) break;
         const r = el.getBoundingClientRect();
         const outX = clipX && (r.left < box.left - TOL || r.right > box.right + TOL);
         const outY = clipY && (r.top < box.top - TOL || r.bottom > box.bottom + TOL);

@@ -417,7 +417,7 @@
       max-width: none;
       padding-inline: 1rem;
       @variant md {
-        padding-inline: 2rem 1rem;
+        padding-inline: calc(var(--gutter) + 0.9rem) 1rem;
       }
     }
     & .reader-body {

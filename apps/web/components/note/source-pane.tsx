@@ -12,6 +12,7 @@ import { BlockMarkdown } from "./block-markdown.tsx";
 
 const plainText = (block: NoteBlock) =>
   (block.originalMarkdown ?? block.markdown)
+    .replace(/<[^>]*>/g, " ")
     .replace(/[#*_`>$|\\[\]]/g, "")
     .replace(/\s+/g, " ")
     .trim();

@@ -10,6 +10,8 @@ const GAP = 12;
 const LEADER_Y = 14;
 const CAPTION_Y = 9;
 const FALLBACK_GUTTER = 40;
+// Past the block's hover tile, which overhangs the content column by 0.9rem.
+const DOT_X = 18;
 
 /**
  * Cutaway margin captions (D22). Rendered only where the margin column exists (above 1180px);
@@ -104,8 +106,8 @@ export function MarginCallouts({
                 callout.status === "needs_review" && "leader-signal",
               )}
             >
-              <path d={`M 4 ${y1} L ${gutterWidth} ${y2}`} />
-              <circle cx="4" cy={y1} r="2.75" />
+              <path d={`M ${DOT_X} ${y1} L ${gutterWidth} ${y2}`} />
+              <circle cx={DOT_X} cy={y1} r="2.75" />
             </g>
           );
         })}
