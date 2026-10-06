@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { FolderTree } from "@/components/library/folder-tree.tsx";
 import { SearchPalette } from "@/components/library/search-palette.tsx";
+import { PipDock } from "@/components/run/pip/pip-dock.tsx";
 import { useMoveNote } from "@/components/library/use-move-note.ts";
 import { orpc } from "@/lib/api/client.ts";
 import { useHotkey } from "@/lib/hooks/use-hotkey.ts";
@@ -67,6 +68,7 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
       <main id="main" className="main" tabIndex={0}>
         <KillBanner />
         {children}
+        <PipDock />
       </main>
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
     </div>
