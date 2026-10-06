@@ -84,18 +84,34 @@ pass "raw secrets scrubbed before supervisord"
 [[ "$(docker exec -u neko "$SLOT" sh -c 'DISPLAY=:99.0 xdotool getdisplaygeometry')" == "1280 800" ]] || fail "display is not 1280x800"
 pass "display 1280x800"
 
-if docker exec "$SLOT" sh -c 'for p in $(pgrep -f /usr/lib/chromium/chromium); do tr "\0" " " < /proc/$p/cmdline; echo; done' | grep -q -- '--no-sandbox'; then
-  fail "Chromium runs with --no-sandbox"
-fi
-docker exec "$SLOT" sh -c 'r=$(pgrep -f "type=renderer" | head -1); test -n "$r" && test "$(readlink /proc/1/ns/user)" != "$(readlink /proc/$r/ns/user 2>/dev/null || echo hidden)"' \
-  || fail "renderer shares the container user namespace (sandbox off)"
+chromium_cmdlines="$(docker exec "$SLOT" sh -c 'for p in $(pgrep -f /usr/lib/chromium/chromium); do tr "\0" " " < /proc/$p/cmdline; echo; done')" \
+  || fail "could not read Chromium command lines"
+[[ -n "$chromium_cmdlines" ]] || fail "no Chromium process matched (sandbox check would be vacuous)"
+if grep -q -- '--no-sandbox' <<<"$chromium_cmdlines"; then fail "Chromium runs with --no-sandbox"; fi
+docker exec "$SLOT" sh -c 'r=$(pgrep -f "type=renderer" | head -1); test -n "$r" && a=$(readlink /proc/1/ns/user) && b=$(readlink /proc/$r/ns/user) && test -n "$a" && test -n "$b" && test "$a" != "$b"' \
+  || fail "renderer shares the container user namespace or its ns link is unreadable (sandbox off)"
 pass "Chromium sandbox on"
 
 from_ip "$PREFIX.10" -o /dev/null "http://$PREFIX.40/" || fail "control: peer not reachable from the test network"
 if docker exec "$SLOT" curl -s -m 3 -o /dev/null "http://$PREFIX.40/"; then fail "slot reached a private address"; fi
 pass "private egress blocked"
+# curl exit 7 = connection refused/unreachable (REJECT); 28 would mean a silent drop or timeout.
+for entry in 169.254.169.254:169.254.0.0/16 10.255.255.1:10.0.0.0/8; do
+  target="${entry%%:*}"; range="${entry#*:}"
+  docker exec "$SLOT" iptables -C OUTPUT -d "$range" -j REJECT || fail "no REJECT rule for $range"
+  rc=0; docker exec "$SLOT" curl -s -m 3 -o /dev/null "http://$target/" || rc=$?
+  [[ "$rc" == "7" ]] || fail "egress to $target did not fail with a connection error (curl exit $rc)"
+done
+pass "metadata and 10/8 egress rejected"
 
-docker exec "$SLOT" touch /tmp/chromium-profile/previous-run-marker
+ipv6_state="$(docker exec -u root "$SLOT" sh -c 'if [ ! -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ] || [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" = 1 ]; then echo sysctl; elif [ "$(ip6tables -S | grep -c -E "^-P (INPUT|OUTPUT|FORWARD) DROP")" = 3 ]; then echo ip6tables; else echo open; fi')" \
+  || fail "could not read the IPv6 state"
+[[ "$ipv6_state" == "sysctl" || "$ipv6_state" == "ip6tables" ]] || fail "IPv6 is neither disabled nor default-drop"
+if [[ "$ipv6_state" == "ip6tables" ]] && docker exec "$SLOT" curl -s -6 -m 3 -o /dev/null "http://[fd00:ec2::254]/"; then fail "slot reached an IPv6 address"; fi
+pass "IPv6 closed ($ipv6_state)"
+
+docker exec "$SLOT" touch /tmp/chromium-profile/previous-run-marker /downloads/previous-run-marker /tmp/previous-run-marker
+docker exec -u neko "$SLOT" sh -c 'mkdir -p /home/neko/.pki && touch /home/neko/.pki/previous-run-marker'
 docker exec "$SLOT" pkill -INT -f '^/usr/lib/chromium/chromium' || true
 for _ in $(seq 1 20); do
   [[ "$(docker inspect -f '{{.State.Status}}' "$SLOT")" == "exited" ]] && break
@@ -105,7 +121,9 @@ done
 pass "container exits with Chromium"
 docker start "$SLOT" >/dev/null
 wait_healthy || fail "slot did not come back healthy"
-if docker exec "$SLOT" test -e /tmp/chromium-profile/previous-run-marker; then fail "previous profile survived the restart"; fi
+for marker in /tmp/chromium-profile /downloads /home/neko/.pki /tmp; do
+  if docker exec "$SLOT" test -e "$marker/previous-run-marker"; then fail "previous-run state survived the restart in $marker"; fi
+done
 pass "fresh profile after restart"
 
 docker image rm -f "$IMAGE" >/dev/null 2>&1 || true
