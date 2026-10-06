@@ -428,7 +428,11 @@ function notes(): NoteRecord[] {
         "Cosine schedules",
         at("2026-09-30"),
       ),
-      blocks: simple(["Cosine decay to 10% of peak is a safe default."]),
+      blocks: simple([
+        "Cosine decay to 10% of peak is a safe default.",
+        // Inline figure and file link as B2 writes them: asset:<id> targets inside block Markdown.
+        `![Cosine decay to a 10% floor](asset:${ids.asset(1)}) See the [full-size figure](asset:${ids.asset(1)}).`,
+      ]),
     }),
     note({
       n: 8,

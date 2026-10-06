@@ -70,6 +70,13 @@
       font-style: italic;
       color: var(--label-2);
     }
+    & .inline-asset {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0.75rem 0;
+      border-radius: var(--r-md);
+    }
   }
   .hljs-keyword,
   .hljs-built_in {

@@ -10,6 +10,7 @@ export * from "./approval.ts";
 export * from "./events.ts";
 export * from "./notify.ts";
 export * from "./live.ts";
+export * from "./asset-uri.ts";
 export * from "./env.ts";
 export * from "./api/dto.ts";
 export * from "./api/contract.ts";
