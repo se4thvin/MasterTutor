@@ -34,8 +34,10 @@ export function exportFileName(title: string): string {
     .replace(/[\\/:*?"<>|#^[\]]/g, "")
     .replace(/\s+/g, " ")
     .replace(/^[\s.]+|[\s.]+$/g, "");
-  const safe = WINDOWS_RESERVED.test(clean) ? `_${clean}` : clean;
-  const name = capBytes(safe, MAX_NAME_BYTES).replace(/[\s.]+$/, "");
+  const fit = (value: string) => capBytes(value, MAX_NAME_BYTES).replace(/[\s.]+$/, "");
+  // Test after the cap: a cut can expose a reserved name. "_…" can never be one, so one refit is enough.
+  const capped = fit(clean);
+  const name = WINDOWS_RESERVED.test(capped) ? fit(`_${capped}`) : capped;
   return `${name || "note"}${EXTENSION}`;
 }
 

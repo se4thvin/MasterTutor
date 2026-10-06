@@ -54,9 +54,20 @@ describe("Obsidian export", () => {
     expect(exportFileName("é".repeat(200))).toBe(`${"é".repeat(126)}.md`);
   });
 
+  it("checks reserved names after the cap, so a cut cannot expose one", () => {
+    // One grapheme of 261 bytes (e + 130 combining acutes) cannot fit, leaving only "CON".
+    expect(exportFileName(`CON ${"e" + "\u0301".repeat(130)}`)).toBe("_CON.md");
+    // A long reserved-looking name keeps its prefix and still fits NAME_MAX.
+    const long = exportFileName(`lpt9.${"a".repeat(300)}`);
+    expect(long.startsWith("_lpt9.")).toBe(true);
+    expect(new TextEncoder().encode(long).length).toBe(255);
+  });
+
   it("strips bidi controls so a name cannot display as something else", () => {
     expect(exportFileName("invoice\u202Egpj.exe")).toBe("invoicegpj.exe.md");
-    for (const cp of [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]) {
+    const bidi = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069];
+    // LRM, RLM and ALM are bidi controls too.
+    for (const cp of [...bidi, 0x200e, 0x200f, 0x061c]) {
       expect(exportFileName(`a${String.fromCodePoint(cp)}b`), cp.toString(16)).toBe("ab.md");
     }
     expect(exportFileName("\u2067\u2069")).toBe("note.md");
