@@ -219,10 +219,9 @@ test("after confirming Stop all runs, focus is back on the busy switch", async (
   await page.getByRole("alertdialog").getByRole("button", { name: "Stop All Runs" }).click();
   await expect(sw).toBeFocused();
   await expect(sw).toHaveAttribute("tabindex", "0");
-  // The switch is optimistic; wait for the server's answer (and any toast it raises) before axe.
-  const answered = page.waitForResponse("**/api/rpc/settings/setKillSwitch");
   release();
-  await answered;
   await expect(sw).toBeChecked();
+  // The switch is optimistic: axe runs once the server's answer (its toast) is on screen.
+  await expect(page.getByRole("group").filter({ hasText: "All runs stopped" })).toBeVisible();
   await expectCleanScreen(page);
 });

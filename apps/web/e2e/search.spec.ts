@@ -1,4 +1,4 @@
-import { failChunksContaining } from "./helpers/chunks.ts";
+import { failChunksContaining, rewriteChunksContaining } from "./helpers/chunks.ts";
 import type { Page } from "@playwright/test";
 import { moved, movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
@@ -132,14 +132,17 @@ test("the palette with results stays clean at every width", async ({ page }) => 
 });
 
 test("if the palette can't load, ⌘K says so and works on the next try", async ({ page }) => {
+  const uncaught: string[] = [];
+  page.on("pageerror", (error) => uncaught.push(error.message));
   let offline = true;
   await failChunksContaining(page, "palette-hit", () => offline);
   await page.goto("/library");
   await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
   await page.keyboard.press("ControlOrMeta+k");
   await expect(page.getByRole("group").filter({ hasText: "Couldn't open search" })).toBeVisible();
-  // The page itself is unharmed (no root error screen).
+  // The page itself is unharmed (no root error screen), and nothing went unhandled (M-1).
   await expect(page.getByRole("searchbox", { name: "Search the library" })).toBeVisible();
+  expect(uncaught).toEqual([]);
   offline = false;
   // The retry is a reload: the bundler keeps a failed chunk for the page's lifetime.
   await page
@@ -152,4 +155,24 @@ test("if the palette can't load, ⌘K says so and works on the next try", async 
   await expect(
     page.getByRole("dialog", { name: "Search notes" }).getByRole("combobox"),
   ).toBeVisible();
+});
+
+test("a bug in the palette is not mistaken for a network failure (I-1)", async ({ page }) => {
+  const uncaught: string[] = [];
+  page.on("pageerror", (error) => uncaught.push(error.message));
+  // The palette's code arrives, but rendering it throws: an ordinary bug, not a missing chunk.
+  await rewriteChunksContaining(
+    page,
+    "palette-hit",
+    '"Search every block"',
+    '(()=>{throw new Error("palette render bug")})()',
+  );
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  // It reaches the normal error path, never the "check your connection" toast.
+  // Next 16's default error screen.
+  await expect(page.getByText(/This page couldn.t load/)).toBeVisible();
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't open search" })).toHaveCount(0);
+  expect(uncaught.join("\n")).toContain("palette render bug");
 });

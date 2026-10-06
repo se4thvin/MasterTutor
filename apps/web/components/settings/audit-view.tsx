@@ -118,10 +118,7 @@ export function AuditView() {
             </table>
           </div>
         ) : (
-          // Focusable so the log can be scrolled from the keyboard: once every page is loaded the
-          // compact layout has nothing else to focus inside the scrolling main (axe
-          // scrollable-region-focusable).
-          <ul className="group audit-list" aria-label="Vault audit" tabIndex={0}>
+          <ul className="group audit-list" aria-label="Vault audit">
             {entries.map(({ entry: e, appended, i }) => (
               <li
                 key={e.id}

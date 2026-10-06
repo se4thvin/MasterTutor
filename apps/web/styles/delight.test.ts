@@ -34,4 +34,15 @@ describe("delight pass: move sheet, run badge and palette details", () => {
       /<FolderPickList\s+key=\{folder/,
     );
   });
+
+  it("a chart bar is styled in one block (M-9)", () => {
+    expect(read("./settings.css").match(/\n\s*\.chart-bar \{/g)).toHaveLength(1);
+  });
+
+  it("bars grow without overshooting the plot (M-11)", () => {
+    const grow = /\.chart-bar \{[^}]*animation-name:\s*bar-grow;[^}]*\}/.exec(
+      read("./settings.css"),
+    );
+    expect(grow?.[0]).toMatch(/animation-timing-function:\s*var\(--motion-ease-out\)/);
+  });
 });

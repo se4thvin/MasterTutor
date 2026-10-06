@@ -62,7 +62,9 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
           </Suspense>
         }
       />
-      <main id="main" className="main" tabIndex={-1}>
+      {/* tabIndex 0: the skip link's target, and a tab stop so the keyboard can scroll it even
+          when a page puts nothing focusable inside (axe scrollable-region-focusable). */}
+      <main id="main" className="main" tabIndex={0}>
         <KillBanner />
         {children}
       </main>

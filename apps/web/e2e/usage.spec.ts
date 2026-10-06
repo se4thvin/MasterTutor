@@ -114,7 +114,8 @@ test("tiles roll to their values and bars grow from the baseline", async ({ page
     .getByRole("radiogroup", { name: "Range" })
     .getByRole("radio", { name: "7 days" })
     .click();
-  await expect(spend).not.toHaveText(before);
+  // The sampled strip is the last digit, so that is the digit that must change (M-8).
+  await expect.poll(async () => (await spend.innerText()).slice(-1)).not.toBe(before.slice(-1));
   await expect(page.locator("[data-qa='bar']")).toHaveCount(7);
   await expect(page.locator("[data-qa='bar']").first()).toHaveCSS("animation-name", "bar-grow");
   const rolled = await readSamples(page, "roll", 30);
@@ -149,4 +150,46 @@ test("under reduced motion the numbers and bars do not move", async ({ page }) =
     "transition-property",
     "opacity",
   );
+});
+
+test("a refetch that crosses midnight keeps keyboard focus on the chart (M-10)", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-10-05T23:59:00Z") });
+  let calls = 0;
+  await page.route("**/api/rpc/settings/usage", async (route) => {
+    calls += 1;
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      json: { perDay: Array<{ day: string; usd: number; runs: number; steps: number }> };
+    };
+    if (calls > 1) {
+      // The window moved a day: the first day drops off and a new one is appended.
+      const days = body.json.perDay;
+      const last = days[days.length - 1]!;
+      const next = new Date(`${last.day}T00:00:00Z`);
+      next.setUTCDate(next.getUTCDate() + 1);
+      body.json.perDay = [
+        ...days.slice(1),
+        { day: next.toISOString().slice(0, 10), usd: 0, runs: 0, steps: 0 },
+      ];
+    }
+    return route.fulfill({ response, json: body });
+  });
+  await page.goto("/settings/usage");
+  const bars = page.getByRole("group", { name: "Spend per day" }).locator("[data-qa='bar']");
+  await expect(bars).toHaveCount(30);
+  await bars.nth(28).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(bars.nth(29)).toBeFocused();
+  await page.clock.fastForward("00:31");
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect.poll(() => calls).toBe(2);
+  await expect(bars).toHaveCount(30);
+  // The focused day is still on screen, so its bar keeps focus (no remount of the bars).
+  await expect(page.locator("[data-qa='bar']:focus")).toHaveCount(1);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });

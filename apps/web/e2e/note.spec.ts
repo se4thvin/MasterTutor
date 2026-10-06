@@ -64,4 +64,6 @@ test("under reduced motion a picked block keeps a static highlight instead of a 
   await expect
     .poll(() => flashed.evaluate((el) => getComputedStyle(el, "::before").animationName))
     .toBe("none");
+  // ...for as long as the flash would last, not until the next pick (M-6).
+  await expect(page.locator(".blk-flash")).toHaveCount(0, { timeout: 4000 });
 });

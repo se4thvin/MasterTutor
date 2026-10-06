@@ -48,6 +48,11 @@
     overflow: auto;
     overscroll-behavior: contain;
     outline: none;
+    /* A tab stop (to scroll by keyboard), so keyboard focus is shown, inside its edges. */
+    &:focus-visible {
+      outline: 2px solid var(--tint);
+      outline-offset: -2px;
+    }
   }
   .sidebar {
     order: 2;

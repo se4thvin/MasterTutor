@@ -35,7 +35,9 @@
     transition-duration: var(--motion-dur-micro) !important;
     scroll-behavior: auto !important;
   }
-  .toolbar::after {
+  [data-motion-keep-delay],
+  [data-motion-keep-delay]::before,
+  [data-motion-keep-delay]::after {
     animation-delay: 0s !important;
   }
 }

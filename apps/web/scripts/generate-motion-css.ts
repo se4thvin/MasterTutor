@@ -64,9 +64,11 @@ export function renderMotionCss(): string {
     "    transition-duration: var(--motion-dur-micro) !important;",
     "    scroll-behavior: auto !important;",
     "  }",
-    // Scroll-linked (not timed) animations keep their scroll mapping: a time delay would offset
-    // it, showing the toolbar hairline at the top of the page.
-    "  .toolbar::after {",
+    // Scroll-linked (not timed) animations opt out with data-motion-keep-delay: a time delay
+    // would offset their scroll mapping (the toolbar hairline would show at the top of the page).
+    "  [data-motion-keep-delay],",
+    "  [data-motion-keep-delay]::before,",
+    "  [data-motion-keep-delay]::after {",
     "    animation-delay: 0s !important;",
     "  }",
     "}",

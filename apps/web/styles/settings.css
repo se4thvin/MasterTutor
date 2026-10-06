@@ -114,6 +114,14 @@
     border-radius: 4px 4px 0 0;
     background: var(--tint);
     outline-offset: 1px;
+    /* Bars grow from the baseline on a left-to-right wave that never takes longer than one panel
+       duration, even at 90 days; ease-out, so the tallest never overshoots the plot. */
+    transform-origin: 50% 100%;
+    animation-name: bar-grow;
+    animation-duration: var(--motion-dur-panel);
+    animation-timing-function: var(--motion-ease-out);
+    animation-fill-mode: both;
+    animation-delay: calc(var(--x, 0) * var(--motion-dur-panel));
   }
   /*
    * Centred over its bar (--x is the bar's centre as a fraction of the chart), clamped to the
@@ -207,15 +215,6 @@
   .audit-alias {
     min-width: 0;
     overflow-wrap: anywhere;
-  }
-  .chart-bar {
-    transform-origin: 50% 100%;
-    animation-name: bar-grow;
-    animation-duration: var(--motion-spring-dur);
-    animation-timing-function: var(--motion-spring);
-    animation-fill-mode: both;
-    /* A left-to-right wave that never takes longer than one panel duration, even at 90 days. */
-    animation-delay: calc(var(--x, 0) * var(--motion-dur-panel));
   }
   @keyframes bar-grow {
     from {
