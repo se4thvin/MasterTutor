@@ -18,6 +18,7 @@
     "env:init": "node scripts/env-init.ts",
     "compose:test": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml",
     "smoke": "bash scripts/compose-smoke.sh",
+    "check:agent-image": "bash scripts/check-agent-image.sh",
     "test:behaviour": "vitest run --project behaviour"
   },
   "devDependencies": {
