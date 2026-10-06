@@ -5,9 +5,19 @@ export interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElemen
   label: string;
   hint?: string;
   error?: string | null;
+  /** False when the form announces one summary itself, so field errors don't talk over it. */
+  announceError?: boolean;
 }
 
-export function TextField({ label, hint, error, id, className, ...input }: TextFieldProps) {
+export function TextField({
+  label,
+  hint,
+  error,
+  announceError = true,
+  id,
+  className,
+  ...input
+}: TextFieldProps) {
   const auto = useId();
   const inputId = id ?? auto;
   const hintId = `${inputId}-hint`;
@@ -32,7 +42,7 @@ export function TextField({ label, hint, error, id, className, ...input }: TextF
         </p>
       ) : null}
       {error ? (
-        <p id={errorId} className="tf-error" role="alert">
+        <p id={errorId} className="tf-error" role={announceError ? "alert" : undefined}>
           {error}
         </p>
       ) : null}

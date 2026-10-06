@@ -45,7 +45,6 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
   const [field, setField] = useState<TypedSecretField>(
     TYPED_SECRET_FIELDS.find((f) => item.fields.includes(f)) ?? "password",
   );
-  const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [pending, setPending] = useState(false);
@@ -54,11 +53,14 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
 
   const refresh = () => qc.invalidateQueries({ queryKey: orpc.vault.key() });
 
-  async function save(event: FormEvent) {
+  async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalized = normalize(field, value);
-    // The value leaves component state the moment it is read, whatever happens next.
-    setValue("");
+    if (pending) return;
+    // Uncontrolled (a controlled input mirrors its value into the DOM attribute): read once, wipe.
+    const input = event.currentTarget.elements.namedItem("value");
+    if (!(input instanceof HTMLInputElement)) return;
+    const normalized = normalize(field, input.value);
+    input.value = "";
     if (!normalized) {
       setError(INVALID[field] ?? "Enter a value.");
       return;
@@ -78,6 +80,8 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
   }
 
   async function remove() {
+    if (pending) return;
+    setPending(true);
     try {
       await api.vault.removeSecret({ itemId: item.id, field });
       await refresh();
@@ -85,6 +89,8 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
       onClose();
     } catch {
       toast({ title: "Couldn't remove the value.", icon: "needsReview", tone: "danger" });
+    } finally {
+      setPending(false);
     }
   }
 
@@ -98,7 +104,12 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
         footer={
           <>
             {exists ? (
-              <Button variant="plain" className="mr-auto" onClick={() => setConfirm(true)}>
+              <Button
+                variant="plain"
+                className="mr-auto"
+                disabled={pending}
+                onClick={() => setConfirm(true)}
+              >
                 Remove value…
               </Button>
             ) : null}
@@ -120,7 +131,6 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
               value={field}
               onChange={(e) => {
                 setField(e.target.value as TypedSecretField);
-                setValue("");
                 setError(null);
               }}
             >
@@ -132,13 +142,14 @@ function SecretForm({ item, onClose }: { item: VaultItemView; onClose: () => voi
               ))}
             </select>
           </div>
+          {/* Keyed on the field: switching fields remounts the input, dropping anything typed. */}
           <TextField
+            key={field}
             label="New value"
+            name="value"
             {...SECRET_INPUT}
             inputMode={field === "pin" ? "numeric" : undefined}
-            value={value}
             error={error}
-            onChange={(e) => setValue(e.target.value)}
           />
         </form>
       </Sheet>
