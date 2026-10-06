@@ -1,0 +1,111 @@
+import { z } from "zod";
+import { ApprovalRequest } from "./approval.ts";
+import { Budget, Usage } from "./budget.ts";
+import {
+  ApprovalStatus,
+  BlockOrigin,
+  BlockType,
+  Controller,
+  FiledBy,
+  RunStatus,
+  StepPhase,
+  StepState,
+  WaitReason,
+} from "./enums.ts";
+import { IsoDateTime, SlotName, Uuid } from "./primitives.ts";
+import { ToolName } from "./tools.ts";
+
+/** What the UI shows for a step; `point` drives the overlay cursor. */
+export const StepAction = z.object({
+  tool: ToolName,
+  summary: z.string().max(300),
+  point: z.object({ x: z.number().int(), y: z.number().int() }).nullable(),
+});
+export type StepAction = z.infer<typeof StepAction>;
+
+export const RUN_EVENT_TYPES = [
+  "status",
+  "step",
+  "control",
+  "slot",
+  "approval_requested",
+  "approval_resolved",
+  "block_added",
+  "budget",
+  "user_message",
+  "download_ready",
+  "error",
+  "filed",
+  "model_fallback",
+] as const;
+export type RunEventType = (typeof RUN_EVENT_TYPES)[number];
+
+/** Stored in run_events.payload and streamed over SSE (spec §6). */
+export const RunEvent = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("status"),
+    status: RunStatus,
+    waitReason: WaitReason.nullable(),
+    reason: z.string().max(500).nullable(),
+  }),
+  z.object({
+    type: z.literal("step"),
+    seq: z.number().int().nonnegative(),
+    phase: StepPhase,
+    state: StepState,
+    caption: z.string().max(300).nullable(),
+    url: z.string().max(4_096).nullable(),
+    screenshotKey: z.string().max(1_024).nullable(),
+    action: StepAction.nullable(),
+  }),
+  z.object({ type: z.literal("control"), holder: Controller }),
+  z.object({ type: z.literal("slot"), slotName: SlotName.nullable() }),
+  z.object({ type: z.literal("approval_requested"), approvalId: Uuid, request: ApprovalRequest }),
+  z.object({
+    type: z.literal("approval_resolved"),
+    approvalId: Uuid,
+    status: ApprovalStatus,
+    decidedBy: z.string().min(1).max(64),
+  }),
+  z.object({
+    type: z.literal("block_added"),
+    noteId: Uuid,
+    blockId: Uuid,
+    blockType: BlockType,
+    origin: BlockOrigin,
+  }),
+  z.object({ type: z.literal("budget"), usage: Usage, budget: Budget }),
+  z.object({ type: z.literal("user_message"), text: z.string().min(1).max(4_000) }),
+  z.object({
+    type: z.literal("download_ready"),
+    downloadId: Uuid,
+    filename: z.string().max(255),
+    bytes: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal("error"),
+    code: z.string().min(1).max(64),
+    message: z.string().max(500),
+  }),
+  z.object({
+    type: z.literal("filed"),
+    noteId: Uuid,
+    folderId: Uuid,
+    path: z.array(z.string().max(120)).max(8),
+    filedBy: FiledBy,
+  }),
+  z.object({
+    type: z.literal("model_fallback"),
+    from: z.string().max(64),
+    to: z.string().max(64),
+  }),
+]);
+export type RunEvent = z.infer<typeof RunEvent>;
+
+export const RunEventRecord = z.object({
+  id: z.string().regex(/^[0-9]+$/),
+  runId: Uuid,
+  at: IsoDateTime,
+  event: RunEvent,
+});
+export type RunEventRecord = z.infer<typeof RunEventRecord>;
