@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { VaultAuditAction, VaultAuditView } from "@mastertutor/contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
@@ -110,7 +111,15 @@ export function AuditView() {
                       {e.origin ? <span className="t-foot"> · {hostOf(e.origin)}</span> : null}
                     </td>
                     <td>{e.field ? fieldLabel(e.field) : "–"}</td>
-                    <td>{e.runId ? <span className="mono">Run {e.runId.slice(-6)}</span> : "–"}</td>
+                    <td>
+                      {e.runId ? (
+                        <Link className="mono" href={`/runs/${e.runId}`}>
+                          Run {e.runId.slice(-6)}
+                        </Link>
+                      ) : (
+                        "–"
+                      )}
+                    </td>
                     <td>{e.outcome}</td>
                   </tr>
                 ))}
