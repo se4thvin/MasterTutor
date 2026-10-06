@@ -1,3 +1,5 @@
+import { upsertBrowserSession } from "@mastertutor/db";
+import { sealValue } from "@mastertutor/sealing";
 import { withOpenedText } from "@mastertutor/sealing/open";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -86,6 +88,8 @@ afterAll(async () => {
   await env?.stop();
 });
 
+// The first tests build on each other (sign in, then restore, then log out), as the plan wrote
+// them; the review tests after them set up their own state.
 describe("sealed per-alias sessions (spec §5.6)", () => {
   let run: Awaited<ReturnType<typeof newRun>>;
   let token: string | null;
@@ -172,10 +176,90 @@ describe("sealed per-alias sessions (spec §5.6)", () => {
     expect(audit).toMatchObject({ action: "delete", outcome: "logout" });
   });
 
-  it("ignores clicks that are not a logout", async () => {
+  it("leaves a sealed session alone on a click that is not a logout (I3)", async () => {
+    const b = await browser();
+    const own = await newRun();
+    const store = await signIn(b, "site", own.id);
+    await b.page.click("#submit");
+    await b.page.waitForURL(`${login}/account`);
+    await saveState(store, own, await collectStorageState(b.session));
+    expect((await sessionRows()).map((row) => row.alias)).toEqual(["site"]);
+    await store.onClick(own, { label: "Log in", url: `${login}/password` });
+    expect((await sessionRows()).map((row) => row.alias)).toEqual(["site"]);
+    const logouts = await env.owner.sql`
+      select 1 from vault_audit where run_id = ${own.id} and outcome = 'logout'`;
+    expect(logouts).toHaveLength(0);
+  });
+
+  it("stops sealing once the grant is revoked mid-run (review)", async () => {
+    const b = await browser();
+    const own = await newRun();
+    const store = await signIn(b, "site", own.id);
+    await b.page.click("#submit");
+    await b.page.waitForURL(`${login}/account`);
+    await saveState(store, own, await collectStorageState(b.session));
+    const before = String((await sessionRows())[0]!.updated_at);
+    await env.owner
+      .sql`delete from vault_grants where item_id = (select id from vault_items where alias = 'site')`;
+    await b.page.evaluate(() => localStorage.setItem("fx_changed", "1"));
+    await saveState(store, own, await collectStorageState(b.session));
+    expect(String((await sessionRows())[0]!.updated_at)).toBe(before);
+  });
+
+  it("saves again when the act that saved was rolled back (review)", async () => {
+    await env.owner.sql`delete from browser_sessions`;
+    const b = await browser();
+    const own = await newRun();
+    const store = await signIn(b, "site", own.id);
+    await b.page.click("#submit");
+    await b.page.waitForURL(`${login}/account`);
+    const state = await collectStorageState(b.session);
+    await env.agent.db
+      .transaction(async (tx) => {
+        await store.save(tx, own, state);
+        throw new Error("the act's commit failed");
+      })
+      .catch(() => undefined);
+    expect(await sessionRows()).toEqual([]);
+    await saveState(store, own, state);
+    expect((await sessionRows()).map((row) => row.alias)).toEqual(["site"]);
+  });
+
+  it("restores one identity per origin, the most recently saved (review)", async () => {
+    await env.owner.sql`delete from browser_sessions`;
+    for (const alias of ["older", "newer"]) {
+      await env.seedItem({ alias, origin: login, secrets: {} });
+      await env.owner.sql`insert into vault_grants (item_id, origin, approved_by)
+        select id, ${login}, ${env.userId} from vault_items where alias = ${alias}`;
+      const state = {
+        cookies: [],
+        origins: [{ origin: login, localStorage: [{ name: "who", value: alias }] }],
+      };
+      await upsertBrowserSession(env.agent.db, {
+        workspaceId: env.workspaceId,
+        alias,
+        origin: login,
+        sealed: await sealValue(
+          env.keys.publicKey,
+          { kind: "session", workspaceId: env.workspaceId, alias, origin: login },
+          JSON.stringify(state),
+        ),
+      });
+    }
+    await env.owner
+      .sql`update browser_sessions set updated_at = now() - interval '1 hour' where alias = 'older'`;
+    const restored = await createVaultSessionStore(env.deps()).load(await newRun());
+    expect(restored?.origins).toEqual([
+      { origin: login, localStorage: [{ name: "who", value: "newer" }] },
+    ]);
+  });
+
+  it("a logout click deletes a session this run only restored (review)", async () => {
+    const restoring = await newRun();
     const store = createVaultSessionStore(env.deps());
-    await expect(
-      store.onClick(run, { label: "Log in", url: `${login}/password` }),
-    ).resolves.toBeUndefined();
+    expect(await store.load(restoring)).not.toBeNull();
+    await store.onClick(restoring, { label: "Sign out", url: `${login}/account` });
+    // The identity it restored ("newer") is signed out; another alias's session is not touched.
+    expect((await sessionRows()).map((row) => row.alias)).toEqual(["older"]);
   });
 });
