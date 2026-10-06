@@ -30,22 +30,46 @@ describe("first-use approval and grants", () => {
 
   it("a policy approval authorizes the call without writing a lasting grant (Review Focus 4)", async () => {
     const zybooks = await item();
-    expect(await approvedBy(env.deps(), policyApproval(), zybooks)).toBe("policy");
+    expect(await approvedBy(env.deps(), policyApproval(), zybooks, `${origin}/signin`)).toBe(
+      "policy",
+    );
     expect(await getVaultGrantApprover(env.agent.db, zybooks.id, origin)).toBeNull();
-    expect(await approvedBy(env.deps(), null, zybooks)).toBeNull();
+    expect(await approvedBy(env.deps(), null, zybooks, `${origin}/signin`)).toBeNull();
   });
 
   it("ignores an approval of another kind", async () => {
     expect(
-      await approvedBy(env.deps(), { kind: "risky_click", decidedBy: env.userId }, await item()),
+      await approvedBy(
+        env.deps(),
+        { kind: "risky_click", decidedBy: env.userId },
+        await item(),
+        `${origin}/signin`,
+      ),
     ).toBeNull();
   });
 
   it("a human approval writes the grant, after which no approval is needed", async () => {
     const zybooks = await item();
-    expect(await approvedBy(env.deps(), humanApproval(env.userId), zybooks)).toBe(env.userId);
-    expect(await approvedBy(env.deps(), null, zybooks)).toBe(env.userId);
+    expect(
+      await approvedBy(env.deps(), humanApproval(env.userId), zybooks, `${origin}/signin`),
+    ).toBe(env.userId);
+    expect(await approvedBy(env.deps(), null, zybooks, `${origin}/signin`)).toBe(env.userId);
     expect(await credentialApproval(env.deps(), origin, zybooks)).toBeNull();
+  });
+});
+
+describe("grants are used only on the pinned origin", () => {
+  it("never uses or writes a grant for a page on another origin", async () => {
+    await env.seedItem({ alias: "pinned", origin, secrets: { password: "PINNED-VALUE-1234" } });
+    const pinned = await item("pinned");
+    const lookalike = "https://learn.zybooks.co/signin";
+    expect(await approvedBy(env.deps(), humanApproval(env.userId), pinned, lookalike)).toBeNull();
+    expect(await getVaultGrantApprover(env.agent.db, pinned.id, origin)).toBeNull();
+    expect(await approvedBy(env.deps(), humanApproval(env.userId), pinned, origin)).toBe(
+      env.userId,
+    );
+    expect(await approvedBy(env.deps(), null, pinned, lookalike)).toBeNull();
+    expect(await approvedBy(env.deps(), null, pinned, `${origin}/home`)).toBe(env.userId);
   });
 });
 
