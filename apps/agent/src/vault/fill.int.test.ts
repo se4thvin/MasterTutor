@@ -5,7 +5,11 @@ import {
   type VaultFixtures,
 } from "../../../../tests/fixtures/vault-sites/server.ts";
 import { fillApproval, fillCredential } from "./fill.ts";
-import { ControlHeld } from "./runtime.ts";
+import { generateVaultKeyPair, vaultKeyPairFromPrivate } from "@mastertutor/sealing/open";
+import { readPageTool } from "../tools/read-page.ts";
+import { ToolRegistry } from "../tools/registry.ts";
+import { register } from "../tools/types.ts";
+import { ControlHeld, captureModelScreenshot } from "./runtime.ts";
 import {
   humanApproval,
   launchTestBrowser,
@@ -257,5 +261,101 @@ describe("fill_credential", () => {
     ).rejects.toBeInstanceOf(ControlHeld);
     tb.setController("agent");
     expect(await tb.page.inputValue("#password")).toBe("");
+  });
+
+  it("records a fill in a same-origin iframe under the child frame's id (I1)", async () => {
+    await tb.page.goto(`${login}/iframe-same-origin`);
+    const frame = tb.page.frames()[1]!;
+    await frame.waitForSelector("#child-password");
+    const d = deps();
+    expect(
+      await fillCredential(d, ctx(), {
+        alias: "site",
+        field: "password",
+        target: await refs.ref("#child-password", frame),
+      }),
+    ).toEqual({ ok: true });
+    const { frameTree } = await (await tb.session.cdp()).send("Page.getFrameTree");
+    const child = frameTree.childFrames![0]!.frame;
+    expect(d.fingerprints.forRun(runId).filledFrames?.()).toEqual([
+      { frameId: child.id, loaderId: child.loaderId },
+    ]);
+  });
+
+  it("a fill the page makes fail leaves nothing of the secret unmasked (I2)", async () => {
+    await tb.page.goto(`${login}/rewrite`);
+    const d = deps();
+    const target = await refs.ref("#password");
+    expect(await fillCredential(d, ctx(), { alias: "site", field: "password", target })).toEqual({
+      error: "fill_failed",
+    });
+    // The box is cleared (the page's own handler may add to the empty value), and the page's
+    // echo of the value is masked and redacted.
+    expect(await tb.page.inputValue("#password")).not.toContain(account.password);
+    const mask = d.fingerprints.forRun(runId);
+    expect(mask.nodeIds(await tb.session.cdp())).toHaveLength(1);
+    const text = await tb.page.evaluate(() => `${document.title}\n${document.body.innerText}`);
+    expect(text).toContain(account.password);
+    expect(mask.redact(text)).not.toContain(account.password);
+    const registry = new ToolRegistry([register(readPageTool)], env.log.logger, mask);
+    const { output } = await registry.run(
+      "read_page",
+      { mode: "text", sinceHash: null },
+      {
+        runId,
+        workspaceId: env.workspaceId,
+        session: tb.session,
+        signal: new AbortController().signal,
+        log: env.log.logger,
+        approval: null,
+      },
+    );
+    expect(output).not.toContain(account.password);
+    const shot = await captureModelScreenshot(tb.session, mask, new AbortController().signal);
+    expect(shot.dropped).toBe(true);
+  });
+
+  it("asks again when the form posts off the item's origin, by action or by submit button (M4)", async () => {
+    for (const path of ["/offsite-form", "/offsite-button"]) {
+      await tb.page.goto(`${login}${path}`);
+      expect(
+        await fillCredential(deps(), ctx(), {
+          alias: "site",
+          field: "password",
+          target: await refs.ref("#password"),
+        }),
+        path,
+      ).toEqual({ error: "approval_required" });
+      expect(await tb.page.inputValue("#password")).toBe("");
+      const [row] = await env.owner
+        .sql`select action, outcome from vault_audit where run_id = ${runId} order by at desc limit 1`;
+      expect(row).toMatchObject({ action: "denied", outcome: "form_action_offsite" });
+      expect(
+        await fillCredential(deps(), ctx(humanApproval(env.userId)), {
+          alias: "site",
+          field: "password",
+          target: await refs.ref("#password"),
+        }),
+        path,
+      ).toEqual({ ok: true });
+    }
+  });
+
+  it("checks control and abort before it decrypts anything (M8)", async () => {
+    await tb.page.goto(`${login}/password`);
+    // With keys that cannot open the box, decrypting first would answer fill_failed instead.
+    const stranger = await vaultKeyPairFromPrivate((await generateVaultKeyPair()).privateKeyBase64);
+    tb.setController("user");
+    await expect(
+      fillCredential({ ...deps(), keys: stranger }, ctx(), {
+        alias: "site",
+        field: "password",
+        target: await refs.ref("#password"),
+      }),
+    ).rejects.toBeInstanceOf(ControlHeld);
+    tb.setController("agent");
+    const [row] = await env.owner
+      .sql`select count(*)::int as n from vault_audit where run_id = ${runId}`;
+    expect(row?.n).toBe(0);
   });
 });

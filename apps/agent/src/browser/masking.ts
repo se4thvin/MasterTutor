@@ -243,6 +243,7 @@ export async function hasCrossOriginFrames(session: BrowserSession): Promise<boo
 export async function hasFilledOutOfProcessFrame(
   session: BrowserSession,
   sources: MaskSources,
+  signal: AbortSignal,
 ): Promise<boolean> {
   const filled = sources.filledFrames?.() ?? [];
   for (const [frameId, worlds] of await session.outOfProcessFrames()) {
@@ -251,10 +252,16 @@ export async function hasFilledOutOfProcessFrame(
     if (documents.length === 0) continue;
     // Filled only while the frame still shows a filled document (review 1): a navigation since
     // (seen only by a session that was replaced) ends the mark. Unreadable: fail closed.
-    const tree = await worlds.cdp.send("Page.getFrameTree").catch(() => null);
-    const loaderId = (tree?.frameTree.frame as { loaderId?: string } | undefined)?.loaderId;
-    if (loaderId === undefined || documents.some((frame) => frame.loaderId === loaderId))
-      return true;
+    // The frame's own renderer answers: bounded like every OOPIF read (M1); a timeout or an
+    // error counts as still filled.
+    const shows = await bounded(
+      worlds.cdp.send("Page.getFrameTree").then(({ frameTree }) => {
+        const loaderId = (frameTree.frame as { loaderId?: string }).loaderId;
+        return documents.some((frame) => frame.loaderId === loaderId) ? "secret" : "clean";
+      }),
+      signal,
+    );
+    if (shows !== "clean") return true;
   }
   return false;
 }

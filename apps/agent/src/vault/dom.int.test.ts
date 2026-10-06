@@ -142,4 +142,45 @@ describe("isolated-world DOM layer", () => {
     expect(await tb.page.isDisabled("#reveal")).toBe(true);
     expect(await tb.page.isEnabled("#submit")).toBe(true);
   });
+
+  it("opens a same-origin iframe's field in its own frame, under its own frame id (I1)", async () => {
+    await tb.page.goto(`${fx.origin("login")}/iframe-same-origin`);
+    await tb.page.frames()[1]!.waitForSelector("#child-password");
+    const { frameTree } = await (await tb.session.cdp()).send("Page.getFrameTree");
+    const child = frameTree.childFrames![0]!.frame;
+    const node = await target("#child-password", 1);
+    expect(node.frameId).toBe(child.id);
+    expect(node.loaderId).toBe(child.loaderId);
+  });
+
+  it("reports the field's own origin when document.domain lets the parent script it (I1)", async () => {
+    await tb.page.goto(`${fx.origin("login")}/iframe-domain`);
+    await tb.page.frames()[1]!.waitForSelector("#domain-password");
+    // The parent really can reach into the child: the relaxation took effect.
+    expect(
+      await tb.page.evaluate(() =>
+        Boolean(
+          (document.getElementById("frame") as HTMLIFrameElement).contentDocument?.getElementById(
+            "domain-password",
+          ),
+        ),
+      ),
+    ).toBe(true);
+    const [box] = await describeGroup(await target("#domain-password", 1));
+    expect(box?.info.origin).toBe(fx.origin("other"));
+  });
+
+  it("treats invisible password decoys and invisible fields as hidden (M3)", async () => {
+    await tb.page.goto(`${fx.origin("login")}/hidden-decoys`);
+    expect((await describeGroup(await target("#user")))[0]?.info.hasPasswordInScope).toBe(false);
+    expect((await describeGroup(await target("#ghost")))[0]?.info.visible).toBe(false);
+  });
+
+  it("disables the password's own reveal toggle but not an unrelated 'Show …' button (M6)", async () => {
+    await tb.page.goto(`${fx.origin("login")}/show-details`);
+    const [box] = await describeGroup(await target("#password"));
+    expect(await disableRevealToggles(box!.node)).toBe(1);
+    expect(await tb.page.isDisabled("#reveal")).toBe(true);
+    expect(await tb.page.isEnabled("#details")).toBe(true);
+  });
 });

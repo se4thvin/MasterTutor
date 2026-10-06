@@ -29,6 +29,7 @@ export {
   type ToolContext,
 } from "../tools/types.ts";
 export { BrowserSession } from "../browser/session.ts";
+export { IsolatedWorlds } from "../browser/isolated-world.ts";
 
 /** A credential target: the node and the CDP session that owns it. */
 export interface ResolvedTarget {

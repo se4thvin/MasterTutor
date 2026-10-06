@@ -1,6 +1,7 @@
 import { toOrigin } from "@mastertutor/contracts";
 import type { CDPSession } from "playwright-core";
 import { z } from "zod";
+import { IsolatedWorlds } from "./runtime.ts";
 
 /**
  * All credential DOM work runs in the vault's own CDP isolated world: page scripts cannot see
@@ -21,6 +22,8 @@ export const TargetInfo = z.object({
   editable: z.boolean(),
   maxLength: z.number(),
   origin: z.string(),
+  /** Origins this field's form submits to (its action, and any submit button's formaction). */
+  formOrigins: z.array(z.string()),
 });
 export type TargetInfo = z.infer<typeof TargetInfo>;
 
@@ -47,19 +50,33 @@ const INSPECT_FN = `function () {
   const labels = e.labels ? Array.from(e.labels, (l) => l.textContent || "").join(" ") : "";
   const hints = [e.getAttribute("aria-label"), labels, e.getAttribute("placeholder"), e.getAttribute("name"), e.id]
     .filter(Boolean).join(" ").slice(0, 300).toLowerCase();
-  const rect = e.getBoundingClientRect();
-  const style = getComputedStyle(e);
+  // Shown to a person: laid out, not transparent or hidden (here or up the tree), not pushed off
+  // the page's top or left edge, and not clipped away (M3).
+  const shown = (x) => {
+    const rect = x.getBoundingClientRect();
+    const style = getComputedStyle(x);
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (!x.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+    if (rect.right + scrollX <= 0 || rect.bottom + scrollY <= 0) return false;
+    return style.clipPath === "none" && (style.clip === "auto" || style.clip === "");
+  };
+  // Where submitting this form sends it: the form's action and any submit button's formaction (M4).
+  const submits = scope
+    ? [scope.action, ...Array.from(scope.querySelectorAll("button[formaction], input[formaction]"), (b) => b.formAction)]
+    : [];
+  const formOrigins = Array.from(new Set(submits.map((url) => { try { return new URL(url, location.href).origin; } catch { return "invalid"; } })));
   return {
     tag,
     type: tag === "input" ? e.type : "",
     autocomplete: (e.getAttribute("autocomplete") || "").toLowerCase().split(/\\s+/).filter(Boolean),
     inputMode: (e.getAttribute("inputmode") || "").toLowerCase(),
     hints,
-    hasPasswordInScope: scope ? Array.from(scope.querySelectorAll("input")).some((x) => x.type === "password") : false,
-    visible: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none",
+    hasPasswordInScope: scope ? Array.from(scope.querySelectorAll("input")).some((x) => x.type === "password" && shown(x)) : false,
+    visible: shown(e),
     editable: !(e.disabled || e.readOnly),
     maxLength: tag === "input" ? e.maxLength : -1,
     origin: self.origin,
+    formOrigins,
   };
 }`;
 
@@ -84,14 +101,23 @@ const SET_VALUE_FN = `function (value, forcePassword) {
   return this.value === value;
 }`;
 
-/** Show/hide-password controls next to the field: parent and grandparent only, by visible name (S4). */
+/**
+ * Show/hide-password controls next to the field: parent and grandparent only, by visible name, and
+ * only those that belong to this field (S4, M6).
+ */
 const DISABLE_TOGGLES_FN = `function () {
   const scope = (this.parentElement && this.parentElement.parentElement) || this.parentElement;
   if (!scope) return 0;
   let disabled = 0;
   for (const b of scope.querySelectorAll("button, [role=button], input[type=checkbox]")) {
     const hint = [b.getAttribute("aria-label"), b.getAttribute("title"), b.textContent].join(" ");
-    if (/\\b(show|reveal|hide|toggle)\\b/i.test(hint)) {
+    // A reveal control for this field only (M6): it names a password, points at the field, or
+    // sits right beside it. An unrelated "Show details" nearby stays clickable.
+    const forField =
+      /pass|pw\\b/i.test(hint) ||
+      (this.id !== "" && b.getAttribute("aria-controls") === this.id) ||
+      b.parentElement === this.parentElement;
+    if (forField && /\\b(show|reveal|hide|toggle)\\b/i.test(hint)) {
       b.disabled = true;
       b.setAttribute("aria-disabled", "true");
       b.style.pointerEvents = "none";
@@ -110,28 +136,54 @@ function frames(tree: FrameTree): FrameTree["frame"][] {
   return [tree.frame, ...(tree.childFrames ?? []).flatMap(frames)];
 }
 
-async function isolatedContext(cdp: CDPSession, frameId: string): Promise<number> {
-  const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
-    frameId,
-    worldName: WORLD,
-    grantUniveralAccess: false,
-  });
-  return executionContextId;
+/** The vault's world per CDP session, reusing B1's per-frame context cache (M2). */
+const vaultWorlds = new WeakMap<CDPSession, IsolatedWorlds>();
+function worldsOf(cdp: CDPSession): IsolatedWorlds {
+  let worlds = vaultWorlds.get(cdp);
+  if (!worlds) {
+    worlds = new IsolatedWorlds(cdp, WORLD);
+    vaultWorlds.set(cdp, worlds);
+  }
+  return worlds;
 }
 
-/** Resolves a backend node in the vault world of whichever frame owns it (verification 3). */
+/** True only in the world of the node's own document (I1: a parent may resolve a child's node). */
+const OWN_DOCUMENT_FN = `function () { return this.ownerDocument === document; }`;
+
+/**
+ * Resolves a backend node in the vault world of the frame whose document owns it. A same-origin
+ * or document.domain-relaxed parent can resolve a child's node too, so a resolution counts only
+ * where the node's ownerDocument is that world's document (I1). A frame that cannot be entered
+ * (detaching) is skipped (M2); none found is null.
+ */
 export async function openTarget(
   cdp: CDPSession,
   backendNodeId: number,
 ): Promise<TargetNode | null> {
+  const worlds = worldsOf(cdp);
   const { frameTree } = await cdp.send("Page.getFrameTree");
   for (const { id: frameId, loaderId } of frames(frameTree as FrameTree)) {
-    const executionContextId = await isolatedContext(cdp, frameId);
-    const resolved = await cdp
-      .send("DOM.resolveNode", { backendNodeId, executionContextId, objectGroup: OBJECT_GROUP })
+    const objectId = await worlds
+      .inContext(frameId, async (executionContextId) => {
+        const resolved = await cdp.send("DOM.resolveNode", {
+          backendNodeId,
+          executionContextId,
+          objectGroup: OBJECT_GROUP,
+        });
+        return resolved.object.objectId ?? null;
+      })
       .catch(() => null);
-    const objectId = resolved?.object.objectId;
-    if (objectId) return { cdp, objectId, frameId, loaderId };
+    if (!objectId) continue;
+    const own = await cdp
+      .send("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: OWN_DOCUMENT_FN,
+        returnByValue: true,
+      })
+      .then((result) => result.result.value === true)
+      .catch(() => false);
+    if (own) return { cdp, objectId, frameId, loaderId };
+    await cdp.send("Runtime.releaseObject", { objectId }).catch(() => undefined);
   }
   return null;
 }
@@ -236,7 +288,11 @@ export async function fillGroup(
         [part, options.forcePassword],
         z.boolean(),
       ).catch(() => false);
-      if (!ok && !leftPage) return "failed";
+      if (!ok && !leftPage) {
+        // The page refused or rewrote the value (I2): clear everything written so far.
+        await clearBoxes(group.slice(0, index + 1));
+        return "failed";
+      }
     }
     if (leftPage) {
       await clearBoxes(group.slice(0, index + 1));
@@ -266,14 +322,17 @@ export async function callInMainFrame<T>(
   args: readonly unknown[],
   schema: z.ZodType<T>,
 ): Promise<T> {
-  const { frameTree } = await cdp.send("Page.getFrameTree");
-  const executionContextId = await isolatedContext(cdp, frameTree.frame.id);
-  const { result, exceptionDetails } = await cdp.send("Runtime.callFunctionOn", {
-    executionContextId,
-    functionDeclaration: fn,
-    arguments: args.map((value) => ({ value })),
-    returnByValue: true,
-  });
+  const worlds = worldsOf(cdp);
+  const { result, exceptionDetails } = await worlds.inContext(
+    await worlds.mainFrameId(),
+    (executionContextId) =>
+      cdp.send("Runtime.callFunctionOn", {
+        executionContextId,
+        functionDeclaration: fn,
+        arguments: args.map((value) => ({ value })),
+        returnByValue: true,
+      }),
+  );
   if (exceptionDetails) throw new Error("vault main-frame call failed");
   return schema.parse(result.value);
 }

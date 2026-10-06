@@ -13,6 +13,7 @@ const input = (over: Partial<TargetInfo>): TargetInfo => ({
   editable: true,
   maxLength: -1,
   origin: "https://a.example",
+  formOrigins: [],
   ...over,
 });
 

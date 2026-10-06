@@ -364,6 +364,17 @@ describe("out-of-process frames (R-E5, review I1/I2)", () => {
     );
   });
 
+  it("a hung filled frame cannot stall the screenshot: bounded, and fails closed (M1)", async () => {
+    const fake = fakeSession({ oopif: { login: { hang: true } } });
+    const filled: MaskSources = {
+      ...sources(),
+      filledFrames: () => [{ frameId: "login", loaderId: "doc-1" }],
+    };
+    const started = performance.now();
+    expect((await captureModelScreenshot(fake.session, filled, signal)).dropped).toBe(true);
+    expect(performance.now() - started).toBeLessThan(2 * OOPIF_READ_TIMEOUT_MS);
+  });
+
   it("forgets the mark once the filled frame shows another document (review 1)", async () => {
     // The frame navigated after its session was swapped: the filled document is gone.
     const fake = fakeSession({ oopif: { login: { ax: [], loaderId: "doc-2" } } });

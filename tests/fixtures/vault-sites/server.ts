@@ -134,6 +134,8 @@ export async function startVaultFixtures(options: {
 
     if (host === FIXTURE_HOSTS.evil || host === FIXTURE_HOSTS.other) {
       if (route === "GET /frame") return html(res, page.evilFrame());
+      if (route === "GET /frame-domain")
+        return html(res, page.domainChild(), 200, { "origin-agent-cluster": "?0" });
       if (route === "GET /landing") return html(res, page.evilLanding());
       if (route === "GET /steal") return html(res, page.message("Stolen"));
       if (route === "POST /collect") return send(res, 204, "text/plain", "");
@@ -229,6 +231,24 @@ export async function startVaultFixtures(options: {
         return html(res, page.tampered());
       case "GET /iframe-same-site":
         return html(res, page.framed(`${origin("other")}/frame`));
+      case "GET /iframe-same-origin":
+        return html(res, page.framed(`${here}/child-frame`));
+      case "GET /child-frame":
+        return html(res, page.childFrame());
+      case "GET /iframe-domain":
+        return html(res, page.domainParent(`${origin("other")}/frame-domain`), 200, {
+          "origin-agent-cluster": "?0",
+        });
+      case "GET /rewrite":
+        return html(res, page.rewrite());
+      case "GET /hidden-decoys":
+        return html(res, page.hiddenDecoys());
+      case "GET /offsite-form":
+        return html(res, page.offsiteForm(`${origin("evil")}/collect`, null));
+      case "GET /offsite-button":
+        return html(res, page.offsiteForm("/password", `${origin("evil")}/collect`));
+      case "GET /show-details":
+        return html(res, page.showDetails());
       case "GET /iframe-cross-site":
         return html(res, page.framed(`${origin("evil")}/frame`));
       case "GET /redirect":
