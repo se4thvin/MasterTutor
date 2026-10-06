@@ -1,6 +1,6 @@
 import type { NoteBlock, SourceView } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
-import { calloutFor, isRawHtmlTable, provenanceOf } from "./provenance.ts";
+import { calloutFor, isRawHtmlTable, provenanceOf, showsVerifyCheck } from "./provenance.ts";
 
 const base: NoteBlock = {
   id: "00000000-0000-4000-8000-000003000001",
@@ -80,5 +80,18 @@ describe("provenance", () => {
   it("detects raw HTML tables only for table blocks", () => {
     expect(isRawHtmlTable({ ...base, type: "table", markdown: "<table></table>" })).toBe(true);
     expect(isRawHtmlTable({ ...base, markdown: "<table></table>" })).toBe(false);
+  });
+});
+
+describe("showsVerifyCheck (T21: ocr_model or not yet verified)", () => {
+  it.each([
+    ["verified page text", { origin: "dom", verified: true }, false],
+    ["unverified page text", { origin: "dom", verified: false }, true],
+    ["OCR, before verifying", { origin: "ocr_model", verified: false }, true],
+    ["OCR, after verifying (stays visible)", { origin: "ocr_model", verified: true }, true],
+    ["unverified agent note", { origin: "model", verified: false }, true],
+    ["verified agent note", { origin: "model", verified: true }, false],
+  ] as const)("%s", (_name, patch, shown) => {
+    expect(showsVerifyCheck({ ...base, ...patch })).toBe(shown);
   });
 });

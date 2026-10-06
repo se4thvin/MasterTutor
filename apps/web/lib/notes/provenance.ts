@@ -29,6 +29,10 @@ export function statusOf(block: NoteBlock): ProvenanceStatus {
   return "verified";
 }
 
+/** Mark verified shows for model-read images and any unverified block, and stays once verified (T21). */
+export const showsVerifyCheck = (block: Pick<NoteBlock, "origin" | "verified">) =>
+  block.origin === "ocr_model" || !block.verified;
+
 export const isRawHtmlTable = (block: NoteBlock) =>
   block.type === "table" && block.markdown.trimStart().startsWith("<");
 

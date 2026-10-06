@@ -19,7 +19,13 @@ export const FIELD_META: Record<
   passkey: { label: "Passkey", icon: "passkey", secret: true },
 };
 
+/** Base32 length bounds: 80-bit keys are 16 characters, SHA-512's 64-byte keys are 103. */
+const TOTP_SEED = /^[A-Z2-7]{16,128}$/;
+/** An otpauth:// link carries more than the seed; anything longer than this is not one. */
+const MAX_TOTP_INPUT = 2_048;
+
 export function normalizeTotpSeed(raw: string): string | null {
+  if (raw.length > MAX_TOTP_INPUT) return null;
   let value = raw.trim();
   if (value.toLowerCase().startsWith("otpauth://")) {
     try {
@@ -29,7 +35,7 @@ export function normalizeTotpSeed(raw: string): string | null {
     }
   }
   value = value.replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
-  return /^[A-Z2-7]{16,}$/.test(value) ? value : null;
+  return TOTP_SEED.test(value) ? value : null;
 }
 
 export const isValidPin = (raw: string) => /^[0-9]{4,12}$/.test(raw);
@@ -37,7 +43,10 @@ export const isValidPin = (raw: string) => /^[0-9]{4,12}$/.test(raw);
 export function suggestAlias(originInput: string): string {
   const parsed = OriginInput.safeParse(originInput);
   if (!parsed.success) return "";
-  const labels = new URL(parsed.data).hostname.split(".").filter((l) => l !== "www");
+  const host = new URL(parsed.data).hostname;
+  // An IP literal has no name to borrow; a fragment such as "1" would only mislead.
+  if (host.startsWith("[") || /^[0-9.]+$/.test(host)) return "";
+  const labels = host.split(".").filter((l) => l !== "www");
   const base = labels.length >= 2 ? (labels[labels.length - 2] ?? "") : (labels[0] ?? "");
   return base
     .toLowerCase()
@@ -93,7 +102,7 @@ export function toCreateInput(
   if (form.enabled.totp) {
     const seed = normalizeTotpSeed(form.values.totp);
     if (seed) secrets["totp"] = seed;
-    else errors.totp = "Paste the setup key or otpauth:// link (16+ characters).";
+    else errors.totp = "Paste the setup key (16–128 characters) or its otpauth:// link.";
   }
   if (form.enabled.pin) {
     if (isValidPin(form.values.pin)) secrets["pin"] = form.values.pin;
@@ -122,6 +131,32 @@ export function toCreateInput(
     secrets,
     imap,
   });
-  if (!parsed.success) return { ok: false, errors: { label: "Check the highlighted fields." } };
+  if (!parsed.success) return { ok: false, errors: contractErrors(parsed.error.issues) };
   return { ok: true, input: parsed.data };
+}
+
+const SECRET_FORM_FIELD: Record<string, VaultFormField> = {
+  username: "username",
+  password: "password",
+  totp: "totp",
+  pin: "pin",
+  imap_password: "imap",
+};
+
+/** Maps contract issues to form fields by path; messages come from the issue code, never the value. */
+function contractErrors(
+  issues: ReadonlyArray<{ code: string; path: ReadonlyArray<PropertyKey> }>,
+): Partial<Record<VaultFormField, string>> {
+  const errors: Partial<Record<VaultFormField, string>> = {};
+  for (const issue of issues) {
+    const [head, sub] = issue.path;
+    const field: VaultFormField =
+      head === "secrets"
+        ? (SECRET_FORM_FIELD[String(sub)] ?? "label")
+        : head === "alias" || head === "origin" || head === "imap"
+          ? head
+          : "label";
+    errors[field] ??= issue.code === "too_big" ? "This is too long." : "Check this field.";
+  }
+  return errors;
 }

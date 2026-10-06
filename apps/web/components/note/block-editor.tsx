@@ -1,31 +1,115 @@
 "use client";
 
-import type { NoteBlock, NoteDetail } from "@mastertutor/contracts";
+import type { NoteBlock } from "@mastertutor/contracts";
 import { useQueryClient } from "@tanstack/react-query";
+import { Extension } from "@tiptap/core";
 import { Markdown } from "@tiptap/markdown";
 import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
 import { patchNoteDetail } from "@/lib/notes/cache.ts";
+import { editsAsRichText, richTextKit } from "@/lib/notes/rich-markdown.ts";
 
-/** These stay byte-faithful, so they edit as raw text rather than through a rich-text round trip. */
-const RAW_TYPES = new Set(["code", "math", "table", "transcript"]);
+type Commit = (markdown: string, baseline: string) => void;
 
-export function BlockEditor({ block, onDone }: { block: NoteBlock; onDone: () => void }) {
+/** Saves optimistically; `baseline` is the editor's own first serialisation, so a no-op is never a write. */
+function useCommitEdit(block: NoteBlock, onDone: () => void): Commit {
   const qc = useQueryClient();
   const toast = useToast();
-  const [raw, setRaw] = useState(block.markdown);
-  const rich = !RAW_TYPES.has(block.type);
+  return (markdown, baseline) => {
+    onDone();
+    if (markdown === baseline) return;
+    void (async () => {
+      // A refetch in flight would land on top of the optimistic text.
+      await qc.cancelQueries({
+        queryKey: orpc.notes.get.queryKey({ input: { noteId: block.noteId } }),
+      });
+      const setBlock = (fn: (b: NoteBlock) => NoteBlock) =>
+        patchNoteDetail(qc, block.noteId, (d) => ({
+          ...d,
+          blocks: d.blocks.map((b) => (b.id === block.id ? fn(b) : b)),
+        }));
+      setBlock((b) => ({
+        ...b,
+        markdown,
+        edited: true,
+        originalMarkdown: b.originalMarkdown ?? b.markdown,
+      }));
+      try {
+        const updated = await api.notes.updateBlock({ blockId: block.id, markdown });
+        setBlock(() => updated);
+      } catch {
+        // Restore only this block, so concurrent changes to the rest of the note survive.
+        setBlock(() => block);
+        toast({
+          title: "Couldn't save your edit.",
+          description: "The block is unchanged.",
+          icon: "needsReview",
+          tone: "danger",
+        });
+      }
+    })();
+  };
+}
+
+/**
+ * ⌘↵ and Esc, ahead of StarterKit (HardBreak binds Mod-Enter at the default priority 100), so
+ * saving never inserts a break first. Handlers are read at key time via the getters.
+ */
+const EditorKeys = Extension.create<{ save: () => void; cancel: () => void }>({
+  name: "blockEditorKeys",
+  priority: 1000,
+  addOptions: () => ({ save: () => undefined, cancel: () => undefined }),
+  addKeyboardShortcuts() {
+    return {
+      "Mod-Enter": () => {
+        this.options.save();
+        return true;
+      },
+      Escape: () => {
+        this.options.cancel();
+        return true;
+      },
+    };
+  },
+});
+
+function Actions({ onCancel, onSave }: { onCancel: () => void; onSave: () => void }) {
+  return (
+    <div className="blk-editor-actions">
+      <span className="t-foot">⌘↵ to save · Esc to cancel</span>
+      <Button onClick={onCancel}>Cancel</Button>
+      <Button variant="primary" onClick={onSave}>
+        Save
+      </Button>
+    </div>
+  );
+}
+
+function RichEditor({ block, commit, onCancel }: EditorProps) {
+  const baseline = useRef<string | null>(null);
+  const keys = useRef<{ save: () => void; cancel: () => void }>({
+    save: () => undefined,
+    cancel: onCancel,
+  });
   const editor = useEditor({
-    extensions: [StarterKit.configure({ link: { openOnClick: false, autolink: false } }), Markdown],
+    extensions: [
+      richTextKit,
+      Markdown,
+      EditorKeys.configure({
+        save: () => keys.current.save(),
+        cancel: () => keys.current.cancel(),
+      }),
+    ],
     content: block.markdown,
     contentType: "markdown",
     immediatelyRender: false,
     autofocus: "end",
-    editable: rich,
+    onCreate: ({ editor: created }) => {
+      baseline.current = created.getMarkdown();
+    },
     editorProps: {
       attributes: {
         "aria-label": "Edit block",
@@ -35,71 +119,67 @@ export function BlockEditor({ block, onDone }: { block: NoteBlock; onDone: () =>
       },
     },
   });
-
-  const save = async () => {
-    const markdown = rich ? (editor?.getMarkdown() ?? block.markdown) : raw;
-    onDone();
-    if (markdown === block.markdown) return;
-    const previous = patchNoteDetail(qc, block.noteId, (d: NoteDetail) => ({
-      ...d,
-      blocks: d.blocks.map((b) =>
-        b.id === block.id
-          ? { ...b, markdown, edited: true, originalMarkdown: b.originalMarkdown ?? b.markdown }
-          : b,
-      ),
-    }));
-    try {
-      const updated = await api.notes.updateBlock({ blockId: block.id, markdown });
-      patchNoteDetail(qc, block.noteId, (d) => ({
-        ...d,
-        blocks: d.blocks.map((b) => (b.id === updated.id ? updated : b)),
-      }));
-    } catch {
-      if (previous) {
-        qc.setQueryData(orpc.notes.get.queryKey({ input: { noteId: block.noteId } }), previous);
-      }
-      toast({
-        title: "Couldn't save your edit.",
-        description: "The block is unchanged.",
-        icon: "needsReview",
-        tone: "danger",
-      });
-    }
+  const save = () => {
+    if (!editor) return;
+    commit(editor.getMarkdown(), baseline.current ?? block.markdown);
   };
+  useEffect(() => {
+    keys.current = { save, cancel: onCancel };
+  });
+  return (
+    <div className="blk-editor">
+      <EditorContent editor={editor} />
+      <Actions onCancel={onCancel} onSave={save} />
+    </div>
+  );
+}
 
+function RawEditor({ block, commit, onCancel }: EditorProps) {
+  const [raw, setRaw] = useState(block.markdown);
+  const save = () => commit(raw, block.markdown);
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      onDone();
+      onCancel();
     } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      void save();
+      save();
     }
   };
-
   return (
-    // The wrapper only relays key events from the editor or textarea inside it.
-    <div className="blk-editor" onKeyDown={onKeyDown}>
-      {rich ? (
-        <EditorContent editor={editor} />
-      ) : (
-        <textarea
-          className="blk-raw"
-          aria-label="Edit block"
-          value={raw}
-          spellCheck={false}
-          rows={Math.min(20, raw.split("\n").length + 1)}
-          onChange={(e) => setRaw(e.target.value)}
-          autoFocus
-        />
-      )}
-      <div className="blk-editor-actions">
-        <span className="t-foot">⌘↵ to save · Esc to cancel</span>
-        <Button onClick={onDone}>Cancel</Button>
-        <Button variant="primary" onClick={() => void save()}>
-          Save
-        </Button>
-      </div>
+    <div className="blk-editor">
+      <textarea
+        className="blk-raw"
+        aria-label="Edit block"
+        value={raw}
+        spellCheck={false}
+        rows={Math.min(20, raw.split("\n").length + 1)}
+        onChange={(e) => setRaw(e.target.value)}
+        onKeyDown={onKeyDown}
+        autoFocus
+      />
+      <Actions onCancel={onCancel} onSave={save} />
     </div>
+  );
+}
+
+interface EditorProps {
+  block: NoteBlock;
+  commit: Commit;
+  onCancel: () => void;
+}
+
+/**
+ * Rich editing only when the editor reproduces the block's Markdown byte for byte; otherwise (and
+ * always for code, math, tables and transcripts) a raw textarea, so nothing is silently rewritten.
+ */
+export function BlockEditor({ block, onDone }: { block: NoteBlock; onDone: () => void }) {
+  const commit = useCommitEdit(block, onDone);
+  // Decided once per edit session, so a refetch mid-edit cannot swap the editor under the caret.
+  const [rich] = useState(() => editsAsRichText(block));
+  return rich ? (
+    <RichEditor block={block} commit={commit} onCancel={onDone} />
+  ) : (
+    <RawEditor block={block} commit={commit} onCancel={onDone} />
   );
 }

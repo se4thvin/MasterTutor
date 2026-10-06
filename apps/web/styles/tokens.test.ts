@@ -108,3 +108,17 @@ describe("--label-3", () => {
     expect(contrast(parseColor(vars["label-3"] ?? ""), bg)).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe("SpringCheck ring", () => {
+  /** The unchecked box is the control's only boundary, so it needs the 1.4.11 non-text minimum. */
+  const components = readFileSync(new URL("./components.css", import.meta.url), "utf8");
+  const ring = /\.scheck-ring\s*\{[^}]*box-shadow:[^;]*var\(--([a-z0-9-]+)\)/.exec(components)?.[1];
+  it.each([
+    ["light", blockAfter("/* light */")],
+    ["dark", blockAfter("prefers-color-scheme: dark")],
+  ])("meets 3:1 against bg (%s)", (_scheme, vars) => {
+    expect(ring, "ring token").toBeDefined();
+    const bg = parseColor(vars["bg"] ?? "");
+    expect(contrast(over(parseColor(vars[ring ?? ""] ?? ""), bg), bg)).toBeGreaterThanOrEqual(3);
+  });
+});

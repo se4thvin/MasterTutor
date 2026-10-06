@@ -135,7 +135,10 @@ export const fixtureRouter = os.router({
       const record = findNote(stateFor(context.ns), input.noteId);
       return {
         note: record.note,
-        blocks: [...record.blocks].sort((a, b) => a.position.localeCompare(b.position)),
+        // Byte order, as Postgres "C" collation orders fractional-index keys.
+        blocks: [...record.blocks].sort((a, b) =>
+          a.position < b.position ? -1 : a.position > b.position ? 1 : 0,
+        ),
         sources: record.sources,
       };
     }),

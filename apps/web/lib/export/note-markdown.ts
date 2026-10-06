@@ -5,18 +5,31 @@ const q = (value: string) => JSON.stringify(value);
 /** Titles and ledes come from untrusted pages: keep them on one line so they cannot open new structure. */
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
+/** Device names Windows reserves, with or without an extension. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+const MAX_NAME_CHARS = 120;
+
 export function exportFileName(title: string): string {
   const clean = title
+    .replace(/\p{Cc}/gu, " ")
     .replace(/[\\/:*?"<>|#^[\]]/g, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
-  return `${clean || "note"}.md`;
+    .replace(/^[\s.]+|[\s.]+$/g, "");
+  // Cap by code point so a surrogate pair is never split.
+  const capped = Array.from(clean)
+    .slice(0, MAX_NAME_CHARS)
+    .join("")
+    .replace(/[\s.]+$/, "");
+  const name = WINDOWS_RESERVED.test(capped) ? `_${capped}` : capped;
+  return `${name || "note"}.md`;
 }
+
+/** Source text cannot pose as our provenance comments: `<!-- mt:` becomes `<!-- mt-src:`. */
+const neutralise = (value: string) => value.replace(/<!--(\s*)mt:/gi, "<!--$1mt-src:");
 
 function blockBody(block: NoteBlock): string {
   if (block.type === "image" || block.type === "figure" || block.type === "keyframe") {
-    const alt = block.markdown.replace(/[[\]*_`]/g, "").trim() || "image";
+    const alt = block.markdown.replace(/[[\]*_`\\]/g, "").trim() || "image";
     const image = block.assetId ? `![${oneLine(alt)}](assets/${block.assetId})` : "";
     return block.type === "image" ? image : `${image}\n\n${block.markdown}`;
   }
@@ -36,7 +49,7 @@ function blockBody(block: NoteBlock): string {
 /** Obsidian-compatible Markdown with provenance (spec §1 v1 defaults). Assets are referenced as assets/<id>. */
 export function buildNoteMarkdown(detail: NoteDetail, folderPath: readonly string[] = []): string {
   const { note, blocks, sources } = detail;
-  const title = oneLine(note.title);
+  const title = neutralise(oneLine(note.title));
   const front = [
     "---",
     `title: ${q(title)}`,
@@ -56,13 +69,12 @@ export function buildNoteMarkdown(detail: NoteDetail, folderPath: readonly strin
     "",
     `# ${title}`,
     "",
-    ...(note.lede ? [`> ${oneLine(note.lede)}`, ""] : []),
+    ...(note.lede ? [`> ${neutralise(oneLine(note.lede))}`, ""] : []),
   ];
-  const body = [...blocks]
-    .sort((a, b) => a.position.localeCompare(b.position))
-    .map(
-      (block) =>
-        `<!-- mt:block id=${block.id} origin=${block.origin} sha256=${block.contentSha256 ?? "none"} -->\n${blockBody(block)}`,
-    );
+  // The API returns blocks in position order (byte order); re-sorting here would add a second rule.
+  const body = blocks.map(
+    (block) =>
+      `<!-- mt:block id=${block.id} origin=${block.origin} sha256=${block.contentSha256 ?? "none"} -->\n${neutralise(blockBody(block))}`,
+  );
   return `${[...front, body.join("\n\n")].join("\n")}\n`;
 }

@@ -24,13 +24,22 @@ export function VerifyCheck({ block }: { block: NoteBlock }) {
   const qc = useQueryClient();
   const toast = useToast();
   const verify = async () => {
-    const previous = patchNoteDetail(qc, block.noteId, (d) => withVerified(d, block.id));
+    // A refetch in flight would land on top of the optimistic state and un-check the box.
+    await qc.cancelQueries({
+      queryKey: orpc.notes.get.queryKey({ input: { noteId: block.noteId } }),
+    });
+    const before = patchNoteDetail(qc, block.noteId, (d) => withVerified(d, block.id));
     try {
       await api.notes.markVerified({ blockId: block.id });
       toast({ title: "Marked verified", icon: "verified" });
     } catch {
-      if (previous) {
-        qc.setQueryData(orpc.notes.get.queryKey({ input: { noteId: block.noteId } }), previous);
+      // Undo only this block (and the fidelity it promoted), so concurrent changes survive.
+      if (before) {
+        patchNoteDetail(qc, block.noteId, (d) => ({
+          ...d,
+          blocks: d.blocks.map((b) => (b.id === block.id ? { ...b, verified: block.verified } : b)),
+          note: { ...d.note, fidelity: before.note.fidelity },
+        }));
       }
       toast({
         title: "Couldn't mark the block verified.",
