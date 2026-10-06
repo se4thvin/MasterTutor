@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+// eslint-disable-next-line no-restricted-imports -- guard test inspects the whole module namespace
 import * as motionReact from "motion/react";
 import { describe, expect, it } from "vitest";
 import { renderMotionCss, sampleSpring } from "../scripts/generate-motion-css.ts";
