@@ -85,7 +85,12 @@ describe("loginNeko", () => {
     });
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    await expect(loginNeko({ baseUrl, username: "user", password: "p4ss" })).rejects.toThrow();
+    // A redirect is a login failure like any other: never a raw fetch TypeError (A6/A7).
+    const error = await loginNeko({ baseUrl, username: "user", password: "p4ss" }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(NekoLoginError);
+    expect((error as Error).message).not.toContain("p4ss");
     expect(hits).toEqual(["/api/login"]);
   });
 });
