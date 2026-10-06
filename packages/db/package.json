@@ -5,11 +5,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./migrate": "./src/migrate.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "generate": "drizzle-kit generate"
+    "generate": "drizzle-kit generate",
+    "migrate": "node src/bin/migrate.ts"
   },
   "dependencies": {
     "@mastertutor/contracts": "workspace:*",
