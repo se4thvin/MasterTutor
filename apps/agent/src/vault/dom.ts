@@ -348,25 +348,3 @@ export async function releaseTargets(cdp: CDPSession): Promise<void> {
     .send("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP })
     .catch(() => undefined);
 }
-
-/** Runs `fn` with `args` in the vault world of the main frame (no element needed). */
-export async function callInMainFrame<T>(
-  cdp: CDPSession,
-  fn: string,
-  args: readonly unknown[],
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const worlds = worldsOf(cdp);
-  const { result, exceptionDetails } = await worlds.inContext(
-    await worlds.mainFrameId(),
-    (executionContextId) =>
-      cdp.send("Runtime.callFunctionOn", {
-        executionContextId,
-        functionDeclaration: fn,
-        arguments: args.map((value) => ({ value })),
-        returnByValue: true,
-      }),
-  );
-  if (exceptionDetails) throw new Error("vault main-frame call failed");
-  return schema.parse(result.value);
-}
