@@ -7,7 +7,7 @@ import { orpc } from "@/lib/api/client.ts";
 import { durations } from "@/lib/motion-tokens.ts";
 import { finishedIds, flashStatus, type RunFlash } from "@/lib/runs/pulse.ts";
 
-export type RunPulse = { status: "running"; count: number } | { status: RunFlash; count: 0 } | null;
+type RunPulse = { status: "running"; count: number } | { status: RunFlash; count: 0 } | null;
 
 /**
  * The Runs nav item's badge: the live count while runs are running, then, when runs leave the
