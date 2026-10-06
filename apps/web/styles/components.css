@@ -459,7 +459,8 @@
     &.switch-danger[data-checked] {
       background: var(--danger);
     }
-    &[data-disabled] {
+    /* Disabled, or busy while a change is in flight (focusable, but it looks unavailable). */
+    &:is([data-disabled], [aria-busy="true"]) {
       opacity: 0.55;
       cursor: not-allowed;
     }

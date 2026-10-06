@@ -39,12 +39,16 @@ async function settle(page: Page): Promise<void> {
           !((a.effect as KeyframeEffect | null)?.target as Element | null)?.matches(".toast-fuse"),
       );
     await Promise.all(finite.map((a) => a.finished.catch(() => undefined)));
-    // Toasts fade in on motion values (rAF, not WAAPI), so wait for them to be fully shown.
+    // Toasts (and their list item) fade in on motion values (rAF, not WAAPI), so wait until each is
+    // fully shown, counting every ancestor's opacity as axe's contrast check does.
+    const shown = (el: Element) => {
+      for (let node: Element | null = el; node; node = node.parentElement) {
+        if (getComputedStyle(node).opacity !== "1") return false;
+      }
+      return true;
+    };
     const deadline = performance.now() + 2000;
-    while (
-      [...document.querySelectorAll(".toast")].some((t) => getComputedStyle(t).opacity !== "1") &&
-      performance.now() < deadline
-    ) {
+    while (![...document.querySelectorAll(".toast")].every(shown) && performance.now() < deadline) {
       await new Promise(requestAnimationFrame);
     }
   });

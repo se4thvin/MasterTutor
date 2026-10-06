@@ -175,3 +175,54 @@ test("a late defaults response cannot switch the kill switch back off (R29-5)", 
   await expect(page.getByRole("status").filter({ hasText: "Kill switch is on." })).toBeVisible();
   await expect(page.getByLabel("Max steps")).toHaveValue("90");
 });
+
+test("the kill switch keeps keyboard focus and its tab stop while a change is in flight (parked)", async ({
+  page,
+}) => {
+  await page.request.post("/api/rpc/settings/setKillSwitch", { data: { json: { on: true } } });
+  let calls = 0;
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/rpc/settings/setKillSwitch", async (route) => {
+    calls += 1;
+    await held;
+    await route.continue();
+  });
+  await page.goto("/settings");
+  const sw = page.getByRole("switch", { name: "Kill switch" });
+  await sw.focus();
+  await page.keyboard.press("Space");
+  await expect(sw).toBeFocused();
+  await expect(sw).toHaveAttribute("tabindex", "0");
+  await expect(sw).toHaveAttribute("aria-disabled", "true");
+  // It also looks unavailable while busy (I4).
+  await expect(sw).toHaveCSS("opacity", "0.55");
+  await page.keyboard.press("Space");
+  expect(calls).toBe(1);
+  release();
+  await expect(sw).not.toBeChecked();
+  await expect(sw).toBeFocused();
+  await expect(sw).not.toHaveAttribute("aria-disabled", "true");
+});
+
+test("after confirming Stop all runs, focus is back on the busy switch", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/rpc/settings/setKillSwitch", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto("/settings");
+  const sw = page.getByRole("switch", { name: "Kill switch" });
+  await sw.focus();
+  await page.keyboard.press("Space");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Stop All Runs" }).click();
+  await expect(sw).toBeFocused();
+  await expect(sw).toHaveAttribute("tabindex", "0");
+  // The switch is optimistic; wait for the server's answer (and any toast it raises) before axe.
+  const answered = page.waitForResponse("**/api/rpc/settings/setKillSwitch");
+  release();
+  await answered;
+  await expect(sw).toBeChecked();
+  await expectCleanScreen(page);
+});
