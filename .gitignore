@@ -12,3 +12,4 @@ apps/web/test-results/
 apps/web/playwright-report/
 apps/web/AGENTS.md
 apps/web/CLAUDE.md
+tests/fixtures/vault-sites/.dist/
