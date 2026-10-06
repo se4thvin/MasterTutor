@@ -4,7 +4,7 @@ import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
@@ -17,6 +17,7 @@ import { SearchField } from "@/components/ui/search-field.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
+import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
 import { transitions } from "@/lib/motion-tokens.ts";
 import { childFolders, folderPath } from "@/lib/folders/tree.ts";
 import {
@@ -30,7 +31,6 @@ import { FolderActions } from "./folder-actions.tsx";
 import { FolderTiles } from "./folder-tiles.tsx";
 import { FolderTree } from "./folder-tree.tsx";
 import { SearchResults } from "./search-results.tsx";
-import { MoveSheet } from "./move-sheet.tsx";
 import { NoteCard } from "./note-card.tsx";
 import { useDeleteNote } from "./use-delete-note.ts";
 import { useMoveNote } from "./use-move-note.ts";
@@ -102,6 +102,11 @@ function emptyCopy(params: LibraryParams, showTiles: boolean): { title: string; 
   if (showTiles) return { title: "No notes in this folder yet", body };
   return { title: "Nothing here yet", body };
 }
+
+// The move sheet (pick list, receive animation) stays out of the library's first load.
+const { Component: MoveSheet, usePrefetch: usePrefetchMoveSheet } = lazyComponent(() =>
+  import("./move-sheet.tsx").then((mod) => mod.MoveSheet),
+);
 
 const URL_WRITE_DEBOUNCE_MS = 250;
 const KIND_ITEMS: SegmentItem<"all" | SourceKind>[] = [
@@ -177,6 +182,10 @@ export function LibraryView() {
   const moveNote = useMoveNote();
   const deleteNote = useDeleteNote();
   const [moving, setMoving] = useState<NoteSummary | null>(null);
+  // Mounted from the first "Move to…" on, so its close animation always plays.
+  const [moveSheetUsed, setMoveSheetUsed] = useState(false);
+  if (moving && !moveSheetUsed) setMoveSheetUsed(true);
+  usePrefetchMoveSheet();
   const [deleting, setDeleting] = useState<NoteSummary | null>(null);
   const reduceMotion = useReducedMotion();
   const dropNote = (noteId: string, folderId: string | null) => {
@@ -315,7 +324,11 @@ export function LibraryView() {
             </div>
           </LayoutMotion>
         )}
-        <MoveSheet note={moving} onClose={() => setMoving(null)} />
+        {moveSheetUsed ? (
+          <Suspense fallback={null}>
+            <MoveSheet note={moving} onClose={() => setMoving(null)} />
+          </Suspense>
+        ) : null}
         <ConfirmDialog
           open={deleting !== null}
           onOpenChange={(open) => !open && setDeleting(null)}

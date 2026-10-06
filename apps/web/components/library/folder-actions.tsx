@@ -3,18 +3,23 @@
 import type { FolderView } from "@mastertutor/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { IconButton } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Menu, MenuItem, MenuPanel } from "@/components/ui/menu.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
+import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
 import { canCreateFolder } from "@/lib/folders/tree.ts";
 import { libraryHref } from "@/lib/library/params.ts";
-import { FolderMoveSheet } from "./folder-move-sheet.tsx";
 import { FolderNameSheet, type FolderNameTarget } from "./folder-name-sheet.tsx";
 
 /** Folder actions for the current Library scope (keyboard- and touch-reachable everywhere). */
+// The folder move sheet stays out of the library's first load.
+const { Component: FolderMoveSheet, usePrefetch: usePrefetchFolderMoveSheet } = lazyComponent(() =>
+  import("./folder-move-sheet.tsx").then((mod) => mod.FolderMoveSheet),
+);
+
 export function FolderActions({
   folders,
   current,
@@ -30,6 +35,10 @@ export function FolderActions({
   // A snapshot taken when the sheet opens: the move updates the tree cache at once, and the live
   // folder's new parentId would drop the destination row mid-receive (B1).
   const [moving, setMoving] = useState<FolderView | null>(null);
+  // Mounted from the first "Move folder to…" on, so its close animation always plays.
+  const [moveSheetUsed, setMoveSheetUsed] = useState(false);
+  if (moving && !moveSheetUsed) setMoveSheetUsed(true);
+  usePrefetchFolderMoveSheet();
 
   const remove = async () => {
     if (!current) return;
@@ -93,7 +102,11 @@ export function FolderActions({
         onClose={() => setSheet(null)}
         onDone={(id) => sheet?.mode === "create" && router.push(libraryHref({ folder: id }))}
       />
-      <FolderMoveSheet folder={moving} folders={folders} onClose={() => setMoving(null)} />
+      {moveSheetUsed ? (
+        <Suspense fallback={null}>
+          <FolderMoveSheet folder={moving} folders={folders} onClose={() => setMoving(null)} />
+        </Suspense>
+      ) : null}
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}
