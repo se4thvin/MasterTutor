@@ -1,4 +1,4 @@
-import { submitOtpCode } from "@mastertutor/db";
+import { setVaultSecret, submitOtpCode } from "@mastertutor/db";
 import { sealValue } from "@mastertutor/sealing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -12,7 +12,15 @@ import {
   type VaultFixtures,
 } from "../../../../tests/fixtures/vault-sites/server.ts";
 import { fillCredential } from "./fill.ts";
-import { launchTestBrowser, refMap, toolContext, type TestBrowser } from "./testing/browser.ts";
+import { CODE_FIRST_LOOKBACK_MS, codeFirstSignInStart } from "./otp.ts";
+import { totpCode } from "./totp.ts";
+import {
+  humanApproval,
+  launchTestBrowser,
+  refMap,
+  toolContext,
+  type TestBrowser,
+} from "./testing/browser.ts";
 import { startVaultTestEnv, type VaultTestEnv } from "./testing/env.ts";
 
 const account = {
@@ -33,6 +41,7 @@ async function grant(alias: string) {
   await env.owner.sql`insert into vault_grants (item_id, origin, approved_by)
                       select id, ${login}, ${env.userId} from vault_items where alias = ${alias}`;
 }
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const ctx = () => toolContext({ runId, workspaceId: env.workspaceId, session: tb.session });
 const status = () => tb.page.textContent("#status").catch(() => null);
 const sealCode = (code: string) =>
@@ -55,7 +64,7 @@ beforeAll(async () => {
   await env.seedItem({
     alias: "mailbox",
     origin: login,
-    secrets: { imap_password: GREENMAIL_USER.password },
+    secrets: { username: account.email, imap_password: GREENMAIL_USER.password },
     imap: { ...imap, senderFilter: FIXTURE_MAIL_FROM },
   });
   // Watches the same inbox for a sender that never writes, so only the code box can answer.
@@ -94,6 +103,58 @@ describe("TOTP", () => {
     ).toEqual({ ok: true });
     await tb.page.click("#submit");
     await expect.poll(status).toBe("TOTP accepted");
+  });
+});
+
+describe("TOTP step reuse", () => {
+  it("waits for a fresh step without the seed open, then types the code of the seed stored now (N5)", async () => {
+    const id = await env.seedItem({
+      alias: "rotating",
+      origin: login,
+      secrets: { totp: account.totpSeed },
+    });
+    await grant("rotating");
+    const rotated = "GEZDGNBVGY3TQOJQGEZDGNBV";
+    let skew = 0;
+    const deps = env.deps({
+      resolveRef: refs.resolve,
+      now: () => Date.now() + skew,
+      // The wait for the next step: the seed is replaced meanwhile, as a person rotating it would.
+      sleep: async (ms: number) => {
+        skew += ms;
+        await setVaultSecret(env.web.db, {
+          workspaceId: env.workspaceId,
+          itemId: id,
+          actor: env.userId,
+          secret: {
+            field: "totp",
+            sealed: await sealValue(
+              env.keys.publicKey,
+              {
+                kind: "secret",
+                workspaceId: env.workspaceId,
+                alias: "rotating",
+                origin: login,
+                field: "totp",
+              },
+              rotated,
+            ),
+          },
+        });
+      },
+    });
+    const fill = async () => {
+      await tb.page.goto(`${login}/totp`);
+      return fillCredential(deps, ctx(), {
+        alias: "rotating",
+        field: "totp",
+        target: await refs.ref("#totp"),
+      });
+    };
+    expect(await fill()).toEqual({ ok: true });
+    expect(await fill()).toEqual({ ok: true });
+    expect(skew).toBeGreaterThan(0);
+    expect(await tb.page.inputValue("#totp")).toBe(totpCode(rotated, Date.now() + skew));
   });
 });
 
@@ -185,8 +246,16 @@ describe("OTP sources are trusted only for this sign-in (review)", () => {
   it("never uses a code emailed before this sign-in started", async () => {
     await tb.page.goto(`${login}/email-otp`);
     await sendCode();
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    await pause(1_500);
     const deps = env.deps({ resolveRef: refs.resolve, otpImapWaitMs: 1_500 });
+    // The sign-in starts with its first fill; the code mailed before it belongs to another attempt.
+    expect(
+      await fillCredential(deps, ctx(), {
+        alias: "mailbox",
+        field: "username",
+        target: await refs.ref("#email"),
+      }),
+    ).toEqual({ ok: true });
     expect(
       await fillCredential(deps, ctx(), {
         alias: "mailbox",
@@ -194,6 +263,38 @@ describe("OTP sources are trusted only for this sign-in (review)", () => {
         target: await refs.ref("#otp0"),
       }),
     ).toEqual({ error: "otp_unavailable" });
+  });
+
+  it("finds the code of an email-code-only sign-in, mailed before its first fill (N2)", async () => {
+    await tb.page.goto(`${login}/email-otp`);
+    await sendCode();
+    // Observing the page and the model's turn take seconds before the code fill starts.
+    await pause(2_500);
+    const deps = env.deps({ resolveRef: refs.resolve, otpImapWaitMs: 3_000 });
+    expect(
+      await fillCredential(deps, ctx(), {
+        alias: "mailbox",
+        field: "otp",
+        target: await refs.ref("#otp0"),
+      }),
+    ).toEqual({ ok: true });
+    await tb.page.click("#submit");
+    await expect.poll(status).toBe("Code accepted");
+  });
+
+  it("finds the code when the agent typed the email itself before asking for it (N2)", async () => {
+    await tb.page.goto(`${login}/email-otp`);
+    await tb.page.fill("#email", account.email); // the agent's own typing, not fill_credential
+    await sendCode();
+    await pause(2_500);
+    const deps = env.deps({ resolveRef: refs.resolve, otpImapWaitMs: 3_000 });
+    expect(
+      await fillCredential(deps, ctx(), {
+        alias: "mailbox",
+        field: "otp",
+        target: await refs.ref("#otp0"),
+      }),
+    ).toEqual({ ok: true });
   });
 
   it("answers fill_failed, audited, when a typed code cannot be opened during the inbox wait", async () => {
@@ -280,5 +381,25 @@ describe("OTP from the UI code box", () => {
     const mask = deps.fingerprints.forRun(runId);
     expect(mask.nodeIds(await tb.session.cdp())).toHaveLength(1);
     expect(mask.hasSecrets()).toBe(false);
+  });
+});
+
+describe("codeFirstSignInStart (N2)", () => {
+  it("starts a code-first sign-in at its approval or a little before the call, whichever is earlier, never before the run", async () => {
+    const now = Date.now();
+    await env.owner
+      .sql`update runs set created_at = ${new Date(now - 60 * 60_000).toISOString()} where id = ${runId}`;
+    const deps = env.deps({ now: () => now });
+    const decided = (at: number) => ({
+      runId,
+      approval: { ...humanApproval(env.userId), decidedAt: at },
+    });
+    expect(await codeFirstSignInStart(deps, { runId, approval: null })).toBe(
+      now - CODE_FIRST_LOOKBACK_MS,
+    );
+    expect(await codeFirstSignInStart(deps, decided(now - 3 * 60_000))).toBe(now - 3 * 60_000);
+    expect(await codeFirstSignInStart(deps, decided(now - 2 * 60 * 60_000))).toBe(
+      now - 60 * 60_000,
+    );
   });
 });

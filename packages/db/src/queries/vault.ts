@@ -651,3 +651,9 @@ export async function listRunCredentialUses(
     row.origin === null ? [] : [{ alias: row.alias, origin: row.origin }],
   );
 }
+
+/** When the run was created: the earliest any of its sign-ins can have started (OTP lookback). */
+export async function runCreatedAt(db: DbExecutor, runId: string): Promise<Date | null> {
+  const [row] = await db.select({ createdAt: runs.createdAt }).from(runs).where(eq(runs.id, runId));
+  return row?.createdAt ?? null;
+}
