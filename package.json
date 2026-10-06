@@ -15,14 +15,18 @@
     "test:int": "vitest run --project integration",
     "env:init": "node scripts/env-init.ts",
     "compose:test": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml",
-    "smoke": "bash scripts/compose-smoke.sh"
+    "smoke": "bash scripts/compose-smoke.sh",
+    "test:behaviour": "vitest run --project behaviour"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@mastertutor/contracts": "workspace:*",
+    "@mastertutor/db": "workspace:*",
     "@types/node": "24.19.1",
+    "drizzle-orm": "0.45.3",
     "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",
+    "playwright-core": "1.63.0",
     "prettier": "3.9.9",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.1",
