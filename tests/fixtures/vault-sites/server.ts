@@ -251,6 +251,11 @@ export async function startVaultFixtures(options: {
         return html(res, page.shadowedAction("javascript:void 0"));
       case "GET /offsite-button":
         return html(res, page.offsiteForm("/password", `${origin("evil")}/collect`));
+      case "GET /offsite-split":
+        return html(
+          res,
+          page.offsiteForm(`${origin("other")}/collect`, `${origin("evil")}/collect`),
+        );
       case "GET /show-details":
         return html(res, page.showDetails());
       case "GET /iframe-cross-site":

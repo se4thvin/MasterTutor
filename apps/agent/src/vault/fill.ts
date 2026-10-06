@@ -40,6 +40,9 @@ const DENIALS: ReadonlySet<CredentialErrorCode> = new Set([
 /** Stored secrets a page might echo; usernames and one-time codes are masked by box only (deviation 7, S5). */
 const SECRET_FIELDS: ReadonlySet<CredentialField> = new Set(["password", "pin"]);
 
+/** ApprovalRequest credential_first_use.postsTo's limit. */
+const MAX_POSTS_TO = 4_096;
+
 /** Per-run, per-alias fill state lives in VaultDeps maps under this key. */
 const runAliasKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
 
@@ -53,9 +56,17 @@ export function forgetFillState(
     for (const key of map.keys()) if (key.startsWith(prefix)) map.delete(key);
 }
 
-/** Where the target's form would send the value, when that is anywhere but the item's origin. */
-const offsiteDestination = (group: readonly GroupBox[], origin: string) =>
-  group.flatMap((box) => box.info.formOrigins).find((destination) => destination !== origin);
+/**
+ * Every place but the item's origin the target's form could send the value (its action and each
+ * submit button's formaction), sorted and joined, so a card and its check name all of them (N7).
+ * Undefined when the form posts home only.
+ */
+function offsiteDestination(group: readonly GroupBox[], origin: string): string | undefined {
+  const offsite = new Set(
+    group.flatMap((box) => box.info.formOrigins).filter((destination) => destination !== origin),
+  );
+  return offsite.size > 0 ? [...offsite].sort().join(", ") : undefined;
+}
 
 /** The page's current answer for `ref`; undefined when the form posts home or the ref is gone. */
 async function currentDestination(
@@ -97,8 +108,14 @@ export async function fillApproval(
       return undefined;
     },
   );
+  // A list too long for a card is cut: the act-time check then never matches (fails closed).
   if (postsTo !== undefined)
-    return { kind: "credential_first_use", alias: item.alias, origin: item.origin, postsTo };
+    return {
+      kind: "credential_first_use",
+      alias: item.alias,
+      origin: item.origin,
+      postsTo: postsTo.slice(0, MAX_POSTS_TO),
+    };
   return credentialApproval(deps, url, item);
 }
 
