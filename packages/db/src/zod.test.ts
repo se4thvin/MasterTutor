@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { insertBenchmarkSchema, insertRunSchema, selectRunSchema } from "./zod.ts";
+import {
+  insertBenchmarkSchema,
+  insertRunSchema,
+  insertSourceSchema,
+  insertVaultItemSchema,
+  selectRunSchema,
+} from "./zod.ts";
 
 const workspaceId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
@@ -23,4 +29,26 @@ describe("drizzle-zod schemas", () => {
       }).success,
     ).toBe(true);
   });
+  it("rejects malformed origins", () => {
+    for (const origin of ["javascript:x", "Example.COM/path"]) {
+      expect(
+        insertRunSchema.safeParse({ workspaceId, goal: "g", allowedOrigins: [origin] }).success,
+      ).toBe(false);
+      expect(
+        insertVaultItemSchema.safeParse({ workspaceId, alias: "a", origin, label: "l" }).success,
+      ).toBe(false);
+      expect(insertSourcesOrigin(origin)).toBe(false);
+    }
+    expect(
+      insertVaultItemSchema.safeParse({
+        workspaceId,
+        alias: "a",
+        origin: "https://a.com",
+        label: "l",
+      }).success,
+    ).toBe(true);
+  });
 });
+
+const insertSourcesOrigin = (origin: string) =>
+  insertSourceSchema.safeParse({ workspaceId, kind: "web", url: "https://a.com", origin }).success;
