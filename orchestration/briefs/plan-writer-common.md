@@ -23,3 +23,6 @@ After the build, the agent must log into zyBooks at `https://learn.zybooks.com/s
 
 ## Output
 Return the **complete plan markdown as your final reply**. Long is fine and may span several messages. Do not write files: the orchestrator saves the reply to the path given in your dispatch. Do not dispatch subagents.
+
+## OpenAI data policy (binding)
+Any code that touches OpenAI must follow `/Users/sethvin-nanayakkara/orca/workspaces/MasterTutor/houndshark/orchestration/briefs/openai-data-policy.md` (D37, D38).

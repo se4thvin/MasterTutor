@@ -51,6 +51,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 | D35 | Execution: subagent-driven development. Plans are written per phase into `docs/superpowers/plans/`. Environment: the worktree branch is `agentic-notes-browser-agent`. pnpm 10.34.6 via corepack, pinned in `packageManager`; about 22GB disk free, so keep Docker images lean. | Orchestrator |
 | D36 | Use the single `OPENAI_API_KEY` for everything OpenAI-related (agent model calls, transcription, embeddings, and web query embeddings). Drop `OPENAI_EMBEDDINGS_KEY`; `web` receives `OPENAI_API_KEY` for query embeddings only. | User |
 | D37 | The agent loop uses `store: false` on the Responses API and never sends `previous_response_id`. Every request rebuilds model input from our own `run_transcript` (with compaction), so OpenAI holds no conversation state. | User |
+| D38 | Minimise data stored at OpenAI: binding policy in `orchestration/briefs/openai-data-policy.md`. store:false everywhere, stateless endpoints only (no Files, vector stores, Assistants, Conversations or Batch), no metadata/user/safety identifiers, minimal masked and windowed content, a single OpenAI client factory that enforces this, and a test guard. Account-level ZDR is an optional request for the user to make. | User |
 
 ## Proposals awaiting user answer
 
