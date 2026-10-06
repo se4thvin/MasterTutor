@@ -13,6 +13,8 @@ export interface EmbeddingsClient {
 
 export const EMBED_MAX_CHARS = 8_000;
 export const EMBED_BATCH_SIZE = 128;
+/** Batches in flight at once: bounded, so one long note never fans out into a request storm. */
+export const EMBED_CONCURRENCY = 4;
 
 /** Text sent for a block: asset links removed, image alt kept, whitespace collapsed, truncated. */
 export function embeddingText(markdown: string): string {
@@ -35,17 +37,26 @@ export async function embedTexts(
   }
   const out: (number[] | undefined)[] = new Array(texts.length).fill(undefined);
   let tokens = 0;
-  await Promise.all(
-    batches.map(async ({ start, input }) => {
+  let next = 0;
+  const worker = async () => {
+    for (let batch = batches[next++]; batch; batch = batches[next++]) {
+      const { start, input } = batch;
       const response = await client.embeddings.create({ input }, { signal: options.signal });
       tokens += response.tokens;
       for (const item of response.data) {
+        // An index outside this batch would overwrite another batch's vector (M5).
+        if (!Number.isInteger(item.index) || item.index < 0 || item.index >= input.length) {
+          throw new Error(`embedding index ${item.index} outside its batch`);
+        }
         if (item.embedding.length !== EMBEDDING_DIMENSIONS) {
           throw new Error(`unexpected embedding size ${item.embedding.length}`);
         }
         out[start + item.index] = item.embedding;
       }
-    }),
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(EMBED_CONCURRENCY, batches.length) }, () => worker()),
   );
   const vectors = out.map((vector, index) => {
     if (!vector) throw new Error(`missing embedding for input ${index}`);

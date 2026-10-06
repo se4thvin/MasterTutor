@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EMBEDDING_DIMENSIONS } from "../constants.ts";
 import { fakeEmbeddingsClient, hashEmbedding } from "../testing/embedding.ts";
-import { EMBED_BATCH_SIZE, embeddingText, embedTexts } from "./embeddings.ts";
+import { EMBED_BATCH_SIZE, EMBED_CONCURRENCY, embeddingText, embedTexts } from "./embeddings.ts";
 
 describe("embeddingText", () => {
   it("drops asset links, keeps alt text and truncates", () => {
@@ -21,6 +21,42 @@ describe("embedTexts", () => {
     expect(vectors[5]).toEqual(hashEmbedding("text 5"));
     expect(vectors[0]).toHaveLength(EMBEDDING_DIMENSIONS);
     expect(tokens).toBe(EMBED_BATCH_SIZE + 3);
+  });
+  it("refuses an answer whose index falls outside its batch (Task 0 review M5)", async () => {
+    const client = {
+      embeddings: {
+        create: async (body: { input: string[] }) => ({
+          data: body.input.map((text, index) => ({
+            index: index + 1,
+            embedding: hashEmbedding(text),
+          })),
+          tokens: 1,
+        }),
+      },
+    };
+    await expect(embedTexts(client, ["a", "b"])).rejects.toThrow(/index/);
+  });
+  it("runs at most EMBED_CONCURRENCY batches at once (Task 0 review M5)", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const client = {
+      embeddings: {
+        create: async (body: { input: string[] }) => {
+          inFlight += 1;
+          peak = Math.max(peak, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          inFlight -= 1;
+          return {
+            data: body.input.map((text, index) => ({ index, embedding: hashEmbedding(text) })),
+            tokens: body.input.length,
+          };
+        },
+      },
+    };
+    const texts = Array.from({ length: EMBED_BATCH_SIZE * 10 }, (_, i) => `t${i}`);
+    const { vectors } = await embedTexts(client, texts);
+    expect(vectors).toHaveLength(texts.length);
+    expect(peak).toBeLessThanOrEqual(EMBED_CONCURRENCY);
   });
   it("refuses empty inputs", async () => {
     await expect(embedTexts(fakeEmbeddingsClient(), [""])).rejects.toThrow(/empty/);

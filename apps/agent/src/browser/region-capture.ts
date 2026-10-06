@@ -1,8 +1,12 @@
+import type { CDPSession } from "playwright-core";
 import sharp from "sharp";
 import {
   collectMaskBoxes,
   containsSecretText, // B3 seam: (session, sources, signal) => Promise<boolean>
   drawMasks,
+  hasCrossOriginFrames,
+  hasFilledOutOfProcessFrame,
+  quadToBox,
   sameBoxes,
   type Box,
   type MaskSources,
@@ -21,24 +25,6 @@ export interface RegionOptions {
 export const MAX_REGION_WIDTH = 4_096;
 export const MAX_REGION_PIXELS = 64_000_000;
 const ATTEMPTS = 3;
-
-/** Read-only: document boxes of frames this world cannot read into (other CDP targets). */
-export function opaqueFrameBoxesScript(): Box[] {
-  const boxes: Box[] = [];
-  for (const frame of document.querySelectorAll("iframe, frame, object, embed")) {
-    let readable: boolean;
-    try {
-      readable = (frame as HTMLIFrameElement).contentDocument != null;
-    } catch {
-      readable = false;
-    }
-    if (readable) continue;
-    const r = frame.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0)
-      boxes.push({ x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height });
-  }
-  return boxes;
-}
 
 /** Read-only: secret inputs anywhere (hidden ones too, since MHTML serializes them). */
 export function secretFieldCountScript(_arg: null, h: PageHelpers): number {
@@ -62,53 +48,177 @@ export function secretFieldCountScript(_arg: null, h: PageHelpers): number {
   return count;
 }
 
-const intersects = (a: Box, b: Box) =>
-  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+/** Read-only: whether any secret input (in this document, its open shadow roots or same-origin frames) is pinned. */
+export function pinnedSecretFieldScript(_arg: null, h: PageHelpers): boolean {
+  const isPinned = (element: Element): boolean => {
+    for (let at: Element | null = element; at;) {
+      const position = getComputedStyle(at).position;
+      if (position === "fixed" || position === "sticky") return true;
+      at = at.parentElement ?? ((at.getRootNode() as ShadowRoot).host || null);
+    }
+    return false;
+  };
+  const visit = (root: Document | ShadowRoot, depth: number): boolean => {
+    if (depth > 6) return false;
+    for (const input of root.querySelectorAll("input"))
+      if (h.isSecretField(input) && isPinned(input)) return true;
+    for (const host of root.querySelectorAll("*"))
+      if (host.shadowRoot && visit(host.shadowRoot, depth + 1)) return true;
+    for (const frame of root.querySelectorAll("iframe, frame")) {
+      try {
+        const doc = (frame as HTMLIFrameElement).contentDocument;
+        if (doc && visit(doc, depth + 1)) return true;
+      } catch {
+        // Cross-origin: withheld by the opaque-frame rule instead.
+      }
+    }
+    return false;
+  };
+  return visit(document, 0);
+}
 
-function bounded(clip: Box, scale: number): Box | null {
-  if (![clip.x, clip.y, clip.width, clip.height, scale].every(Number.isFinite) || scale <= 0)
+/** Runs on a vault-registered node in our world: pinned like `pinned` above. */
+const PINNED_NODE_FN = `function () {
+  const start = this.nodeType === 1 ? this : this.parentElement;
+  for (let at = start; at; ) {
+    const position = getComputedStyle(at).position;
+    if (position === "fixed" || position === "sticky") return true;
+    at = at.parentElement ?? ((at.getRootNode()).host || null);
+  }
+  return false;
+}`;
+
+/**
+ * A secret field pinned to the viewport (fixed or sticky: a one-time code bar, a sticky sign-in
+ * strip) moves with every scroll, so no single document position masks it across a capture (I2).
+ * Any doubt counts as pinned.
+ */
+async function hasPinnedSecretField(
+  session: BrowserSession,
+  sources: MaskSources,
+  cdp: CDPSession,
+): Promise<boolean> {
+  const worlds = await session.worlds();
+  if (await worlds.evaluate(pinnedSecretFieldScript, null)) return true;
+  for (const backendNodeId of sources.nodeIds(cdp)) {
+    const answer = await worlds
+      .callOnNode<boolean>(backendNodeId, PINNED_NODE_FN, null)
+      .catch(() => true);
+    if (answer !== false) return true;
+  }
+  return false;
+}
+
+interface DomNode {
+  backendNodeId: number;
+  nodeName: string;
+  documentURL?: string;
+  children?: DomNode[];
+  shadowRoots?: DomNode[];
+  contentDocument?: DomNode;
+}
+
+const FRAME_OWNERS = new Set(["IFRAME", "FRAME", "OBJECT", "EMBED"]);
+
+function originOf(url: string | undefined): string | null {
+  try {
+    return url ? new URL(url).origin : null;
+  } catch {
     return null;
-  const width = Math.min(Math.floor(clip.width), MAX_REGION_WIDTH);
-  const height = Math.min(
-    Math.floor(clip.height),
-    Math.floor(MAX_REGION_PIXELS / Math.max(1, width * scale * scale)),
-  );
-  if (width < 1 || height < 1) return null;
-  return { x: Math.max(0, clip.x), y: Math.max(0, clip.y), width, height };
+  }
 }
 
 /**
- * A masked capture of a document region for stored assets (spec §7.4, §9); the model never sees it.
- * Masks are drawn on the image in the agent; nothing is injected into the page. Returns null
- * (withheld, never a black frame) when the region cannot be proven clean: a cross-origin frame
- * inside it while the run holds vault material, an unverifiable vault node, a moving secret field,
- * or a secret in the page's text (preflight F7, Q6).
+ * Document boxes of every frame whose content this page's world cannot read: cross-origin or
+ * out-of-process frames, in open shadow roots too, and a same-origin frame that holds one (its
+ * whole box, nested to any depth). Found through the CDP DOM tree, not a page-side walk (I1).
  */
-export async function captureMaskedRegion(
+async function opaqueFrameBoxes(cdp: CDPSession, scroll: { x: number; y: number }): Promise<Box[]> {
+  const { root } = (await cdp.send("DOM.getDocument", { depth: -1, pierce: true })) as {
+    root: DomNode;
+  };
+  const main = originOf(root.documentURL);
+  const owners = new Set<number>();
+  const walk = (node: DomNode, topOwner: DomNode | null) => {
+    if (FRAME_OWNERS.has(node.nodeName)) {
+      const owner = topOwner ?? node;
+      const doc = node.contentDocument;
+      const readable =
+        doc !== undefined &&
+        (doc.documentURL?.startsWith("about:") === true || originOf(doc.documentURL) === main);
+      if (!readable) owners.add(owner.backendNodeId);
+      else walk(doc, owner);
+    }
+    for (const child of node.children ?? []) walk(child, topOwner);
+    for (const shadow of node.shadowRoots ?? []) walk(shadow, topOwner);
+  };
+  walk(root, null);
+  const boxes: Box[] = [];
+  for (const backendNodeId of owners) {
+    try {
+      const { model } = await cdp.send("DOM.getBoxModel", { backendNodeId });
+      const box = quadToBox(model.border);
+      boxes.push({ ...box, x: box.x + scroll.x, y: box.y + scroll.y });
+    } catch {
+      // Not rendered (display:none or detached): nothing of it can appear in an image.
+    }
+  }
+  return boxes;
+}
+
+const intersects = (a: Box, b: Box) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+function bounded(clip: Box, scale: number, content: { width: number; height: number }): Box | null {
+  if (![clip.x, clip.y, clip.width, clip.height, scale].every(Number.isFinite) || scale <= 0)
+    return null;
+  const x = Math.max(0, clip.x);
+  const y = Math.max(0, clip.y);
+  // Only the document exists to be captured (a viewport-sized capture cannot reach past it).
+  const width = Math.min(Math.floor(clip.width), MAX_REGION_WIDTH, Math.floor(content.width - x));
+  const height = Math.min(
+    Math.floor(clip.height),
+    Math.floor(content.height - y),
+    Math.floor(MAX_REGION_PIXELS / Math.max(1, width * scale * scale)),
+  );
+  if (width < 1 || height < 1) return null;
+  return { x, y, width, height };
+}
+
+/** One viewport-sized piece of the region, captured in the live layout and masked. */
+async function captureTile(
   session: BrowserSession,
   sources: MaskSources,
-  options: RegionOptions,
+  cdp: CDPSession,
+  tile: Box,
+  scale: number,
   signal: AbortSignal,
-): Promise<Uint8Array | null> {
-  const clip = bounded(options.clip, options.scale);
-  if (!clip) return null;
-  const cdp = await session.cdp();
-  const vault = sources.hasSecrets() || sources.nodeIds(cdp).length > 0; // B3 seam: nodeIds(cdp)
+): Promise<Buffer | null> {
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     session.guard.assertAgent(signal);
+    await (
+      await session.worlds()
+    ).evaluate((target: { x: number; y: number }) => window.scrollTo(target.x, target.y), {
+      x: tile.x,
+      y: tile.y,
+    });
     const layout = await session.layout();
-    if (vault) {
-      const frames = await (await session.worlds()).evaluate(opaqueFrameBoxesScript, null);
-      if (frames.some((frame) => intersects(frame, clip))) return null;
-    }
+    // The tile must lie inside the viewport as scrolled, or the image would not be the layout measured.
+    if (
+      tile.x < layout.scrollX ||
+      tile.y < layout.scrollY ||
+      tile.x + tile.width > layout.scrollX + layout.width + 1 ||
+      tile.y + tile.height > layout.scrollY + layout.height + 1
+    )
+      return null;
     const before = await collectMaskBoxes(session, sources);
     if (before.unverifiable > 0) return null;
     session.guard.assertAgent(signal);
     const { data } = await cdp.send("Page.captureScreenshot", {
       format: "png",
       fromSurface: true,
-      captureBeyondViewport: true,
-      clip: { ...clip, scale: options.scale },
+      captureBeyondViewport: false,
+      clip: { ...tile, scale },
     });
     const after = await collectMaskBoxes(session, sources);
     const settled = await session.layout();
@@ -119,22 +229,97 @@ export async function captureMaskedRegion(
       settled.scrollY !== layout.scrollY
     )
       continue;
-    if (await containsSecretText(session, sources, signal)) return null; // B3 seam: (…, signal)
     const raw = Buffer.from(data, "base64");
     const meta = await sharp(raw).metadata();
+    // Mask boxes are viewport coordinates of this very layout.
     const boxes = after.boxes.map((box) => ({
-      x: (box.x + layout.scrollX - clip.x) * options.scale,
-      y: (box.y + layout.scrollY - clip.y) * options.scale,
-      width: box.width * options.scale,
-      height: box.height * options.scale,
+      x: (box.x + layout.scrollX - tile.x) * scale,
+      y: (box.y + layout.scrollY - tile.y) * scale,
+      width: box.width * scale,
+      height: box.height * scale,
     }));
-    const png =
-      boxes.length > 0
-        ? await drawMasks(raw, boxes, { width: meta.width ?? 0, height: meta.height ?? 0 })
-        : raw;
-    return new Uint8Array(png);
+    return boxes.length > 0
+      ? drawMasks(raw, boxes, { width: meta.width ?? 0, height: meta.height ?? 0 })
+      : raw;
   }
   return null;
+}
+
+/**
+ * A masked capture of a document region for stored assets (spec §7.4, §9); the model never sees it.
+ * Masks are drawn on the image in the agent; nothing is injected into the page. The region is
+ * captured viewport by viewport in the live layout (scrolled into view, never
+ * captureBeyondViewport, whose enlarged layout the masks were not measured in: I2), then joined.
+ * Returns null (withheld, never a black frame) when the region cannot be proven clean: B1's
+ * screenshot gates, a cross-origin frame inside it while the run holds vault material (I1), a
+ * pinned secret field, an unverifiable vault node, a moving field, or a secret in the page's text.
+ */
+export async function captureMaskedRegion(
+  session: BrowserSession,
+  sources: MaskSources,
+  options: RegionOptions,
+  signal: AbortSignal,
+): Promise<Uint8Array | null> {
+  const cdp = await session.cdp();
+  const metrics = await cdp.send("Page.getLayoutMetrics");
+  const clip = bounded(options.clip, options.scale, metrics.cssContentSize);
+  if (!clip) return null;
+  session.guard.assertAgent(signal);
+  // B1's gates for model screenshots (screenshot.ts), in the same order.
+  if (sources.nodeIds(cdp).length > 0 && (await hasCrossOriginFrames(session))) return null; // B3 seam: nodeIds(cdp)
+  if (await hasFilledOutOfProcessFrame(session, sources, signal)) return null;
+  const start = await session.layout();
+  if (sources.hasSecrets() || sources.nodeIds(cdp).length > 0) {
+    const frames = await opaqueFrameBoxes(cdp, { x: start.scrollX, y: start.scrollY });
+    if (frames.some((frame) => intersects(frame, clip))) return null;
+  }
+  if (await hasPinnedSecretField(session, sources, cdp)) return null;
+  const tiles: Box[] = [];
+  for (let y = clip.y; y < clip.y + clip.height; y += start.height)
+    for (let x = clip.x; x < clip.x + clip.width; x += start.width)
+      tiles.push({
+        x,
+        y,
+        width: Math.min(start.width, clip.x + clip.width - x),
+        height: Math.min(start.height, clip.y + clip.height - y),
+      });
+  const pieces: Array<{ input: Buffer; left: number; top: number }> = [];
+  try {
+    for (const tile of tiles) {
+      const piece = await captureTile(session, sources, cdp, tile, options.scale, signal);
+      if (!piece) return null;
+      pieces.push({
+        input: piece,
+        left: Math.round((tile.x - clip.x) * options.scale),
+        top: Math.round((tile.y - clip.y) * options.scale),
+      });
+    }
+  } finally {
+    // Put the page back where the agent left it.
+    session.guard.assertAgent(signal);
+    await (
+      await session.worlds()
+    )
+      .evaluate((target: { x: number; y: number }) => window.scrollTo(target.x, target.y), {
+        x: start.scrollX,
+        y: start.scrollY,
+      })
+      .catch(() => undefined);
+  }
+  if (await containsSecretText(session, sources, signal)) return null; // B3 seam: (…, signal)
+  if (pieces.length === 1) return new Uint8Array(pieces[0]!.input);
+  const png = await sharp({
+    create: {
+      width: Math.round(clip.width * options.scale),
+      height: Math.round(clip.height * options.scale),
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    },
+  })
+    .composite(pieces)
+    .png()
+    .toBuffer();
+  return new Uint8Array(png);
 }
 
 /** True when the page holds anything the masker covers: secret inputs (hidden too) or vault nodes. */

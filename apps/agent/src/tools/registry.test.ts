@@ -50,6 +50,25 @@ describe("ToolRegistry", () => {
     });
     expect(() => new ToolError("Bad Code", "x")).toThrow(TypeError);
   });
+  it("redacts a registered secret from a ToolError message (Task 0 review M4)", async () => {
+    const mask: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text) => text.replaceAll("hunter2-secret", SECRET_REDACTION),
+    };
+    const registry = new ToolRegistry(
+      [
+        fakeReadPage(async () => {
+          throw new ToolError("selector_not_found", "No element shows hunter2-secret");
+        }),
+      ],
+      log,
+      mask,
+    );
+    const { output } = await registry.run("read_page", readArgs, ctx());
+    expect(output).not.toContain("hunter2-secret");
+    expect(output).toContain(SECRET_REDACTION);
+  });
   it("marks every other error answer failed, and a success not", async () => {
     const ok = new ToolRegistry([fakeReadPage(async () => ({ unchanged: true }))], log);
     expect((await ok.run("read_page", readArgs, ctx())).failed).toBe(false);

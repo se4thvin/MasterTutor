@@ -1744,6 +1744,17 @@ describe("function-tool writes join the act commit (B2 seam F2)", () => {
     expect(await storage.head("assets/orphan")).toBeNull();
   });
 
+  it("charges what an interrupted tool already spent (Task 0 review M7)", async () => {
+    const { run, browser, loop } = await setup([capture, done()]);
+    browser.functionHook = async (_name, step) => {
+      step.addUsage({ ...EMPTY_USAGE, usd: 0.5 });
+      throw new Interrupted("takeover");
+    };
+    await expect(drive(loop)).rejects.toBeInstanceOf(Interrupted);
+    const [fresh] = await owner.db.select().from(runs).where(eq(runs.id, run.id));
+    expect(fresh!.usage.usd).toBeGreaterThanOrEqual(0.5);
+  });
+
   it("commits onComplete's writes with the completed transition", async () => {
     const event = blockAdded();
     const { run, loop } = await setup([done()], {

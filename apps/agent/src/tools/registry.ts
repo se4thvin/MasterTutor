@@ -82,7 +82,8 @@ export class ToolRegistry {
       if (interruptionOf(error) !== null || ctx.signal.aborted) throw error;
       if (error instanceof ToolError)
         return {
-          output: JSON.stringify({ error: error.code, message: error.message }),
+          // Tool-written, but a message can quote what it looked for: redacted all the same (M4).
+          output: JSON.stringify({ error: error.code, message: this.#mask.redact(error.message) }),
           notesChanged: false,
           failed: true,
           wait: null,

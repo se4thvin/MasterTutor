@@ -52,3 +52,38 @@ describe("allowsFetch", () => {
       expect(await session.allowsFetch(url)).toBe(false);
   });
 });
+
+describe("named world cache (Task 0 review M6)", () => {
+  it("gives a different prelude its own world, even under the same name", async () => {
+    await session.goto(`${FIXTURES}/index.html`, signal);
+    const one = await session.namedWorlds({
+      name: "mastertutor-m6",
+      prelude: async () => "globalThis.__v = 1;",
+    });
+    const two = await session.namedWorlds({
+      name: "mastertutor-m6",
+      prelude: async () => "globalThis.__v = 2;",
+    });
+    expect(await one.call(() => (globalThis as { __v?: number }).__v, [])).toBe(1);
+    expect(await two.call(() => (globalThis as { __v?: number }).__v, [])).toBe(2);
+    const again = await session.namedWorlds({
+      name: "mastertutor-m6",
+      prelude: async () => "globalThis.__v = 1;",
+    });
+    expect(again).toBe(one);
+  });
+});
+
+describe("allowsFetch with an injected resolver (Task 0 review M11)", () => {
+  it("refuses the internal object store even where its name resolves, and allows a public host", async () => {
+    const resolving = await openTestSession({
+      resolveHost: async (host) => (host === "garage" ? ["172.18.0.5"] : ["93.184.216.34"]),
+    });
+    try {
+      expect(await resolving.allowsFetch("http://garage:3900/bucket/key")).toBe(false);
+      expect(await resolving.allowsFetch("https://cdn.example.com/x.png")).toBe(true);
+    } finally {
+      await resolving.close();
+    }
+  });
+});

@@ -142,6 +142,8 @@ export function createOpenAI(options: {
     baseURL: options.baseURL,
     maxRetries: 0,
     timeout: options.timeoutMs ?? 180_000,
+    // Request bodies carry page text: the SDK never logs, whatever OPENAI_LOG says (M2).
+    logLevel: "off",
   });
   const create = (params: StatelessResponseParams, requestOptions: { signal: AbortSignal }) =>
     client.responses.create(statelessParams(params), { signal: requestOptions.signal });

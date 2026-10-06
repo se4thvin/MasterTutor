@@ -324,13 +324,16 @@ export function slotBrowserConnector(options: {
 }): ConnectBrowser {
   return async ({ slotName, run, guard }) => {
     const baseUrl = await options.cdpBaseUrl(slotName);
+    const mask = options.hooks.maskSources(run().id);
     const session = await BrowserSession.connect({
       cdpBaseUrl: baseUrl,
       allowedOrigins: () => run().allowedOrigins,
       testMode: options.testMode,
       log: options.log,
       guard,
-      ...(options.hooks.responseLog ? { responseLog: options.hooks.responseLog } : {}),
+      ...(options.hooks.responseLog
+        ? { responseLog: options.hooks.responseLog, redactUrl: (url: string) => mask.redact(url) }
+        : {}),
       downloads: {
         slotPath: slotDownloadPath(run().id),
         localPath: join(options.config.downloadsDir, Uuid.parse(run().id)),
@@ -342,7 +345,6 @@ export function slotBrowserConnector(options: {
         clock: options.clock,
         waitActionMs: options.config.waitActionMs,
       });
-      const mask = options.hooks.maskSources(run().id);
       const registry = new ToolRegistry(
         [register(readPageTool), ...options.hooks.functionTools],
         options.log,

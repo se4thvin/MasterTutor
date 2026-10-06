@@ -93,7 +93,7 @@ export function secretFieldBoxesScript(_arg: null, h: PageHelpers): Box[] {
   return boxes;
 }
 
-function quadToBox(quad: readonly number[]): Box {
+export function quadToBox(quad: readonly number[]): Box {
   const xs = [quad[0] ?? 0, quad[2] ?? 0, quad[4] ?? 0, quad[6] ?? 0];
   const ys = [quad[1] ?? 0, quad[3] ?? 0, quad[5] ?? 0, quad[7] ?? 0];
   const x = Math.min(...xs);

@@ -183,4 +183,34 @@ describe("installNetworkPolicy routing", () => {
     );
     expect(blocked).toEqual([{ url: "http://evil.test/", origin: "http://evil.test" }]);
   });
+  it("exposes its host check, so the session's fetch policy shares one DNS cache (Task 0 review M9)", async () => {
+    let lookups = 0;
+    let handler: Handler | undefined;
+    const context = {
+      route: async (_glob: string, h: Handler) => void (handler = h),
+      on: () => undefined,
+    } as unknown as BrowserContext;
+    const policy = await installNetworkPolicy(context, {
+      allowedOrigins: () => ["http://ok.test"],
+      testMode: false,
+      onBlockedNavigation: () => undefined,
+      resolveHost: async () => {
+        lookups += 1;
+        return ["93.184.216.34"];
+      },
+    });
+    const route = {
+      request: () => ({
+        url: () => "http://ok.test/a.png",
+        isNavigationRequest: () => false,
+        frame: () => ({ parentFrame: () => null }),
+      }),
+      abort: async () => undefined,
+      continue: async () => undefined,
+    } as unknown as Route;
+    await handler!(route);
+    expect(lookups).toBe(1);
+    expect(await policy.privateHosts.isPrivate("ok.test")).toBe(false);
+    expect(lookups).toBe(1);
+  });
 });
