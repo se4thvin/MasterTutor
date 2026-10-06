@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
+import { FolderTree } from "@/components/library/folder-tree.tsx";
 import type { Viewer } from "@/lib/server/viewer.ts";
 import { KillBanner } from "./kill-banner.tsx";
 import { Sidebar } from "./sidebar.tsx";
@@ -19,7 +20,15 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
       <a href="#main" className="skip-link">
         Skip to content
       </a>
-      <Sidebar viewer={viewer} onSignOut={signOut} />
+      <Sidebar
+        viewer={viewer}
+        onSignOut={signOut}
+        libraryTree={
+          <Suspense>
+            <FolderTree onDropNote={() => undefined} />
+          </Suspense>
+        }
+      />
       <main id="main" className="main" tabIndex={-1}>
         <KillBanner />
         {children}
