@@ -3,6 +3,7 @@ import {
   type Browser,
   type BrowserContext,
   type CDPSession,
+  type Frame,
   type Page,
 } from "playwright-core";
 import { abortable } from "../runtime/abortable.ts";
@@ -143,8 +144,54 @@ export class BrowserSession {
     return null;
   }
 
-  forgetFrame(frameId: string): void {
+  /** Drops a failed out-of-process frame and closes its CDP session (no leak per failure). */
+  async forgetFrame(frameId: string): Promise<void> {
+    const worlds = this.#frameWorlds.get(frameId);
     this.#frameWorlds.delete(frameId);
+    await worlds?.cdp.detach().catch(() => undefined);
+  }
+
+  /**
+   * Every document of the page as {worlds, frameId}: the top session's frames (in-process ones
+   * included), then each out-of-process frame through its own session with its in-process
+   * children, discovered in parallel. Bounded at 32 documents.
+   */
+  async documents(): Promise<Array<{ worlds: IsolatedWorlds; frameId: string }>> {
+    const found: Array<{ worlds: IsolatedWorlds; frameId: string }> = [];
+    const add = async (worlds: IsolatedWorlds) => {
+      const { frameTree } = await worlds.cdp.send("Page.getFrameTree");
+      const walk = (tree: typeof frameTree) => {
+        if (found.length >= 32) return;
+        found.push({ worlds, frameId: tree.frame.id });
+        for (const child of tree.childFrames ?? []) walk(child);
+      };
+      walk(frameTree);
+    };
+    await add(await this.worlds()).catch(() => undefined);
+    const children = this.#page.frames().filter((frame) => frame !== this.#page.mainFrame());
+    await Promise.all(children.map((frame) => this.#addOutOfProcess(frame, found, add)));
+    return found;
+  }
+
+  /** Adds an out-of-process frame's documents; in-process frames have no session of their own. */
+  async #addOutOfProcess(
+    frame: Frame,
+    found: Array<{ worlds: IsolatedWorlds; frameId: string }>,
+    add: (worlds: IsolatedWorlds) => Promise<void>,
+  ): Promise<void> {
+    const cdp = await this.#context.newCDPSession(frame).catch(() => null);
+    if (!cdp) return;
+    const id = (await cdp.send("Page.getFrameTree").catch(() => null))?.frameTree.frame.id;
+    const cached = id ? this.#frameWorlds.get(id) : undefined;
+    if (!id || cached || found.some((doc) => doc.frameId === id)) {
+      await cdp.detach().catch(() => undefined);
+      if (cached && !found.some((doc) => doc.frameId === id))
+        await add(cached).catch(() => undefined);
+      return;
+    }
+    const worlds = new IsolatedWorlds(cdp);
+    this.#frameWorlds.set(id, worlds);
+    await add(worlds).catch(() => undefined);
   }
 
   worlds(): Promise<IsolatedWorlds> {
@@ -216,6 +263,8 @@ export class BrowserSession {
     this.#page = page;
     this.#cdp = null;
     this.#worlds = null;
+    for (const worlds of this.#frameWorlds.values())
+      void worlds.cdp.detach().catch(() => undefined);
     this.#frameWorlds.clear();
     this.navigations.attach(page);
     page.once("close", () => this.#onClose(page));

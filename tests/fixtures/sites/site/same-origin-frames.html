@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Same-origin widget</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      .owner {
+        position: absolute;
+        left: 40px;
+        top: 40px;
+        width: 600px;
+        height: 300px;
+        border: 0;
+      }
+      .scale {
+        transform: scale(0.5);
+        transform-origin: 0 0;
+      }
+      .zoom {
+        zoom: 2;
+        left: 20px;
+        top: 20px;
+        width: 300px;
+        height: 150px;
+      }
+      .padding {
+        padding: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      // ?variant=scale|object|zoom|padding: the same-origin Cancel/Delete widget drawn differently.
+      const variant = new URLSearchParams(location.search).get("variant") ?? "scale";
+      const owner = document.createElement(variant === "object" ? "object" : "iframe");
+      owner.className = `owner ${variant === "object" ? "scale" : variant}`;
+      if (variant === "object") {
+        owner.type = "text/html";
+        owner.data = "/cancel-delete.html";
+      } else {
+        owner.src = "/cancel-delete.html";
+      }
+      owner.title = "Account";
+      document.body.append(owner);
+    </script>
+  </body>
+</html>

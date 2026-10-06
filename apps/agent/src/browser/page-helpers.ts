@@ -147,19 +147,32 @@ export function describeTarget(el: Element): TargetDescription {
   const RECORD =
     "tr, [role=row], li, [role=listitem], article, [role=article], dialog, [role=dialog], fieldset, form, section, [role=region], [aria-selected=true], main, [role=main], nav, [role=navigation], aside, [role=complementary], header, footer";
   const doc = target.ownerDocument;
-  const scope = target.closest(RECORD) ?? doc.body ?? doc.documentElement;
-  const parts: string[] = [];
-  const walker = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
-  let visited = 0;
-  for (
-    let node = walker.nextNode();
-    node && parts.length < 500 && visited < 2_000;
-    node = walker.nextNode(), visited++
-  ) {
-    if (node.parentElement?.closest(LIVE)) continue;
-    const text = clean(node.textContent);
-    if (text) parts.push(text);
+  const textIn = (scope: Element): string => {
+    const parts: string[] = [];
+    const walker = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+    let visited = 0;
+    for (
+      let node = walker.nextNode();
+      node && parts.length < 500 && visited < 2_000;
+      node = walker.nextNode(), visited++
+    ) {
+      if (node.parentElement?.closest(LIVE)) continue;
+      const text = clean(node.textContent);
+      if (text) parts.push(text);
+    }
+    return parts.join(" ").slice(0, 16_000);
+  };
+  // A container that holds nothing but the element itself (Rails button_to's lone <form>) says
+  // nothing about the record: climb to the next record or landmark, else the body (N4).
+  const own = clean(target.textContent);
+  const body = doc.body ?? doc.documentElement;
+  let scope: Element = target.closest(RECORD) ?? body;
+  let recordText = textIn(scope);
+  for (let climb = 0; climb < 6 && scope !== body && recordText === own; climb++) {
+    scope = scope.parentElement?.closest(RECORD) ?? body;
+    recordText = textIn(scope);
   }
+  const parts = [recordText];
   const context = [parts.join(" ").slice(0, 16_000), doc.location?.href ?? ""].join("\n");
   return {
     label: label.slice(0, 200),
@@ -174,6 +187,42 @@ export function describeTarget(el: Element): TargetDescription {
   };
 }
 
-export const PAGE_HELPERS = { isSecretField, describeTarget };
+/**
+ * True when a frame owner maps points by a plain offset (N5): no scale, rotation or other
+ * non-translation transform on it or its ancestors, no CSS zoom, no padding. Otherwise the page
+ * script stops at the frame and the agent maps through its real geometry over CDP.
+ */
+export function frameIsPlain(owner: Element): boolean {
+  const el = owner as HTMLElement;
+  const view = el.ownerDocument.defaultView;
+  if (!view) return false;
+  const rect = el.getBoundingClientRect();
+  if (Math.abs(rect.width - el.offsetWidth) > 0.5 || Math.abs(rect.height - el.offsetHeight) > 0.5)
+    return false;
+  const zoom = (el as unknown as { currentCSSZoom?: number }).currentCSSZoom ?? 1;
+  if (Math.abs(zoom - 1) > 1e-6) return false;
+  const style = view.getComputedStyle(el);
+  if (
+    [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].some(
+      (value) => parseFloat(value) !== 0,
+    )
+  )
+    return false;
+  for (let node: Element | null = el; node; node = node.parentElement) {
+    const computed = view.getComputedStyle(node);
+    const transform = computed.transform;
+    if (transform && transform !== "none" && !/^matrix\(1, 0, 0, 1, /.test(transform)) return false;
+    // CSS zoom on the owner or any ancestor (not always visible in rect vs offset sizes).
+    const nodeZoom = (computed as unknown as { zoom?: string }).zoom;
+    if (nodeZoom && nodeZoom !== "1" && nodeZoom !== "normal" && nodeZoom !== "100%") return false;
+  }
+  return true;
+}
+
+export const PAGE_HELPERS = { isSecretField, describeTarget, frameIsPlain };
 export type PageHelpers = typeof PAGE_HELPERS;
-export const PAGE_HELPERS_SOURCE = [isSecretField.toString(), describeTarget.toString()].join("\n");
+export const PAGE_HELPERS_SOURCE = [
+  isSecretField.toString(),
+  describeTarget.toString(),
+  frameIsPlain.toString(),
+].join("\n");

@@ -8,7 +8,8 @@ import { captureModelScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
-import { ComputerExecutor, SECRET_FIELD_REFUSAL } from "./computer.ts";
+import { waitFor } from "../testing/wait.ts";
+import { ComputerExecutor, FOCUS_MOVED_REFUSAL, SECRET_FIELD_REFUSAL } from "./computer.ts";
 import { readPage } from "./read-page.ts";
 
 const log = createLogger({ service: "test", level: "silent" });
@@ -371,7 +372,7 @@ describe("ComputerExecutor inside cross-origin frames (targeted fix)", () => {
     const forgotten: string[] = [];
     const broken = s as unknown as {
       frameWorlds(frameId: string): Promise<unknown>;
-      forgetFrame(frameId: string): void;
+      forgetFrame(frameId: string): Promise<void>;
     };
     broken.frameWorlds = async () => ({
       evaluate: async () => {
@@ -382,10 +383,39 @@ describe("ComputerExecutor inside cross-origin frames (targeted fix)", () => {
       },
       cdp: { send: async () => ({}) },
     });
-    broken.forgetFrame = (frameId) => void forgotten.push(frameId);
+    broken.forgetFrame = async (frameId) => void forgotten.push(frameId);
     // The out-of-process frame (other.fixtures-isolated.test) at top 200.
     const hit = await hitTest(s, { x: 140, y: 240 });
     expect(hit.target).toMatchObject({ opaqueFrame: true });
     expect(forgotten).toHaveLength(1);
+  });
+
+  it.each(["pw", "note"])(
+    "stops typing when a page script moves focus into another document mid-chunk (into %s)",
+    async (into) => {
+      const { s, executor } = await setup(`/advance-into-frame.html?into=${into}`);
+      expect(await executor.execute(click({ x: 100, y: 35 }), signal)).toBeNull();
+      const result = await executor.execute({ type: "type", text: "1234abcdef" }, signal);
+      expect(result).toBe(FOCUS_MOVED_REFUSAL);
+      const frame = s.page.frames().find((candidate) => candidate !== s.page.mainFrame())!;
+      expect(
+        await frame.evaluate((id) => (document.getElementById(id) as HTMLInputElement).value, into),
+      ).toBe("");
+    },
+  );
+
+  it("closes the CDP session of a forgotten out-of-process frame (N3 minor)", async () => {
+    const { s } = await setup("/frame-host.html");
+    const oopif = await waitFor(
+      () => s.page.frames().find((f) => f.url().includes("fixtures-isolated")),
+      { label: "oopif" },
+    );
+    const own = await s.context.newCDPSession(oopif);
+    const id = (await own.send("Page.getFrameTree")).frameTree.frame.id;
+    await own.detach();
+    const worlds = (await s.frameWorlds(id))!;
+    expect(await worlds.cdp.send("Runtime.evaluate", { expression: "1" })).toBeTruthy();
+    await s.forgetFrame(id);
+    await expect(worlds.cdp.send("Runtime.evaluate", { expression: "1" })).rejects.toThrow();
   });
 });

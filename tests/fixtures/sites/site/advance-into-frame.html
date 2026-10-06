@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Code entry</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      input {
+        position: absolute;
+        left: 40px;
+        top: 20px;
+        width: 200px;
+        height: 30px;
+      }
+      iframe {
+        position: absolute;
+        left: 40px;
+        top: 80px;
+        width: 400px;
+        height: 150px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <input id="code" aria-label="Code" />
+    <iframe
+      title="Sign in"
+      srcdoc='<input id="pw" type="password" aria-label="Password"><input id="note" aria-label="Note">'
+    ></iframe>
+    <script>
+      // ?into=pw|note: after 4 characters, a page script moves focus into the frame mid-typing.
+      const into = new URLSearchParams(location.search).get("into") ?? "pw";
+      document.getElementById("code").addEventListener("input", (event) => {
+        if (event.target.value.length >= 4)
+          document.querySelector("iframe").contentDocument.getElementById(into).focus();
+      });
+    </script>
+  </body>
+</html>
