@@ -14,7 +14,8 @@
     "test": "vitest run --project unit",
     "test:int": "vitest run --project integration",
     "env:init": "node scripts/env-init.ts",
-    "compose:test": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml"
+    "compose:test": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml",
+    "smoke": "bash scripts/compose-smoke.sh"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
