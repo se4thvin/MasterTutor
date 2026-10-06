@@ -56,6 +56,20 @@ describe("web_role", () => {
       /permission denied/,
     );
   });
+  it("cannot select any bytea column in the schema", async () => {
+    const columns = await owner<
+      { table_schema: string; table_name: string; column_name: string }[]
+    >`
+      select table_schema, table_name, column_name from information_schema.columns
+      where data_type = 'bytea' and table_schema not in ('pg_catalog', 'information_schema')`;
+    expect(columns.length).toBeGreaterThan(0);
+    for (const c of columns) {
+      await expect(
+        web.unsafe(`select "${c.column_name}" from "${c.table_schema}"."${c.table_name}"`),
+        `${c.table_name}.${c.column_name}`,
+      ).rejects.toThrow(/permission denied/);
+    }
+  });
   it("cannot create tables", async () => {
     await expect(web`create table sneaky (a int)`).rejects.toThrow(/permission denied/);
   });
