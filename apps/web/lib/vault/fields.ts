@@ -6,7 +6,7 @@ import {
   type VaultSecretField,
 } from "@mastertutor/contracts";
 import type { InputHTMLAttributes } from "react";
-import type { IconName } from "@/components/ui/icons.ts";
+import type { IconName } from "@/lib/ui/vocabulary.ts";
 
 type InputAttrs = InputHTMLAttributes<HTMLInputElement> &
   Record<"data-1p-ignore" | "data-lpignore", string>;

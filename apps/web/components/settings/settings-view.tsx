@@ -10,7 +10,7 @@ import { PageHead } from "@/components/ui/page-head.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
-import { useSignOut } from "@/lib/hooks/use-sign-out.ts";
+import { useSignOut } from "@/components/shell/use-sign-out.ts";
 import { DefaultsForm } from "./defaults-form.tsx";
 import { KillSwitchRow } from "./kill-switch-row.tsx";
 

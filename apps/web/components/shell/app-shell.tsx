@@ -8,7 +8,7 @@ import { SearchPalette } from "@/components/library/search-palette.tsx";
 import { useMoveNote } from "@/components/library/use-move-note.ts";
 import { orpc } from "@/lib/api/client.ts";
 import { useHotkey } from "@/lib/hooks/use-hotkey.ts";
-import { useSignOut } from "@/lib/hooks/use-sign-out.ts";
+import { useSignOut } from "./use-sign-out.ts";
 import type { NotesPage } from "@/lib/notes/cache.ts";
 import type { Viewer } from "@/lib/server/viewer.ts";
 import { KillBanner } from "./kill-banner.tsx";

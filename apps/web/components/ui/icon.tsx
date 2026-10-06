@@ -1,7 +1,8 @@
 import { cx } from "@/lib/cx.ts";
-import { icons, type IconName } from "./icons.ts";
+import type { IconName } from "@/lib/ui/vocabulary.ts";
+import { icons } from "./icons.ts";
 
-export type { IconName } from "./icons.ts";
+export type { IconName } from "@/lib/ui/vocabulary.ts";
 export type IconSize = "sm" | "md" | "lg" | "xl";
 
 export interface IconProps {
