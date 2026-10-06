@@ -1,3 +1,4 @@
+import { ids } from "../lib/fixtures/ids.ts";
 import { expect, expectCleanScreen, isCompact, test } from "./helpers/test.ts";
 
 const fail = { status: 500, json: { json: { code: "INTERNAL_SERVER_ERROR" } } };
@@ -38,8 +39,21 @@ test.describe("empty states are clean", () => {
       route.fulfill({ json: { json: { items: [], nextCursor: null } } }),
     );
     await page.goto("/library");
-    // The folder tiles stay above it, so the empty state speaks of notes only (I5).
-    await expect(page.getByRole("heading", { name: "No notes in this folder yet" })).toBeVisible();
+    // All notes is not a folder: the top-level folder tiles stay above a library-wide message (I5).
+    await expect(page.getByRole("heading", { name: "No notes yet" })).toBeVisible();
+    await expect(page.getByText("Notes appear here when the agent files them.")).toBeVisible();
+    await expect(page.locator("#main").getByRole("link", { name: "New task" })).toBeVisible();
+    await expectCleanScreen(page);
+  });
+
+  test("library under a kind filter names the kind", async ({ page }) => {
+    await page.route("**/api/rpc/notes/list", (route) =>
+      route.fulfill({ json: { json: { items: [], nextCursor: null } } }),
+    );
+    // Machine learning has subfolder tiles; the folder may still hold notes of other kinds.
+    await page.goto(`/library?folder=${ids.folder(1)}&kind=pdf`);
+    await expect(page.getByRole("heading", { name: "No PDF notes here yet" })).toBeVisible();
+    await expect(page.locator("#main").getByRole("link", { name: "New task" })).toBeVisible();
     await expectCleanScreen(page);
   });
 

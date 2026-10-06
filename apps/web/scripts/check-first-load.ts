@@ -5,9 +5,10 @@
  *   pnpm --filter @mastertutor/web check:first-load -- --write-baseline  rewrite routes, keep budget
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { compareFirstLoad, measureFirstLoad, type FirstLoadBaseline } from "./first-load.ts";
 
-const nextDir = new URL("../.next/", import.meta.url).pathname;
+const nextDir = fileURLToPath(new URL("../.next/", import.meta.url));
 const baselineUrl = new URL("./first-load-baseline.json", import.meta.url);
 const DEFAULT_BUDGET_KB = 6;
 
