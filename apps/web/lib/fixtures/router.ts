@@ -6,7 +6,8 @@ import {
   type VaultAuditView,
 } from "@mastertutor/contracts";
 import { ORPCError, implement } from "@orpc/server";
-import { canCreateFolder, canMoveFolder, descendantIds } from "../folders/tree.ts";
+import { buildNoteMarkdown } from "../export/note-markdown.ts";
+import { canCreateFolder, canMoveFolder, descendantIds, folderPath } from "../folders/tree.ts";
 import { FIXTURE_ASSETS } from "./assets.ts";
 import { stateFor, usageReport } from "./store.ts";
 import type { FixtureContext, FixtureState, NoteRecord } from "./types.ts";
@@ -170,7 +171,19 @@ export const fixtureRouter = os.router({
       state.notes = state.notes.filter((r) => r.note.id !== input.noteId);
       return { ok: true as const };
     }),
-    export: os.notes.export.handler(notImplemented),
+    export: os.notes.export.handler(({ input, context }) => {
+      const state = stateFor(context.ns);
+      const record = findNote(state, input.noteId);
+      const path = record.note.folderId ? folderPath(state.folders, record.note.folderId) : [];
+      const markdown = buildNoteMarkdown(
+        { note: record.note, blocks: record.blocks, sources: record.sources },
+        path.map((f) => f.name),
+      );
+      return {
+        downloadUrl: `data:text/markdown;charset=utf-8,${encodeURIComponent(markdown)}`,
+        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+      };
+    }),
     search: os.notes.search.handler(({ input, context }) => {
       const q = input.q.toLowerCase();
       const hits: Array<{
