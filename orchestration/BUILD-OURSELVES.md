@@ -5,7 +5,7 @@ We use only these OpenAI capabilities:
 - embeddings;
 - audio transcription.
 
-If work needs any other OpenAI tool or API, do not adopt it. That includes hosted web_search, file_search, code_interpreter, image generation, the Agents SDK, Realtime, and similar. Build the capability ourselves, or stub it behind an interface for now, then log it here. The orchestrator triages.
+If work needs any other OpenAI tool or API, do not adopt it. That includes hosted web_search, file_search, code_interpreter, image generation, the Agents SDK, Realtime, and similar. Build the capability ourselves, properly: a top-of-the-line architecture that follows CLAUDE.md, with a full TDD plan and a review. A stub is allowed only as a short bridge inside the same phase. Log the need here. The orchestrator schedules each row as real work before the goal (D32) counts as met.
 
-| # | Need (OpenAI tool it would replace) | Why / where it came up | Interim (stub / minimal / blocked) | Raised by | Status |
+| # | Need (OpenAI tool it would replace) | Why / where it came up | Plan / phase | Raised by | Status |
 |---|-------------------------------------|------------------------|-------------------------------------|-----------|--------|
