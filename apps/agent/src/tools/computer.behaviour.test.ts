@@ -679,19 +679,33 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     },
   );
 
-  it.each(["unapproved", "person-approved"] as const)(
-    "refuses a click while a frame's navigation to another site is under way (%s): 30/30",
-    async (approval) => {
+  it.each([
+    ["src", "unapproved"],
+    ["src", "person-approved"],
+    ["reload", "unapproved"],
+    ["reload", "person-approved"],
+    ["back", "unapproved"],
+    ["back", "person-approved"],
+  ] as const)(
+    "refuses a click while a frame's navigation to another site is under way (%s, %s): 30/30",
+    async (trigger, approval) => {
       const { s, executor } = await setup();
-      // The new site's page is held back 1.5 s, so its navigation is pending when the click runs.
+      const DELETE = "http://other.fixtures-isolated.test/widget.html?only=delete";
+      const PANEL = `${SITE}/widget.html?gap`;
+      // The other site's page is held back 2 s, so the navigation is pending when the click runs.
+      // reload: the panel's own reload is held back, then redirected to the other site.
+      let hold = false;
       await s.page.route("http://other.fixtures-isolated.test/**", async (route) => {
-        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        if (hold) await new Promise((resolve) => setTimeout(resolve, 2_000));
         await route.fallback();
       });
-      const hits = { cancel: 0, delete: 0, refused: 0 };
-      for (let i = 0; i < 30; i++) {
-        await s.goto(`${SITE}/frame-swap.html`, signal);
-        await waitFor(
+      await s.page.route(PANEL, async (route) => {
+        if (!hold) return route.fallback();
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        await route.fulfill({ status: 302, headers: { location: DELETE } });
+      });
+      const panelReady = () =>
+        waitFor(
           () =>
             s.page
               .frames()[1]
@@ -701,11 +715,35 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
               .catch(() => false),
           { label: "panel" },
         );
+      const hits = { cancel: 0, delete: 0, refused: 0 };
+      for (let i = 0; i < 30; i++) {
+        hold = false;
+        await s.goto(`${SITE}/frame-swap.html`, signal);
+        await panelReady();
+        if (trigger === "back") {
+          // Two entries in the panel: the other site's page, then Cancel again.
+          await s.page.evaluate((url) => {
+            (document.getElementById("panel") as HTMLIFrameElement).src = url;
+          }, DELETE);
+          await waitFor(() => s.page.frames()[1]?.url().includes("only=delete"), {
+            label: "other",
+          });
+          await s.page.evaluate((url) => {
+            (document.getElementById("panel") as HTMLIFrameElement).src = url;
+          }, PANEL);
+          await panelReady();
+        }
         await new Promise((resolve) => setTimeout(resolve, 300)); // painted
-        await s.page.evaluate(() => {
-          const panel = document.getElementById("panel") as HTMLIFrameElement;
-          panel.src = "http://other.fixtures-isolated.test/widget.html?only=delete";
-        });
+        hold = true;
+        await s.page.evaluate(
+          ({ trigger, url }) => {
+            const panel = document.getElementById("panel") as HTMLIFrameElement;
+            if (trigger === "src") panel.src = url;
+            else if (trigger === "reload") panel.contentWindow!.location.reload();
+            else history.back();
+          },
+          { trigger, url: DELETE },
+        );
         await new Promise((resolve) => setTimeout(resolve, 50)); // the request is out
         const { target } = await hitTest(s, at);
         expect(target?.label).toBe("Cancel"); // still the old page
@@ -720,10 +758,41 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
         if (reached === "cancel" || reached === "delete") hits[reached] += 1;
       }
       await s.page.unrouteAll({ behavior: "ignoreErrors" });
-      console.info(JSON.stringify({ metric: "pending_navigation_clicks", approval, ...hits }));
+      console.info(
+        JSON.stringify({ metric: "pending_navigation_clicks", trigger, approval, ...hits }),
+      );
       expect(hits).toEqual({ cancel: 0, delete: 0, refused: 30 });
     },
+    240_000,
   );
+
+  it("a page whose frames are not navigating stays clickable (30/30)", async () => {
+    const { s, executor } = await setup();
+    let cancels = 0;
+    for (let i = 0; i < 30; i++) {
+      await s.goto(`${SITE}/frame-swap.html`, signal);
+      await waitFor(
+        () =>
+          s.page
+            .frames()[1]
+            ?.evaluate(
+              () => document.readyState === "complete" && !!document.getElementById("cancel"),
+            )
+            .catch(() => false),
+        { label: "panel" },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+      const { target } = await hitTest(s, at);
+      const run = await executor.run([click(at)], signal, async () => ({
+        target,
+        personApproved: false,
+      }));
+      expect(run.notes).toEqual([]);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      if ((await clicked(s)) === "cancel") cancels += 1;
+    }
+    expect(cancels).toBe(30);
+  });
 
   it.each([15, 4])(
     "a page with more documents than the guard arms refuses the click: 0/60 reach Delete (swap every %i ms)",

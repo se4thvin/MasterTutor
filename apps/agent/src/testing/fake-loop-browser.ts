@@ -63,7 +63,10 @@ export class FakeLoopBrowser implements LoopBrowser {
   dispatchHold: ((action: ComputerAction) => boolean) | null = null;
   /** Download attempts the page made (drained by the loop), and the downloads a person allowed. */
   blockedDownloads: Array<{ url: string; filename: string | null }> = [];
-  allowedDownloads: string[] = [];
+  /** Downloads let through: an approved card, or (`link`) a download link at its press. */
+  allowedDownloads: Array<{ url: string; filename?: string | null }> = [];
+  /** The executor refuses this action at the press with this note, or null. */
+  refuseWith: ((action: ComputerAction) => string | null) | null = null;
   /** The executor hands the page to the user at this action (returns the reason), or null. */
   handOverOn: ((action: ComputerAction) => string | null) | null = null;
   /** The worker's control guard, checked before every input and screenshot like the real session. */
@@ -123,11 +126,16 @@ export class FakeLoopBrowser implements LoopBrowser {
           notes: ["Stopped before an action: its target changed."],
           handOver: null,
         };
+      // The executor's own refusal at the press (its note), as a real executor would return it.
+      const refusal = this.refuseWith?.(action) ?? null;
+      if (refusal) return { executed: executed + 1, notes: [refusal], handOver: null };
       // A page the executor cannot act on safely even with approval (B1 breaker fix 2).
       const handOver = this.handOverOn?.(action) ?? null;
       if (handOver)
         return { executed: executed + 1, notes: ["Nothing was clicked: handed over."], handOver };
       this.guard?.assertAgent(signal);
+      if (verdict !== true && verdict.allowDownload)
+        this.allowedDownloads.push({ url: verdict.allowDownload });
       this.executed.push(action);
       executed += 1;
       await this.actionHook?.(action);
@@ -178,8 +186,8 @@ export class FakeLoopBrowser implements LoopBrowser {
     return this.blockedDownloads.splice(0);
   }
 
-  async allowDownload(url: string): Promise<void> {
-    this.allowedDownloads.push(url);
+  async allowDownload(card: { url: string; filename: string | null }): Promise<void> {
+    this.allowedDownloads.push(card);
   }
 
   async collectStorage(): Promise<CollectedStorage> {

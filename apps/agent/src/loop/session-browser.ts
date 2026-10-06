@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import {
   toOrigin,
+  Uuid,
   type ComputerAction,
   type FunctionToolName,
   type ScrollPosition,
@@ -22,7 +24,7 @@ import {
   type BrowserStorageState,
 } from "../browser/storage-state.ts";
 import { isCaptchaFrameUrl, isChallengePage } from "../guardrails/captcha.ts";
-import { HISTORY_TAG, redactedExcerpt } from "../guardrails/policy.ts";
+import { HISTORY_TAG, downloadRequest, redactedExcerpt } from "../guardrails/policy.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
@@ -282,8 +284,15 @@ export class SessionLoopBrowser implements LoopBrowser {
       .map((blocked) => ({ ...blocked, url: this.#mask.redact(blocked.url) }));
   }
 
-  allowDownload(url: string): Promise<void> {
-    return this.#session.downloads.allowOnce(url);
+  allowDownload(card: { url: string; filename: string | null }): Promise<void> {
+    // The card was made from the redacted URL and the suggested name: a download matches when it
+    // makes the same card. A script's blob or data download gets a new URL each time: for those
+    // the same kind (blob origin, data type) and the same name are enough (I4).
+    return this.#session.downloads.allowOnce((url, filename) => {
+      const made = downloadRequest(this.#mask.redact(url), filename);
+      if (made.kind !== "download" || made.filename !== card.filename) return false;
+      return made.url === card.url || sameScriptDownload(made.url, card.url);
+    });
   }
 
   collectStorage(): Promise<CollectedStorage> {
@@ -313,7 +322,10 @@ export function slotBrowserConnector(options: {
       testMode: options.testMode,
       log: options.log,
       guard,
-      downloadPath: slotDownloadPath(run().id),
+      downloads: {
+        slotPath: slotDownloadPath(run().id),
+        localPath: join(options.config.downloadsDir, Uuid.parse(run().id)),
+      },
     });
     try {
       await options.pool.rememberBrowser(slotName, baseUrl);
@@ -347,4 +359,15 @@ export function slotBrowserConnector(options: {
       throw error;
     }
   };
+}
+
+/** Two script-made downloads (blob or data URLs) of the same kind: same blob origin, or same data type. */
+function sameScriptDownload(a: string, b: string): boolean {
+  const kind = (url: string) =>
+    url.startsWith("blob:")
+      ? `blob:${url.slice(5, url.lastIndexOf("/"))}`
+      : url.startsWith("data:")
+        ? url.split(",")[0]
+        : null;
+  return kind(a) !== null && kind(a) === kind(b);
 }

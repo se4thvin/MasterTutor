@@ -49,6 +49,17 @@ describe("approvedBy never writes a grant the policy decided (review 8, R-E7)", 
     expect(db.insertVaultGrant).not.toHaveBeenCalled();
   });
 
+  it("never turns a bypass-mode approval into a lasting grant (D44, m7)", async () => {
+    const approval = {
+      kind: "credential_first_use",
+      decidedBy: "bypass",
+      label: null,
+      decidedAt: null,
+    };
+    expect(await approvedBy(deps, approval, item, item.origin)).toBe("bypass");
+    expect(db.insertVaultGrant).not.toHaveBeenCalled();
+  });
+
   it("turns a person's approval into a lasting grant", async () => {
     const approval = {
       kind: "credential_first_use",

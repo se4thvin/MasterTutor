@@ -1,33 +1,60 @@
-import type { CDPSession } from "playwright-core";
+import type { Frame, Page, Request } from "playwright-core";
 
-/** A navigation that never reports its end stops counting after this long (never wedges clicks). */
-const STALE_MS = 30_000;
+/** After its response has fully arrived, a navigation that does not commit (a 204, a download) ends this late. */
+const NO_COMMIT_GRACE_MS = 1_000;
 
 /**
- * Frames of the page with a document-replacing navigation in flight, across every CDP session
- * the browser session watches (the page's and each out-of-process frame's). A click arms only the
- * documents that exist; a navigation already under way when it arms is never held for the guard,
- * so while one is pending the page counts as changed (the click is refused and looked at again).
+ * The navigation requests in flight in a page's frames: any that replaces a document (a link, a
+ * `src` or `location` change, a form, a reload, a redirect, a history move to another entry),
+ * in every frame including out-of-process ones (Playwright attaches each before it runs).
+ * Same-document moves (pushState, a fragment) send no request and never count. A click arms only
+ * the documents that exist, and a navigation already under way is never held for the guard, so
+ * while one is pending the page counts as changed and the click is refused. Nothing is dropped
+ * for taking long: a request the server holds back stays pending until it commits, fails, or
+ * its frame goes away.
  */
 export class PendingNavigations {
-  readonly #started = new Map<string, number>();
+  readonly #pages = new WeakMap<Page, Map<Request, Frame>>();
 
-  watch(cdp: CDPSession): void {
-    cdp.on("Page.frameStartedNavigating", (event) => {
-      if (event.navigationType === "differentDocument")
-        this.#started.set(event.frameId, Date.now());
+  watch(page: Page): void {
+    if (this.#pages.has(page)) return;
+    const inFlight = new Map<Request, Frame>();
+    this.#pages.set(page, inFlight);
+    const detached = (frame: Frame) => {
+      for (const [request, owner] of inFlight) if (owner === frame) inFlight.delete(request);
+    };
+    // Playwright also reports same-document moves as navigations: only the request whose URL the
+    // frame now shows has committed (a page cannot pushState to another site's URL).
+    const committed = (frame: Frame) => {
+      const url = withoutFragment(frame.url());
+      for (const [request, owner] of inFlight)
+        if (owner === frame && withoutFragment(request.url()) === url)
+          for (let hop: Request | null = request; hop; hop = hop.redirectedFrom())
+            inFlight.delete(hop);
+    };
+    page.on("request", (request) => {
+      try {
+        if (request.isNavigationRequest()) inFlight.set(request, request.frame());
+      } catch {
+        // A service worker's request has no frame: not a document navigation.
+      }
     });
-    const end = (frameId: string) => this.#started.delete(frameId);
-    cdp.on("Page.frameNavigated", (event) => end(event.frame.id));
-    cdp.on("Page.frameDetached", (event) => end(event.frameId));
-    cdp.on("Page.frameStoppedLoading", (event) => end(event.frameId));
+    page.on("requestfailed", (request) => inFlight.delete(request));
+    page.on("requestfinished", (request) => {
+      if (!inFlight.has(request)) return;
+      setTimeout(() => inFlight.delete(request), NO_COMMIT_GRACE_MS).unref();
+    });
+    page.on("framenavigated", committed);
+    page.on("framedetached", detached);
   }
 
-  /** True while any watched frame has a navigation in flight. */
-  any(): boolean {
-    const now = Date.now();
-    for (const [frameId, at] of this.#started)
-      if (now - at > STALE_MS) this.#started.delete(frameId);
-    return this.#started.size > 0;
+  /** True while a navigation is in flight in any frame of `page`. */
+  pending(page: Page): boolean {
+    return (this.#pages.get(page)?.size ?? 0) > 0;
   }
+}
+
+function withoutFragment(url: string): string {
+  const at = url.indexOf("#");
+  return at === -1 ? url : url.slice(0, at);
 }
