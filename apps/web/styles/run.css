@@ -1046,4 +1046,330 @@
     color: var(--label-2);
     font-size: 0.75rem;
   }
+  /* Replay scrubber (Task 15). */
+  .run-scrub {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: var(--hit);
+    padding: 0 0.6rem;
+    border-top: 0.03125rem solid var(--hairline);
+  }
+  .run-scrub-track {
+    position: relative;
+    display: flex;
+    flex: 1;
+    align-items: center;
+    min-height: var(--hit);
+    & input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      margin: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    &:has(input:focus-visible) .run-scrub-rail {
+      outline: 0.125rem solid var(--tint);
+      outline-offset: 0.25rem;
+    }
+  }
+  .run-scrub-rail,
+  .run-scrub-fill {
+    position: absolute;
+    inset-inline: 0;
+    height: 0.1875rem;
+    border-radius: var(--r-pill);
+  }
+  .run-scrub-rail {
+    background: var(--fill);
+  }
+  .run-scrub-fill {
+    background: var(--label);
+    transform-origin: left;
+    transition-property: transform;
+    transition-duration: var(--motion-dur-micro);
+    transition-timing-function: var(--motion-ease-out);
+  }
+  .run-scrub-label {
+    color: var(--label-2);
+    font: 400 0.6875rem/1 var(--font-code);
+    white-space: nowrap;
+  }
+  /* Budget meters (Task 15). */
+  .run-meters {
+    display: grid;
+    gap: 1rem;
+    margin: 0;
+    padding-top: 1.5rem;
+    border-top: 0.0625rem solid var(--sep);
+    @variant md {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.5rem;
+    }
+  }
+  .run-meter {
+    min-width: 0;
+  }
+  .run-meter-value {
+    display: grid;
+    gap: 0.45rem;
+    margin: 0.45rem 0 0;
+  }
+  .run-meter-num {
+    color: var(--label);
+    font: 600 1.75rem/1 var(--font-display);
+    letter-spacing: -0.04em;
+    white-space: nowrap;
+    @variant md {
+      font-size: 2.25rem;
+    }
+    & small {
+      color: var(--label-2);
+      font-size: 0.875rem;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+    }
+  }
+  .run-meter-bar {
+    position: relative;
+    height: 0.125rem;
+    overflow: hidden;
+    background: var(--fill);
+    & i {
+      position: absolute;
+      inset: 0;
+      background: var(--label);
+      transform-origin: left;
+      transition-property: transform;
+      transition-duration: var(--motion-dur-panel);
+      transition-timing-function: var(--motion-ease-out);
+    }
+  }
+  .run-meter-foot {
+    color: var(--label-2);
+    font-size: 0.75rem;
+  }
+  /* Timeline (Task 15): aside at md and up, Sheet below. */
+  .run-tl {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-width: 0;
+    @variant lg {
+      position: sticky;
+      top: calc(var(--toolbar-h) + 1rem);
+      align-self: start;
+      max-height: calc(100dvh - var(--toolbar-h) - 2rem);
+    }
+  }
+  .run-tl-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .run-tl-title {
+    margin: 0;
+    color: var(--label);
+    font: 600 1.25rem/1.2 var(--font-ui);
+  }
+  .run-tl-summary {
+    color: var(--label-2);
+    font-size: 0.75rem;
+  }
+  .run-tl-toggle {
+    width: 100%;
+  }
+  .run-tl-list {
+    flex: 1;
+    min-height: 12rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    @variant lg {
+      overflow: auto;
+      scrollbar-width: thin;
+    }
+  }
+  .run-tl-row {
+    position: relative;
+    & + & {
+      border-top: 0.0625rem solid var(--sep);
+    }
+  }
+  .run-tl-pad {
+    padding: 0.7rem 0.5rem;
+  }
+  .run-tl-body {
+    display: grid;
+    grid-template-columns: 3.5rem minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.7rem 0.5rem;
+    border: 0;
+    border-radius: var(--r-md);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+  }
+  button.run-tl-body {
+    cursor: pointer;
+    &:hover {
+      background: var(--fill-2);
+    }
+  }
+  .run-tl-row[data-selected] .run-tl-body {
+    background: var(--tint-wash);
+  }
+  .run-tl-thumb {
+    display: grid;
+    place-items: center;
+    width: 3.5rem;
+    height: 2.1875rem;
+    border-radius: var(--r-xs);
+    background: var(--bg-2);
+    box-shadow: var(--e1);
+    color: var(--label-2);
+    object-fit: cover;
+  }
+  .run-tl-row[data-current] .run-tl-thumb {
+    box-shadow: 0 0 0 0.09375rem var(--signal);
+  }
+  .run-tl-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+    font: 500 0.8125rem/1.38 var(--font-ui);
+  }
+  .run-tl-line {
+    --smark-size: 1rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    min-width: 0;
+    color: var(--label);
+    font: 500 0.8125rem/1.38 var(--font-ui);
+    overflow-wrap: anywhere;
+    & .smark {
+      margin-top: 0.1rem;
+    }
+  }
+  .run-tl-row[data-tone="warn"] .run-tl-thumb {
+    color: var(--warn);
+  }
+  .run-tl-verb {
+    color: var(--label-2);
+    font: 600 0.625rem/1 var(--font-ui);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    &[data-kind="cred"] {
+      color: var(--tint-text);
+    }
+    &[data-kind="sig"] {
+      color: var(--signal);
+    }
+  }
+  .run-tl-alias {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    width: fit-content;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--r-pill);
+    background: var(--tint-wash);
+    color: var(--tint-text);
+    font-size: 0.6875rem;
+  }
+  .run-tl-ts {
+    color: var(--label-2);
+    font: 400 0.6875rem/1.4 var(--font-code);
+  }
+  .run-tl-message {
+    margin: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: var(--r-md);
+    background: var(--tint-wash);
+    & p {
+      margin: 0.25rem 0 0;
+      font-size: 0.8125rem;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    &[data-pending] p {
+      color: var(--label-2);
+    }
+  }
+  .run-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border-radius: var(--r-lg);
+    background: var(--fill-2);
+    &:focus-within {
+      box-shadow: 0 0 0 0.125rem var(--tint);
+    }
+    & textarea {
+      flex: 1;
+      min-width: 0;
+      min-height: 2.25rem;
+      max-height: 8rem;
+      padding: 0.5rem;
+      border: 0;
+      background: none;
+      color: var(--label);
+      font: 400 0.875rem/1.4 var(--font-ui);
+      field-sizing: content;
+      resize: none;
+      &:focus-visible {
+        outline: none;
+      }
+    }
+  }
+  .run-send:not(:disabled) {
+    background: var(--tint);
+    color: var(--on-tint);
+    border-radius: 50%;
+  }
+  /* OTP card (Task 15). */
+  .run-otp {
+    margin: 0.5rem;
+    padding: 0.85rem;
+    border-radius: var(--r-md);
+    background: var(--elevated);
+    box-shadow: var(--e2);
+  }
+  .run-otp-title {
+    margin: 0;
+    font: 600 0.8125rem/1.3 var(--font-ui);
+  }
+  .run-otp-foot {
+    margin: 0.15rem 0 0.65rem;
+    color: var(--label-2);
+    font-size: 0.75rem;
+  }
+  .run-otp-state {
+    margin: 0.65rem 0 0;
+    color: var(--label-2);
+    font: 500 0.75rem/1.3 var(--font-ui);
+    &[data-phase="sent"] {
+      color: var(--ok);
+    }
+    &[data-phase="failed"] {
+      color: var(--danger);
+    }
+  }
+  .run-otp-flow {
+    margin: 0.5rem 0 0;
+    color: var(--label-2);
+    font-size: 0.6875rem;
+    white-space: nowrap;
+    & s {
+      text-decoration-color: var(--signal);
+      white-space: nowrap;
+    }
+  }
 }

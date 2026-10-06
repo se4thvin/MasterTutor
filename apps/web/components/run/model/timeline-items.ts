@@ -15,7 +15,7 @@ import { untrustedText } from "./untrusted-text.ts";
 /** A chat message is shown whole up to this many characters. */
 const MAX_MESSAGE = 2_000;
 
-interface PendingMessage {
+export interface PendingMessage {
   /** The client id: one entry per sent message, however often it is listed. */
   key: string;
   text: string;
@@ -24,7 +24,7 @@ interface PendingMessage {
   sentAt: string;
 }
 
-type TimelineItem =
+export type TimelineItem =
   | {
       kind: "step";
       key: string;
@@ -51,7 +51,7 @@ type TimelineItem =
   | { kind: "download"; key: string; line: string; ts: string; at: string }
   | { kind: "notice"; key: string; line: string; tone: "info" | "warn"; ts: string; at: string };
 
-interface ThinkingState {
+export interface ThinkingState {
   label: string;
   /** When the current spell of thinking began: the first observe/decide since the last act. */
   since: string;
