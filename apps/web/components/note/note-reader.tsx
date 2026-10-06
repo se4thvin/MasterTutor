@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { RollingNumber } from "@/components/bits/rolling-number.tsx";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { ButtonLink } from "@/components/ui/button.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
@@ -106,6 +107,7 @@ export function NoteReader({ noteId }: { noteId: string }) {
   // (hover events fired by the layout shift must not erase that choice).
   const shownActive = activeBlockId ?? (view === "source" ? pinnedBlockId : null);
   const sourceById = new Map(data.sources.map((s) => [s.id, s]));
+  const verifiedCount = data.blocks.filter((b) => b.verified).length;
 
   return (
     <>
@@ -143,7 +145,8 @@ export function NoteReader({ noteId }: { noteId: string }) {
             </h1>
             {data.note.lede ? <p className="reader-lede">{data.note.lede}</p> : null}
             <p className="t-foot">
-              {formatDate(data.note.createdAt)} · {data.blocks.length} blocks · filed by{" "}
+              {formatDate(data.note.createdAt)} · {data.blocks.length} blocks ·{" "}
+              <RollingNumber value={String(verifiedCount)} /> verified · filed by{" "}
               {data.note.filedBy === "agent" ? "the agent" : "you"}
             </p>
           </header>
