@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BUDGET, EMPTY_USAGE } from "./budget.ts";
-import { RUN_EVENT_TYPES, RunEvent, RunEventRecord, type RunEventType } from "./events.ts";
+import {
+  POINTER_KINDS,
+  RUN_EVENT_TYPES,
+  RunEvent,
+  RunEventRecord,
+  StepAction,
+  pointerOf,
+  type RunEventType,
+} from "./events.ts";
 
 const id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
@@ -67,5 +75,22 @@ describe("RunEvent", () => {
     expect(
       RunEventRecord.safeParse({ id: "4x", runId: id, at: "2026-10-05T12:00:00Z", event }).success,
     ).toBe(false);
+  });
+});
+
+describe("StepAction.pointer (run view A1)", () => {
+  const base = { tool: "computer", summary: "Clicked", point: { x: 1, y: 2 } } as const;
+  it("is optional and limited to pointer kinds", () => {
+    expect(StepAction.parse(base)).not.toHaveProperty("pointer");
+    expect(StepAction.parse({ ...base, pointer: "click" }).pointer).toBe("click");
+    expect(StepAction.safeParse({ ...base, pointer: "type" }).success).toBe(false);
+    expect(POINTER_KINDS).toEqual(["click", "double_click", "drag", "move", "scroll"]);
+  });
+  it("pointerOf names pointer actions and leaves keyboard and idle actions out", () => {
+    expect(pointerOf({ type: "click", x: 1, y: 2, button: "left" })).toBe("click");
+    expect(pointerOf({ type: "scroll", x: 1, y: 2, scroll_x: 0, scroll_y: 100 })).toBe("scroll");
+    expect(pointerOf({ type: "keypress", keys: ["ENTER"] })).toBeUndefined();
+    expect(pointerOf({ type: "type", text: "x" })).toBeUndefined();
+    expect(pointerOf({ type: "wait" })).toBeUndefined();
   });
 });

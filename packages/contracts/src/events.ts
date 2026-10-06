@@ -13,13 +13,23 @@ import {
   WaitReason,
 } from "./enums.ts";
 import { IsoDateTime, SlotName, Uuid } from "./primitives.ts";
-import { ToolName } from "./tools.ts";
+import { ToolName, type ComputerAction } from "./tools.ts";
 
-/** What the UI shows for a step; `point` drives the overlay cursor. */
+/** Pointer kinds the run view animates; the agent sets `pointer` for computer steps that start with one. */
+export const POINTER_KINDS = ["click", "double_click", "drag", "move", "scroll"] as const;
+export type PointerKind = (typeof POINTER_KINDS)[number];
+
+/** The pointer kind of a computer action, or undefined for keyboard, wait and screenshot actions. */
+export function pointerOf(action: ComputerAction): PointerKind | undefined {
+  return POINTER_KINDS.find((kind) => kind === action.type);
+}
+
+/** What the UI shows for a step; `point` drives the overlay cursor, `pointer` the click pulse. */
 export const StepAction = z.object({
   tool: ToolName,
   summary: z.string().max(300),
   point: z.object({ x: z.number().int(), y: z.number().int() }).nullable(),
+  pointer: z.enum(POINTER_KINDS).optional(),
 });
 export type StepAction = z.infer<typeof StepAction>;
 

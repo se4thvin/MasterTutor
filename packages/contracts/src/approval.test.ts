@@ -131,3 +131,37 @@ describe("ApprovalDecisionInput", () => {
     ).toBeNull();
   });
 });
+
+describe("approval request display fields (run view A2, A3a)", () => {
+  const click = { type: "click", x: 1, y: 2, button: "left" } as const;
+  const risky = {
+    kind: "risky_click",
+    action: click,
+    label: "Delete",
+    url: "https://a.com/",
+    screenshotKey: null,
+  } as const;
+  it("carries an optional record excerpt on risky clicks, capped at 240 characters", () => {
+    expect(ApprovalRequest.parse({ ...risky, context: "Alice" })).toMatchObject({
+      context: "Alice",
+    });
+    expect(ApprovalRequest.parse(risky)).not.toHaveProperty("context");
+    expect(ApprovalRequest.safeParse({ ...risky, context: "x".repeat(241) }).success).toBe(false);
+  });
+  it("lets a form submit name the action that triggers it, and keeps old rows valid", () => {
+    const form = {
+      kind: "form_submit",
+      url: "https://a.com/",
+      formSummary: "Press Enter in a form",
+      screenshotKey: null,
+    } as const;
+    expect(
+      ApprovalRequest.parse({
+        ...form,
+        action: { type: "keypress", keys: ["ENTER"] },
+        context: null,
+      }),
+    ).toMatchObject({ action: { type: "keypress" }, context: null });
+    expect(ApprovalRequest.safeParse(form).success).toBe(true);
+  });
+});
