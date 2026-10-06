@@ -188,9 +188,36 @@ describe("TOTP across a sleep and wake", () => {
     expect(await tb.page.inputValue("#totp")).not.toBe(typed);
   });
 
+  it("never lets two runs of one alias type the same step (final review minor 3)", async () => {
+    let skew = 0;
+    const waits: number[] = [];
+    const deps = env.deps({
+      resolveRef: refs.resolve,
+      now: () => Date.now() + skew,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+        skew += ms;
+      },
+    });
+    const fillIn = async (run: string) => {
+      await tb.page.goto(`${login}/totp`);
+      return fillCredential(
+        deps,
+        toolContext({ runId: run, workspaceId: env.workspaceId, session: tb.session }),
+        { alias: "site", field: "totp", target: await refs.ref("#totp") },
+      );
+    };
+    expect(await fillIn(runId)).toEqual({ ok: true });
+    const typed = await tb.page.inputValue("#totp");
+    waits.length = 0;
+    expect(await fillIn(await env.newRun([login]))).toEqual({ ok: true });
+    expect(waits).toHaveLength(1);
+    expect(await tb.page.inputValue("#totp")).not.toBe(typed);
+  });
+
   it("drops a step once its window has passed", () => {
     const deps = env.deps();
-    deps.totpSteps.set(`${runId}\u0000site`, { step: 1, until: 1_000 });
+    deps.totpSteps.set(`${env.workspaceId}\u0000site\u0000${login}`, { step: 1, until: 1_000 });
     forgetFillState(deps, runId, 2_000);
     expect(deps.totpSteps.size).toBe(0);
   });
