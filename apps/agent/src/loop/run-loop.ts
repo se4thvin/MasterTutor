@@ -846,6 +846,7 @@ export class RunLoop {
   ): Promise<{ result: CallResult; ran: boolean; wait: "otp" | null }> {
     if (call.kind === "computer") {
       const refusals: string[] = [];
+      const clicked: Array<{ index: number; label: string }> = [];
       let index = -1;
       const gate = async (action: ComputerAction) => {
         index += 1;
@@ -856,24 +857,33 @@ export class RunLoop {
         }
         const target = await this.#deps.browser.targetFor(action, null);
         const need = needsApproval(action, target);
-        // "approved" tells the executor a person approved this action (after a restore the page
-        // may no longer show why: a frame that hangs is only found when typing is guarded).
-        if (need === null) return decision?.approved ? "approved" : true;
         // An approval covers what was approved, not the batch index: the same kind and label on
-        // the same element (M10).
-        if (
-          decision &&
+        // the same element (M10), and on the same record: an approval for Alice's row never
+        // deletes Bobby (R29-3).
+        const matchesApproval =
+          decision !== undefined &&
+          need !== null &&
           need.kind === decision.kind &&
           needLabel(need) === decision.label &&
           (decision.target === null || decision.target === (target?.path ?? null)) &&
-          // ...and on the same record: an approval for Alice's row never deletes Bobby (R29-3).
-          (decision.context === null || decision.context === (target?.context ?? null))
-        )
-          return "approved";
-        if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
-        return false;
+          (decision.context === null || decision.context === (target?.context ?? null));
+        if (need !== null && !matchesApproval) {
+          if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
+          return false;
+        }
+        if (target && (action.type === "click" || action.type === "double_click"))
+          clicked.push({ index, label: target.label });
+        // "approved" tells the executor a person approved this action (after a restore the page
+        // may no longer show why: a frame that hangs is only found when typing is guarded).
+        if (need === null) return decision?.approved ? "approved" : true;
+        return "approved";
       };
       const run = await this.#deps.browser.runComputer(call.actions, signal, gate);
+      // Only clicks that actually ran (B3 logout detection, F10).
+      for (const click of clicked) {
+        if (click.index < run.executed)
+          await this.#deps.hooks.onClick(this.#run, { label: click.label, url: this.#obs().url });
+      }
       const acknowledged = this.#decided.get(safetyItem(call.callId))?.approved
         ? call.safetyChecks
         : [];
@@ -1168,10 +1178,12 @@ export class RunLoop {
       steps,
       events,
       ...(pending ? { extra: (tx) => markApprovalSuperseded(tx, pending.approvalId) } : {}),
-      ...(control?.status === "running"
+      // A run waiting on an approval becomes waiting(takeover) too: the approval is gone (A5).
+      ...(control?.status === "running" ||
+      (control?.status === "waiting" && control.waitReason !== "takeover")
         ? {
             transition: {
-              from: ["running"],
+              from: ["running", "waiting"],
               to: "waiting",
               waitReason: "takeover",
               reason: "user",

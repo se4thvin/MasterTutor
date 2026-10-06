@@ -157,9 +157,13 @@ const expectInput = (text: string) => (request: { body: { input?: unknown } }) =
   if (!JSON.stringify(request.body.input).includes(text)) throw new Error(`no "${text}" in input`);
 };
 const controlEvents = async (id: string) =>
-  (await owner.db.select().from(runEvents).where(eq(runEvents.runId, id))).flatMap((e) =>
-    e.payload.type === "control" ? [e.payload.holder] : [],
-  );
+  (
+    await owner.db
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, id))
+      .orderBy(asc(runEvents.id))
+  ).flatMap((e) => (e.payload.type === "control" ? [e.payload.holder] : []));
 /** The web's takeControl / handBack (Task 18 web contract). */
 async function takeOver(id: string) {
   await owner.db
@@ -741,5 +745,50 @@ describe("RunWorker + Supervisor", () => {
       .where(eq(runs.id, run.id));
     await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
     await until(run.id, (r) => r.status === "completed", "completed after wake");
+  });
+
+  it("calls hooks.onReleased once the worker ends (F11)", async () => {
+    const released: string[] = [];
+    await start({ hooks: { onReleased: async (runId) => void released.push(runId) } });
+    const { run } = await queue([done]);
+    await until(run.id, (r) => r.status === "completed", "completed");
+    await waitFor(() => released.includes(run.id), { label: "onReleased" });
+  });
+
+  it("loads the session store with the run's allowed origins (F9)", async () => {
+    const loads: Array<readonly string[]> = [];
+    await start({
+      hooks: {
+        sessionStore: {
+          load: async (run) => (loads.push(run.allowedOrigins), null),
+          save: async () => undefined,
+        },
+      },
+    });
+    const { run } = await queue([done]);
+    await until(run.id, (r) => r.status === "completed", "completed");
+    expect(loads).toEqual([["http://site.fixtures.test"]]);
+  });
+
+  it("a takeover while an approval is pending supersedes it; hand back re-observes and the risky click never runs (A5, D19)", async () => {
+    const { clock } = gatedClock();
+    await start({}, clock);
+    const { run, browser } = await queue(
+      [click, { ...done, check: expectInput("took control before approving") }],
+      "ask",
+      (b) => b.targets.set("10,20", riskyTarget),
+    );
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "approval", "pending");
+    await takeOver(run.id);
+    await waitFor(
+      async () =>
+        (await owner.db.select().from(approvals).where(eq(approvals.runId, run.id)))[0]?.status ===
+        "superseded",
+      { label: "superseded" },
+    );
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after hand back");
+    expect(browser.computerRuns).toEqual([]);
+    expect(await controlEvents(run.id)).toEqual(["user", "agent"]);
   });
 });

@@ -27,13 +27,16 @@ describe("storage state", () => {
     const source = await connect("browser-1");
     await source.goto(`${SITE}/storage.html?set=1`, signal);
     const tabs = source.context.pages().length;
-    const state = await collectStorageState(source);
+    const { state, page } = await collectStorageState(source);
+    expect(page).toEqual({ origin: SITE, passwordFieldVisible: false });
     expect(source.context.pages().length).toBe(tabs);
     expect(state.cookies.some((cookie) => cookie.name === "mt_session")).toBe(true);
     expect(state.origins).toContainEqual({
       origin: SITE,
       localStorage: [{ name: "mt_token", value: "xyz" }],
     });
+    await source.goto(`${SITE}/masking-reveal.html`, signal);
+    expect((await collectStorageState(source)).page.passwordFieldVisible).toBe(true);
     await source.close();
 
     const target = await connect("browser-2");

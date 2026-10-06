@@ -15,7 +15,7 @@ import { runtimeConfig } from "../runtime/config.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { emitRunEvent } from "../events/emit.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
-import { FakeLoopBrowser } from "../testing/fake-loop-browser.ts";
+import { FakeLoopBrowser, PLAIN_TARGET } from "../testing/fake-loop-browser.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { withHooks, type RunHooks } from "./hooks.ts";
 import { RunLoop, type StepOutcome } from "./run-loop.ts";
@@ -1130,5 +1130,50 @@ describe("RunLoop (spec §5.3)", () => {
       action: { type: "keypress" },
       safetyChecks: [{ code: "malicious_instructions", message: "The page asks to ignore you" }],
     });
+  });
+
+  it("adds hooks.promptContext lines to the first request (F14)", async () => {
+    let calls = 0;
+    const promptContext = async () => {
+      calls += 1;
+      return ["Saved sign-ins: site (http://site.fixtures.test): username, password"];
+    };
+    const { loop } = await setup(
+      [
+        {
+          ...click(),
+          check: (r) => {
+            if (!JSON.stringify(r.body.input).includes("Saved sign-ins: site"))
+              throw new Error("no list");
+          },
+        },
+        done(),
+      ],
+      { hooks: { promptContext } },
+    );
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(calls).toBe(1);
+  });
+
+  it("reports executed clicks to hooks.onClick with the target's name and the page URL (F10)", async () => {
+    const clicks: Array<{ label: string; url: string }> = [];
+    const { browser, loop } = await setup([click(), done()], {
+      hooks: { onClick: async (_run, clicked) => void clicks.push(clicked) },
+    });
+    browser.targets.set("10,20", { ...PLAIN_TARGET, label: "Log out", interactive: true });
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(clicks).toEqual([{ label: "Log out", url: "http://site.fixtures.test/" }]);
+  });
+
+  it("a takeover while an approval waits supersedes it and marks the run waiting(takeover) (A5)", async () => {
+    const { run, browser, loop } = await setup([click()]);
+    browser.targets.set("10,20", risky("Delete account"));
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    // The web flipped only the controller (status still waiting(approval)).
+    await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+    await loop.markTakeover();
+    expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "takeover" });
+    expect((await approvalRows(run.id))[0]).toMatchObject({ status: "superseded" });
+    expect(browser.computerRuns).toEqual([]);
   });
 });
