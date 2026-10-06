@@ -39,6 +39,39 @@
           swap,
         );
       }
+      // ?frames=N: N tiny same-process frames first (more documents than the guard arms).
+      const params = new URLSearchParams(location.search);
+      for (let i = 0; i < Number(params.get("frames") ?? 0); i++) {
+        const tiny = document.createElement("iframe");
+        tiny.srcdoc = "x";
+        tiny.style.cssText = "position: absolute; left: 900px; width: 1px; height: 1px; border: 0";
+        document.body.append(tiny);
+      }
+      // ?cover=N: N ms after the pointer enters Cancel, a same-origin frame holding a Delete
+      // button is inserted over it (a document that did not exist when the click was guarded).
+      // window.__gap: ms from the pointer entering Cancel to the press, to aim N just before it.
+      if (params.has("cover")) {
+        const cancel = document.getElementById("cancel");
+        let entered = 0;
+        addEventListener("mousedown", () => (window.__gap = performance.now() - entered), true);
+        cancel.addEventListener("mouseenter", () =>
+          setTimeout(
+            () => {
+              const frame = document.createElement("iframe");
+              frame.style.cssText =
+                "position: absolute; left: 0; top: 50px; width: 200px; height: 40px; border: 0";
+              document.body.append(frame);
+              frame.contentDocument.write(
+                '<body style="margin: 0"><button style="width: 200px; height: 40px"' +
+                  " onclick=\"window.__clicked = 'delete'\">Delete account</button></body>",
+              );
+              frame.contentDocument.close();
+            },
+            Number(params.get("cover")),
+          ),
+        );
+        cancel.addEventListener("mouseenter", () => (entered = performance.now()));
+      }
     </script>
   </body>
 </html>

@@ -1,12 +1,13 @@
 import type { ComputerAction, ReadPageElement } from "@mastertutor/contracts";
+import type { Locator } from "playwright-core";
 import { createLogger } from "@mastertutor/contracts/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { OTHER, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts";
-import { hitTest } from "../browser/hit-test.ts";
+import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { captureModelScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
-import { ARM_BUDGET_MS, typingGuardIncomplete } from "../browser/input-guard.ts";
+import { ARM_BUDGET_MS, markUnguarded } from "../browser/input-guard.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { waitFor } from "../testing/wait.ts";
@@ -15,6 +16,8 @@ import {
   FOCUS_MOVED_REFUSAL,
   PAGE_CHANGED_REFUSAL,
   SECRET_FIELD_REFUSAL,
+  TARGET_MOVED_REFUSAL,
+  UNGUARDED_CLICK_REFUSAL,
   UNRESPONSIVE_REFUSAL,
 } from "./computer.ts";
 import { readPage } from "./read-page.ts";
@@ -437,7 +440,17 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     // The advert hangs for 3 s, so leaving the page afterwards does not wait long.
     const { s, executor } = await setup("/hung-frame.html?ms=3000");
     await new Promise((resolve) => setTimeout(resolve, 800)); // the advert hangs once loaded
-    expect(await executor.execute(click({ x: 100, y: 35 }), signal)).toBeNull();
+    // Clicking there fails closed too, until a person approves it (breaker fix).
+    const code = { x: 100, y: 35 };
+    expect(await executor.execute(click(code), signal)).toBe(UNGUARDED_CLICK_REFUSAL);
+    const target = (await hitTest(s, code)).target;
+    expect(markUnguarded(s, target)?.opaqueFrame).toBe(true); // so the loop asks a person
+    expect(
+      await executor.execute(click(code), signal, {
+        target: markUnguarded(s, target),
+        personApproved: true,
+      }),
+    ).toBeNull();
     return { s, executor };
   }
 
@@ -455,7 +468,7 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
       expect(elapsed).toBeLessThan(ARM_BUDGET_MS + 750);
       expect(await value(s, null, "code")).toBe("");
       // The loop's next classification asks a person first (runs.behaviour covers that flow)...
-      expect(typingGuardIncomplete(s)).toBe(true);
+      expect(markUnguarded(s, await focusTarget(s))?.opaqueFrame).toBe(true);
       // ...and once a person approved it, it runs.
       expect(
         await executor.execute(action, signal, { target: null, personApproved: true }),
@@ -497,7 +510,12 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     async (frames, refusal) => {
       // After 4 characters the page creates a frame with a password field and focuses it.
       const { s, executor } = await setup(`/advance-into-frame.html?into=new${frames}`);
-      expect(await executor.execute(click({ x: 100, y: 35 }), signal)).toBeNull();
+      // A person approved the click: past the document cap it would fail closed (breaker fix).
+      const code = { x: 100, y: 35 };
+      const { target } = await hitTest(s, code);
+      expect(
+        await executor.execute(click(code), signal, { target, personApproved: true }),
+      ).toBeNull();
       expect(await executor.execute({ type: "type", text: "1234abcdef" }, signal)).toBe(refusal);
       const leaked = await s.page.evaluate(() =>
         (window as { __leaked?: () => string }).__leaked?.(),
@@ -542,5 +560,140 @@ describe("ComputerExecutor on a page that changes under the pointer (fix round 5
     console.info(JSON.stringify({ metric: "toctou_clicks", path, ...hits }));
     expect(hits.delete).toBe(0);
     expect(hits.cancel).toBeGreaterThan(0);
+  });
+});
+
+describe("ComputerExecutor when the click guard is not whole (breaker fix)", () => {
+  const at = { x: 100, y: 70 }; // widget.html: Cancel
+  /** The loop's gate: only "Cancel" runs without approval, and it hands its classification on. */
+  const cancelGate = (s: BrowserSession) => async () => {
+    const { target } = await hitTest(s, at);
+    return target?.label === "Cancel" && !target.opaqueFrame
+      ? { target, personApproved: false }
+      : false;
+  };
+  /** Which button a click reached, in any document of the page. */
+  async function clicked(s: BrowserSession): Promise<string | undefined> {
+    let found: string | undefined;
+    for (const frame of s.page.frames()) {
+      const value = await frame
+        .evaluate(() => {
+          const holder = window as { __clicked?: string };
+          const result = holder.__clicked;
+          holder.__clicked = undefined;
+          return result;
+        })
+        .catch(() => undefined);
+      found ??= value;
+    }
+    return found;
+  }
+
+  it("a same-origin frame inserted just before the press never takes the click: 0/30 reach Delete", async () => {
+    const { s, executor } = await setup();
+    const attempt = async (delay: number) => {
+      await s.goto(`${SITE}/widget.html?cover=${delay}`, signal);
+      await s.page.mouse.move(600, 500); // off Cancel, so the executor's move enters it
+      const run = await executor.run([click(at)], signal, cancelGate(s));
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const gap = await s.page.evaluate(() => (window as { __gap?: number }).__gap);
+      return { run, reached: await clicked(s), gap };
+    };
+    // Aim the insertion at the window between the executor's checks and its press: first measure
+    // how long the pointer rests on Cancel before the press, here (the frame never comes).
+    const gaps: number[] = [];
+    for (let i = 0; i < 5; i++) gaps.push((await attempt(60_000)).gap ?? 0);
+    const gap = gaps.sort((a, b) => a - b)[2]!;
+    const hits = { cancel: 0, delete: 0, refused: 0 };
+    for (let i = 0; i < 30; i++) {
+      const { run, reached } = await attempt(Math.round(gap * [0.5, 0.7, 0.85][i % 3]!));
+      if (run.notes.includes(TARGET_MOVED_REFUSAL)) hits.refused += 1;
+      if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+    }
+    console.info(JSON.stringify({ metric: "inserted_frame_clicks", gap, ...hits }));
+    expect(hits.delete).toBe(0);
+  });
+
+  it.each([15, 4])(
+    "a page with more documents than the guard arms refuses the click: 0/60 reach Delete (swap every %i ms)",
+    async (period) => {
+      const { s, executor } = await setup(`/widget.html?frames=70&swap=${period}`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const hits = { cancel: 0, delete: 0, refused: 0 };
+      for (let i = 0; i < 60; i++) {
+        const run = await executor.run([click(at)], signal, cancelGate(s));
+        if (run.executed === 1 && run.notes.length > 0) hits.refused += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const reached = await clicked(s);
+        if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+      }
+      console.info(JSON.stringify({ metric: "many_documents_clicks", period, ...hits }));
+      // Fail closed: no click runs unguarded, not even on Cancel.
+      expect(hits).toEqual({ cancel: 0, delete: 0, refused: expect.any(Number) });
+    },
+  );
+
+  it("on a page with more documents than the guard arms, the next click needs a person, then runs", async () => {
+    const { s, executor } = await setup("/widget.html?frames=70");
+    const { target } = await hitTest(s, at);
+    expect(await executor.execute(click(at), signal, { target, personApproved: false })).toBe(
+      UNGUARDED_CLICK_REFUSAL,
+    );
+    expect(await clicked(s)).toBeUndefined();
+    // The loop's next classification is uninspectable, so the policy asks a person (R29-1)...
+    const next = markUnguarded(s, (await hitTest(s, at)).target);
+    expect(next?.opaqueFrame).toBe(true);
+    // ...and once a person approved it, it runs.
+    expect(
+      await executor.execute(click(at), signal, { target: next, personApproved: true }),
+    ).toBeNull();
+    expect(await clicked(s)).toBe("cancel");
+  });
+
+  it("ordinary pages still click normally: a form, a link, an SPA and a page with a few frames", async () => {
+    const { s, executor } = await setup();
+    const centre = async (locator: Locator) => {
+      const box = await locator.boundingBox();
+      if (!box) throw new Error("not visible");
+      return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    };
+    /** One click through a gate that, like the loop's, holds it to its classification. */
+    const gatedClick = async (locator: Locator) => {
+      const at = await centre(locator);
+      const run = await executor.run([click(at)], signal, async () => ({
+        target: (await hitTest(s, at)).target,
+        personApproved: false,
+      }));
+      expect(run).toEqual({ executed: 1, notes: [] });
+    };
+    // interactive.html (one frame): a button, a form's submit button, the frame's button, a link.
+    await gatedClick(s.page.locator("#inc"));
+    expect(await text(s, "#count")).toBe("1");
+    await gatedClick(s.page.locator("#search button"));
+    expect(await text(s, "#searched")).toBe("searched");
+    await gatedClick(s.page.frameLocator("#frame").locator("button"));
+    expect(await s.page.evaluate(() => (window as { __frameClicks?: number }).__frameClicks)).toBe(
+      1,
+    );
+    await gatedClick(s.page.getByText("Go to page two"));
+    expect(s.page.url()).toBe(`${SITE}/page2`);
+    // An SPA: the nav re-renders the view and pushes a URL; a click that embeds a frame is fine.
+    await s.goto(`${SITE}/spa.html`, signal);
+    await gatedClick(s.page.locator("#lessons"));
+    expect(s.page.url()).toBe(`${SITE}/spa.html?route=lessons`);
+    await gatedClick(s.page.locator("#play"));
+    await gatedClick(s.page.frameLocator("#player").locator("button"));
+    expect(await s.page.evaluate(() => (window as { __played?: boolean }).__played)).toBe(true);
+    // A page with a few frames: same-site other-origin in process, and another site out of process.
+    await s.goto(`${SITE}/frame-host.html`, signal);
+    for (const id of ["inproc", "oopif"]) {
+      const frame = s.page.frameLocator(`#${id}`);
+      await gatedClick(frame.locator("#delete"));
+      expect(
+        await frame
+          .locator("#delete")
+          .evaluate(() => (window as { __deleted?: boolean }).__deleted),
+      ).toBe(true);
+    }
   });
 });
