@@ -11,6 +11,7 @@ import type { MaskSources } from "../browser/masking.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash } from "../browser/phash.ts";
 import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
+import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
 import { markUnguarded } from "../browser/input-guard.ts";
@@ -274,6 +275,17 @@ export class SessionLoopBrowser implements LoopBrowser {
       .map((blocked) => ({ ...blocked, url: this.#mask.redact(blocked.url) }));
   }
 
+  /** Download URLs reach the approval card too: a secret in them is redacted (M13). */
+  drainBlockedDownloads() {
+    return this.#session.downloads
+      .drainBlocked()
+      .map((blocked) => ({ ...blocked, url: this.#mask.redact(blocked.url) }));
+  }
+
+  allowDownload(url: string): Promise<void> {
+    return this.#session.downloads.allowOnce(url);
+  }
+
   collectStorage(): Promise<CollectedStorage> {
     return collectStorageState(this.#session);
   }
@@ -301,6 +313,7 @@ export function slotBrowserConnector(options: {
       testMode: options.testMode,
       log: options.log,
       guard,
+      downloadPath: slotDownloadPath(run().id),
     });
     try {
       await options.pool.rememberBrowser(slotName, baseUrl);

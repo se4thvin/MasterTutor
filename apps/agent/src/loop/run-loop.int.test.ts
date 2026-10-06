@@ -354,6 +354,78 @@ describe("RunLoop (spec §5.3)", () => {
     expect((await status(run.id))?.allowedOrigins).toEqual(["http://site.fixtures.test"]);
   });
 
+  describe("downloads (spec §9)", () => {
+    const attempt = {
+      url: "https://u:p@site.fixtures.test/files/r.csv",
+      filename: "../r\u202e.csv",
+    };
+
+    it("asks a person about a download the page started, then allows only that one", async () => {
+      const { run, browser, loop, reload } = await setup([
+        click(),
+        doneExpecting("the user approved downloading"),
+      ]);
+      browser.computerHook = async () => void browser.blockedDownloads.push(attempt);
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect(await approvalRows(run.id)).toMatchObject([
+        {
+          kind: "download",
+          status: "pending",
+          request: {
+            kind: "download",
+            url: "https://site.fixtures.test/files/r.csv",
+            filename: "_r.csv",
+          },
+        },
+      ]);
+      expect(browser.allowedDownloads).toEqual([]);
+      await decideApproval(run.id, "approved");
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.allowedDownloads).toEqual(["https://site.fixtures.test/files/r.csv"]);
+    });
+
+    it("never lets auto mode's policy approve a download: it is denied, recorded and reported", async () => {
+      const { run, browser, loop } = await setup(
+        [click(), doneExpecting("Downloads need the user's approval")],
+        { approvalMode: "auto_within_allowlist" },
+      );
+      browser.computerHook = async () => void browser.blockedDownloads.push(attempt);
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(await approvalRows(run.id)).toMatchObject([
+        { kind: "download", status: "denied", decidedBy: "policy" },
+      ]);
+      expect(browser.allowedDownloads).toEqual([]);
+    });
+
+    it("asks before clicking a download link, and lets that download through once approved", async () => {
+      const { run, browser, loop, reload } = await setup([click(), done()]);
+      const link = {
+        ...PLAIN_TARGET,
+        label: "Report",
+        tag: "a",
+        path: "a:report",
+        interactive: true,
+        download: { url: "https://site.fixtures.test/files/r.csv", filename: "r.csv" },
+      };
+      browser.targets.set("10,20", link);
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect(browser.executed).toEqual([]);
+      expect(await approvalRows(run.id)).toMatchObject([
+        { kind: "download", request: { url: link.download.url, filename: "r.csv" } },
+      ]);
+      await decideApproval(run.id, "approved");
+      const resumed = await reload();
+      browser.targets.set("10,20", link);
+      browser.actionHook = async () =>
+        void expect(browser.allowedDownloads).toEqual([link.download.url]);
+      await resumed.resume(new AbortController().signal);
+      expect(await drive(resumed)).toEqual({ kind: "completed" });
+      expect(browser.executed).toHaveLength(1);
+    });
+  });
+
   it("turns a budget hit into a budget approval and extends by 50% when approved", async () => {
     const { run, loop, reload } = await setup([click(), click(), done()], {
       budget: { maxSteps: 1, maxUsd: 5, maxActiveMinutes: 60 },

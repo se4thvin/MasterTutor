@@ -95,8 +95,10 @@ export function armScript(
   let home = false;
   if (arg.click !== null) {
     const kept = slot.__mtFound?.key === arg.click ? slot.__mtFound.el : null;
+    // Only the browser's own input (the agent's press): a page script's synthetic click, such
+    // as a download helper's link.click(), is the page's business, not a misdirected press.
     const onPointer = (event: Event) => {
-      if (!kept || !event.composedPath().includes(kept)) cancel(event);
+      if (event.isTrusted && (!kept || !event.composedPath().includes(kept))) cancel(event);
     };
     for (const type of arg.pointerEvents) listeners.push([type, onPointer]);
   } else {
@@ -151,7 +153,7 @@ export function newDocumentScript(arg: { pointerEvents: string[]; lifetimeMs: nu
   const state = { active: true, cancelled: false };
   (globalThis as unknown as { __mtNewDoc?: typeof state }).__mtNewDoc = state;
   const cancel = (event: Event) => {
-    if (!state.active || Date.now() > until) return;
+    if (!event.isTrusted || !state.active || Date.now() > until) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     state.cancelled = true;

@@ -24,6 +24,11 @@ export interface TargetDescription {
   excerpt?: string;
   /** An embedded page that could not be inspected: activating it always needs approval (R29-1). */
   opaqueFrame?: boolean;
+  /**
+   * Activating it downloads (a link with a `download` attribute): what and under which suggested
+   * name, so the download is approved before any request is sent (spec §9).
+   */
+  download?: { url: string; filename: string | null };
   isFormSubmit: boolean;
   formKind: "login" | "search" | "other" | null;
   isSecretField: boolean;
@@ -179,6 +184,8 @@ export function describeTarget(el: Element): TargetDescription {
     recordText = textIn(scope);
   }
   const parts = [recordText];
+  const downloadLink = target.closest("a[download][href], area[download][href]") as
+    HTMLAnchorElement | HTMLAreaElement | null;
   const context = [parts.join(" ").slice(0, 16_000), doc.location?.href ?? ""].join("\n");
   return {
     label: label.slice(0, 200),
@@ -191,6 +198,14 @@ export function describeTarget(el: Element): TargetDescription {
     isSecretField: isSecretField(target),
     editable,
     interactive: target !== el || el.matches(INTERACTIVE),
+    ...(downloadLink
+      ? {
+          download: {
+            url: downloadLink.href.slice(0, 4_096),
+            filename: downloadLink.getAttribute("download") || null,
+          },
+        }
+      : {}),
   };
 }
 

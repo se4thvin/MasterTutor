@@ -1,7 +1,13 @@
 import { ApprovalRequest } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import { approvalExcerpt, approvalRequestFor, needsApproval, redactedExcerpt } from "./policy.ts";
+import {
+  approvalExcerpt,
+  approvalRequestFor,
+  downloadRequest,
+  needsApproval,
+  redactedExcerpt,
+} from "./policy.ts";
 
 const target = (overrides: Partial<TargetDescription>): TargetDescription => ({
   label: "",
@@ -184,5 +190,36 @@ describe("approval card excerpt (review M2, M3)", () => {
     // Full-width characters only match once NFKC has normalised them.
     expect(redactedExcerpt("pw: ｈｕｎｔｅｒ２-secret", redact)).toBe("pw: [secret]");
     expect(redactedExcerpt(undefined, redact)).toBeNull();
+  });
+});
+
+describe("downloads (spec §9)", () => {
+  const download = { url: "https://a.test/files/r.csv", filename: "r.csv" };
+
+  it("needs a download approval to activate a download link, by click or by Enter", () => {
+    const link = target({ tag: "a", label: "Delete report", download });
+    for (const action of [click, { type: "keypress" as const, keys: ["ENTER"] }]) {
+      const need = needsApproval(action, link);
+      expect(need).toMatchObject({ kind: "download", ...download });
+      const request = approvalRequestFor(need!, "https://a.test/", null, null);
+      expect(ApprovalRequest.parse(request)).toEqual({ kind: "download", ...download });
+    }
+  });
+
+  it("cleans the URL and name for the card: no credentials, no payload, no path or controls", () => {
+    expect(downloadRequest("https://u:p@a.test/f.csv", "../../etc/pass\u202ewd")).toEqual({
+      kind: "download",
+      url: "https://a.test/f.csv",
+      filename: "_.._etc_passwd",
+    });
+    expect(downloadRequest("data:text/csv;base64,c2VjcmV0", null)).toEqual({
+      kind: "download",
+      url: "data:text/csv,...",
+      filename: null,
+    });
+    expect(downloadRequest("blob:https://a.test/0b1c", ". . .")).toMatchObject({ filename: null });
+    expect(downloadRequest("https://a.test/f", "x".repeat(300))).toMatchObject({
+      filename: "x".repeat(255),
+    });
   });
 });
