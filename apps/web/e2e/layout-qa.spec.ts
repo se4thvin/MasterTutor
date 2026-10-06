@@ -28,6 +28,19 @@ test.describe("layout detector self-test", () => {
     expect(await findLayoutIssues(page)).toEqual([]);
   });
 
+  test("ignores a closed <details> body but checks it once open", async ({ page }) => {
+    const html = (open: boolean) => `
+      <div style="width:120px;height:60px;overflow:hidden">
+        <details${open ? " open" : ""}><summary>Show data</summary>
+          <div style="width:300px;height:400px">wide table</div>
+        </details>
+      </div>`;
+    await page.setContent(html(false));
+    expect(await findLayoutIssues(page)).toEqual([]);
+    await page.setContent(html(true));
+    expect((await findLayoutIssues(page)).join("\n")).toContain("clipped by");
+  });
+
   test("accepts the visually-hidden pattern but not a small clipped box", async ({ page }) => {
     await page.setContent(`
       <span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">screen reader text</span>
