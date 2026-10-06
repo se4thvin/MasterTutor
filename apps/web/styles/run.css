@@ -824,4 +824,18 @@
       color: var(--warn);
     }
   }
+  /* D44: bypass indicator in the frame chrome, so it stays visible in full screen. */
+  .run-bypass-chip {
+    flex: none;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--r-pill);
+    background: var(--warn-wash);
+    color: var(--label);
+    font: 600 0.6875rem/1.4 var(--font-ui);
+  }
+  .run-list-more {
+    display: flex;
+    justify-content: center;
+    padding-top: 1.5rem;
+  }
 }

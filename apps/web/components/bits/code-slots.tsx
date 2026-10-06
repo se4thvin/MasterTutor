@@ -24,7 +24,7 @@ import {
 } from "react";
 import { transitions } from "@/lib/motion-tokens.ts";
 import {
-  OTP_DEFAULT_DIGITS,
+  slotCount,
   backspace,
   emptySlots,
   isComplete,
@@ -38,14 +38,16 @@ interface CodeSlotsProps {
   /** Number of dots to show after submit; null while editable. */
   sealed: number | null;
   disabled?: boolean;
+  /** How many digits the code has, 4–8 (M9); six when unknown. */
+  digits?: number;
   onComplete(code: string): void;
 }
 
-export function CodeSlots({ label, sealed, disabled = false, onComplete }: CodeSlotsProps) {
+export function CodeSlots({ label, sealed, disabled = false, digits, onComplete }: CodeSlotsProps) {
   const id = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<SlotsState>(() => ({
-    slots: emptySlots(OTP_DEFAULT_DIGITS),
+    slots: emptySlots(slotCount(digits)),
     active: 0,
   }));
   const [focused, setFocused] = useState(false);

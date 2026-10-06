@@ -1,10 +1,10 @@
 "use client";
 
 import type { RunStatus } from "@mastertutor/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
-import { ButtonLink } from "@/components/ui/button.tsx";
+import { Button, ButtonLink } from "@/components/ui/button.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
@@ -23,9 +23,19 @@ const TEXT: Record<RunStatus, string> = {
   cancelled: "Cancelled",
 };
 
+const PAGE = 50;
+
 /** Every run, newest first, each a link to its run view (X2). */
 export function RunsList() {
-  const runs = useQuery(orpc.runs.list.queryOptions({ input: { status: null, limit: 50 } }));
+  // Paged, newest first: "Load more" reaches every run (M11).
+  const runs = useInfiniteQuery(
+    orpc.runs.list.infiniteOptions({
+      input: (cursor: string | null) => ({ status: null, limit: PAGE, cursor }),
+      initialPageParam: null as string | null,
+      getNextPageParam: (last) => last.nextCursor,
+    }),
+  );
+  const items = runs.data?.pages.flatMap((p) => p.items) ?? [];
   if (runs.isError) {
     return (
       <LoadError
@@ -42,7 +52,7 @@ export function RunsList() {
       </div>
     );
   }
-  if (runs.data.items.length === 0) {
+  if (items.length === 0) {
     return (
       <EmptyState
         icon="runs"
@@ -57,21 +67,30 @@ export function RunsList() {
     );
   }
   return (
-    <nav className="group" aria-label="Runs">
-      {runs.data.items.map((run) => (
-        <Link key={run.id} className="row row-link" href={`/runs/${run.id}`}>
-          <span className="run-list-main">
-            <StatusMark status={markStatus(run.status)} decorative />
-            <span className="min-w-0 run-list-text">
-              <bdi className="run-list-goal">{run.goal.split("\n")[0]}</bdi>
-              <small>
-                {TEXT[run.status]} · {formatDateTime(run.createdAt)}
-              </small>
+    <>
+      <nav className="group" aria-label="Runs">
+        {items.map((run) => (
+          <Link key={run.id} className="row row-link" href={`/runs/${run.id}`}>
+            <span className="run-list-main">
+              <StatusMark status={markStatus(run.status)} decorative />
+              <span className="min-w-0 run-list-text">
+                <bdi className="run-list-goal">{run.goal.split("\n")[0]}</bdi>
+                <small>
+                  {TEXT[run.status]} · {formatDateTime(run.createdAt)}
+                </small>
+              </span>
             </span>
-          </span>
-          <Icon name="chevronRight" />
-        </Link>
-      ))}
-    </nav>
+            <Icon name="chevronRight" />
+          </Link>
+        ))}
+      </nav>
+      {runs.hasNextPage ? (
+        <div className="run-list-more">
+          <Button onClick={() => void runs.fetchNextPage()} disabled={runs.isFetchingNextPage}>
+            Load more
+          </Button>
+        </div>
+      ) : null}
+    </>
   );
 }

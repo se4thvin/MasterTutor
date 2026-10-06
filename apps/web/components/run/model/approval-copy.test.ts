@@ -205,3 +205,17 @@ describe("approvalCopy: a sign-in form with several destinations (I1, re-review)
     expect(rows.at(-1)).toEqual(["Sends to", "zz-evil.example"]);
   });
 });
+
+describe("approvalCopy: duplicate destinations (M8)", () => {
+  it("counts a host once, in its first position", () => {
+    const copy = approvalCopy({
+      ...offSiteSignInRequest(),
+      postsTo: "http://evil.example, https://evil.example, https://other.example",
+    });
+    expect(copy.title).toBe("Send your ada-learn sign-in to 2 other sites?");
+    expect(copy.details.filter(([k]) => k === "Sends to")).toEqual([
+      ["Sends to", "evil.example"],
+      ["Sends to", "other.example"],
+    ]);
+  });
+});

@@ -153,7 +153,19 @@ test.describe("New task", () => {
     await page.getByRole("textbox", { name: "Allowed domain" }).fill("example.com");
     await page.getByRole("textbox", { name: "Allowed domain" }).press("Enter");
     await page.getByRole("radio", { name: "Bypass approvals" }).click();
-    await expect(page.getByText(/approves every step on its own/)).toBeVisible();
+    // D44: the warning names everything bypass lifts, sign-ins first, and what it never lifts.
+    const warning = page.getByTestId("bypass-warning");
+    await expect(warning).toContainText("first use of a saved sign-in");
+    await expect(warning).toContainText("frames it can't inspect");
+    await expect(warning).toContainText("sensitive-site warnings");
+    await expect(warning).toContainText("Budget limits still pause");
+    await expect(warning).toContainText("never reach the agent, logs or screenshots");
+    await expect(warning).toContainText("private networks");
+    await expect(page.getByText("Every step goes ahead without asking")).toHaveCount(0);
+    // The consent checkbox is described by the warning it agrees to (M2).
+    await expect(page.getByRole("checkbox", { name: /I understand/ })).toHaveAccessibleDescription(
+      /first use of a saved sign-in/,
+    );
     const start = page.getByRole("button", { name: /^Start/ });
     await expect(start).toBeDisabled();
     await page.getByRole("checkbox", { name: /I understand/ }).check();

@@ -157,6 +157,12 @@
     font-size: 0.8125rem;
     line-height: 1.45;
   }
+  .nt-risk p {
+    margin: 0;
+    & + p {
+      margin-top: 0.4rem;
+    }
+  }
   .nt-risk {
     display: flex;
     gap: 0.5rem;

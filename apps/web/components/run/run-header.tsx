@@ -40,8 +40,9 @@ export function RunHeader({ model, state }: { model: RunModel; state: BrowserSta
           <p className="run-bypass" role="note" aria-label="Bypass mode">
             <Icon name="needsReview" size="sm" />
             <span>
-              <b>Bypass mode.</b> Approvals are automatic. Prompt-injection warnings still stop for
-              you, and Take over and the kill switch still work.
+              <b>Bypass mode.</b> Approvals are automatic, including first use of a saved sign-in;
+              budget limits still pause, prompt-injection warnings still stop for you, and Take over
+              and the kill switch always work.
             </span>
           </p>
         ) : null}

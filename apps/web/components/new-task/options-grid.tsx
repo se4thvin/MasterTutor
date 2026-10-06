@@ -8,6 +8,7 @@ import { RubberSegment } from "@/components/bits/rubber-segment.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
+import { untrustedText } from "@/components/run/model/untrusted-text.ts";
 import { buildFolderTree, flattenAll } from "@/lib/folders/tree.ts";
 import { BUDGET_PRESETS, type BudgetPreset, type SourceChip } from "./draft.ts";
 
@@ -27,7 +28,8 @@ const MODE_TEXT: Record<ApprovalMode, string> = {
   ask: "Risky clicks, form submits, downloads, first sign-ins and new domains always ask you first.",
   auto_within_allowlist:
     "Risky clicks, forms and first sign-ins in your allowed domains go ahead and are logged.",
-  bypass: "Every step goes ahead without asking, and each one is logged.",
+  bypass:
+    "Steps go ahead without asking, except budget limits and prompt-injection warnings; each one is logged.",
 };
 
 interface OptionsGridProps {
@@ -185,18 +187,28 @@ export function OptionsGrid(p: OptionsGridProps) {
         ) : null}
         {p.approvalMode === "bypass" ? (
           <>
-            <p className="nt-risk">
+            {/* D44: informed consent. Everything bypass lifts, and everything it never lifts. */}
+            <div className="nt-risk" id={`${id}-bypass`} data-testid="bypass-warning">
               <Icon name="needsReview" size="sm" />
-              <span>
-                Bypass approves every step on its own: purchases, deletions, posts, form submits,
-                downloads and new domains. Sign-ins still fill only on their own site, the kill
-                switch and Take over still work, and a prompt-injection warning still stops for you.
-              </span>
-            </p>
+              <div>
+                <p>
+                  Bypass approves every step on its own: purchases, deletions, posts, form submits,
+                  downloads, new domains, first use of a saved sign-in, frames it can&apos;t
+                  inspect, and irrelevant- or sensitive-site warnings.
+                </p>
+                <p>
+                  It never lifts these: prompt-injection warnings still stop for you. Budget limits
+                  still pause. Secrets never reach the agent, logs or screenshots. Sign-ins only go
+                  to their own site. No access to private networks. The kill switch and Take over
+                  always work.
+                </p>
+              </div>
+            </div>
             <label className="nt-check">
               <input
                 type="checkbox"
                 checked={p.bypassAcknowledged}
+                aria-describedby={`${id}-bypass`}
                 onChange={(e) => p.onBypassAcknowledged(e.target.checked)}
               />
               <span>I understand. Start this run in bypass mode.</span>
@@ -213,7 +225,7 @@ export function OptionsGrid(p: OptionsGridProps) {
             <option value="">Let the agent file it</option>
             {flattenAll(buildFolderTree(p.folders)).map((node) => (
               <option key={node.folder.id} value={node.folder.id}>
-                {`${"\u2003".repeat(node.depth - 1)}${node.folder.name}`}
+                {`${"\u2003".repeat(node.depth - 1)}${untrustedText(node.folder.name, 120)}`}
               </option>
             ))}
           </select>

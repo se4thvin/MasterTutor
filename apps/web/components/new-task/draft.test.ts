@@ -136,3 +136,13 @@ describe("bypass mode (D44): an explicit, acknowledged opt-in", () => {
     expect(ask).not.toHaveProperty("bypassAcknowledged", true);
   });
 });
+
+describe("buildCreateRunInput never throws (M3)", () => {
+  it("turns a schema failure into the form's error branch", () => {
+    const bad = draft({
+      domains: ["https://a.example"],
+      standardBudget: { maxSteps: -1, maxUsd: 5, maxActiveMinutes: 30 },
+    });
+    expect(buildCreateRunInput(bad)).toEqual({ error: "Check the task details and try again." });
+  });
+});

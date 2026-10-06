@@ -14,6 +14,7 @@ import {
 } from "../model/run-model.ts";
 import { syncRunQueries } from "./query-sync.ts";
 import { connectRunEvents } from "./run-events.ts";
+import { scheduleFlush } from "./schedule.ts";
 
 const STEP_PAGE = 500;
 
@@ -83,9 +84,11 @@ export function useRun(runId: string): RunHandle {
   useEffect(() => {
     if (after === null || terminal) return undefined;
     let queue: RunEventRecord[] = [];
-    let frame = 0;
+    let pending = false;
+    let closed = false;
     const flush = () => {
-      frame = 0;
+      pending = false;
+      if (closed) return;
       const records = queue;
       queue = [];
       if (records.length === 0) return;
@@ -97,18 +100,22 @@ export function useRun(runId: string): RunHandle {
       after: after.id,
       onRecord: (record) => {
         queue.push(record);
-        if (frame === 0) frame = requestAnimationFrame(flush);
+        if (!pending) {
+          pending = true;
+          scheduleFlush(flush);
+        }
       },
       onConnection: setConnection,
       // After 3 refused reopens, runs.get through the RPC link says why: UNAUTHORIZED ends the
       // session (R29-4 interceptor); 401/403/404 end this view; a 5xx keeps retrying.
-      probe: () => api.runs.get({ runId }),
+      // A detail it reads is applied too: a run that finished meanwhile settles and stops (M7).
+      probe: () => api.runs.get({ runId }).then((detail) => dispatch({ type: "sync", detail })),
       onFailure: () => setLoadError(true),
     });
     return () => {
       stream.close();
-      cancelAnimationFrame(frame);
       flush();
+      closed = true;
     };
   }, [runId, after, terminal, qc]);
 

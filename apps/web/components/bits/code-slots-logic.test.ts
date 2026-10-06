@@ -6,6 +6,7 @@ import {
   isComplete,
   pasteDigits,
   typeDigits,
+  slotCount,
 } from "./code-slots-logic.ts";
 
 const fresh = () => ({ slots: emptySlots(6), active: 0 });
@@ -45,5 +46,11 @@ describe("code slots logic", () => {
     expect(s).toEqual({ slots: ["1", "", "", "", "", ""], active: 1 });
     s = backspace(s);
     expect(s).toEqual({ slots: emptySlots(6), active: 0 });
+  });
+});
+
+describe("slotCount (M9: the vault's 4–8 digit codes)", () => {
+  it("shows one box per digit, 4 to 8, and six by default", () => {
+    expect([undefined, 3, 4, 5, 7, 8, 9].map((n) => slotCount(n))).toEqual([6, 4, 4, 5, 7, 8, 8]);
   });
 });

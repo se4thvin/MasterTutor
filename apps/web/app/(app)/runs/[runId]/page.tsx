@@ -11,5 +11,6 @@ export default async function RunPage({ params }: { params: Promise<{ runId: str
   if (!Uuid.safeParse(runId).success) notFound();
   // The layout already redirected a signed-out visitor; the id names "You" in decisions (A4).
   const viewer = await getViewer();
-  return <RunView runId={runId} viewerId={viewer?.id ?? null} />;
+  // Keyed by run: another run starts from its own snapshot and stream position (M6).
+  return <RunView key={runId} runId={runId} viewerId={viewer?.id ?? null} />;
 }

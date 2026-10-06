@@ -158,6 +158,9 @@ test.describe("Run view states", () => {
     const badge = page.getByRole("note", { name: "Bypass mode" });
     await expect(badge).toBeVisible();
     await expect(badge).toContainText("Approvals are automatic");
+    await expect(badge).toContainText("budget limits still pause");
+    // The full-screen target (the frame) carries its own indicator (M1).
+    await expect(frame(page).getByText("Bypass", { exact: true })).toBeVisible();
     await emit(page, [rec({ type: "control", holder: "user" })]);
     await expect(frame(page)).toHaveAttribute("data-state", "control");
     await expect(badge).toBeVisible();
@@ -166,6 +169,7 @@ test.describe("Run view states", () => {
   test("an ask run shows no bypass badge", async ({ page }) => {
     await gotoRun(page);
     await expect(page.getByRole("note", { name: "Bypass mode" })).toHaveCount(0);
+    await expect(frame(page).getByText("Bypass", { exact: true })).toHaveCount(0);
   });
 
   test("a stream the server keeps refusing asks runs.get, and a 404 there ends the view (no endless retry)", async ({
@@ -193,5 +197,32 @@ test.describe("Run view states", () => {
       timeout: 15_000,
     });
     expect(gets).toBe(2);
+  });
+
+  test("a refused stream settles on what runs.get says: a run that finished meanwhile stops retrying (M7)", async ({
+    page,
+  }) => {
+    let gets = 0;
+    await gotoRun(page, {
+      handlers: {
+        "runs/get": () => {
+          gets += 1;
+          return gets === 1
+            ? recordedDetail()
+            : recordedDetail({ status: "completed", slotName: null });
+        },
+      },
+    });
+    await page.evaluate(() => {
+      window.__sse.blockOpen = true;
+    });
+    for (let i = 0; i < 3; i++) {
+      await page.waitForFunction((n) => window.__sse.sources.length >= n, i + 1);
+      await page.evaluate(() => window.__sse.fail(true));
+    }
+    await expect(page.getByText("Finished").first()).toBeVisible({ timeout: 15_000 });
+    const sources = await page.evaluate(() => window.__sse.sources.length);
+    await page.waitForTimeout(3_000);
+    expect(await page.evaluate(() => window.__sse.sources.length)).toBe(sources);
   });
 });
