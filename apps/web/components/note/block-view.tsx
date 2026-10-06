@@ -10,6 +10,7 @@ import { isRawHtmlTable, statusOf } from "@/lib/notes/provenance.ts";
 import { AssetImage } from "./asset-image.tsx";
 import { BlockMarkdown } from "./block-markdown.tsx";
 import { ProvenancePopover } from "./provenance-popover.tsx";
+import { VerifyCheck } from "./verify-check.tsx";
 
 export const EDITABLE_TYPES = new Set([
   "heading",
@@ -143,11 +144,14 @@ export function BlockView(props: BlockViewProps) {
         editable={EDITABLE_TYPES.has(block.type)}
       />
       {editing ? <BlockEditor block={block} onDone={onEditDone} /> : <BlockContent block={block} />}
-      {status === "needs_review" ? (
+      {block.origin === "ocr_model" || status === "needs_review" ? (
         <div className="blk-actions" data-qa="review-actions">
-          <Badge tone="warn" icon="needsReview">
-            Needs review
-          </Badge>
+          {!block.verified ? (
+            <Badge tone="warn" icon="needsReview">
+              Needs review
+            </Badge>
+          ) : null}
+          <VerifyCheck block={block} />
         </div>
       ) : null}
     </div>
