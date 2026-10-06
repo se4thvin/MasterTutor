@@ -121,7 +121,7 @@ const NODE_STATE_SCRIPT = `function () {
 const GONE_DOCUMENT = /does not belong to the document/i;
 
 /** True only when the node is provably not on screen; any doubt (other target, error, visible) is false. */
-async function provablyNotShown(cdp: CDPSession, backendNodeId: number): Promise<boolean> {
+export async function provablyNotShown(cdp: CDPSession, backendNodeId: number): Promise<boolean> {
   try {
     await cdp.send("DOM.describeNode", { backendNodeId });
     let resolved;
