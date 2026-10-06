@@ -2,6 +2,7 @@
 
 import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { AnimatePresence, m } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
@@ -15,6 +16,7 @@ import { SearchField } from "@/components/ui/search-field.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
+import { transitions } from "@/lib/motion-tokens.ts";
 import { folderPath } from "@/lib/folders/tree.ts";
 import {
   libraryHref,
@@ -252,16 +254,25 @@ export function LibraryView() {
           />
         ) : (
           <div className="notes" data-view={params.view}>
-            {items.map((note, i) => (
-              <NoteCard
-                key={note.id}
-                note={note}
-                view={params.view}
-                index={i}
-                onMove={setMoving}
-                onDelete={setDeleting}
-              />
-            ))}
+            {/* A card that leaves (moved or deleted) fades and settles out instead of vanishing. */}
+            <AnimatePresence initial={false}>
+              {items.map((note, i) => (
+                <m.div
+                  key={note.id}
+                  className="card-slot"
+                  exit={{ opacity: 0, scale: 0.96 }}
+                  transition={transitions.exit}
+                >
+                  <NoteCard
+                    note={note}
+                    view={params.view}
+                    index={i}
+                    onMove={setMoving}
+                    onDelete={setDeleting}
+                  />
+                </m.div>
+              ))}
+            </AnimatePresence>
           </div>
         )}
         <MoveSheet note={moving} onClose={() => setMoving(null)} />
