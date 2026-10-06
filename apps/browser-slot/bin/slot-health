@@ -1,0 +1,3 @@
+#!/bin/sh
+# Healthy when Chromium answers CDP through the socat proxy (spec §14).
+exec curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:9223/json/version

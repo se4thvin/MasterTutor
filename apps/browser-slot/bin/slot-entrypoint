@@ -1,0 +1,63 @@
+#!/bin/bash
+# Browser-slot entrypoint. It:
+#   1. derives the n.eko member passwords;
+#   2. installs the network filter;
+#   3. wipes any previous browser state;
+#   4. execs n.eko's supervisord.
+set -euo pipefail
+
+for name in SLOT_NAME NEKO_ADMIN_SECRET NEKO_MEMBER_SECRET CDP_ALLOWED_IP NEKO_ALLOWED_IPS; do
+  if [[ -z "${!name:-}" ]]; then echo "slot-entrypoint: $name is required" >&2; exit 64; fi
+done
+if [[ ! "$SLOT_NAME" =~ ^browser-[1-9][0-9]?$ ]]; then echo "slot-entrypoint: invalid SLOT_NAME" >&2; exit 64; fi
+if (( ${#NEKO_ADMIN_SECRET} < 32 || ${#NEKO_MEMBER_SECRET} < 32 )); then
+  echo "slot-entrypoint: n.eko secrets must be at least 32 characters" >&2; exit 64
+fi
+
+# Same derivation as deriveNekoPassword() in @mastertutor/contracts/server.
+hmac_hex() { printf '%s' "$SLOT_NAME" | openssl dgst -sha256 -hmac "$1" -r | cut -d' ' -f1; }
+admin_password="$(hmac_hex "$NEKO_ADMIN_SECRET")"
+user_password="$(hmac_hex "$NEKO_MEMBER_SECRET")"
+unset NEKO_ADMIN_SECRET NEKO_MEMBER_SECRET
+
+profile() { # name is_admin can_host can_share_media can_access_clipboard
+  printf '{"name":"%s","is_admin":%s,"can_login":true,"can_connect":true,"can_watch":true,"can_host":%s,"can_share_media":%s,"can_access_clipboard":%s,"sends_inactive_cursor":false,"can_see_inactive_cursors":false}' \
+    "$1" "$2" "$3" "$4" "$5"
+}
+export NEKO_MEMBER_PROVIDER=object
+NEKO_MEMBER_OBJECT_USERS="[{\"username\":\"agent\",\"password\":\"${admin_password}\",\"profile\":$(profile agent true true true true)},{\"username\":\"user\",\"password\":\"${user_password}\",\"profile\":$(profile user false true false false)}]"
+export NEKO_MEMBER_OBJECT_USERS
+unset admin_password user_password
+
+# Ingress: CDP (9223) and PulseAudio (4713) from the agent only; n.eko (8080) from web/Traefik only.
+iptables -F INPUT
+iptables -F OUTPUT
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+for port in 9223 4713; do
+  iptables -A INPUT -p tcp --dport "$port" -s "$CDP_ALLOWED_IP" -j ACCEPT
+  iptables -A INPUT -p tcp --dport "$port" -j DROP
+done
+IFS=',' read -r -a neko_ips <<< "$NEKO_ALLOWED_IPS"
+for ip in "${neko_ips[@]}"; do iptables -A INPUT -p tcp --dport 8080 -s "$ip" -j ACCEPT; done
+iptables -A INPUT -p tcp --dport 8080 -j DROP
+
+# Egress: the browser may reach the internet but never private ranges (other slots, web,
+# the metadata address). Replies to inbound connections are allowed by conntrack.
+iptables -A OUTPUT -o lo -j ACCEPT
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+if [[ -n "${SLOT_EGRESS_ALLOW_CIDRS:-}" ]]; then
+  IFS=',' read -r -a allowed <<< "$SLOT_EGRESS_ALLOW_CIDRS"
+  for cidr in "${allowed[@]}"; do iptables -A OUTPUT -d "$cidr" -j ACCEPT; done
+fi
+for cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4; do
+  iptables -A OUTPUT -d "$cidr" -j REJECT
+done
+
+# Compose restarts the same container, so wipe state even though the profile is on tmpfs.
+mkdir -p /tmp/chromium-profile /downloads
+find /tmp/chromium-profile -mindepth 1 -delete
+chown neko:neko /tmp/chromium-profile /downloads
+chmod 700 /tmp/chromium-profile
+
+exec "$@"

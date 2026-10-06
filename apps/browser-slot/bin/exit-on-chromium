@@ -1,0 +1,14 @@
+#!/bin/bash
+# Supervisor event listener: when Chromium exits, stop supervisord so the container exits
+# and Compose `restart: always` brings the slot back with an empty tmpfs profile (spec §5.2).
+set -u
+while true; do
+  printf 'READY\n'
+  read -r header
+  len=$(printf '%s' "$header" | sed -n 's/.*len:\([0-9]*\).*/\1/p')
+  payload=$(head -c "${len:-0}")
+  case "$payload" in
+    *processname:chromium*) kill -TERM "$(cat /var/run/supervisord.pid)" ;;
+  esac
+  printf 'RESULT 2\nOK'
+done
