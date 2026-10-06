@@ -147,19 +147,31 @@ export async function startVaultScenario(options: {
       return { status: run.status, waitReason: run.waitReason };
     },
     async decide(runId, decision) {
-      await owner.db
+      const decided = await owner.db
         .update(approvals)
         .set({ status: decision, decidedBy: userId, decidedAt: sql`now()` })
-        .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")));
+        .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")))
+        .returning({ id: approvals.id });
       await owner.db
         .update(runs)
         .set({ wakeRequestedAt: sql`now()` })
         .where(eq(runs.id, runId));
       await owner.sql.notify("run_wake", encodeNotify("run_wake", { runId, reason: "approval" }));
-      await waitFor(async () => (await read(runId)).status !== "waiting", {
-        label: "resumed",
-        timeoutMs: 30_000,
-      });
+      // Resumed: the run left this wait, or already waits on a newer approval. A run can pass
+      // through "running" faster than a poll, so "not waiting" alone would miss it.
+      const done = new Set(decided.map((row) => row.id));
+      await waitFor(
+        async () => {
+          const row = await read(runId);
+          if (row.status !== "waiting" || row.waitReason !== "approval") return true;
+          const pending = await owner.db
+            .select({ id: approvals.id })
+            .from(approvals)
+            .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")));
+          return pending.some((approval) => !done.has(approval.id));
+        },
+        { label: "resumed", timeoutMs: 30_000 },
+      );
     },
     async toolOutputs(runId) {
       const rows = await owner.db
