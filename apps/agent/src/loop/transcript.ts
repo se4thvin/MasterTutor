@@ -1,11 +1,11 @@
 import { runTranscript, type Database } from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
+import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { parseModelOutput, type PendingCall } from "../llm/items.ts";
 
 export const GARAGE_REF = "garage:";
-const PNG_PREFIX = "data:image/png;base64,";
 
 /** One Responses item, stored with images replaced by Garage keys (spec §4 run_transcript). */
 export const TranscriptEntry = z.object({
@@ -16,20 +16,33 @@ export const TranscriptEntry = z.object({
 });
 export type TranscriptEntry = z.infer<typeof TranscriptEntry>;
 
+const DATA_IMAGE = /^data:image\/([a-z0-9]+)(?:[.+-][a-z0-9.+-]*)?;base64,/i;
+
+/**
+ * Replaces every image data URL with a `garage:` ref and uploads it. Keys carry `nonce` (unique per
+ * commit) so a zombie writer cannot overwrite a live owner's object. Uploaded keys are pushed to
+ * `uploaded` as they are created so the caller can delete them if the commit fails.
+ */
 export async function externalizeImages(
   storage: Storage,
   runId: string,
   seq: number,
   entry: TranscriptEntry,
+  nonce = randomUUID().replaceAll("-", ""),
+  uploaded: string[] = [],
 ): Promise<TranscriptEntry> {
   let index = 0;
   const uploads: Array<Promise<void>> = [];
   const walk = (value: unknown): unknown => {
-    if (typeof value === "string" && value.startsWith(PNG_PREFIX)) {
-      const key = objectKeys.transcriptImage(runId, seq, index++);
+    if (typeof value === "string") {
+      const match = DATA_IMAGE.exec(value);
+      if (!match) return value;
+      const ext = match[1]!.toLowerCase().slice(0, 8);
+      const key = objectKeys.transcriptImage(runId, seq, index++, nonce, ext);
+      uploaded.push(key);
       uploads.push(
-        storage.put(key, Buffer.from(value.slice(PNG_PREFIX.length), "base64"), {
-          contentType: "image/png",
+        storage.put(key, Buffer.from(value.slice(match[0].length), "base64"), {
+          contentType: `image/${ext}`,
         }),
       );
       return `${GARAGE_REF}${key}`;
@@ -46,13 +59,16 @@ export async function externalizeImages(
 
 export async function loadTranscript(db: Database, runId: string): Promise<TranscriptEntry[]> {
   const rows = await db
-    .select({ item: runTranscript.item })
+    .select({ seq: runTranscript.seq, item: runTranscript.item })
     .from(runTranscript)
     .where(eq(runTranscript.runId, runId))
     .orderBy(asc(runTranscript.seq));
-  return rows.flatMap((row) => {
+  // A dropped row would orphan a call/output pair and make the next request 400; fail loudly.
+  return rows.map((row) => {
     const parsed = TranscriptEntry.safeParse(row.item);
-    return parsed.success ? [parsed.data] : [];
+    if (!parsed.success)
+      throw new Error(`run_transcript row ${row.seq} of run ${runId} is unparseable`);
+    return parsed.data;
   });
 }
 
@@ -86,13 +102,35 @@ export function lastUserEventId(entries: readonly TranscriptEntry[]): string | n
   return best === null ? null : best.toString();
 }
 
-export function recentScreenshotKeys(entries: readonly TranscriptEntry[], count: number): string[] {
+/** The storage key behind a `garage:` ref, only if it lies under this run's transcript prefix. */
+export function resolveGarageRef(runId: string, value: unknown): string | null {
+  if (typeof value !== "string" || !value.startsWith(GARAGE_REF)) return null;
+  const key = value.slice(GARAGE_REF.length);
+  if (
+    !key.startsWith(objectKeys.transcriptImagePrefix(runId)) ||
+    key.includes("..") ||
+    key.includes("\\")
+  )
+    return null;
+  return key;
+}
+
+/** Keys of the newest `count` screenshots; only real image fields count, never message or argument text. */
+export function recentScreenshotKeys(
+  entries: readonly TranscriptEntry[],
+  runId: string,
+  count: number,
+): string[] {
   const keys: string[] = [];
   const walk = (value: unknown) => {
-    if (typeof value === "string" && value.startsWith(GARAGE_REF))
-      keys.push(value.slice(GARAGE_REF.length));
-    else if (Array.isArray(value)) value.forEach(walk);
-    else if (value !== null && typeof value === "object") Object.values(value).forEach(walk);
+    if (Array.isArray(value)) return value.forEach(walk);
+    if (value === null || typeof value !== "object") return;
+    const object = value as Record<string, unknown>;
+    if (object.type === "computer_screenshot" || object.type === "input_image") {
+      const key = resolveGarageRef(runId, object.image_url);
+      if (key) keys.push(key);
+    }
+    Object.values(object).forEach(walk);
   };
   entries.forEach((entry) => walk(entry.item));
   return keys.slice(-count);

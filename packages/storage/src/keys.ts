@@ -66,8 +66,16 @@ export const objectKeys = {
   stepScreenshot(runId: string, seq: number): string {
     return `runs/${uuid(runId, "runId")}/steps/${count(seq, "seq")}.png`;
   },
-  transcriptImage(runId: string, seq: number, index: number): string {
-    return `runs/${uuid(runId, "runId")}/transcript/${count(seq, "seq")}-${count(index, "index")}.png`;
+  transcriptImagePrefix(runId: string): string {
+    return `runs/${uuid(runId, "runId")}/transcript/`;
+  },
+  /** `nonce` makes the key unique per commit so a zombie writer can never overwrite a live owner's image. */
+  transcriptImage(runId: string, seq: number, index: number, nonce?: string, ext = "png"): string {
+    if (!/^[a-z0-9]{1,8}$/.test(ext))
+      throw new TypeError("ext must be 1-8 lowercase alphanumerics");
+    if (nonce !== undefined && !/^[a-z0-9]{1,32}$/.test(nonce))
+      throw new TypeError("nonce must be 1-32 lowercase alphanumerics");
+    return `runs/${uuid(runId, "runId")}/transcript/${count(seq, "seq")}-${count(index, "index")}${nonce ? `-${nonce}` : ""}.${ext}`;
   },
   download(runId: string, filename: string): string {
     return `downloads/${uuid(runId, "runId")}/${safeFilename(filename)}`;

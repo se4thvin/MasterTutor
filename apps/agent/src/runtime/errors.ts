@@ -41,6 +41,14 @@ export class ChainLost extends Error {
   }
 }
 
+/** The request exceeded the model's context window; the loop should compact now. */
+export class ContextOverflow extends Error {
+  constructor() {
+    super("context_length_exceeded");
+    this.name = "ContextOverflow";
+  }
+}
+
 export class ModelUnavailable extends Error {
   readonly code: string;
   constructor(code: string, message: string) {

@@ -3,8 +3,8 @@ import { APIError } from "openai";
 import { afterEach, describe, expect, it } from "vitest";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { instantClock } from "../runtime/clock.ts";
-import { ChainLost, ModelUnavailable } from "../runtime/errors.ts";
-import { ModelCaller, classifyModelError } from "./caller.ts";
+import { ChainLost, ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
+import { ModelCaller, backoffMs, classifyModelError, retryAfterMs } from "./caller.ts";
 import {
   createOpenAIModelClient,
   type ModelClient,
@@ -209,6 +209,28 @@ describe("ModelCaller", () => {
     ).rejects.toBeInstanceOf(ModelUnavailable);
     expect(classifyModelError(new Error("socket hang up"))).toBe("server");
   });
+  it("treats context overflow as compact-now, 408/409 as retryable and honours Retry-After", async () => {
+    expect(classifyModelError(apiError(400, "context_length_exceeded"))).toBe("context_overflow");
+    await expect(
+      caller(scripted([apiError(400, "context_length_exceeded")]).client).call(request, signal()),
+    ).rejects.toBeInstanceOf(ContextOverflow);
+    expect(classifyModelError(apiError(408))).toBe("transient");
+    expect(classifyModelError(apiError(409))).toBe("transient");
+    expect(
+      (await caller(scripted([apiError(409), apiError(408), reply]).client).call(request, signal()))
+        .fallback,
+    ).toBeNull();
+    const limited = APIError.generate(
+      429,
+      { error: { message: "x" } },
+      "x",
+      new Headers({ "retry-after": "20" }),
+    );
+    expect(retryAfterMs(limited)).toBe(20_000);
+    expect(retryAfterMs(apiError(429))).toBeNull();
+    expect(backoffMs(1, 20_000)).toBe(20_000);
+    expect(backoffMs(1, null)).toBeLessThanOrEqual(500);
+  });
 });
 
 describe("OpenAI client against llm-mock", () => {
@@ -236,6 +258,11 @@ describe("OpenAI client against llm-mock", () => {
     expect(body.tools?.map((tool) => tool.name ?? tool.type).sort()).toEqual(
       [...TOOL_NAMES].sort(),
     );
+    const functions = (body.tools ?? []).filter((tool) => tool.type === "function") as Array<{
+      strict?: boolean;
+    }>;
+    expect(functions).toHaveLength(6);
+    for (const tool of functions) expect(tool.strict).toBe(true);
     expect(body).toMatchObject({
       store: true,
       reasoning: { effort: "medium" },

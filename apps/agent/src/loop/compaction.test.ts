@@ -72,6 +72,7 @@ describe("compaction (spec §5.4)", () => {
     const body = mock!.requestsFor("c")[0]!.body;
     expect(body.previous_response_id ?? null).toBeNull();
     expect(JSON.stringify(body.input)).toContain("read_page");
+    expect(JSON.stringify(body.input)).toContain("<untrusted_page_content");
   });
 
   it("seeds a new chain with the summary and the last 3 screenshots", async () => {

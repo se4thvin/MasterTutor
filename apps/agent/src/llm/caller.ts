@@ -1,14 +1,17 @@
 import { MODELS } from "@mastertutor/contracts";
 import { APIError } from "openai";
 import type { Clock } from "../runtime/clock.ts";
-import { ChainLost, ModelUnavailable } from "../runtime/errors.ts";
+import { ChainLost, ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
 import type { ModelClient, ModelReply, ModelRequest } from "./client.ts";
 
-export type ModelErrorKind = "rate_limited" | "server" | "chain_lost" | "fatal";
+export type ModelErrorKind =
+  "rate_limited" | "server" | "transient" | "chain_lost" | "context_overflow" | "fatal";
 
 export function classifyModelError(error: unknown): ModelErrorKind {
   if (error instanceof APIError) {
     if (error.code === "previous_response_not_found") return "chain_lost";
+    if (error.code === "context_length_exceeded") return "context_overflow";
+    if (error.status === 408 || error.status === 409) return "transient";
     if (error.status === 429) return "rate_limited";
     if (error.status === undefined || error.status >= 500) return "server";
     return "fatal";
@@ -22,9 +25,21 @@ export interface CallResult {
   fallback: { from: string; to: string } | null;
 }
 
-export function backoffMs(attempt: number): number {
+export function backoffMs(attempt: number, retryAfterMs: number | null = null): number {
   const base = Math.min(30_000, 500 * 2 ** Math.max(0, attempt - 1));
-  return Math.round(base * (0.5 + Math.random() / 2));
+  const jittered = Math.round(base * (0.5 + Math.random() / 2));
+  return retryAfterMs === null ? jittered : Math.max(jittered, Math.min(60_000, retryAfterMs));
+}
+
+/** Retry-After as seconds or an HTTP date; null when absent or unusable. */
+export function retryAfterMs(error: unknown, now = Date.now()): number | null {
+  if (!(error instanceof APIError)) return null;
+  const value = error.headers?.get?.("retry-after");
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? null : Math.max(0, date - now);
 }
 
 /** Spec §5.2 rule 8: 429/5xx backoff with jitter; 3 consecutive 5xx on gpt-6-astra → gpt-6.1-sol. */
@@ -55,6 +70,7 @@ export class ModelCaller {
         if (signal.aborted) throw signal.reason;
         const kind = classifyModelError(error);
         if (kind === "chain_lost") throw new ChainLost();
+        if (kind === "context_overflow") throw new ContextOverflow();
         if (kind === "fatal")
           throw new ModelUnavailable("model_request_rejected", "The model rejected the request.");
         if (kind === "server") {
@@ -72,7 +88,7 @@ export class ModelCaller {
         }
         if (attempt >= this.#maxAttempts)
           throw new ModelUnavailable("model_rate_limited", "The model kept rate-limiting.");
-        await this.#clock.sleep(backoffMs(attempt), signal);
+        await this.#clock.sleep(backoffMs(attempt, retryAfterMs(error)), signal);
       }
     }
   }
