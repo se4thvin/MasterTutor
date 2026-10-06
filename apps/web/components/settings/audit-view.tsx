@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Badge, type BadgeTone } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import type { IconName } from "@/components/ui/icon.tsx";
+import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar } from "@/components/ui/toolbar.tsx";
@@ -70,10 +71,12 @@ export function AuditView() {
           <div role="status" aria-busy="true" aria-label="Loading audit log">
             <Skeleton className="h-64 rounded-lg" />
           </div>
-        ) : audit.isError ? (
-          <p className="t-foot" role="alert">
-            Couldn&apos;t load the audit log. Reload to try again.
-          </p>
+        ) : audit.isError && !audit.data ? (
+          <LoadError
+            title="Couldn't load the audit log."
+            onRetry={() => void audit.refetch()}
+            retrying={audit.isFetching}
+          />
         ) : wide ? (
           <div className="group table-scroll">
             <table className="data-table" aria-label="Vault audit">

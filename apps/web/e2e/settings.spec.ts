@@ -90,3 +90,57 @@ test("activity links lead to Usage and the Audit log", async ({ page }) => {
     "/settings/audit",
   );
 });
+
+test("the kill switch is locked while a change is in flight", async ({ page }) => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/rpc/settings/setKillSwitch", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto("/settings");
+  const kill = page.getByRole("switch", { name: "Kill switch" });
+  await kill.click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Stop All Runs" }).click();
+  await expect(kill).toBeChecked();
+  await expect(kill).toBeDisabled();
+  release();
+  await expect(kill).toBeEnabled();
+  await expect(kill).toBeChecked();
+});
+
+test("a website typed but not added is saved with the defaults", async ({ page }) => {
+  await page.goto("/settings");
+  await page.getByLabel("Add a website").fill("example.org/some/path");
+  await page.getByRole("button", { name: "Save defaults" }).click();
+  await expect(page.getByRole("group").filter({ hasText: "Defaults saved" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("https://example.org")).toBeVisible();
+  await page.getByLabel("Add a website").fill("javascript:alert(1)");
+  await page.getByRole("button", { name: "Save defaults" }).click();
+  await expect(page.getByText("Enter a website such as example.com.")).toBeVisible();
+});
+
+test("a failed sign-out keeps the user here and says so", async ({ page }) => {
+  await page.route("**/api/auth/sign-out", (route) => route.fulfill({ status: 500, json: {} }));
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't sign out." })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings$/);
+});
+
+test("settings that fail to load offer Retry instead of an endless skeleton", async ({ page }) => {
+  let fail = true;
+  await page.route("**/api/rpc/settings/get", (route) =>
+    fail
+      ? route.fulfill({ status: 500, json: { json: { code: "INTERNAL_SERVER_ERROR" } } })
+      : route.continue(),
+  );
+  await page.goto("/settings");
+  const error = page.getByRole("alert").filter({ hasText: "Couldn't load settings." });
+  await expect(error).toBeVisible({ timeout: 10_000 });
+  await expectCleanScreen(page);
+  fail = false;
+  await error.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByRole("switch", { name: "Kill switch" })).toBeVisible();
+});

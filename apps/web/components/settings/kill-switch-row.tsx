@@ -13,11 +13,15 @@ export function KillSwitchRow({ settings }: { settings: SettingsView }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [confirm, setConfirm] = useState(false);
+  // One change at a time: out-of-order responses would otherwise settle on the wrong state.
+  const [pending, setPending] = useState(false);
   const key = orpc.settings.get.queryKey({ input: {} });
   const setKillSwitch = (killSwitch: boolean) =>
     qc.setQueryData<SettingsView>(key, (old) => old && { ...old, killSwitch });
 
   const apply = async (on: boolean) => {
+    if (pending) return;
+    setPending(true);
     // A refetch in flight would overwrite the optimistic value with the old one.
     await qc.cancelQueries({ queryKey: key });
     setKillSwitch(on);
@@ -31,6 +35,8 @@ export function KillSwitchRow({ settings }: { settings: SettingsView }) {
       // Roll back only the switch, so a concurrent defaults save survives.
       setKillSwitch(!on);
       toast({ title: "Couldn't change the kill switch.", icon: "needsReview", tone: "danger" });
+    } finally {
+      setPending(false);
     }
   };
 
@@ -44,6 +50,7 @@ export function KillSwitchRow({ settings }: { settings: SettingsView }) {
         label="Kill switch"
         tone="danger"
         checked={settings.killSwitch}
+        disabled={pending}
         onCheckedChange={(on) => (on ? setConfirm(true) : void apply(false))}
       />
       <ConfirmDialog
