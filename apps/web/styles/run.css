@@ -97,6 +97,10 @@
     color: var(--on-signal);
     font: 600 0.625rem/1.4 var(--font-ui);
     white-space: nowrap;
+    .acur[data-flip] & {
+      right: 1.0625rem;
+      left: auto;
+    }
   }
   .acur-pulse {
     position: absolute;
@@ -316,9 +320,11 @@
   .run-tip {
     position: absolute;
     top: calc(100% + 0.625rem);
-    right: -0.5rem;
+    left: 50%;
     z-index: 30;
-    width: 15rem;
+    /* Centred on the shield and never wider than the screen: at 390 a right-aligned 15rem tip ran
+       past the frame's left edge. */
+    width: min(15rem, calc(100vw - 2.5rem));
     padding: 0.6rem 0.7rem;
     border-radius: var(--r-sm);
     background: var(--elevated);
@@ -327,16 +333,18 @@
     font: 400 0.75rem/1.4 var(--font-ui);
     text-align: start;
     white-space: normal;
+    visibility: hidden;
     opacity: 0;
     pointer-events: none;
-    translate: 0 -0.25rem;
-    transition-property: opacity, translate;
+    translate: -50% -0.25rem;
+    transition-property: opacity, translate, visibility;
     transition-duration: var(--motion-dur-base);
     transition-timing-function: var(--motion-ease-out);
   }
   .run-keyshield:is(:hover, :focus-visible) .run-tip {
+    visibility: visible;
     opacity: 1;
-    translate: 0 0;
+    translate: -50% 0;
   }
   .run-pill {
     display: inline-flex;
@@ -507,15 +515,20 @@
     font: 400 0.75rem/1.3 var(--font-ui);
     white-space: nowrap;
     translate: -50% -150%;
+    /* Hidden, not just transparent: a parked banner is off screen and must not count as shown.
+       Visibility stays visible for the whole fade, so the exit still plays. */
+    visibility: hidden;
     opacity: 0;
-    transition-property: translate, opacity;
-    transition-duration: var(--motion-spring-dur), var(--motion-dur-base);
-    transition-timing-function: var(--motion-spring), var(--motion-ease-out);
+    transition-property: translate, opacity, visibility;
+    transition-duration: var(--motion-spring-dur), var(--motion-dur-base), var(--motion-dur-base);
+    transition-timing-function:
+      var(--motion-spring), var(--motion-ease-out), var(--motion-ease-out);
     @variant md {
       font-size: 0.8125rem;
     }
     &[data-show] {
       translate: -50% 0;
+      visibility: visible;
       opacity: 1;
     }
   }
@@ -749,6 +762,8 @@
     font: 700 clamp(1.75rem, 3.4vw, 2.5rem) / 1.08 var(--font-display);
     letter-spacing: -0.03em;
     overflow-wrap: anywhere;
+    /* The two-line clamp ends in an ellipsis: a long goal is cut on purpose, not clipped. */
+    text-overflow: ellipsis;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
@@ -799,6 +814,8 @@
     display: -webkit-box;
     overflow: hidden;
     overflow-wrap: anywhere;
+    /* The two-line clamp ends in an ellipsis: a long goal is cut on purpose, not clipped. */
+    text-overflow: ellipsis;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }

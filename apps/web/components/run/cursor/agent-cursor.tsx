@@ -8,6 +8,8 @@ import { arcControl, pointOnArc, travelMs, type Point } from "./cursor-path.ts";
 
 const ease = cubicBezier(easings.cursor);
 const HOTSPOT = { x: 3, y: 2 };
+/** Room the "Agent" label needs right of the arrow; nearer the right edge it sits on the left. */
+const LABEL_ROOM = 64;
 
 interface AgentCursorProps {
   /** Viewport pixels; null hides the cursor. */
@@ -50,6 +52,8 @@ export function AgentCursor({ target, pulseKey, hidden, thinking }: AgentCursorP
     const place = (p: Point) => {
       at.current = p;
       el.style.transform = `translate(${p.x - HOTSPOT.x}px, ${p.y - HOTSPOT.y}px)`;
+      // A small frame (390) puts a right-edge click's label outside the picture: flip it.
+      el.toggleAttribute("data-flip", p.x > (el.parentElement?.clientWidth ?? 0) - LABEL_ROOM);
     };
     const from = at.current;
     if (!from || reduce) {
