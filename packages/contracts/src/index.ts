@@ -5,3 +5,5 @@ export * from "./budget.ts";
 export * from "./run.ts";
 export * from "./note.ts";
 export * from "./agent-turn.ts";
+export * from "./tools.ts";
+export * from "./approval.ts";
