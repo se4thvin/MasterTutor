@@ -4,6 +4,7 @@
 @import "../styles/base.css";
 @import "../styles/components.css";
 @import "../styles/overlays.css";
+@import "../styles/shell.css";
 
 @theme inline {
   --color-*: initial;
