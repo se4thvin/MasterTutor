@@ -73,9 +73,10 @@
     flex-direction: column;
     min-width: 0;
     border-radius: var(--r-lg);
-    transition-property: transform;
-    transition-duration: var(--motion-spring-dur);
-    transition-timing-function: var(--motion-spring);
+    /* The hover lift springs (transform); the shared press rule adds scale. */
+    transition-property: transform, scale;
+    transition-duration: var(--motion-spring-dur), var(--motion-dur-press);
+    transition-timing-function: var(--motion-spring), var(--motion-ease-out);
     animation-name: pop-in;
     animation-duration: var(--motion-spring-dur);
     animation-timing-function: var(--motion-spring);
@@ -85,9 +86,6 @@
       &:hover {
         transform: translateY(-2px);
       }
-    }
-    &:active {
-      transform: scale(var(--motion-press-row));
     }
   }
   .card-cover {

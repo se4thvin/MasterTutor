@@ -240,16 +240,10 @@
     color: var(--bg);
     font-size: 0.75rem;
     font-weight: 600;
-    transition-property: transform;
-    transition-duration: var(--motion-dur-micro);
-    transition-timing-function: var(--motion-ease-out);
     &::after {
       content: "";
       position: absolute;
       inset: -0.5rem -0.25rem;
-    }
-    &:active {
-      transform: scale(var(--motion-press));
     }
   }
   .toast-close {
