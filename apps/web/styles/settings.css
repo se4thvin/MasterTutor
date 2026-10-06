@@ -190,4 +190,22 @@
       border-bottom: 0;
     }
   }
+  .audit-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .audit-item {
+    display: grid;
+    gap: 0.35rem;
+    min-width: 0;
+    padding: 0.8rem 1.1rem;
+    & + .audit-item {
+      border-top: 1px solid var(--sep);
+    }
+  }
+  .audit-alias {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 }
