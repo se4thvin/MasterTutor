@@ -1,7 +1,7 @@
 // Fills missing or empty keys in the root .env with fresh secrets and safe local defaults.
 // Never prints or overwrites an existing value. Usage: pnpm env:init
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_BROWSER_SLOTS } from "@mastertutor/contracts";
 
@@ -87,8 +87,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const path = fileURLToPath(new URL("../.env", import.meta.url));
   const existing = await readFile(path, "utf8").catch(() => "");
   const result = fillEnv(existing, generateSecrets());
-  await writeFile(path, result.text, { mode: 0o600 });
-  await chmod(path, 0o600);
+  // Atomic: a crash mid-write must not lose existing keys.
+  await writeFile(`${path}.tmp`, result.text, { mode: 0o600 });
+  await rename(`${path}.tmp`, path);
   console.log(result.filled.length ? `filled: ${result.filled.join(", ")}` : "nothing to fill");
   if (result.missingManual.length) console.log(`set by hand: ${result.missingManual.join(", ")}`);
 }
