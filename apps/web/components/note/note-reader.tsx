@@ -10,7 +10,10 @@ import { orpc } from "@/lib/api/client.ts";
 import { folderPath } from "@/lib/folders/tree.ts";
 import { libraryHref } from "@/lib/library/params.ts";
 import { formatDate } from "@/lib/notes/format.ts";
+import { MEDIA } from "@/lib/breakpoints.ts";
+import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
 import { BlockView } from "./block-view.tsx";
+import { MarginCallouts } from "./margin-callouts.tsx";
 import { SourceStrip } from "./source-strip.tsx";
 
 export function NoteReader({ noteId }: { noteId: string }) {
@@ -20,6 +23,7 @@ export function NoteReader({ noteId }: { noteId: string }) {
   const [openBlockId, setOpenBlockId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
+  const wide = useMediaQuery(MEDIA.lg);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -107,6 +111,15 @@ export function NoteReader({ noteId }: { noteId: string }) {
               />
             ))}
           </div>
+          {wide ? (
+            <MarginCallouts
+              blocks={data.blocks}
+              bodyRef={bodyRef}
+              activeBlockId={activeBlockId}
+              onActivate={setActiveBlockId}
+              onOpen={(id) => setOpenBlockId(id)}
+            />
+          ) : null}
         </div>
       </article>
     </>
