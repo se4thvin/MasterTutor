@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import {
   decideByPolicy,
   decideSafetyChecks,
+  BYPASS_DECIDER,
   POLICY_DECIDER,
+  isPersonDecider,
+  policyDecider,
   type ApprovalRequest,
   type ComputerAction,
   type RunError,
@@ -758,7 +761,7 @@ export class RunLoop {
         ...riskOf(item.request),
         target: item.target,
         context: item.context,
-        decidedBy: POLICY_DECIDER,
+        decidedBy: policyDecider(this.#run.approvalMode),
         decidedAt: Date.now(),
       });
     }
@@ -779,10 +782,11 @@ export class RunLoop {
             type: "approval_resolved",
             approvalId: row.id,
             status: row.status,
-            decidedBy: POLICY_DECIDER,
+            decidedBy: policyDecider(this.#run.approvalMode),
           },
         ]),
-        extra: (tx) => insertApprovals(tx, this.#run.id, seq, rows, POLICY_DECIDER),
+        extra: (tx) =>
+          insertApprovals(tx, this.#run.id, seq, rows, policyDecider(this.#run.approvalMode)),
       });
     }
     if (ask)
@@ -842,16 +846,16 @@ export class RunLoop {
   }
 
   async #recordPolicy(request: ApprovalRequest, status: "approved" | "denied"): Promise<void> {
+    const decider = policyDecider(this.#run.approvalMode);
     const seq = this.#deps.store.nextSeq();
     const id = randomUUID();
     await this.#deps.store.commit({
       steps: [{ seq, phase: "approve", state: "done", result: { policy: [status] } }],
       events: [
         { type: "approval_requested", approvalId: id, request },
-        { type: "approval_resolved", approvalId: id, status, decidedBy: POLICY_DECIDER },
+        { type: "approval_resolved", approvalId: id, status, decidedBy: decider },
       ],
-      extra: (tx) =>
-        insertApprovals(tx, this.#run.id, seq, [{ id, request, status }], POLICY_DECIDER),
+      extra: (tx) => insertApprovals(tx, this.#run.id, seq, [{ id, request, status }], decider),
     });
   }
 
@@ -892,16 +896,16 @@ export class RunLoop {
         if (target && (action.type === "click" || action.type === "double_click"))
           clicked.push({ index, label: target.label });
         // Only a person's approval of this very element (path and record) lets typing run with an
-        // incomplete guard; a policy approval in auto mode never does. After a restore the page
-        // may no longer show why approval was needed (a hung frame), so need may be null here.
+        // incomplete guard; a policy approval (auto or bypass mode) never does. After a restore the
+        // page may no longer show why approval was needed (a hung frame), so need may be null here.
         const personApproved =
           decision?.approved === true &&
-          decision.decidedBy !== POLICY_DECIDER &&
+          isPersonDecider(decision.decidedBy) &&
           decision.target !== null &&
           decision.target === (target?.path ?? null) &&
           (decision.context === null || decision.context === (target?.context ?? null));
-        // A person approved this very download: its start is let through, once (spec §9).
-        if (need?.kind === "download" && personApproved)
+        // This very download was approved (by a person, or bypass mode): it is let through, once.
+        if (need?.kind === "download" && decision?.approved === true)
           await this.#deps.browser.allowDownload(need.url);
         // The executor holds a click to this classification at the moment it presses (TOCTOU).
         return { target, personApproved };
@@ -935,11 +939,13 @@ export class RunLoop {
     // The decision for exactly this call (same call id and arguments), so a tool can tell a human
     // approval (a lasting vault grant) from a policy one (this call only).
     const decision = this.#decided.get(functionItem(call.callId));
+    // A bypass decision reaches tools as a policy one: never a person's (no lasting vault grant,
+    // an off-origin sign-in form still needs a person), D44.
     const approval: CallApproval | null =
       decision?.approved && decision.kind !== null && decision.decidedBy !== null
         ? {
             kind: decision.kind,
-            decidedBy: decision.decidedBy,
+            decidedBy: decision.decidedBy === BYPASS_DECIDER ? POLICY_DECIDER : decision.decidedBy,
             label: decision.label,
             decidedAt: decision.decidedAt,
           }
@@ -1024,6 +1030,21 @@ export class RunLoop {
         );
         continue;
       }
+      if (decision === "approved") {
+        // Bypass mode (D44): the origin is allowed for the rest of the run and opened. The network
+        // policy still applies to it (no private ranges).
+        await this.#recordPolicy(request, decision);
+        this.#run = {
+          ...this.#run,
+          allowedOrigins: [...new Set([...this.#run.allowedOrigins, entry.origin])],
+        };
+        await this.#deps.store.commit({ run: { allowedOrigins: this.#run.allowedOrigins } });
+        await browser.navigate(entry.url, signal);
+        this.#notes.push(
+          `Executor: ${entry.origin} was allowed by this run's bypass mode; it is now open.`,
+        );
+        continue;
+      }
       if (decision !== "denied") {
         for (const other of origins.slice(position + 1))
           this.#notes.push(
@@ -1042,6 +1063,14 @@ export class RunLoop {
     for (const [position, entry] of downloads.entries()) {
       const request = downloadRequest(entry.url, entry.filename);
       const decision = decideByPolicy(this.#run.approvalMode, "download");
+      if (decision === "approved") {
+        await this.#recordPolicy(request, decision);
+        await browser.allowDownload(entry.url);
+        this.#notes.push(
+          `Executor: downloading ${downloadUrlForCard(entry.url)} was allowed by this run's bypass mode. Do the action that started it again to save it.`,
+        );
+        continue;
+      }
       if (decision !== "denied" && !wait && !handOver) {
         // One card at a time; the page can start the others again to ask.
         for (const later of downloads.slice(position + 1))

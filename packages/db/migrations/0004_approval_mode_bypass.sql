@@ -1,0 +1,1 @@
+ALTER TYPE "public"."approval_mode" ADD VALUE 'bypass';

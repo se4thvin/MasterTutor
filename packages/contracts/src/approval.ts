@@ -111,24 +111,69 @@ export const AUTO_MODE_DECISIONS = {
   budget: "ask",
 } as const satisfies Record<ApprovalKind, PolicyDecision>;
 
+/**
+ * Bypass mode (D44): every action approval is approved without asking: risky clicks and keys,
+ * submits, uninspectable frames, first credential use, new origins and downloads. A budget hit
+ * still waits for a person (a spending cap, not an action). Bypass never lifts the hard
+ * invariants: a prompt-injection safety check still waits for a person (decideSafetyChecks); a
+ * bypass decision is never a person's (vault fills stay on the item's exact origin, an off-origin
+ * form still needs a person, no lasting vault grant); the network policy, sandbox, kill switch,
+ * takeover and secret masking do not depend on the approval mode at all.
+ */
+export const BYPASS_DECISIONS = {
+  risky_click: "approved",
+  form_submit: "approved",
+  download: "approved",
+  credential_first_use: "approved",
+  new_origin: "approved",
+  budget: "ask",
+} as const satisfies Record<ApprovalKind, PolicyDecision>;
+
 export const POLICY_DECIDER = "policy";
+/** decided_by of a decision bypass mode made (D44). */
+export const BYPASS_DECIDER = "bypass";
+
+/** Who the policy decides as in this mode: recorded in approvals.decided_by. */
+export function policyDecider(mode: ApprovalMode): string {
+  return mode === "bypass" ? BYPASS_DECIDER : POLICY_DECIDER;
+}
+
+/** A decision made by a person (a user id), not by the auto or bypass policy. */
+export function isPersonDecider(decidedBy: string | null): boolean {
+  return decidedBy !== null && decidedBy !== POLICY_DECIDER && decidedBy !== BYPASS_DECIDER;
+}
 
 export function decideByPolicy(mode: ApprovalMode, kind: ApprovalKind): PolicyDecision {
+  if (mode === "bypass") return BYPASS_DECISIONS[kind];
   return mode === "ask" ? "ask" : AUTO_MODE_DECISIONS[kind];
 }
 
 /** The only safety-check code auto mode may clear, and only on an allowed origin. */
 export const AUTO_CLEARABLE_SAFETY_CHECK = "irrelevant_domain";
 
+/** Safety-check codes bypass mode clears (D44); anything else, prompt injection first, waits. */
+export const BYPASS_CLEARABLE_SAFETY_CHECKS: readonly string[] = [
+  "irrelevant_domain",
+  "sensitive_domain",
+];
+
 /**
  * The model's pending_safety_checks have their own rule (not AUTO_MODE_DECISIONS): prompt-injection
  * signals (malicious_instructions), sensitive domains and unknown codes always wait for a human.
+ * Bypass clears only BYPASS_CLEARABLE_SAFETY_CHECKS: malicious_instructions always waits.
  */
 export function decideSafetyChecks(
   mode: ApprovalMode,
   checks: ReadonlyArray<{ code: string | null }>,
   originAllowed: boolean,
 ): PolicyDecision {
+  if (mode === "bypass")
+    return checks.length > 0 &&
+      checks.every(
+        (check) => check.code !== null && BYPASS_CLEARABLE_SAFETY_CHECKS.includes(check.code),
+      )
+      ? "approved"
+      : "ask";
   if (mode === "ask" || !originAllowed || checks.length === 0) return "ask";
   return checks.every((check) => check.code === AUTO_CLEARABLE_SAFETY_CHECK) ? "approved" : "ask";
 }

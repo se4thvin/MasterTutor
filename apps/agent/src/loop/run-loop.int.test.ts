@@ -1,4 +1,4 @@
-import { MODELS, type Budget } from "@mastertutor/contracts";
+import { MODELS, type ApprovalMode, type Budget } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { approvals, createDb, runEvents, runSteps, runs, type DbHandle } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
@@ -89,7 +89,7 @@ const risky = (label: string, path = `button:${label}`, context = "page") => ({
 async function setup(
   turns: MockTurn[],
   options: {
-    approvalMode?: "ask" | "auto_within_allowlist";
+    approvalMode?: ApprovalMode;
     budget?: Budget;
     hooks?: Partial<RunHooks>;
     leaseExpired?: () => boolean;
@@ -1490,5 +1490,96 @@ describe("RunLoop (spec §5.3)", () => {
     expect(await drive(loop)).toEqual({ kind: "waiting", reason: "takeover" });
     expect(browser.functionRuns.map((call) => call.name)).toEqual(["fill_credential"]);
     expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "takeover" });
+  });
+  describe("bypass mode (D44)", () => {
+    const bypass = { approvalMode: "bypass" as const };
+    const readPage: MockTurn = {
+      outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+    };
+    const firstUse = async () =>
+      ({
+        kind: "credential_first_use",
+        alias: "school",
+        origin: "http://site.fixtures.test",
+      }) as const;
+
+    it("approves a risky click, a new origin and a download without asking, each recorded as bypass", async () => {
+      const { run, browser, loop } = await setup(
+        [click(), doneExpecting("allowed by this run's bypass mode")],
+        bypass,
+      );
+      browser.targets.set("10,20", risky("Delete account"));
+      browser.computerHook = async () => {
+        browser.blocked.push({
+          url: "http://other.fixtures.test/a",
+          origin: "http://other.fixtures.test",
+        });
+        browser.blockedDownloads.push({
+          url: "http://site.fixtures.test/files/r.csv",
+          filename: "r.csv",
+        });
+      };
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.executed).toHaveLength(1);
+      expect(browser.navigations).toEqual(["http://other.fixtures.test/a"]);
+      expect(browser.allowedDownloads).toEqual(["http://site.fixtures.test/files/r.csv"]);
+      expect(
+        (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
+      ).toEqual([
+        ["risky_click", "approved", "bypass"],
+        ["new_origin", "approved", "bypass"],
+        ["download", "approved", "bypass"],
+      ]);
+      expect((await status(run.id))?.allowedOrigins).toContain("http://other.fixtures.test");
+    });
+
+    it("still waits for a person on a prompt-injection safety check (malicious_instructions)", async () => {
+      const flagged: MockTurn = {
+        outputs: [
+          {
+            type: "computer",
+            actions: [{ type: "click", x: 10, y: 20, button: "left" }],
+            safetyChecks: [{ id: "sc_1", code: "malicious_instructions", message: "Flagged" }],
+          },
+        ],
+      };
+      const { run, browser, loop } = await setup([flagged, done()], bypass);
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect(browser.executed).toEqual([]);
+      expect(await approvalRows(run.id)).toMatchObject([{ status: "pending", decidedBy: null }]);
+    });
+
+    it("never counts as a person's approval: tools see a policy decision (no lasting vault grant, an off-origin form still needs a person), and the click guard is not relaxed", async () => {
+      const { run, browser, loop } = await setup([readPage, click(), done()], bypass);
+      browser.functionApproval = firstUse;
+      browser.targets.set("10,20", risky("Delete account"));
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.functionApprovals).toEqual([
+        {
+          kind: "credential_first_use",
+          decidedBy: "policy",
+          label: null,
+          decidedAt: expect.any(Number),
+        },
+      ]);
+      expect(browser.verdicts).toMatchObject([{ personApproved: false }]);
+      expect((await approvalRows(run.id)).every((row) => row.decidedBy === "bypass")).toBe(true);
+    });
+
+    it("still stops for the user: never calls the model while the user holds control", async () => {
+      const { name, run, loop } = await setup([done()], bypass);
+      expect(await loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
+      await owner.db.update(runs).set({ controller: "user" }).where(eq(runs.id, run.id));
+      await expect(loop.step(new AbortController().signal)).rejects.toBeInstanceOf(ControlHeld);
+      expect(mock.requestsFor(name)).toHaveLength(0);
+    });
+
+    it("still waits for a person at a budget hit (a spending cap, not an action)", async () => {
+      const { loop } = await setup([click(), click(), done()], {
+        ...bypass,
+        budget: { maxSteps: 1, maxUsd: 5, maxActiveMinutes: 60 },
+      });
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    });
   });
 });
