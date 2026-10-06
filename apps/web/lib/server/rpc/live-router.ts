@@ -1,12 +1,10 @@
 import { apiContract } from "@mastertutor/contracts";
 import { ORPCError, implement } from "@orpc/server";
-import type { Viewer } from "../viewer.ts";
+import { requireViewer, type SessionContext } from "./require-viewer.ts";
 
-export interface LiveContext {
-  viewer: Viewer;
-}
+export type LiveContext = SessionContext;
 
-const os = implement(apiContract).$context<LiveContext>();
+const os = implement(apiContract).$context<LiveContext>().use(requireViewer);
 
 /** Phase 7 (with B2, B3 and B6) replaces these handlers, one namespace at a time, with DB-backed ones. */
 const notWired = (): never => {

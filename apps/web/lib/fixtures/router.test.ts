@@ -1,5 +1,7 @@
 import { createRouterClient } from "@orpc/server";
 import { describe, expect, it } from "vitest";
+import { liveRouter } from "../server/rpc/live-router.ts";
+import { FIXTURE_VIEWER } from "../server/viewer.ts";
 import { fixtureNamespaceFrom } from "./cookies.ts";
 import { ids } from "./ids.ts";
 import { fixtureRouter } from "./router.ts";
@@ -9,8 +11,23 @@ let counter = 0;
 function client() {
   counter += 1;
   const ns = `test-${counter}`;
-  return { ns, api: createRouterClient(fixtureRouter, { context: { ns } }) };
+  return {
+    ns,
+    api: createRouterClient(fixtureRouter, { context: { ns, viewer: FIXTURE_VIEWER } }),
+  };
 }
+
+describe("session", () => {
+  it("rejects every call without a viewer as UNAUTHORIZED, in both routers", async () => {
+    const fixture = createRouterClient(fixtureRouter, { context: { ns: "x", viewer: null } });
+    await expect(fixture.settings.get({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(fixture.vault.list({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const live = createRouterClient(liveRouter, { context: { viewer: null } });
+    await expect(live.settings.get({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const signedIn = createRouterClient(liveRouter, { context: { viewer: FIXTURE_VIEWER } });
+    await expect(signedIn.settings.get({})).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
+  });
+});
 
 describe("fixture notes", () => {
   it("lists by folder, unfiled and kind, newest first, with pagination", async () => {

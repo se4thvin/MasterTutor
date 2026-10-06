@@ -6,6 +6,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { TextField } from "@/components/ui/text-field.tsx";
 import { authClient, authErrorCopy } from "@/lib/auth-client.ts";
+import { safeNextPath } from "@/lib/auth/next-path.ts";
 
 export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
   const router = useRouter();
@@ -35,7 +36,8 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
     } finally {
       setPending(false);
     }
-    router.replace("/library");
+    // Back to where an expired session interrupted the user, if that is a safe app path.
+    router.replace(safeNextPath(new URLSearchParams(window.location.search).get("next")));
     router.refresh();
   }
 
