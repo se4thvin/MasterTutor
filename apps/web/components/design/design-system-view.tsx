@@ -1,6 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
+import { ControlsSection } from "./sections/controls.tsx";
 import { FoundationsSection } from "./sections/foundations.tsx";
 import { IconGallerySection } from "./sections/icon-gallery.tsx";
 
@@ -8,6 +9,7 @@ import { IconGallerySection } from "./sections/icon-gallery.tsx";
 const SECTIONS: ReadonlyArray<{ id: string; title: string; Section: ComponentType }> = [
   { id: "foundations", title: "Foundations", Section: FoundationsSection },
   { id: "icons", title: "Icons", Section: IconGallerySection },
+  { id: "controls", title: "Controls", Section: ControlsSection },
 ];
 
 export function DesignSystemView() {
