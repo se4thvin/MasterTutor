@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Proves the production agent image carries no test code (review M7): no *.test.ts files, no
-# testing/ helpers (local Chromium launcher, fakes) and no testing.ts entries. Builds the
-# node-runtime stage, lists offenders inside it, and exits 1 when there are any.
+# Proves the production agent image carries no test code (T7-9 review M7, carry-over 5). Builds
+# the node-runtime stage and runs scripts/scan-test-code.ts inside it: no *.test.ts, no testing/
+# directory, no file that loads a test framework. The scanner's rules are its own, independent of
+# how the Dockerfile prunes. Exits 1 with the offenders.
 # Usage: bash scripts/check-agent-image.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,10 +12,8 @@ cleanup() { docker image rm -f "$IMAGE" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 docker build --quiet --target node-runtime -t "$IMAGE" . >/dev/null
-offenders="$(docker run --rm --entrypoint sh "$IMAGE" -c \
-  "find /app/apps /app/packages -path '*/node_modules' -prune -o \
-     \\( -name '*.test.ts' -o -name testing -o -name testing.ts \\) -print")"
-if [[ -n "$offenders" ]]; then
+if ! offenders="$(docker run --rm --entrypoint node \
+  -v "$PWD/scripts/scan-test-code.ts:/scan-test-code.ts:ro" "$IMAGE" /scan-test-code.ts /app)"; then
   echo "agent image ships test code:" >&2
   echo "$offenders" >&2
   exit 1

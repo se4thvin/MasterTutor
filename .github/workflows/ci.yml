@@ -43,7 +43,18 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Vault integration and security tests drive a real local Chromium.
+      - run: pnpm --filter @mastertutor/agent exec playwright-core install --with-deps chromium
       - run: pnpm test:int
+      - run: pnpm test:security
+
+  agent-image:
+    name: Agent image carries no test code
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-agent-image.sh
 
   compose-smoke:
     name: Browser slot + Compose smoke
