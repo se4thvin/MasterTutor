@@ -12,6 +12,7 @@ import { orpc } from "@/lib/api/client.ts";
 import { MEDIA } from "@/lib/breakpoints.ts";
 import { cx } from "@/lib/cx.ts";
 import { folderPath } from "@/lib/folders/tree.ts";
+import { firstDraftedBlock } from "@/lib/notes/edit-drafts.ts";
 import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
 import { libraryHref } from "@/lib/library/params.ts";
 import { formatDate } from "@/lib/notes/format.ts";
@@ -46,6 +47,15 @@ export function NoteReader({ noteId }: { noteId: string }) {
     router.replace(next === "source" ? `${pathname}?view=source` : pathname, { scroll: false });
   };
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  // An edit that never reached the server (failed, or the session ended mid-save) reopens once.
+  const restoredDraft = useRef(false);
+  useEffect(() => {
+    if (!data || restoredDraft.current) return;
+    restoredDraft.current = true;
+    const drafted = firstDraftedBlock(data.blocks.map((b) => b.id));
+    if (drafted) setEditingId(drafted);
+  }, [data]);
 
   useEffect(() => {
     if (!data || !window.location.hash.startsWith("#block-")) return;

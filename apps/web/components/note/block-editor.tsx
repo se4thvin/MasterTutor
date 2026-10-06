@@ -9,18 +9,28 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
+import { errorCode } from "@/lib/api/errors.ts";
+import { draftFor, dropDraft, keepDraft } from "@/lib/notes/edit-drafts.ts";
 import { patchNoteDetail } from "@/lib/notes/cache.ts";
 import { editsAsRichText, richTextKit } from "@/lib/notes/rich-markdown.ts";
 
 type Commit = (markdown: string, baseline: string) => void;
 
-/** Saves optimistically; `baseline` is the editor's own first serialisation, so a no-op is never a write. */
-function useCommitEdit(block: NoteBlock, onDone: () => void): Commit {
+/**
+ * Saves optimistically; `baseline` is what the block held when editing began (as the editor
+ * serialises it), so a no-op is never a write. The draft is kept until the server confirms it:
+ * a failed save reopens the editor with it, and an ended session finds it again after sign-in.
+ */
+function useCommitEdit(block: NoteBlock, onDone: () => void, onReopen: () => void): Commit {
   const qc = useQueryClient();
   const toast = useToast();
   return (markdown, baseline) => {
     onDone();
-    if (markdown === baseline) return;
+    if (markdown === baseline) {
+      dropDraft(block.id);
+      return;
+    }
+    keepDraft(block.id, markdown);
     void (async () => {
       // A refetch in flight would land on top of the optimistic text.
       await qc.cancelQueries({
@@ -39,16 +49,20 @@ function useCommitEdit(block: NoteBlock, onDone: () => void): Commit {
       }));
       try {
         const updated = await api.notes.updateBlock({ blockId: block.id, markdown });
+        dropDraft(block.id);
         setBlock(() => updated);
-      } catch {
+      } catch (err) {
         // Restore only this block, so concurrent changes to the rest of the note survive.
         setBlock(() => block);
+        // An ended session is already on its way to sign-in; the draft waits for the return.
+        if (errorCode(err) === "UNAUTHORIZED") return;
         toast({
           title: "Couldn't save your edit.",
-          description: "The block is unchanged.",
+          description: "Your text is still in the editor.",
           icon: "needsReview",
           tone: "danger",
         });
+        onReopen();
       }
     })();
   };
@@ -88,7 +102,7 @@ function Actions({ onCancel, onSave }: { onCancel: () => void; onSave: () => voi
   );
 }
 
-function RichEditor({ block, commit, onCancel }: EditorProps) {
+function RichEditor({ block, initial, commit, onCancel }: EditorProps) {
   const baseline = useRef<string | null>(null);
   const keys = useRef<{ save: () => void; cancel: () => void }>({
     save: () => undefined,
@@ -103,12 +117,13 @@ function RichEditor({ block, commit, onCancel }: EditorProps) {
         cancel: () => keys.current.cancel(),
       }),
     ],
-    content: block.markdown,
+    content: initial,
     contentType: "markdown",
     immediatelyRender: false,
     autofocus: "end",
     onCreate: ({ editor: created }) => {
-      baseline.current = created.getMarkdown();
+      // A restored draft is a change from the block, so it must not count as the baseline.
+      baseline.current = initial === block.markdown ? created.getMarkdown() : block.markdown;
     },
     editorProps: {
       attributes: {
@@ -134,8 +149,8 @@ function RichEditor({ block, commit, onCancel }: EditorProps) {
   );
 }
 
-function RawEditor({ block, commit, onCancel }: EditorProps) {
-  const [raw, setRaw] = useState(block.markdown);
+function RawEditor({ block, initial, commit, onCancel }: EditorProps) {
+  const [raw, setRaw] = useState(initial);
   const save = () => commit(raw, block.markdown);
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -165,6 +180,8 @@ function RawEditor({ block, commit, onCancel }: EditorProps) {
 
 interface EditorProps {
   block: NoteBlock;
+  /** What the editor opens with: an unsaved draft if there is one, else the block. */
+  initial: string;
   commit: Commit;
   onCancel: () => void;
 }
@@ -173,13 +190,28 @@ interface EditorProps {
  * Rich editing only when the editor reproduces the block's Markdown byte for byte; otherwise (and
  * always for code, math, tables and transcripts) a raw textarea, so nothing is silently rewritten.
  */
-export function BlockEditor({ block, onDone }: { block: NoteBlock; onDone: () => void }) {
-  const commit = useCommitEdit(block, onDone);
+export function BlockEditor({
+  block,
+  onDone,
+  onReopen,
+}: {
+  block: NoteBlock;
+  onDone: () => void;
+  /** Opens this editor again (after a failed save, with the draft). */
+  onReopen: () => void;
+}) {
+  const commit = useCommitEdit(block, onDone, onReopen);
   // Decided once per edit session, so a refetch mid-edit cannot swap the editor under the caret.
-  const [rich] = useState(() => editsAsRichText(block));
+  const [initial] = useState(() => draftFor(block.id) ?? block.markdown);
+  const [rich] = useState(() => editsAsRichText({ ...block, markdown: initial }));
+  // Cancel discards the draft for good.
+  const cancel = () => {
+    dropDraft(block.id);
+    onDone();
+  };
   return rich ? (
-    <RichEditor block={block} commit={commit} onCancel={onDone} />
+    <RichEditor block={block} initial={initial} commit={commit} onCancel={cancel} />
   ) : (
-    <RawEditor block={block} commit={commit} onCancel={onDone} />
+    <RawEditor block={block} initial={initial} commit={commit} onCancel={cancel} />
   );
 }

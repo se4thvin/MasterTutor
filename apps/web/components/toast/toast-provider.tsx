@@ -4,6 +4,7 @@ import { AnimatePresence, m } from "motion/react";
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
 import { SwipeToast } from "@/components/bits/swipe-toast.tsx";
 import type { IconName } from "@/components/ui/icon.tsx";
+import { hasSessionEnded } from "@/lib/auth/session-end.ts";
 import { transitions } from "@/lib/motion-tokens.ts";
 
 export interface ToastInput {
@@ -22,6 +23,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Array<ToastInput & { id: number }>>([]);
   const nextId = useRef(0);
   const show = useCallback((toast: ToastInput) => {
+    // On the way back to sign-in, failures are expected: no toast should flash before the page goes.
+    if (hasSessionEnded()) return;
     nextId.current += 1;
     const id = nextId.current;
     setToasts((list) => [...list.slice(-(MAX_TOASTS - 1)), { ...toast, id }]);
