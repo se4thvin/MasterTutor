@@ -17,6 +17,8 @@ export const ItemDecision = z.object({
   /** The approved request's risk kind and label: an approved action runs only while these still match. */
   kind: z.string().nullable(),
   label: z.string().nullable(),
+  /** The approved element's path (TargetDescription.path); null when the item has no element. */
+  target: z.string().nullable().default(null),
 });
 export type ItemDecision = z.infer<typeof ItemDecision>;
 
@@ -25,6 +27,8 @@ export const ApproveStepResult = z.object({
   callIds: z.array(z.string()),
   /** The risky item this approval is for; null for run-level approvals (budget, new origin). */
   item: z.string().nullable(),
+  /** The element path of the item being asked about, bound into its decision. */
+  target: z.string().nullable().default(null),
   url: z.string(),
   domHash: z.string(),
   decided: z.array(ItemDecision),

@@ -8,6 +8,7 @@ import type { RuntimeConfig } from "../runtime/config.ts";
 import {
   Interrupted,
   LeaseLost,
+  ModelUnavailable,
   RunChanged,
   interruptionOf,
   type InterruptCause,
@@ -54,18 +55,25 @@ export class RunWorker {
   #attached: AttachedBrowser | null = null;
   #store: StepStore | null = null;
   #loop: RunLoop | null = null;
-  #done: Promise<void> | null = null;
+  #started = false;
+  /** Settles when the main loop has ended, whether stop() came before or after start() (M1). */
+  readonly #finished = Promise.withResolvers<void>();
 
   constructor(deps: WorkerDeps, claim: ClaimedRun) {
     this.#deps = deps;
     this.#claim = claim;
     this.runId = claim.run.id;
     this.workspaceId = claim.run.workspaceId;
+    // The claim just set the lease: until the first renewal the local deadline counts from now.
+    this.#guard.fence(performance.now() + deps.config.leaseMs - deps.config.heartbeatMs);
   }
 
   start(): Promise<void> {
-    this.#done ??= this.#main();
-    return this.#done;
+    if (!this.#started) {
+      this.#started = true;
+      void this.#main().finally(() => this.#finished.resolve());
+    }
+    return this.#finished.promise;
   }
 
   notify(): void {
@@ -92,17 +100,22 @@ export class RunWorker {
 
   /** The run was claimed again (its lease lapsed): stop without writing anything. */
   abandon(): Promise<void> {
-    this.#stop = "lease_lost";
-    this.#abort.abort(new Interrupted("lease_lost"));
-    this.#latch.open();
-    return this.#done ?? Promise.resolve();
+    this.#loseLease();
+    return this.#finished.promise;
   }
 
-  stop(why: "kill" | "shutdown" | "crash"): Promise<void> {
+  /** Resolves when the main loop has ended (the caller still starts a worker it has not started). */
+  stop(why: "kill" | "shutdown"): Promise<void> {
     this.#stop = why;
     this.#abort.abort(new Interrupted(why));
     this.#latch.open();
-    return this.#done ?? Promise.resolve();
+    return this.#finished.promise;
+  }
+
+  #loseLease(): void {
+    this.#stop = "lease_lost";
+    this.#abort.abort(new Interrupted("lease_lost"));
+    this.#latch.open();
   }
 
   async #main(): Promise<void> {
@@ -116,6 +129,8 @@ export class RunWorker {
         owner: this.#claim.leaseToken,
         run: this.#claim.run,
       });
+      // Stopped before it began (e.g. shutdown while waiting on a predecessor): no browser work.
+      if (this.#stop) return await this.#onStop();
       this.#attached = await this.#deps.connect({
         slotName: this.#claim.slotName,
         run: () => this.#loop?.run ?? snapshotOf(this.#claim.run),
@@ -130,21 +145,22 @@ export class RunWorker {
         else return await this.#end(next);
       }
     } catch (error) {
-      if (this.#stop === "crash" || this.#stop === "lease_lost" || error instanceof LeaseLost)
-        return;
+      if (this.#stop === "lease_lost" || error instanceof LeaseLost) return;
       if (this.#stop) return await this.#onStop().catch(() => undefined);
+      // A model outage keeps its own code (M2); anything else is an unexpected agent error.
+      const failure =
+        error instanceof ModelUnavailable
+          ? { code: error.code, message: error.message }
+          : { code: "agent_error", message: "The agent hit an unexpected error." };
       log.error(
         {
           runId: this.runId,
-          errorCode: "agent_error",
+          errorCode: failure.code,
           err: error instanceof Error ? error.name : "unknown",
         },
         "run failed",
       );
-      await this.#end({
-        kind: "failed",
-        error: { code: "agent_error", message: "The agent hit an unexpected error." },
-      }).catch(() => undefined);
+      await this.#end({ kind: "failed", error: failure }).catch(() => undefined);
     } finally {
       clearInterval(beat);
       await this.#attached?.close().catch(() => undefined);
@@ -156,7 +172,10 @@ export class RunWorker {
       return await work();
     } catch (error) {
       if (error instanceof RunChanged) return CONTINUE;
-      if (interruptionOf(error) === null && !this.#abort.signal.aborted) throw error;
+      const cause = interruptionOf(error);
+      if (cause === null && !this.#abort.signal.aborted) throw error;
+      // The local lease deadline passed (ControlGuard): stop as if the lease were lost (I2).
+      if (cause === "lease_lost") this.#loseLease();
       if (this.#stop) return CONTINUE;
       const run = await readRunControl(this.#deps.db, this.runId);
       if (!run || isTerminal(run.status)) return { kind: "cancelled" };
@@ -189,8 +208,12 @@ export class RunWorker {
     const state = await this.#deps.hooks.sessionStore.load(run);
     const removeRestore = state ? await browser.applyStorage(state) : null;
     const target = run.currentUrl ?? startUrl(run.goal, run.allowedOrigins);
-    if (target) await browser.navigate(target, this.#abort.signal);
-    await removeRestore?.();
+    try {
+      if (target) await browser.navigate(target, this.#abort.signal);
+    } finally {
+      // Even when the navigation is interrupted: a stale restore script must never outlive it (I3).
+      await removeRestore?.().catch(() => undefined);
+    }
     await browser.restoreView({ scroll: run.scroll ?? null, videoTime: run.videoTime ?? null });
     if (run.controller === "user") return this.#holdForUser();
     if (this.#loop.hasPendingApproval) return this.#loop.resume(this.#abort.signal);
@@ -206,21 +229,29 @@ export class RunWorker {
     return this.#loop!.step(this.#abort.signal);
   }
 
+  /**
+   * A wait ends only on a durable change a person made (spec §5.1, I1): a decided approval, a new
+   * message, or a status/controller change. A stale wake keeps waiting; the idle timer sleeps.
+   */
   async #waitForChange(): Promise<Next> {
     const timer = new AbortController();
     try {
-      const woke = await Promise.race([
-        this.#latch.wait().then(() => true),
-        this.#deps.clock.sleep(this.#deps.config.idleSleepMs, timer.signal).then(
-          () => false,
-          () => false,
-        ),
-      ]);
-      if (this.#stop) return CONTINUE;
-      const run = await readRunControl(this.#deps.db, this.runId);
-      if (!run || isTerminal(run.status)) return { kind: "cancelled" };
-      if (run.controller === "user") return this.#holdForUser();
-      if (woke) return this.#loop!.resume(this.#abort.signal);
+      const entry = await readRunControl(this.#deps.db, this.runId);
+      const idle = this.#deps.clock.sleep(this.#deps.config.idleSleepMs, timer.signal).then(
+        () => false,
+        () => false,
+      );
+      let woke = false;
+      for (;;) {
+        woke = await Promise.race([this.#latch.wait().then(() => true), idle]);
+        if (this.#stop) return CONTINUE;
+        const run = await readRunControl(this.#deps.db, this.runId);
+        if (!run || isTerminal(run.status)) return { kind: "cancelled" };
+        if (run.controller === "user") return this.#holdForUser();
+        if (!woke) break;
+        const changed = run.status !== entry?.status || run.waitReason !== entry?.waitReason;
+        if (changed || (await this.#loop!.hasNews())) return this.#loop!.resume(this.#abort.signal);
+      }
       await this.#release({
         transition: {
           from: ["running", "waiting"],
@@ -338,18 +369,22 @@ export class RunWorker {
   }
 
   async #beat(): Promise<void> {
+    const { leaseMs, heartbeatMs } = this.#deps.config;
+    // Past the local deadline nothing may act, whatever the database says or cannot say (I2).
+    if (this.#guard.expired) return this.#loseLease();
+    const started = performance.now();
     try {
       await renewLeases(this.#deps.db, {
         runId: this.runId,
         slotName: this.#claim.slotName,
         owner: this.#claim.leaseToken,
-        leaseMs: this.#deps.config.leaseMs,
+        leaseMs,
       });
+      // Counted from when the renewal was sent, the safe side of the database's own clock.
+      if (!this.#guard.expired) this.#guard.fence(started + leaseMs - heartbeatMs);
     } catch (error) {
       if (error instanceof LeaseLost) {
-        this.#stop = "lease_lost";
-        this.#abort.abort(new Interrupted("lease_lost"));
-        this.#latch.open();
+        this.#loseLease();
       } else {
         this.#deps.log.warn(
           { runId: this.runId, errorCode: "heartbeat_failed" },

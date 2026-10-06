@@ -5,6 +5,7 @@ import { approvalRequestFor, needsApproval } from "./policy.ts";
 const target = (overrides: Partial<TargetDescription>): TargetDescription => ({
   label: "",
   tag: "button",
+  path: "button",
   isFormSubmit: false,
   formKind: null,
   isSecretField: false,

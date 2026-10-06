@@ -56,6 +56,7 @@ describe("claimNextRun", () => {
     expect(claim?.priority).toBe("queued");
     expect(claim?.run.status).toBe("running");
     expect(claim?.leaseToken).toMatch(/^agent-a:[0-9a-f-]{36}$/);
+    expect(claim?.reclaimedSlot).toBeNull();
     expect(claim?.run.leaseOwner).toBe(claim?.leaseToken);
     const [slot] = await owner.db
       .select()
@@ -132,6 +133,8 @@ describe("claimNextRun", () => {
     expect(claim?.run.id).toBe(run.id);
     expect(claim?.priority).toBe("wake");
     expect(claim?.slotName).toBe("browser-2");
+    // Returned so the agent restarts the retired slot at once: a stale worker loses its browser (I2).
+    expect(claim?.reclaimedSlot).toBe("browser-1");
     const [old] = await owner.db
       .select()
       .from(browserSlots)

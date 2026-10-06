@@ -5,7 +5,6 @@ import { ModelCaller } from "../llm/caller.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
 import { functionCallOutput, userMessage } from "../llm/items.ts";
 import { instantClock } from "../runtime/clock.ts";
-import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { seedFromSummary, summarizeContext, summarizeTranscript } from "./compaction.ts";
 
 let mock: LlmMock | undefined;
@@ -21,8 +20,6 @@ const summary = {
   facts: ["f"],
   openQuestions: [],
 };
-const PNG =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
 async function deps() {
   mock = await startLlmMock({ scenarios: [{ name: "c", turns: [], compaction: summary }] });
@@ -77,28 +74,20 @@ describe("compaction (spec §5.4)", () => {
     expect(JSON.stringify(body.input)).toContain("<untrusted_page_content");
   });
 
-  it("seeds a new chain with the summary and the last 3 screenshots", async () => {
-    const storage = createMemoryStorage();
-    const bytes = Buffer.from(PNG.slice(22), "base64");
-    await storage.put("runs/3f2504e0-4f89-41d3-9a0c-0305e82c3301/transcript/1-0.png", bytes, {
-      contentType: "image/png",
-    });
-    await storage.put("runs/3f2504e0-4f89-41d3-9a0c-0305e82c3301/transcript/2-0.png", bytes, {
-      contentType: "image/png",
-    });
-    const seed = await seedFromSummary(
-      storage,
+  it("seeds a new chain with the summary, the last 3 screenshots as refs, and carried texts verbatim", () => {
+    const run = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+    const seed = seedFromSummary(
       summary,
-      [
-        "runs/3f2504e0-4f89-41d3-9a0c-0305e82c3301/transcript/1-0.png",
-        "runs/3f2504e0-4f89-41d3-9a0c-0305e82c3301/transcript/2-0.png",
-      ],
+      [`runs/${run}/transcript/1-0.png`, `runs/${run}/steps/2-ab.png`],
       {
         pageText: "Current page: x",
-        screenshot: PNG,
-        userMessages: ["Message from the user: do 2.4 next"],
+        screenshotKey: `runs/${run}/steps/3-cd.png`,
+        carried: ["Executor: the click was refused", "Message from the user: do 2.4 next"],
       },
     );
+    // Refs only: nothing is fetched or re-uploaded; the request rehydrates them.
+    expect(JSON.stringify(seed)).toContain(`"garage:runs/${run}/steps/3-cd.png"`);
+    expect(JSON.stringify(seed)).not.toContain("data:image");
     expect(JSON.stringify(seed).match(/input_image/g)).toHaveLength(3);
     const texts = seed.flatMap((item) =>
       "content" in item && Array.isArray(item.content)
@@ -110,5 +99,6 @@ describe("compaction (spec §5.4)", () => {
     const summaryText = texts.find((text) => text.startsWith("Summary:\n"));
     expect(JSON.parse(summaryText!.slice("Summary:\n".length))).toEqual(summary);
     expect(texts).toContain("Message from the user: do 2.4 next");
+    expect(texts).toContain("Executor: the click was refused");
   });
 });

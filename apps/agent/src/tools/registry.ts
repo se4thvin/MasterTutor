@@ -1,5 +1,5 @@
 import { toOrigin, type FunctionToolName } from "@mastertutor/contracts";
-import { wrapUntrusted } from "../guardrails/untrusted.ts";
+import { wrapUntrusted } from "./untrusted.ts";
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import type { RegisteredTool, ToolContext } from "./types.ts";

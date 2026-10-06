@@ -2,6 +2,9 @@ import { isRiskyLabel, type ApprovalRequest, type ComputerAction } from "@master
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { normalizeCombo } from "../tools/keys.ts";
 
+/** TargetDescription.tag of a history move (reload, back, forward) rather than a page element. */
+export const HISTORY_TAG = "history";
+
 export type ApprovalNeed =
   | { kind: "risky_click"; label: string; action: ComputerAction }
   | { kind: "form_submit"; formSummary: string; action: ComputerAction };
@@ -15,6 +18,9 @@ export function needsApproval(
   target: TargetDescription | null,
 ): ApprovalNeed | null {
   if (!target) return null;
+  // Reload/back/forward onto a page made by a form submission sends the form again (M11).
+  if (target.tag === HISTORY_TAG && target.isFormSubmit)
+    return { kind: "form_submit", formSummary: target.label || "Resubmit a form", action };
   switch (action.type) {
     case "click":
     case "double_click":

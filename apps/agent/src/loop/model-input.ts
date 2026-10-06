@@ -95,11 +95,16 @@ export function buildModelInput(
   ) as unknown as ResponseInputItem[];
 }
 
-/** Replaces this run's `garage:` refs with data URLs; foreign or missing images are omitted. */
+/**
+ * Replaces this run's `garage:` refs with data URLs; foreign or missing images are omitted.
+ * `cache` (key → data URL) is per worker: images it holds are not fetched again, and afterwards it
+ * keeps only the images this request used, so it stays as small as the screenshot window.
+ */
 export async function rehydrateImages(
   items: readonly ResponseInputItem[],
   runId: string,
   storage: Storage,
+  cache: Map<string, string> = new Map(),
 ): Promise<ResponseInputItem[]> {
   const loose = items as unknown as Loose[];
   const keys = new Set<string>();
@@ -108,18 +113,20 @@ export async function rehydrateImages(
     if (key) keys.add(key);
     return url;
   });
-  const urls = new Map<string, string>();
   await Promise.all(
-    [...keys].map(async (key) => {
-      const bytes = await storage.getBytes(key).catch(() => null);
-      if (!bytes) return;
-      const ext = /\.([a-z0-9]+)$/i.exec(key)?.[1]?.toLowerCase() ?? "png";
-      urls.set(key, `data:image/${ext};base64,${Buffer.from(bytes).toString("base64")}`);
-    }),
+    [...keys]
+      .filter((key) => !cache.has(key))
+      .map(async (key) => {
+        const bytes = await storage.getBytes(key).catch(() => null);
+        if (!bytes) return;
+        const ext = /\.([a-z0-9]+)$/i.exec(key)?.[1]?.toLowerCase() ?? "png";
+        cache.set(key, `data:image/${ext};base64,${Buffer.from(bytes).toString("base64")}`);
+      }),
   );
+  for (const key of cache.keys()) if (!keys.has(key)) cache.delete(key);
   return mapImages(loose, (url) => {
     if (!url.startsWith("garage:")) return url;
     const key = resolveGarageRef(runId, url);
-    return (key && urls.get(key)) ?? null;
+    return (key && cache.get(key)) ?? null;
   }) as unknown as ResponseInputItem[];
 }

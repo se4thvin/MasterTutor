@@ -63,8 +63,14 @@ export const objectKeys = {
     if (!SNAPSHOT_NAMES.includes(name)) throw new TypeError("unknown snapshot name");
     return `snapshots/${uuid(sourceId, "sourceId")}/${name}`;
   },
-  stepScreenshot(runId: string, seq: number): string {
-    return `runs/${uuid(runId, "runId")}/steps/${count(seq, "seq")}.png`;
+  /** `nonce` makes the key unique per capture so a stale worker can never overwrite a live one's image. */
+  stepScreenshot(runId: string, seq: number, nonce: string): string {
+    if (!/^[a-z0-9]{1,32}$/.test(nonce))
+      throw new TypeError("nonce must be 1-32 lowercase alphanumerics");
+    return `runs/${uuid(runId, "runId")}/steps/${count(seq, "seq")}-${nonce}.png`;
+  },
+  stepScreenshotPrefix(runId: string): string {
+    return `runs/${uuid(runId, "runId")}/steps/`;
   },
   transcriptImagePrefix(runId: string): string {
     return `runs/${uuid(runId, "runId")}/transcript/`;

@@ -2,6 +2,7 @@ import { createLogger } from "@mastertutor/contracts/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { SITE, cdpBaseUrlForTests } from "../../../../tests/behaviour/constants.ts";
 import { ControlGuard } from "../browser/guard.ts";
+import { needsApproval } from "../guardrails/policy.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { SlotPool } from "../slots/pool.ts";
@@ -84,5 +85,32 @@ describe("SessionLoopBrowser", () => {
       (await browser.runFunction("capture", { scope: "page", selector: null, kind: null }, signal))
         .output,
     ).toBe('{"error":"tool_unavailable"}');
+  });
+
+  it("needs approval to reload or go back onto a page made by a form POST (no silent resubmit)", async () => {
+    const browser = await connect();
+    await browser.navigate(`${SITE}/form-post.html`, signal);
+    const reload = { type: "keypress" as const, keys: ["F5"] };
+    const back = { type: "keypress" as const, keys: ["ALT", "ARROWLEFT"] };
+    expect(needsApproval(reload, await browser.targetFor(reload, null))).toBeNull();
+    await browser.observe(signal);
+    const run = await browser.runComputer(
+      [{ type: "click", x: 100, y: 90, button: "left" }],
+      signal,
+      async () => true,
+    );
+    expect(run.executed).toBe(1);
+    expect((await browser.observe(signal)).title).toBe("Order placed");
+    // Reloading the POST result would send the order again.
+    expect(needsApproval(reload, await browser.targetFor(reload, null))?.kind).toBe("form_submit");
+    // Going back lands on the plain form page: no resubmission.
+    expect(needsApproval(back, await browser.targetFor(back, null))).toBeNull();
+    await browser.navigate(`${SITE}/index.html`, signal);
+    // Going back onto the POST result would resubmit it too.
+    expect(needsApproval(back, await browser.targetFor(back, null))?.kind).toBe("form_submit");
+    const mouseBack = { type: "click" as const, x: 10, y: 10, button: "back" as const };
+    expect(needsApproval(mouseBack, await browser.targetFor(mouseBack, null))?.kind).toBe(
+      "form_submit",
+    );
   });
 });

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeNotify } from "@mastertutor/contracts";
+import { emitRunEvent } from "../events/emit.ts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
   approvals,
@@ -20,13 +21,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Scenario } from "../../../../tests/llm-mock/src/scenario.ts";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
-import { instantClock } from "../runtime/clock.ts";
+import { instantClock, type Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { BrowserControl } from "../slots/lifecycle.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser } from "../testing/fake-loop-browser.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
+import { crashSupervisor } from "../testing/crash.ts";
 import { waitFor } from "../testing/wait.ts";
+import type { RunHooks } from "./hooks.ts";
 import { Supervisor } from "./supervisor.ts";
 
 const log = createLogger({ service: "test", level: "silent" });
@@ -73,13 +76,22 @@ afterAll(async () => {
 const idleSlots = async () =>
   (await owner.db.select().from(browserSlots).where(eq(browserSlots.state, "idle"))).length;
 
+let agentDb: DbHandle | undefined;
+
 async function start(
-  options: { config?: Partial<RuntimeConfig>; control?: BrowserControl } = {},
-  clock = instantClock(),
+  options: {
+    config?: Partial<RuntimeConfig>;
+    control?: BrowserControl;
+    hooks?: Partial<RunHooks>;
+    storage?: ReturnType<typeof createMemoryStorage>;
+  } = {},
+  clock: Clock = instantClock(),
 ) {
+  agentDb = createDb(database.agentUrl);
   supervisor = new Supervisor({
-    db: createDb(database.agentUrl),
-    storage: createMemoryStorage(),
+    db: agentDb,
+    storage: options.storage ?? createMemoryStorage(),
+    hooks: options.hooks,
     model: createOpenAIModelClient({ apiKey: "k", baseURL: `${mock.url}/v1` }),
     slots: SLOTS,
     cdpBaseUrl: async (name) => `http://${name}`,
@@ -97,8 +109,9 @@ async function start(
       ...options.config,
     },
     browserControl: options.control ?? fakeControl(),
-    connect: async ({ run }) => {
+    connect: async ({ run, guard }) => {
       const browser = browsers.get(run().id) ?? new FakeLoopBrowser();
+      browser.guard = guard;
       browsers.set(run().id, browser);
       return { browser, close: async () => undefined };
     },
@@ -159,6 +172,63 @@ async function handBackTo(id: string) {
   await owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, id));
   await owner.sql.notify("run_control", encodeNotify("run_control", { runId: id }));
 }
+/** A clock whose sleeps (the idle → sleep timer) end only when the test says so. */
+function gatedClock() {
+  const sleepers: Array<() => void> = [];
+  const clock: Clock = {
+    now: () => Date.now(),
+    sleep: (_ms, signal) =>
+      new Promise<void>((resolve, reject) => {
+        signal?.throwIfAborted();
+        sleepers.push(resolve);
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+  };
+  return { clock, wakeSleepers: () => sleepers.splice(0).forEach((wake) => wake()) };
+}
+/** The web's sendMessage (Task 18 web contract): event row, wake request, NOTIFY run_wake. */
+async function sendMessage(id: string, text: string) {
+  await owner.db.transaction(async (tx) => {
+    await emitRunEvent(tx, id, { type: "user_message", text });
+    await tx
+      .update(runs)
+      .set({ wakeRequestedAt: sql`now()` })
+      .where(eq(runs.id, id));
+  });
+  await owner.sql.notify("run_wake", encodeNotify("run_wake", { runId: id, reason: "message" }));
+}
+/** The web's decideApproval. */
+async function approve(id: string) {
+  await owner.db
+    .update(approvals)
+    .set({ status: "approved", decidedBy: "user-1" })
+    .where(and(eq(approvals.runId, id), eq(approvals.status, "pending")));
+  await owner.db
+    .update(runs)
+    .set({ wakeRequestedAt: sql`now()` })
+    .where(eq(runs.id, id));
+  await owner.sql.notify("run_wake", encodeNotify("run_wake", { runId: id, reason: "approval" }));
+}
+const needHuman = {
+  outputs: [
+    {
+      type: "turn" as const,
+      status: "need_human" as const,
+      needHuman: "takeover" as const,
+      reason: "Please log in",
+    },
+  ],
+};
+const riskyTarget = {
+  label: "Delete account",
+  tag: "button",
+  path: "button",
+  isFormSubmit: false,
+  formKind: null,
+  isSecretField: false,
+  editable: false,
+  interactive: true,
+};
 /** A slot whose browser never comes back with a new id: its restart hangs until the timeout. */
 function stuckControl(): BrowserControl {
   return { readBrowserId: async () => "stuck", closeBrowser: async () => undefined };
@@ -182,6 +252,7 @@ describe("RunWorker + Supervisor", () => {
     browser.targets.set("10,20", {
       label: "Delete",
       tag: "button",
+      path: "button",
       isFormSubmit: false,
       formKind: null,
       isSecretField: false,
@@ -389,7 +460,7 @@ describe("RunWorker + Supervisor", () => {
       async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
       { label: "acting" },
     );
-    await supervisor!.crash();
+    await crashSupervisor(supervisor!, agentDb!);
     supervisor = undefined;
     const acts = (await stepsOf(run.id)).filter((s) => s.phase === "act");
     expect(acts.map((s) => s.state)).toEqual(["started"]);
@@ -444,5 +515,182 @@ describe("RunWorker + Supervisor", () => {
     // Well before the 2 s lease could expire and the sweep reclaim it.
     expect(Date.now() - killed).toBeLessThan(1_000);
     expect((await row(run.id)).slotName).toBeNull();
+  });
+
+  it("a message sent mid-act does not end the next human wait (I1)", async () => {
+    await start();
+    let release: () => void = () => undefined;
+    const acting = new Promise<void>((resolve) => (release = resolve));
+    const { run, name } = await queue([click, needHuman, done], "ask", (fake) => {
+      fake.computerHook = () => acting;
+    });
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await sendMessage(run.id, "Use my school account");
+    release();
+    await until(run.id, (r) => r.status === "sleeping", "asleep in the human wait");
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    // The message was read in turn 2; only a person can end the "Please log in" wait.
+    expect(await row(run.id)).toMatchObject({ status: "sleeping", wakeRequestedAt: null });
+    expect(mock.requestsFor(name)).toHaveLength(2);
+    expect(JSON.stringify(mock.requestsFor(name)[1]?.body.input)).toContain(
+      "Use my school account",
+    );
+  });
+
+  it("a run that took an approval while awake stays asleep after its next human wait (I1)", async () => {
+    const { clock, wakeSleepers } = gatedClock();
+    await start({}, clock);
+    const { run, name } = await queue([click, needHuman, done], "ask", (fake) => {
+      fake.targets.set("10,20", riskyTarget);
+    });
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "approval", "asking");
+    await approve(run.id);
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "takeover", "human wait");
+    wakeSleepers(); // the idle timer fires: the run goes to sleep
+    await until(run.id, (r) => r.status === "sleeping", "asleep");
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(await row(run.id)).toMatchObject({ status: "sleeping", wakeRequestedAt: null });
+    expect(mock.requestsFor(name)).toHaveLength(2);
+  });
+
+  it("a stale worker past its local lease deadline performs no act and leaves no upload (I2)", async () => {
+    const storage = createMemoryStorage();
+    await start({ config: { leaseMs: 1_500, heartbeatMs: 300 }, storage });
+    let unlock: () => void = () => undefined;
+    const twoClicks = {
+      outputs: [
+        {
+          type: "computer" as const,
+          actions: [
+            { type: "click", x: 10, y: 20, button: "left" },
+            { type: "click", x: 30, y: 40, button: "left" },
+          ],
+        },
+      ],
+    };
+    const { run, browser } = await queue([twoClicks, done], "ask", (fake) => {
+      fake.actionHook = async (action) => {
+        if (action.type !== "click" || action.x !== 10) return;
+        // A heartbeat outage: renewals hang on the locked slot row (commits still work) while
+        // this action takes longer than the lease.
+        const slot = (await row(run.id)).slotName!;
+        const locked = new Promise<void>((resolve) => {
+          void owner.sql.begin(async (tx) => {
+            await tx`select 1 from browser_slots where name = ${slot} for update`;
+            resolve();
+            await new Promise<void>((done) => (unlock = done));
+          });
+        });
+        await locked;
+        await new Promise((resolve) => setTimeout(resolve, 1_600));
+        unlock(); // the outage ends; this worker is already past its local lease deadline
+      };
+    });
+    try {
+      await until(run.id, (r) => r.status === "completed", "completed by a fresh claim");
+    } finally {
+      unlock();
+    }
+    // The second click came after the local deadline: never performed, by either worker.
+    expect(browser.executed).toEqual([{ type: "click", x: 10, y: 20, button: "left" }]);
+    // Every stored screenshot belongs to a committed step: nothing stale was left behind.
+    const committed = new Set(
+      (await stepsOf(run.id)).map((s) => s.screenshotKey).filter((key) => key !== null),
+    );
+    expect([...storage.objects.keys()].filter((key) => !committed.has(key))).toEqual([]);
+  });
+
+  it("an interrupted restore still removes the storage-restore script (I3)", async () => {
+    const state = { cookies: [], origins: [] };
+    await start({
+      hooks: { sessionStore: { load: async () => state, save: async () => undefined } },
+    });
+    let navigating = false;
+    const { run, browser } = await queue([done], "ask", (fake) => {
+      fake.navigateHook = (signal) =>
+        new Promise((_, reject) => {
+          navigating = true;
+          signal.addEventListener("abort", () => reject(signal.reason));
+        });
+    });
+    await waitFor(() => navigating, { label: "restoring" });
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), {
+      label: "control event",
+    });
+    expect(browser.restoreRemovals).toBe(1);
+    browser.navigateHook = null;
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed");
+  });
+
+  it("stop() waits for a replacement worker that was still waiting on its predecessor (M1)", async () => {
+    await start();
+    const { run } = await queue([click, done], "ask", (fake) => {
+      // The first worker needs a while to let go of its act.
+      fake.computerHook = (_actions, signal) =>
+        new Promise((_, reject) =>
+          signal.addEventListener("abort", () => setTimeout(() => reject(signal.reason), 600)),
+        );
+    });
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await owner.db
+      .update(runs)
+      .set({ leaseExpiresAt: sql`now() - interval '1 second'` })
+      .where(eq(runs.id, run.id));
+    await owner.sql.notify("run_queued", encodeNotify("run_queued", { runId: run.id }));
+    await waitFor(
+      async () => (await row(run.id)).slotName !== null && (await row(run.id)).leaseOwner !== null,
+      { label: "re-claimed" },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await supervisor!.stop();
+    supervisor = undefined;
+    // The replacement ran its shutdown path before the DB closed: asleep with a wake, lease freed.
+    const final = await row(run.id);
+    expect(final).toMatchObject({ status: "sleeping", slotName: null, leaseOwner: null });
+    expect(final.wakeRequestedAt).not.toBeNull();
+    await owner.db
+      .update(runs)
+      .set({ status: "cancelled", wakeRequestedAt: null })
+      .where(eq(runs.id, run.id));
+  });
+
+  it("a model outage fails the run with its own code, not agent_error (M2)", async () => {
+    await start();
+    const { run } = await queue([{ error: { status: 400, code: "invalid_value" } }]);
+    await until(run.id, (r) => r.status === "failed", "failed");
+    expect((await row(run.id)).error).toMatchObject({ code: "model_request_rejected" });
+  });
+
+  it("the sweep notices a takeover whose NOTIFY was lost (M3)", async () => {
+    await start();
+    const { run, browser } = await queue([click, done], "ask", (fake) => {
+      fake.computerHook = (_actions, signal) =>
+        new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+    });
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    // takeControl's row change, but its run_control NOTIFY never arrives.
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", status: "waiting", waitReason: "takeover" })
+      .where(eq(runs.id, run.id));
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), {
+      label: "control event from the sweep",
+      timeoutMs: 3_000,
+    });
+    expect((await stepsOf(run.id)).some((s) => s.state === "aborted")).toBe(true);
+    browser.computerHook = null;
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed");
   });
 });

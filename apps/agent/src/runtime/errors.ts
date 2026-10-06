@@ -33,14 +33,6 @@ export class RunChanged extends Error {
   }
 }
 
-/** The Responses chain is gone (previous_response_not_found); rebuild it from run_transcript. */
-export class ChainLost extends Error {
-  constructor() {
-    super("previous_response_not_found");
-    this.name = "ChainLost";
-  }
-}
-
 /** The request exceeded the model's context window; the loop should compact now. */
 export class ContextOverflow extends Error {
   constructor() {

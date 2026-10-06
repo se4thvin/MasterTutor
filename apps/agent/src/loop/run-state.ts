@@ -9,7 +9,7 @@ import {
   type WaitReason,
 } from "@mastertutor/contracts";
 import { runSteps, runs, type Database } from "@mastertutor/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { RunRecord } from "./claim.ts";
 
 export interface RunSnapshot {
@@ -73,3 +73,15 @@ export async function lastInputTokens(db: Database, runId: string): Promise<numb
 
 export const isTerminal = (status: RunStatus) =>
   (TERMINAL_RUN_STATUSES as readonly RunStatus[]).includes(status);
+
+/**
+ * The pending wake request as exact database text (microseconds kept), or null. A step that
+ * consumes it clears it only if no newer wake arrived (StepStore `consumeWake`).
+ */
+export async function readWakeRequest(db: Database, runId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ at: sql<string | null>`${runs.wakeRequestedAt}::text` })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  return row?.at ?? null;
+}

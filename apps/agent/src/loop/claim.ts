@@ -33,6 +33,8 @@ export interface ClaimedRun {
    * stale worker of the same agent loses every write once its run is claimed again.
    */
   leaseToken: string;
+  /** The slot a reclaimed run held before (now restarting): restart it at once to cut off a stale worker. */
+  reclaimedSlot: string | null;
   slotName: string;
   priority: LeasePriority;
   previousStatus: RunStatus;
@@ -102,7 +104,14 @@ export async function claimNextRun(
       events.push({ type: "status", status: run.status, waitReason: run.waitReason, reason: null });
     }
     await emitRunEvents(tx, run.id, events);
-    return { run, leaseToken, slotName, priority, previousStatus: candidate.status };
+    return {
+      run,
+      leaseToken,
+      reclaimedSlot: candidate.slotName ?? null,
+      slotName,
+      priority,
+      previousStatus: candidate.status,
+    };
   });
 }
 
