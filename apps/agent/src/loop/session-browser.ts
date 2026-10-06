@@ -88,12 +88,23 @@ export class SessionLoopBrowser implements LoopBrowser {
     this.#log = options.log;
   }
 
+  /**
+   * The URL is read first and re-checked last, so a navigation in between never pairs one page's
+   * screenshot with another page's URL and DOM hash; the capture is retried on the new page.
+   */
   async observe(signal: AbortSignal): Promise<Observation> {
+    for (let attempt = 1; ; attempt++) {
+      const url = this.#session.page.url();
+      const observation = await this.#capture(url, signal);
+      if (this.#session.page.url() === url || attempt >= 3) return observation;
+    }
+  }
+
+  async #capture(url: string, signal: AbortSignal): Promise<Observation> {
     const session = this.#session;
     const screenshot = await captureModelScreenshot(session, this.#mask, signal);
     const page = await readPage(session, { mode: "interactive", sinceHash: null });
     const state = await (await session.worlds()).evaluate(pageStateScript, null);
-    const url = session.page.url();
     return {
       url,
       title: state.title,
@@ -189,23 +200,29 @@ export function slotBrowserConnector(options: {
       log: options.log,
       guard,
     });
-    await options.pool.rememberBrowser(slotName, baseUrl);
-    const executor = new ComputerExecutor(session, {
-      clock: options.clock,
-      waitActionMs: options.config.waitActionMs,
-    });
-    const registry = new ToolRegistry(
-      [register(readPageTool), ...options.hooks.functionTools],
-      options.log,
-    );
-    const browser = new SessionLoopBrowser({
-      session,
-      executor,
-      registry,
-      mask: options.hooks.maskSources(run().id),
-      run,
-      log: options.log,
-    });
-    return { browser, close: () => session.close() };
+    try {
+      await options.pool.rememberBrowser(slotName, baseUrl);
+      const executor = new ComputerExecutor(session, {
+        clock: options.clock,
+        waitActionMs: options.config.waitActionMs,
+      });
+      const registry = new ToolRegistry(
+        [register(readPageTool), ...options.hooks.functionTools],
+        options.log,
+      );
+      const browser = new SessionLoopBrowser({
+        session,
+        executor,
+        registry,
+        mask: options.hooks.maskSources(run().id),
+        run,
+        log: options.log,
+      });
+      return { browser, close: () => session.close() };
+    } catch (error) {
+      // Do not leak the CDP connection when setup after connect fails.
+      await session.close();
+      throw error;
+    }
   };
 }

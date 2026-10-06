@@ -4,6 +4,7 @@ import {
   ApprovalRequest,
   AUTO_MODE_DECISIONS,
   decideByPolicy,
+  decideSafetyChecks,
   isRiskyLabel,
 } from "./approval.ts";
 import { APPROVAL_KINDS, type ApprovalKind } from "./enums.ts";
@@ -72,6 +73,45 @@ describe("decideByPolicy", () => {
     expect(decideByPolicy("auto_within_allowlist", "download")).toBe("denied");
     expect(decideByPolicy("auto_within_allowlist", "budget")).toBe("ask");
     expect(Object.keys(AUTO_MODE_DECISIONS).sort()).toEqual([...APPROVAL_KINDS].sort());
+  });
+});
+
+describe("decideSafetyChecks", () => {
+  const checks = (...codes: Array<string | null>) => codes.map((code) => ({ code }));
+  it("always asks in ask mode", () => {
+    expect(decideSafetyChecks("ask", checks("irrelevant_domain"), true)).toBe("ask");
+  });
+  it("auto-approves only irrelevant_domain on an allowed origin", () => {
+    expect(decideSafetyChecks("auto_within_allowlist", checks("irrelevant_domain"), true)).toBe(
+      "approved",
+    );
+    expect(decideSafetyChecks("auto_within_allowlist", checks("irrelevant_domain"), false)).toBe(
+      "ask",
+    );
+  });
+  it("never auto-clears injection, sensitive-domain, unknown or empty checks", () => {
+    for (const list of [
+      checks("malicious_instructions"),
+      checks("sensitive_domain"),
+      checks("something_new"),
+      checks(null),
+      checks("irrelevant_domain", "malicious_instructions"),
+      [],
+    ])
+      expect(decideSafetyChecks("auto_within_allowlist", list, true)).toBe("ask");
+  });
+  it("marks a safety-check request on risky_click", () => {
+    const request = ApprovalRequest.parse({
+      kind: "risky_click",
+      action: { type: "screenshot" },
+      label: "Safety check",
+      url: "http://a.test/",
+      screenshotKey: null,
+      safetyChecks: [{ code: "malicious_instructions", message: "x" }],
+    });
+    expect(request.kind === "risky_click" && request.safetyChecks).toEqual([
+      { code: "malicious_instructions", message: "x" },
+    ]);
   });
 });
 

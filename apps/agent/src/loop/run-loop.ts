@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   decideByPolicy,
+  decideSafetyChecks,
   POLICY_DECIDER,
   type ApprovalRequest,
   type ComputerAction,
@@ -15,7 +16,7 @@ import type { ResponseInputItem } from "openai/resources/responses/responses";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
-import { approvalRequestFor, needsApproval } from "../guardrails/policy.ts";
+import { approvalRequestFor, needsApproval, type ApprovalNeed } from "../guardrails/policy.ts";
 import { wrapUntrusted } from "../guardrails/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
 import { AGENT_INSTRUCTIONS, NUDGE, goalText } from "../llm/instructions.ts";
@@ -103,6 +104,8 @@ interface RiskyItem {
   /** Action index for computer actions; null for safety checks and function calls. */
   index: number | null;
   request: ApprovalRequest;
+  /** The model's pending_safety_checks: decided by decideSafetyChecks, never by AUTO_MODE_DECISIONS. */
+  safetyChecks: ReadonlyArray<{ code: string | null }> | null;
 }
 
 const CONTINUE: StepOutcome = { kind: "continue" };
@@ -114,6 +117,20 @@ const TO_RUNNING: Transition = {
 };
 const DENIED = "Not run: the user denied this action.";
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
+
+/** What an approval was for; an approved action only runs while its target still classifies the same. */
+function riskOf(request: ApprovalRequest): { kind: string | null; label: string | null } {
+  if (request.kind === "risky_click") return { kind: request.kind, label: request.label };
+  if (request.kind === "form_submit") return { kind: request.kind, label: request.formSummary };
+  return { kind: request.kind, label: null };
+}
+
+function needLabel(need: ApprovalNeed): string {
+  return need.kind === "risky_click" ? need.label.slice(0, 500) : need.formSummary.slice(0, 1_000);
+}
+
+const TARGET_CHANGED =
+  "Not run: the page changed after approval; this action now targets something else. Look at the screen and ask again.";
 
 function splitItem(item: string): { callId: string; part: string } {
   const at = item.lastIndexOf("#");
@@ -435,15 +452,6 @@ export class RunLoop {
       );
     const recoverable = (error: unknown) =>
       error instanceof ChainLost || error instanceof ContextOverflow;
-    if (previous !== null && this.#lastInputTokens > config.compactionInputTokens) {
-      try {
-        input = await reseed(await summarizeChain(compactionDeps, previous, input));
-      } catch (error) {
-        if (!recoverable(error)) throw error;
-        input = await rebuild();
-      }
-      previous = null;
-    }
     const request = () => ({
       model: this.#run.model,
       instructions: AGENT_INSTRUCTIONS,
@@ -452,15 +460,33 @@ export class RunLoop {
       format: "agent_turn" as const,
       withTools: true,
     });
+    const obtain = async (): Promise<ModelCall> => {
+      if (previous !== null && this.#lastInputTokens > config.compactionInputTokens) {
+        try {
+          input = await reseed(await summarizeChain(compactionDeps, previous, input));
+        } catch (error) {
+          if (!recoverable(error)) throw error;
+          input = await rebuild();
+        }
+        previous = null;
+      }
+      try {
+        return await caller.call(request(), signal);
+      } catch (error) {
+        // ChainLost → rebuild from run_transcript; ContextOverflow → compact now (once).
+        if (!recoverable(error)) throw error;
+        input = await rebuild();
+        previous = null;
+        return caller.call(request(), signal);
+      }
+    };
     let call: ModelCall;
     try {
-      call = await caller.call(request(), signal);
+      call = await obtain();
     } catch (error) {
-      // ChainLost → rebuild from run_transcript; ContextOverflow → compact now (once).
-      if (!recoverable(error)) throw error;
-      input = await rebuild();
-      previous = null;
-      call = await caller.call(request(), signal);
+      // A compaction that succeeded was paid for even if the turn failed afterwards.
+      if (deltas.length > 0) await this.#charge(deltas).catch(() => undefined);
+      throw error;
     }
     record("in", input, null);
     record("out", call.reply.output, call.reply.id);
@@ -523,6 +549,11 @@ export class RunLoop {
     return CONTINUE;
   }
 
+  async #charge(deltas: readonly Usage[]): Promise<void> {
+    this.#run = { ...this.#run, usage: deltas.reduce(addUsage, this.#run.usage) };
+    await this.#deps.store.commit({ run: { usage: this.#run.usage } });
+  }
+
   /* --------------------------------- approve --------------------------------- */
 
   /** Every risky item of the unanswered calls, classified in code (spec §5.5). */
@@ -542,8 +573,31 @@ export class RunLoop {
             callId: call.callId,
             index: null,
             request,
+            safetyChecks: null,
           });
         continue;
+      }
+      // The model's own warning comes before any click approval of the same call (review M6).
+      if (call.safetyChecks.length > 0) {
+        const label = `Safety check: ${call.safetyChecks.map((check) => check.message ?? check.code ?? check.id).join("; ")}`;
+        const checks = call.safetyChecks.map((check) => ({
+          code: check.code?.slice(0, 100) ?? null,
+          message: check.message,
+        }));
+        items.push({
+          item: safetyItem(call.callId),
+          callId: call.callId,
+          index: null,
+          request: {
+            kind: "risky_click",
+            action: call.actions[0] ?? { type: "screenshot" },
+            label: label.slice(0, 500),
+            url: url.slice(0, 4_096),
+            screenshotKey: this.#screenshotKey,
+            safetyChecks: checks.slice(0, 20),
+          },
+          safetyChecks: checks,
+        });
       }
       let previous: TargetDescription | null = null;
       for (const [index, action] of call.actions.entries()) {
@@ -556,22 +610,8 @@ export class RunLoop {
             callId: call.callId,
             index,
             request: approvalRequestFor(need, url, this.#screenshotKey),
+            safetyChecks: null,
           });
-      }
-      if (call.safetyChecks.length > 0) {
-        const label = `Safety check: ${call.safetyChecks.map((check) => check.message ?? check.code ?? check.id).join("; ")}`;
-        items.push({
-          item: safetyItem(call.callId),
-          callId: call.callId,
-          index: null,
-          request: {
-            kind: "risky_click",
-            action: call.actions[0] ?? { type: "screenshot" },
-            label: label.slice(0, 500),
-            url: url.slice(0, 4_096),
-            screenshotKey: this.#screenshotKey,
-          },
-        });
       }
     }
     return items;
@@ -599,18 +639,24 @@ export class RunLoop {
     }
     const rows: Array<{ id: string; request: ApprovalRequest; status: "approved" | "denied" }> = [];
     let ask: RiskyItem | null = null;
+    const origin = this.#obs().origin;
+    const originAllowed = origin !== null && this.#run.allowedOrigins.includes(origin);
     for (const item of items) {
       if (this.#results.has(item.callId) || this.#unreachable(item)) continue;
-      const decision = decideByPolicy(this.#run.approvalMode, item.request.kind);
+      const decision = item.safetyChecks
+        ? decideSafetyChecks(this.#run.approvalMode, item.safetyChecks, originAllowed)
+        : decideByPolicy(this.#run.approvalMode, item.request.kind);
       if (decision === "ask") {
-        ask ??= item;
-        continue;
+        // Items are in order (safety checks first); nothing after this is decided until a person answers.
+        ask = item;
+        break;
       }
       rows.push({ id: randomUUID(), request: item.request, status: decision });
       this.#applyDecision({
         item: item.item,
         approved: decision === "approved",
         note: decision === "denied" ? POLICY_BLOCKED : null,
+        ...riskOf(item.request),
       });
     }
     if (rows.length > 0) {
@@ -709,12 +755,17 @@ export class RunLoop {
       const gate = async (action: ComputerAction) => {
         index += 1;
         const decision = this.#decided.get(actionItem(call.callId, index));
-        if (decision) {
-          if (!decision.approved)
-            refusals.push(`Action ${index + 1} (${action.type}): ${decision.note ?? DENIED}`);
-          return decision.approved;
+        if (decision && !decision.approved) {
+          refusals.push(`Action ${index + 1} (${action.type}): ${decision.note ?? DENIED}`);
+          return false;
         }
-        return needsApproval(action, await this.#deps.browser.targetFor(action, null)) === null;
+        const need = needsApproval(action, await this.#deps.browser.targetFor(action, null));
+        if (need === null) return true;
+        // An approval covers what was approved, not the batch index: the target must still match.
+        if (decision && need.kind === decision.kind && needLabel(need) === decision.label)
+          return true;
+        if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
+        return false;
       };
       const run = await this.#deps.browser.runComputer(call.actions, signal, gate);
       const acknowledged = this.#decided.get(safetyItem(call.callId))?.approved
@@ -768,23 +819,30 @@ export class RunLoop {
       });
     }
     this.#next = "observe";
-    const blocked = browser.drainBlockedNavigations()[0];
-    if (blocked) {
+    const blocked = browser.drainBlockedNavigations();
+    const origins = [...new Map(blocked.map((entry) => [entry.origin, entry])).values()];
+    for (const [position, entry] of origins.entries()) {
       const request: ApprovalRequest = {
         kind: "new_origin",
-        origin: blocked.origin,
-        url: blocked.url.slice(0, 4_096),
+        origin: entry.origin,
+        url: entry.url.slice(0, 4_096),
       };
       const decision = decideByPolicy(this.#run.approvalMode, "new_origin");
-      if (decision === "ask") return this.#ask(request, { callIds: [], item: null });
+      // Only a denial is decided here; anything else waits for a person (resume adds the origin).
+      if (decision !== "denied") {
+        for (const other of origins.slice(position + 1))
+          this.#notes.push(
+            `Executor: navigation to ${other.origin} was blocked: it is not one of this run's allowed origins.`,
+          );
+        return this.#ask(request, { callIds: [], item: null });
+      }
       await this.#recordPolicy(request, decision);
-      if (decision === "denied")
-        this.#notes.push(
-          `Executor: navigation to ${blocked.origin} was blocked: it is not one of this run's allowed origins.`,
-        );
+      this.#notes.push(
+        `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
+      );
     }
-    // The page position is part of the signature: scrolling down a long page is not a loop.
-    const signature = `${this.#calls.map(callSignature).join("|")}@${obs.url}#${obs.scroll.x},${obs.scroll.y}`;
+    // The page (URL, DOM, position) is part of the signature: scrolling or paging is not a loop.
+    const signature = `${this.#calls.map(callSignature).join("|")}@${obs.url}#${obs.domHash}#${obs.scroll.x},${obs.scroll.y}`;
     if (ran && this.#loops.recordAction(signature, obs.phash))
       return this.#wait("takeover", "stuck");
     return CONTINUE;
@@ -930,6 +988,7 @@ export class RunLoop {
     if (pending.item !== null) {
       this.#applyDecision({
         item: pending.item,
+        ...riskOf(pending.request),
         approved: decision.status === "approved",
         note:
           decision.status === "approved"

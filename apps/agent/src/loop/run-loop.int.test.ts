@@ -10,6 +10,7 @@ import { ModelCaller } from "../llm/caller.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
+import { Interrupted } from "../runtime/errors.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser } from "../testing/fake-loop-browser.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
@@ -490,5 +491,184 @@ describe("RunLoop (spec §5.3)", () => {
     expect(await drive(loop)).toEqual({ kind: "completed" });
     expect(browser.computerRuns).toEqual([]);
     expect(browser.executed).toEqual([{ type: "click", x: 10, y: 20, button: "left" }]);
+  });
+  describe("pending safety checks (ruling: only irrelevant_domain on an allowed origin is auto-cleared)", () => {
+    const flagged = (code: string): MockTurn => ({
+      outputs: [
+        {
+          type: "computer",
+          actions: [{ type: "click", x: 10, y: 20, button: "left" }],
+          safetyChecks: [{ id: "sc_1", code, message: `Flagged: ${code}` }],
+        },
+      ],
+    });
+
+    it("waits for a person on malicious_instructions in auto mode", async () => {
+      const { run, browser, loop } = await setup([flagged("malicious_instructions"), done()], {
+        approvalMode: "auto_within_allowlist",
+      });
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect(browser.executed).toEqual([]);
+      expect(await approvalRows(run.id)).toMatchObject([
+        {
+          kind: "risky_click",
+          status: "pending",
+          request: { safetyChecks: [{ code: "malicious_instructions" }] },
+        },
+      ]);
+    });
+
+    it("approves irrelevant_domain on an allowed origin by policy and acknowledges it", async () => {
+      const { run, name, browser, loop } = await setup(
+        [flagged("irrelevant_domain"), doneExpecting("acknowledged_safety_checks")],
+        { approvalMode: "auto_within_allowlist" },
+      );
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.executed).toHaveLength(1);
+      expect(await approvalRows(run.id)).toMatchObject([
+        { kind: "risky_click", status: "approved", decidedBy: "policy" },
+      ]);
+      expect(JSON.stringify(mock.requestsFor(name).at(-1)?.body.input)).toContain('"id":"sc_1"');
+    });
+
+    it("waits for a person on irrelevant_domain on an origin outside the allowlist", async () => {
+      const { browser, loop } = await setup([flagged("irrelevant_domain"), done()], {
+        approvalMode: "auto_within_allowlist",
+      });
+      browser.url = "http://other.fixtures.test/page";
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect(browser.executed).toEqual([]);
+    });
+
+    it("asks about the safety check before the click it flags", async () => {
+      const { run, browser, loop } = await setup([flagged("sensitive_domain"), done()]);
+      browser.targets.set("10,20", risky("Delete account"));
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      const [first] = await approvalRows(run.id);
+      expect(first?.request).toMatchObject({ safetyChecks: [{ code: "sensitive_domain" }] });
+    });
+  });
+
+  it("binds an approval to its target: an earlier action that changes the target voids it", async () => {
+    const { run, browser, loop, reload } = await setup([
+      {
+        outputs: [
+          {
+            type: "computer",
+            actions: [
+              { type: "click", x: 10, y: 20, button: "left" },
+              { type: "click", x: 30, y: 40, button: "left" },
+            ],
+          },
+        ],
+      },
+      doneExpecting("page changed"),
+    ]);
+    browser.targets.set("30,40", risky("Delete account"));
+    browser.actionHook = (action) => {
+      if (action.type === "click" && action.x === 10)
+        browser.targets.set("30,40", risky("Pay now"));
+    };
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    await decideApproval(run.id, "approved");
+    const resumed = await reload();
+    await resumed.resume(new AbortController().signal);
+    expect(await drive(resumed)).toEqual({ kind: "completed" });
+    expect(browser.executed).toEqual([{ type: "click", x: 10, y: 20, button: "left" }]);
+  });
+
+  it("tells the model about every blocked navigation, not only the first", async () => {
+    const { run, browser, loop } = await setup(
+      [click(), doneExpecting("http://third.fixtures.test")],
+      { approvalMode: "auto_within_allowlist" },
+    );
+    browser.computerHook = async () => {
+      browser.blocked.push(
+        { url: "http://other.fixtures.test/a", origin: "http://other.fixtures.test" },
+        { url: "http://third.fixtures.test/b", origin: "http://third.fixtures.test" },
+      );
+    };
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect((await approvalRows(run.id)).map((r) => [r.kind, r.status])).toEqual([
+      ["new_origin", "denied"],
+      ["new_origin", "denied"],
+    ]);
+  });
+
+  it("does not mistake paging with the same Next button for a loop", async () => {
+    const { browser, loop } = await setup([click(), click(), click(), click(), done()]);
+    let page = 0;
+    browser.computerHook = async () => {
+      page += 1;
+      browser.domHash = String(page).repeat(64).slice(0, 64);
+    };
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.executed).toHaveLength(4);
+  });
+
+  it("counts compaction usage even when the following model call fails", async () => {
+    const { run, loop } = await setup([
+      { ...click(), usage: { input: 210_000 } },
+      { error: { status: 400, code: "invalid_value" } },
+    ]);
+    await expect(drive(loop)).rejects.toThrow();
+    expect((await status(run.id))?.usage.inputTokens).toBe(211_000);
+  });
+
+  it("passes an edited decision to the model as the user's instruction", async () => {
+    const { run, browser, loop, reload } = await setup([
+      click(),
+      doneExpecting("The user said instead: Use the archive button"),
+    ]);
+    browser.targets.set("10,20", risky("Delete account"));
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    await decideApproval(run.id, "edited", {
+      instruction: "Use the archive button",
+      budgetChoice: null,
+    });
+    const resumed = await reload();
+    await resumed.resume(new AbortController().signal);
+    expect(await drive(resumed)).toEqual({ kind: "completed" });
+    expect(browser.executed).toEqual([]);
+  });
+
+  it("answers an interrupted act and the calls after it, and records act:aborted", async () => {
+    const { run, browser, loop } = await setup([
+      {
+        outputs: [
+          { type: "computer", actions: [{ type: "click", x: 10, y: 20, button: "left" }] },
+          { type: "computer", actions: [{ type: "click", x: 30, y: 40, button: "left" }] },
+        ],
+      },
+      doneExpecting("Interrupted: the user took control"),
+    ]);
+    browser.computerHook = async () => {
+      throw new Interrupted("takeover");
+    };
+    await expect(drive(loop)).rejects.toBeInstanceOf(Interrupted);
+    expect(await phases(run.id)).toContain("act:aborted");
+    browser.computerHook = null;
+    await loop.markTakeover();
+    expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "takeover" });
+    await loop.markHandBack();
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.executed).toHaveLength(1);
+    const last = JSON.stringify(mock.requests.at(-1)?.body.input);
+    expect(last).toContain("Not run: the run was interrupted first.");
+  });
+
+  it("supersedes a pending item approval when the user takes control", async () => {
+    const { run, browser, loop } = await setup([
+      click(),
+      doneExpecting("the user took control before approving"),
+    ]);
+    browser.targets.set("10,20", risky("Delete account"));
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    await loop.markTakeover();
+    expect(loop.hasPendingApproval).toBe(false);
+    expect((await approvalRows(run.id))[0]?.status).toBe("superseded");
+    await loop.markHandBack();
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.executed).toEqual([]);
   });
 });

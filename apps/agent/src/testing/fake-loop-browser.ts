@@ -36,6 +36,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   readonly functionRuns: Array<{ name: string; args: unknown }> = [];
   readonly navigations: string[] = [];
   blocked: BlockedNavigation[] = [];
+  /** Runs after each single action, e.g. to change what lies under a later action of the batch. */
+  actionHook: ((action: ComputerAction) => void) | null = null;
   computerHook:
     ((actions: readonly ComputerAction[], signal: AbortSignal) => Promise<void>) | null = null;
   functionOutput = (name: string): string => JSON.stringify({ ok: true, tool: name });
@@ -76,6 +78,7 @@ export class FakeLoopBrowser implements LoopBrowser {
         return { executed, notes: ["Stopped before an action: it needs approval."] };
       this.executed.push(action);
       executed += 1;
+      this.actionHook?.(action);
     }
     this.computerRuns.push([...actions]);
     await this.computerHook?.(actions, signal);
