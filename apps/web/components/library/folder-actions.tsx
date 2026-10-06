@@ -27,7 +27,9 @@ export function FolderActions({
   const toast = useToast();
   const [sheet, setSheet] = useState<FolderNameTarget | null>(null);
   const [confirm, setConfirm] = useState(false);
-  const [moving, setMoving] = useState(false);
+  // A snapshot taken when the sheet opens: the move updates the tree cache at once, and the live
+  // folder's new parentId would drop the destination row mid-receive (B1).
+  const [moving, setMoving] = useState<FolderView | null>(null);
 
   const remove = async () => {
     if (!current) return;
@@ -75,7 +77,7 @@ export function FolderActions({
             </MenuItem>
           ) : null}
           {current ? (
-            <MenuItem icon="move" onSelect={() => setMoving(true)}>
+            <MenuItem icon="move" onSelect={() => setMoving(current)}>
               Move folder to…
             </MenuItem>
           ) : null}
@@ -91,11 +93,7 @@ export function FolderActions({
         onClose={() => setSheet(null)}
         onDone={(id) => sheet?.mode === "create" && router.push(libraryHref({ folder: id }))}
       />
-      <FolderMoveSheet
-        folder={moving ? current : null}
-        folders={folders}
-        onClose={() => setMoving(false)}
-      />
+      <FolderMoveSheet folder={moving} folders={folders} onClose={() => setMoving(null)} />
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}

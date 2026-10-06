@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+import { movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, isWide, test } from "./helpers/test.ts";
 
 const OPT = "/library?folder=00000000-0000-4000-8000-000001000002";
@@ -81,4 +83,105 @@ test("deleting a note asks first and keeps Cancel as the default", async ({ page
   await expect(alert.getByRole("button", { name: "Cancel" })).toBeFocused();
   await alert.getByRole("button", { name: "Delete Note" }).click();
   await expect(card).toBeHidden();
+});
+
+async function openMoveSheet(page: Page, title: RegExp) {
+  await page.goto(OPT);
+  const card = page.locator('[data-qa="note-card"]').filter({ hasText: title });
+  await card.getByRole("button", { name: new RegExp(`Actions for ${title.source}`) }).click();
+  await page.getByRole("menuitem", { name: "Move to…" }).click();
+  return { card, sheet: page.getByRole("dialog", { name: "Move to…" }) };
+}
+
+test("the destination folder opens to receive the note, then the sheet closes", async ({
+  page,
+}) => {
+  const { sheet } = await openMoveSheet(page, /Learning-rate warmup/);
+  const papers = sheet.getByRole("button", { name: "Papers" });
+  await papers.click();
+  await expect(papers.locator(".fmark")).toHaveAttribute("data-lift", "");
+  await expect(papers.locator(".move-pill")).toHaveText(/Learning-rate warmup/);
+  await expect(sheet).toBeHidden();
+  await expect(page.getByRole("group").filter({ hasText: "Moved to Papers" })).toBeVisible();
+});
+
+test("a second pick during the receive animation is ignored (Review Focus 2)", async ({ page }) => {
+  let moves = 0;
+  await page.route("**/api/rpc/notes/move", async (route) => {
+    moves += 1;
+    await route.continue();
+  });
+  const { sheet } = await openMoveSheet(page, /Learning-rate warmup/);
+  await sheet.getByRole("button", { name: "Papers" }).click();
+  await expect(sheet.getByRole("button", { name: "Databases" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await sheet.getByRole("button", { name: "Databases" }).click({ force: true });
+  await expect(sheet).toBeHidden();
+  await expect(page.getByRole("group").filter({ hasText: "Moved to Papers" })).toBeVisible();
+  expect(moves).toBe(1);
+  await expect(page.getByRole("group").filter({ hasText: "Moved to Databases" })).toHaveCount(0);
+});
+
+test("under reduced motion the sheet closes at once and nothing flies", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const { sheet } = await openMoveSheet(page, /Learning-rate warmup/);
+  await page.evaluate(() => {
+    const seen = { pill: false };
+    (window as { __pill?: typeof seen }).__pill = seen;
+    new MutationObserver(() => {
+      if (document.querySelector(".move-pill")) seen.pill = true;
+    }).observe(document.body, { subtree: true, childList: true });
+  });
+  await sheet.getByRole("button", { name: "Papers" }).click();
+  await expect(sheet).toBeHidden();
+  expect(await page.evaluate(() => (window as { __pill?: { pill: boolean } }).__pill?.pill)).toBe(
+    false,
+  );
+  // The "Moved to" toast's countdown fuse is a timer, kept under reduced motion by design
+  // (swipe-toast.tsx); everything else must stay still.
+  const moving = await movingAnimations(page, "body");
+  expect(moving.filter((a) => !a.includes("toast-fuse"))).toEqual([]);
+});
+
+test("moving a folder plays the same receive moment", async ({ page }) => {
+  await page.goto(`/library?folder=00000000-0000-4000-8000-000001000004`);
+  await page.getByRole("button", { name: "Folder actions" }).click();
+  await page.getByRole("menuitem", { name: /Move folder/ }).click();
+  const sheet = page.getByRole("dialog", { name: "Move folder to…" });
+  await expectCleanScreen(page);
+  const target = sheet.getByRole("button", { name: "Databases" });
+  await target.click();
+  await expect(target.locator(".move-pill")).toHaveText("Papers");
+  await expect(sheet).toBeHidden();
+});
+
+test("the pill flies in from beyond the glyph and nothing clips it (I2)", async ({ page }) => {
+  const { sheet } = await openMoveSheet(page, /Learning-rate warmup/);
+  const papers = sheet.getByRole("button", { name: "Papers" });
+  await papers.click();
+  await startSampling(page, "pill", ".move-pill", "translate", 12);
+  const geometry = await papers.evaluate((row) => {
+    const pill = row.querySelector(".move-pill");
+    const mark = row.querySelector(".fmark");
+    if (!pill || !mark) return null;
+    const clippers: string[] = [];
+    for (let el = pill.parentElement; el && el !== row; el = el.parentElement) {
+      if (getComputedStyle(el).overflow !== "visible") clippers.push(el.className);
+    }
+    return {
+      pillRight: pill.getBoundingClientRect().right,
+      markRight: mark.getBoundingClientRect().right,
+      clippers,
+    };
+  });
+  expect(geometry).not.toBeNull();
+  expect(geometry!.clippers, "no ancestor inside the row may clip the pill").toEqual([]);
+  expect(geometry!.pillRight).toBeGreaterThan(geometry!.markRight);
+  const samples = await readSamples(page, "pill", 12);
+  // It starts about 2.5rem to the right and travels into the glyph.
+  const offsets = samples.filter(Boolean).map((v) => parseFloat(v));
+  expect(Math.max(...offsets), samples.join(" | ")).toBeGreaterThan(16);
+  await expect(sheet).toBeHidden();
 });

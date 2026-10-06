@@ -12,11 +12,6 @@ export function MoveSheet({ note, onClose }: { note: NoteSummary | null; onClose
   const { data } = useQuery(orpc.folders.tree.queryOptions({ input: {} }));
   const move = useMoveNote();
   const rows = flattenAll(buildFolderTree(data?.folders ?? []));
-  const pick = (folderId: string | null) => {
-    if (!note) return;
-    onClose();
-    void move(note.id, folderId, note.folderId);
-  };
   return (
     <Sheet
       open={note !== null}
@@ -28,7 +23,11 @@ export function MoveSheet({ note, onClose }: { note: NoteSummary | null; onClose
         root={{ label: "Unfiled", icon: "unfiled" }}
         folders={rows}
         currentId={note?.folderId}
-        onPick={pick}
+        receiveLabel={note?.title ?? ""}
+        onPick={(folderId) => {
+          if (note) void move(note.id, folderId, note.folderId);
+        }}
+        onDone={onClose}
       />
     </Sheet>
   );
