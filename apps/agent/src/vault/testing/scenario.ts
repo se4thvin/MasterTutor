@@ -1,12 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  encodeNotify,
-  type ApprovalMode,
-  type RunStatus,
-  type WaitReason,
-} from "@mastertutor/contracts";
+import { encodeNotify, type RunStatus, type WaitReason } from "@mastertutor/contracts";
 import {
   approvals,
   browserSlots,
@@ -28,7 +23,7 @@ import { startLlmMock, type LlmMock } from "../../../../../tests/llm-mock/src/se
 import { createOpenAIModelClient } from "../../llm/client.ts";
 import { Supervisor } from "../../loop/supervisor.ts";
 import type { BrowserControl } from "../../slots/lifecycle.ts";
-import { insertRun } from "../../testing/db.ts";
+import { insertRun, type InsertRunOptions } from "../../testing/db.ts";
 import { createMemoryStorage } from "../../testing/memory-storage.ts";
 import { waitFor } from "../../testing/wait.ts";
 import { createVault, vaultHooks } from "../index.ts";
@@ -43,12 +38,13 @@ export interface VaultScenario {
   userId: string;
   keys: VaultKeyPair;
   logs(): string;
-  start(input: {
-    name: string;
-    goal: string;
-    allowedOrigins: string[];
-    approvalMode: ApprovalMode;
-  }): Promise<string>;
+  /**
+   * Queues a run with these options (allowed origins, mode, …), tagged for the named scenario.
+   * The options pass through untouched: no vault code reads the approval mode (D44).
+   */
+  start(
+    input: { name: string; goal: string } & Omit<InsertRunOptions, "workspaceId" | "goal">,
+  ): Promise<string>;
   /** Waits until the run waits for a person or ends, then reports where it stopped. */
   settle(runId: string): Promise<{ status: RunStatus; waitReason: WaitReason | null }>;
   /** The web's decideApproval for the pending approval, as the scenario user. */
@@ -127,12 +123,11 @@ export async function startVaultScenario(options: {
     userId,
     keys,
     logs: () => log.text(),
-    async start(input) {
+    async start({ name, goal, ...options }) {
       const run = await insertRun(owner.db, {
+        ...options,
         workspaceId,
-        goal: `[scenario:${input.name}] ${input.goal}`,
-        allowedOrigins: input.allowedOrigins,
-        approvalMode: input.approvalMode,
+        goal: `[scenario:${name}] ${goal}`,
       });
       await owner.sql.notify("run_queued", encodeNotify("run_queued", { runId: run.id }));
       return run.id;
