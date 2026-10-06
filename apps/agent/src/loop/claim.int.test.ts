@@ -4,7 +4,9 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LeaseLost } from "../runtime/errors.ts";
 import { reclaimExpiredSlots, releaseSlot } from "../slots/leases.ts";
+import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
+import { NO_SESSION_STORE, StepStore } from "./step-store.ts";
 import { cancelRunsForKill, claimNextRun, killedWorkspaces, renewLeases } from "./claim.ts";
 
 const SLOTS = ["browser-1", "browser-2", "browser-3"];
@@ -53,12 +55,17 @@ describe("claimNextRun", () => {
     expect(claim?.slotName).toBe("browser-1");
     expect(claim?.priority).toBe("queued");
     expect(claim?.run.status).toBe("running");
-    expect(claim?.run.leaseOwner).toBe("agent-a");
+    expect(claim?.leaseToken).toMatch(/^agent-a:[0-9a-f-]{36}$/);
+    expect(claim?.run.leaseOwner).toBe(claim?.leaseToken);
     const [slot] = await owner.db
       .select()
       .from(browserSlots)
       .where(eq(browserSlots.name, "browser-1"));
-    expect(slot).toMatchObject({ state: "leased", runId: claim?.run.id, leaseOwner: "agent-a" });
+    expect(slot).toMatchObject({
+      state: "leased",
+      runId: claim?.run.id,
+      leaseOwner: claim?.leaseToken,
+    });
     const events = await owner.db
       .select()
       .from(runEvents)
@@ -153,12 +160,44 @@ describe("leases", () => {
     const lease = {
       runId: claim.run.id,
       slotName: claim.slotName,
-      owner: "agent-a",
+      owner: claim.leaseToken,
       leaseMs: 30_000,
     };
     await renewLeases(agent.db, lease);
     await owner.db.update(runs).set({ leaseOwner: "agent-b" }).where(eq(runs.id, claim.run.id));
     await expect(renewLeases(agent.db, lease)).rejects.toBeInstanceOf(LeaseLost);
+  });
+
+  it("gives every claim its own lease token: a stale claim of the same agent can neither renew nor commit", async () => {
+    await insertRun(owner.db, { workspaceId });
+    await setIdle(["browser-1", "browser-2", "browser-3"]);
+    const first = await claimNextRun(agent.db, OPTIONS);
+    if (!first) throw new Error("no claim");
+    const stale = await StepStore.open({
+      db: agent.db,
+      storage: createMemoryStorage(),
+      sessionStore: NO_SESSION_STORE,
+      owner: first.leaseToken,
+      run: first.run,
+    });
+    await stale.commit({}); // still ours
+    // A heartbeat outage: the lease expires and the SAME agent re-claims its own run.
+    await owner.db
+      .update(runs)
+      .set({ leaseExpiresAt: sql`now() - interval '1 second'` })
+      .where(eq(runs.id, first.run.id));
+    const second = await claimNextRun(agent.db, OPTIONS);
+    expect(second?.run.id).toBe(first.run.id);
+    expect(second?.leaseToken).not.toBe(first.leaseToken);
+    await expect(stale.commit({})).rejects.toBeInstanceOf(LeaseLost);
+    await expect(
+      renewLeases(agent.db, {
+        runId: first.run.id,
+        slotName: first.slotName,
+        owner: first.leaseToken,
+        leaseMs: 30_000,
+      }),
+    ).rejects.toBeInstanceOf(LeaseLost);
   });
 
   it("releases a slot into restarting and clears runs.slot_name", async () => {

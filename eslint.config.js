@@ -20,6 +20,8 @@ export default defineConfig(
       "orchestration/**",
       "design/**",
       "docs/**",
+      // Nested git worktrees hold other branches' code (gitignored).
+      ".worktrees/**",
     ],
   },
   js.configs.recommended,

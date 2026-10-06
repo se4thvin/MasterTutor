@@ -15,12 +15,13 @@ import {
   type DbHandle,
 } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Scenario } from "../../../../tests/llm-mock/src/scenario.ts";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
 import { instantClock } from "../runtime/clock.ts";
+import type { RuntimeConfig } from "../runtime/config.ts";
 import type { BrowserControl } from "../slots/lifecycle.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser } from "../testing/fake-loop-browser.ts";
@@ -72,7 +73,10 @@ afterAll(async () => {
 const idleSlots = async () =>
   (await owner.db.select().from(browserSlots).where(eq(browserSlots.state, "idle"))).length;
 
-async function start(clock = instantClock()) {
+async function start(
+  options: { config?: Partial<RuntimeConfig>; control?: BrowserControl } = {},
+  clock = instantClock(),
+) {
   supervisor = new Supervisor({
     db: createDb(database.agentUrl),
     storage: createMemoryStorage(),
@@ -82,8 +86,17 @@ async function start(clock = instantClock()) {
     log,
     testMode: true,
     clock,
-    config: { heartbeatMs: 200, leaseMs: 2_000, sweepMs: 300, slotPollMs: 5, downloadsDir },
-    browserControl: fakeControl(),
+    config: {
+      heartbeatMs: 200,
+      leaseMs: 2_000,
+      sweepMs: 300,
+      slotPollMs: 5,
+      downloadsDir,
+      // Tests wait for every slot restart on stop; production bounds it (M1).
+      shutdownDrainMs: 30_000,
+      ...options.config,
+    },
+    browserControl: options.control ?? fakeControl(),
     connect: async ({ run }) => {
       const browser = browsers.get(run().id) ?? new FakeLoopBrowser();
       browsers.set(run().id, browser);
@@ -97,6 +110,7 @@ async function start(clock = instantClock()) {
 async function queue(
   turns: Scenario["turns"],
   approvalMode: "ask" | "auto_within_allowlist" = "ask",
+  prepare: (browser: FakeLoopBrowser) => void = () => undefined,
 ) {
   const name = `w${++counter}`;
   mock.setScenarios([{ name, turns }]);
@@ -105,9 +119,11 @@ async function queue(
     goal: `[scenario:${name}] task`,
     approvalMode,
   });
-  browsers.set(run.id, new FakeLoopBrowser());
+  const browser = new FakeLoopBrowser();
+  prepare(browser);
+  browsers.set(run.id, browser);
   await owner.sql.notify("run_queued", encodeNotify("run_queued", { runId: run.id }));
-  return { run, browser: browsers.get(run.id)! };
+  return { run, browser, name };
 }
 const row = async (id: string) => (await owner.db.select().from(runs).where(eq(runs.id, id)))[0]!;
 const until = (id: string, test: (r: Awaited<ReturnType<typeof row>>) => boolean, label: string) =>
@@ -124,6 +140,29 @@ const click = {
   ],
 };
 const holdFor = (ms: number) => () => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const expectInput = (text: string) => (request: { body: { input?: unknown } }) => {
+  if (!JSON.stringify(request.body.input).includes(text)) throw new Error(`no "${text}" in input`);
+};
+const controlEvents = async (id: string) =>
+  (await owner.db.select().from(runEvents).where(eq(runEvents.runId, id))).flatMap((e) =>
+    e.payload.type === "control" ? [e.payload.holder] : [],
+  );
+/** The web's takeControl / handBack (Task 18 web contract). */
+async function takeOver(id: string) {
+  await owner.db
+    .update(runs)
+    .set({ controller: "user", status: "waiting", waitReason: "takeover" })
+    .where(and(eq(runs.id, id), sql`${runs.status} <> 'sleeping'`));
+  await owner.sql.notify("run_control", encodeNotify("run_control", { runId: id }));
+}
+async function handBackTo(id: string) {
+  await owner.db.update(runs).set({ controller: "agent" }).where(eq(runs.id, id));
+  await owner.sql.notify("run_control", encodeNotify("run_control", { runId: id }));
+}
+/** A slot whose browser never comes back with a new id: its restart hangs until the timeout. */
+function stuckControl(): BrowserControl {
+  return { readBrowserId: async () => "stuck", closeBrowser: async () => undefined };
+}
 
 describe("RunWorker + Supervisor", () => {
   it("claims on NOTIFY, completes, and releases: slot_name null, slot recycled, downloads cleared", async () => {
@@ -268,5 +307,142 @@ describe("RunWorker + Supervisor", () => {
       .update(runs)
       .set({ status: "cancelled", wakeRequestedAt: null })
       .where(eq(runs.id, graceful.run.id));
+  });
+
+  it("a takeover while the run restores its page holds control instead of failing the run (I1)", async () => {
+    await start();
+    let navigating = false;
+    const { run, browser } = await queue([done], "ask", (fake) => {
+      fake.navigateHook = (signal) =>
+        new Promise((_, reject) => {
+          navigating = true;
+          signal.addEventListener("abort", () => reject(signal.reason));
+        });
+    });
+    await waitFor(() => navigating, { label: "restoring" });
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), {
+      label: "control event",
+    });
+    expect(await row(run.id)).toMatchObject({ status: "waiting", controller: "user" });
+    browser.navigateHook = null;
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after hand back");
+  });
+
+  it("graceful stop while the user holds control sleeps with a wake; the next agent holds again (I2)", async () => {
+    await start();
+    const { run } = await queue([{ ...click, hold: holdFor(1_000) }, done]);
+    await until(run.id, (r) => r.status === "running", "running");
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), {
+      label: "control event",
+    });
+    await supervisor!.stop();
+    supervisor = undefined;
+    const slept = await row(run.id);
+    expect(slept).toMatchObject({ status: "sleeping", controller: "user", slotName: null });
+    expect(slept.wakeRequestedAt).not.toBeNull();
+    await start();
+    await until(
+      run.id,
+      (r) => r.status === "waiting" && r.waitReason === "takeover" && r.slotName !== null,
+      "holding again on a new agent",
+    );
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after hand back");
+  });
+
+  it("a re-claim of its own run after a heartbeat outage leaves exactly one tracked worker (I3)", async () => {
+    await start();
+    const { run, name } = await queue([
+      { ...click, hold: holdFor(1_500) },
+      { ...done, hold: holdFor(2_000) },
+    ]);
+    await waitFor(() => mock.requestsFor(name).length === 1, { label: "first worker deciding" });
+    // The heartbeat outage: the lease lapses while the first worker still runs, and the same
+    // supervisor claims the run again.
+    await owner.db
+      .update(runs)
+      .set({ leaseExpiresAt: sql`now() - interval '1 second'` })
+      .where(eq(runs.id, run.id));
+    await owner.sql.notify("run_queued", encodeNotify("run_queued", { runId: run.id }));
+    await waitFor(() => mock.requestsFor(name).length === 2, { label: "second worker deciding" });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    // The first worker is gone; the map entry still points at the live second worker.
+    expect(supervisor!.activeRuns).toEqual([run.id]);
+    await until(run.id, (r) => r.status === "completed", "completed");
+    expect(browsers.get(run.id)!.executed).toEqual([]);
+  });
+
+  it("a true crash leaves the started act without an abort row, and restore never retries it (M4)", async () => {
+    await start();
+    const { run, browser } = await queue(
+      [click, { ...done, check: expectInput("Not retried") }],
+      "ask",
+      (fake) => {
+        fake.computerHook = (_actions, signal) =>
+          new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+      },
+    );
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await supervisor!.crash();
+    supervisor = undefined;
+    const acts = (await stepsOf(run.id)).filter((s) => s.phase === "act");
+    expect(acts.map((s) => s.state)).toEqual(["started"]);
+    browser.computerHook = null;
+    await start();
+    await until(run.id, (r) => r.status === "completed", "completed after restore");
+    expect(browser.executed).toHaveLength(1);
+    expect((await stepsOf(run.id)).filter((s) => s.phase === "act")).toHaveLength(1);
+  });
+
+  it("the kill sweep still runs while a slot restart hangs, and stop() is bounded (M5, M1)", async () => {
+    await start({ config: { shutdownDrainMs: 300 }, control: stuckControl() });
+    // A slot left restarting (e.g. by a dead agent) that never comes back.
+    await owner.db
+      .update(browserSlots)
+      .set({ state: "restarting", runId: null, leaseOwner: null, leaseExpiresAt: null })
+      .where(eq(browserSlots.name, "browser-2"));
+    await new Promise((resolve) => setTimeout(resolve, 700)); // a sweep is now stuck on it
+    // Kill without NOTIFY: only the sweep fallback can see it.
+    await owner.db.update(settings).set({ killSwitch: true });
+    const queued = await insertRun(owner.db, { workspaceId });
+    await until(queued.id, (r) => r.status === "cancelled", "cancelled by the sweep");
+    const stopping = Date.now();
+    await supervisor!.stop();
+    supervisor = undefined;
+    expect(Date.now() - stopping).toBeLessThan(2_000);
+  });
+
+  it("a kill that races a web cancel still frees the slot at once (M7)", async () => {
+    await start();
+    const { run } = await queue([{ ...click, hold: holdFor(5_000) }, done]);
+    await until(run.id, (r) => r.status === "running", "running");
+    const slot = (await row(run.id)).slotName!;
+    // The web cancelled, but its run_control has not reached the worker yet.
+    await owner.db
+      .update(runs)
+      .set({ status: "cancelled", finishedAt: new Date() })
+      .where(eq(runs.id, run.id));
+    await owner.db.update(settings).set({ killSwitch: true });
+    const killed = Date.now();
+    await owner.sql.notify("run_wake", encodeNotify("run_wake", { runId: null, reason: "kill" }));
+    await waitFor(
+      async () =>
+        (
+          await owner.db
+            .select()
+            .from(browserSlots)
+            .where(and(eq(browserSlots.name, slot), eq(browserSlots.state, "leased")))
+        ).length === 0,
+      { label: "slot freed", intervalMs: 20 },
+    );
+    // Well before the 2 s lease could expire and the sweep reclaim it.
+    expect(Date.now() - killed).toBeLessThan(1_000);
+    expect((await row(run.id)).slotName).toBeNull();
   });
 });

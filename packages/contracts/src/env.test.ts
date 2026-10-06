@@ -20,6 +20,14 @@ describe("parseEnv", () => {
     expect(env.S3_REGION).toBe("garage");
     expect(env.S3_BUCKET).toBe("mastertutor");
     expect(env.AGENT_HEALTH_PORT).toBe(8787);
+    expect(env.AGENT_SHUTDOWN_DRAIN_MS).toBe(5_000);
+    expect(
+      parseEnv(AgentEnv, { ...agentSource, AGENT_SHUTDOWN_DRAIN_MS: "12000" })
+        .AGENT_SHUTDOWN_DRAIN_MS,
+    ).toBe(12_000);
+    expect(() => parseEnv(AgentEnv, { ...agentSource, AGENT_SHUTDOWN_DRAIN_MS: "-1" })).toThrow(
+      EnvError,
+    );
     expect(env.AGENT_TEST_MODE).toBe(false);
     expect(env.OPENAI_BASE_URL).toBeUndefined();
     expect(env.LOG_LEVEL).toBe("info");

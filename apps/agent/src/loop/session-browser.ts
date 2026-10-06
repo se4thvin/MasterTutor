@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   toOrigin,
   type ComputerAction,
@@ -88,7 +89,9 @@ export async function observeOnOnePage(
         title: "",
         domHash: "",
         screenshot: await withheldScreenshot(observation.screenshot),
-        phash: 0n,
+        // A black frame says nothing about the page: a random hash keeps loop detection from
+        // treating consecutive withheld frames as the same screen (M8).
+        phash: randomBytes(8).readBigUInt64BE(),
       };
     url = now;
   }

@@ -92,7 +92,11 @@ export class FakeLoopBrowser implements LoopBrowser {
     return { output: this.functionOutput(name), notesChanged: false };
   }
 
-  async navigate(url: string): Promise<boolean> {
+  /** Runs inside navigate, e.g. to block a restore navigation until it is aborted. */
+  navigateHook: ((signal: AbortSignal) => Promise<void>) | null = null;
+
+  async navigate(url: string, signal: AbortSignal): Promise<boolean> {
+    await this.navigateHook?.(signal);
     this.navigations.push(url);
     this.url = url;
     return true;

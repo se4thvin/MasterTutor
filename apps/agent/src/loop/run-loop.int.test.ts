@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { MockTurn } from "../../../../tests/llm-mock/src/scenario.ts";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { ModelCaller } from "../llm/caller.ts";
+import { FORBIDDEN_RESPONSE_FIELDS } from "../llm/openai.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
@@ -42,21 +43,13 @@ afterAll(async () => {
   await owner?.close();
   await database?.stop();
 });
-const FORBIDDEN_FIELDS = [
-  "previous_response_id",
-  "metadata",
-  "user",
-  "safety_identifier",
-  "conversation",
-  "background",
-];
 const ALLOWED_PATHS = new Set(["/v1/responses", "/v1/embeddings", "/v1/audio/transcriptions"]);
 /** openai-data-policy.md rule 6: stateless, anonymous and allowlisted only. */
 function expectPolicy(requests: typeof mock.requests): void {
   for (const request of requests) {
     expect(ALLOWED_PATHS.has(request.path)).toBe(true);
     expect(request.body.store).toBe(false);
-    for (const field of FORBIDDEN_FIELDS) expect(request.body).not.toHaveProperty(field);
+    for (const field of FORBIDDEN_RESPONSE_FIELDS) expect(request.body).not.toHaveProperty(field);
   }
 }
 let policyChecked = 0;
