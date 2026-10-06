@@ -11,6 +11,7 @@ import { Menu, MenuItem, MenuPanel } from "@/components/ui/menu.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
 import { canCreateFolder } from "@/lib/folders/tree.ts";
 import { libraryHref } from "@/lib/library/params.ts";
+import { FolderMoveSheet } from "./folder-move-sheet.tsx";
 import { FolderNameSheet, type FolderNameTarget } from "./folder-name-sheet.tsx";
 
 /** Folder actions for the current Library scope (keyboard- and touch-reachable everywhere). */
@@ -26,6 +27,7 @@ export function FolderActions({
   const toast = useToast();
   const [sheet, setSheet] = useState<FolderNameTarget | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   const remove = async () => {
     if (!current) return;
@@ -73,6 +75,11 @@ export function FolderActions({
             </MenuItem>
           ) : null}
           {current ? (
+            <MenuItem icon="move" onSelect={() => setMoving(true)}>
+              Move folder to…
+            </MenuItem>
+          ) : null}
+          {current ? (
             <MenuItem icon="delete" destructive onSelect={() => setConfirm(true)}>
               Delete folder…
             </MenuItem>
@@ -83,6 +90,11 @@ export function FolderActions({
         target={sheet}
         onClose={() => setSheet(null)}
         onDone={(id) => sheet?.mode === "create" && router.push(libraryHref({ folder: id }))}
+      />
+      <FolderMoveSheet
+        folder={moving ? current : null}
+        folders={folders}
+        onClose={() => setMoving(false)}
       />
       <ConfirmDialog
         open={confirm}

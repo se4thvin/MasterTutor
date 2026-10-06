@@ -62,12 +62,9 @@ function FolderNameForm({
       onDone?.(folder.id);
       onClose();
     } catch (err) {
-      const copy = errorCopy(err);
-      setError(
-        copy === "That name is already taken."
-          ? "A folder with that name already exists here."
-          : copy,
-      );
+      const conflict =
+        typeof err === "object" && err !== null && "code" in err && err.code === "CONFLICT";
+      setError(conflict ? "A folder with that name already exists here." : errorCopy(err));
     } finally {
       setPending(false);
     }

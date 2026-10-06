@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
-import { patchNoteDetail, patchNoteLists } from "@/lib/notes/cache.ts";
+import { applyNoteFolder, restoreNote, snapshotNote } from "@/lib/notes/move-cache.ts";
 
 /** Optimistic move with an Undo toast. Undo is itself a move, so it never offers Undo again. */
 export function useMoveNote() {
@@ -18,16 +18,8 @@ export function useMoveNote() {
       options: { undo?: boolean } = {},
     ): Promise<void> {
       if (to === from) return;
-      const apply = (folderId: string | null) => {
-        patchNoteLists(qc, (items) =>
-          items.map((n) => (n.id === noteId ? { ...n, folderId, filedBy: "user" } : n)),
-        );
-        patchNoteDetail(qc, noteId, (d) => ({
-          ...d,
-          note: { ...d.note, folderId, filedBy: "user" },
-        }));
-      };
-      apply(to);
+      const snapshot = snapshotNote(qc, noteId);
+      applyNoteFolder(qc, noteId, to);
       try {
         await api.notes.move({ noteId, folderId: to });
         if (!options.undo) {
@@ -45,7 +37,7 @@ export function useMoveNote() {
           });
         }
       } catch {
-        apply(from);
+        restoreNote(qc, noteId, snapshot);
         toast({
           title: "Couldn't move the note.",
           description: "Nothing changed.",
@@ -53,7 +45,10 @@ export function useMoveNote() {
           tone: "danger",
         });
       } finally {
-        await qc.invalidateQueries({ queryKey: orpc.notes.list.key() });
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: orpc.notes.list.key() }),
+          qc.invalidateQueries({ queryKey: orpc.notes.get.key() }),
+        ]);
       }
     },
     [qc, toast],

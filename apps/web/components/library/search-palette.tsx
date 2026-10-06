@@ -32,8 +32,12 @@ export function SearchPalette({
 function PaletteBody({ onDone }: { onDone: () => void }) {
   const router = useRouter();
   const [q, setQ] = useState("");
-  const [active, setActive] = useState(-1);
+  const [cursor, setCursor] = useState(-1);
   const { hits, settledQuery, isFetching } = useNoteSearch(q, null);
+  // New results can be shorter than the list the cursor was on; never point past the end.
+  const active = Math.min(cursor, hits.length - 1);
+  const setActive = (next: number | ((current: number) => number)) =>
+    setCursor(typeof next === "function" ? next(active) : next);
   const choose = (i: number) => {
     const hit = hits[i];
     if (!hit) return;
@@ -67,6 +71,7 @@ function PaletteBody({ onDone }: { onDone: () => void }) {
           aria-label="Search every block"
           placeholder="Search every block"
           autoFocus
+          maxLength={500}
           value={q}
           onChange={(e) => {
             setQ(e.target.value);

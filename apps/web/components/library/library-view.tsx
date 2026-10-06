@@ -3,7 +3,7 @@
 import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
@@ -80,6 +80,7 @@ export function LibraryHeader({
   );
 }
 
+const URL_WRITE_DEBOUNCE_MS = 250;
 const KIND_ITEMS: SegmentItem<"all" | SourceKind>[] = [
   { value: "all", label: "All" },
   { value: "web", label: "Web" },
@@ -114,7 +115,40 @@ export function LibraryView() {
         ? n.folderId === null
         : n.folderId === params.folder,
   );
-  const [query, setQuery] = useState(params.q);
+  const set = (patch: Partial<LibraryParams>) =>
+    router.replace(libraryHref({ ...params, ...patch }), { scroll: false });
+
+  // The URL owns the query. `draft` is only what is being typed before the debounced URL write
+  // lands; it is dropped once the URL catches up or the folder changes, so a folder click and
+  // back/forward always show the URL's query.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [seenFolder, setSeenFolder] = useState(params.folder);
+  if (seenFolder !== params.folder) {
+    setSeenFolder(params.folder);
+    setDraft(null);
+  }
+  if (draft !== null && draft === params.q) setDraft(null);
+  const query = draft ?? params.q;
+  const latest = useRef(params);
+  useEffect(() => {
+    latest.current = params;
+  });
+  const writeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(writeTimer.current), []);
+  useEffect(() => clearTimeout(writeTimer.current), [params.folder]);
+  const typeQuery = (value: string) => {
+    setDraft(value);
+    clearTimeout(writeTimer.current);
+    writeTimer.current = setTimeout(
+      () => router.replace(libraryHref({ ...latest.current, q: value }), { scroll: false }),
+      URL_WRITE_DEBOUNCE_MS,
+    );
+  };
+  const clearQuery = () => {
+    clearTimeout(writeTimer.current);
+    setDraft("");
+    set({ q: "" });
+  };
   const search = useNoteSearch(query, params.kind);
   const searching = query.trim() !== "";
   const moveNote = useMoveNote();
@@ -125,8 +159,6 @@ export function LibraryView() {
     const note = items.find((n) => n.id === noteId);
     if (note) void moveNote(noteId, folderId, note.folderId);
   };
-  const set = (patch: Partial<LibraryParams>) =>
-    router.replace(libraryHref({ ...params, ...patch }), { scroll: false });
 
   return (
     <>
@@ -137,10 +169,8 @@ export function LibraryView() {
             <SearchField
               label="Search the library"
               value={query}
-              onChange={(v) => {
-                setQuery(v);
-                set({ q: v });
-              }}
+              onChange={typeQuery}
+              maxLength={500}
               placeholder="Search every block"
               shortcut="⌘K"
             />
@@ -178,13 +208,7 @@ export function LibraryView() {
                   >
                     Take notes on this
                   </ButtonLink>
-                  <Button
-                    size="lg"
-                    onClick={() => {
-                      setQuery("");
-                      set({ q: "" });
-                    }}
-                  >
+                  <Button size="lg" onClick={clearQuery}>
                     Clear search
                   </Button>
                 </>

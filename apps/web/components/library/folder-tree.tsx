@@ -1,12 +1,10 @@
 "use client";
 
-import type { FolderView } from "@mastertutor/contracts";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
-import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Icon, type IconName } from "@/components/ui/icon.tsx";
-import { api, orpc } from "@/lib/api/client.ts";
+import { orpc } from "@/lib/api/client.ts";
 import { cx } from "@/lib/cx.ts";
 import { FOLDER_DRAG_TYPE, NOTE_DRAG_TYPE, getDragged, setDragged } from "@/lib/folders/drag.ts";
 import {
@@ -16,11 +14,31 @@ import {
   folderPath,
   type FolderNode,
 } from "@/lib/folders/tree.ts";
+import { useMoveFolder } from "./use-move-folder.ts";
 import { libraryHref, parseLibraryParams, type LibraryScope } from "@/lib/library/params.ts";
 
-type Row =
+interface Place {
+  size: number;
+  pos: number;
+}
+type Row = (
   | { key: "all" | "unfiled"; label: string; icon: IconName; level: 1; node: null }
-  | { key: string; label: string; icon: IconName; level: number; node: FolderNode };
+  | { key: string; label: string; icon: IconName; level: number; node: FolderNode }
+) &
+  Place;
+
+/** Position among siblings for every folder; the two fixed rows count as part of the top level. */
+function placesOf(tree: readonly FolderNode[]): Map<string, Place> {
+  const places = new Map<string, Place>();
+  const walk = (siblings: readonly FolderNode[], offset: number, size: number) => {
+    siblings.forEach((node, i) => {
+      places.set(node.folder.id, { size, pos: offset + i + 1 });
+      walk(node.children, 0, node.children.length);
+    });
+  };
+  walk(tree, 2, tree.length + 2);
+  return places;
+}
 
 export function FolderTree({
   onNavigate,
@@ -34,8 +52,6 @@ export function FolderTree({
   const search = useSearchParams();
   const params = parseLibraryParams(search);
   const scope: LibraryScope = pathname.startsWith("/library") ? params.folder : "";
-  const qc = useQueryClient();
-  const toast = useToast();
   const { data } = useQuery(orpc.folders.tree.queryOptions({ input: {} }));
   const folders = useMemo(() => data?.folders ?? [], [data]);
   const tree = useMemo(() => buildFolderTree(folders), [folders]);
@@ -56,11 +72,22 @@ export function FolderTree({
     }
   }
 
-  const rows: Row[] = useMemo(
-    () => [
-      { key: "all", label: "All notes", icon: "allNotes", level: 1, node: null },
-      { key: "unfiled", label: "Unfiled", icon: "unfiled", level: 1, node: null },
+  const rows: Row[] = useMemo(() => {
+    const places = placesOf(tree);
+    const top = tree.length + 2;
+    return [
+      { key: "all", label: "All notes", icon: "allNotes", level: 1, node: null, size: top, pos: 1 },
+      {
+        key: "unfiled",
+        label: "Unfiled",
+        icon: "unfiled",
+        level: 1,
+        node: null,
+        size: top,
+        pos: 2,
+      },
       ...flattenVisible(tree, expanded).map((node) => ({
+        ...(places.get(node.folder.id) ?? { size: 1, pos: 1 }),
         key: node.folder.id,
         label: node.folder.name,
         icon: (expanded.has(node.folder.id)
@@ -71,9 +98,8 @@ export function FolderTree({
         level: node.depth,
         node,
       })),
-    ],
-    [tree, expanded],
-  );
+    ];
+  }, [tree, expanded]);
   const [focusKeyState, setFocusKey] = useState<string>(scope === "" ? "all" : scope);
   // A collapsed or deleted row cannot hold the roving tab stop, or the tree would be unreachable.
   const focusKey = rows.some((r) => r.key === focusKeyState) ? focusKeyState : "all";
@@ -141,26 +167,7 @@ export function FolderTree({
     }
   };
 
-  const moveFolder = async (folderId: string, parentId: string | null) => {
-    const key = orpc.folders.tree.queryKey({ input: {} });
-    const previous = qc.getQueryData<{ folders: FolderView[] }>(key);
-    qc.setQueryData<{ folders: FolderView[] }>(key, (old) =>
-      old ? { folders: old.folders.map((f) => (f.id === folderId ? { ...f, parentId } : f)) } : old,
-    );
-    try {
-      await api.folders.move({ folderId, parentId });
-    } catch {
-      qc.setQueryData(key, previous);
-      toast({
-        title: "Couldn't move the folder.",
-        description: "Nothing changed.",
-        icon: "needsReview",
-        tone: "danger",
-      });
-    } finally {
-      await qc.invalidateQueries({ queryKey: key });
-    }
-  };
+  const moveFolder = useMoveFolder();
 
   const accepts = (row: Row, event: DragEvent): boolean => {
     const dragged = getDragged();
@@ -169,6 +176,9 @@ export function FolderTree({
     if (dragged?.kind === "folder" && types.includes(FOLDER_DRAG_TYPE)) {
       if (row.key === "unfiled") return false;
       const parentId = row.key === "all" ? null : row.key;
+      const current = folders.find((f) => f.id === dragged.id);
+      // Dropping on the current parent would be a no-op request.
+      if (!current || current.parentId === parentId) return false;
       return dragged.id !== row.key && canMoveFolder(folders, dragged.id, parentId);
     }
     return false;
@@ -201,6 +211,8 @@ export function FolderTree({
             }}
             role="treeitem"
             aria-level={row.level}
+            aria-setsize={row.size}
+            aria-posinset={row.pos}
             aria-selected={current}
             aria-expanded={row.node?.children.length ? expanded.has(row.key) : undefined}
             aria-label={row.label}

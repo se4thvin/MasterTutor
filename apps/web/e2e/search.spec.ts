@@ -47,3 +47,29 @@ test("snippets render page text as text, never HTML", async ({ page }) => {
   await page.goto("/library?q=%3Ctable");
   await expect(page.getByRole("list", { name: "Search results" })).toContainText("<table");
 });
+
+test("the search field follows the URL after a folder click and back/forward", async ({ page }) => {
+  await page.goto("/library");
+  const field = page.getByRole("searchbox", { name: "Search the library" });
+  await field.pressSequentially("warmup");
+  await expect(page).toHaveURL(/q=warmup/);
+  await expect(page.getByRole("list", { name: "Search results" })).toBeVisible();
+
+  const wide = (page.viewportSize()?.width ?? 0) > 1180;
+  if (!wide) await page.getByRole("button", { name: "Folders" }).click();
+  await page
+    .getByRole("tree", { name: "Folders" })
+    .getByRole("treeitem", { name: "Databases" })
+    .click();
+  await expect(page).not.toHaveURL(/q=/);
+  await expect(field).toHaveValue("");
+  await expect(page.getByRole("list", { name: "Search results" })).toBeHidden();
+  await expect(page.locator('[data-qa="note-card"]').first()).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(/q=warmup/);
+  await expect(field).toHaveValue("warmup");
+  await expect(page.getByRole("list", { name: "Search results" })).toBeVisible();
+  await page.goForward();
+  await expect(field).toHaveValue("");
+});
