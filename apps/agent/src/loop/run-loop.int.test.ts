@@ -1328,7 +1328,9 @@ describe("RunLoop (spec §5.3)", () => {
   });
 
   it("keeps the hooks.promptContext lines in the context after a compaction (B3 final review)", async () => {
-    const promptContext = async () => ["Saved sign-ins: site (http://site.fixtures.test): password"];
+    const promptContext = async () => [
+      "Saved sign-ins: site (http://site.fixtures.test): password",
+    ];
     const big = await setup([{ ...click(), usage: { input: 210_000 } }, done()], {
       hooks: { promptContext },
     });
