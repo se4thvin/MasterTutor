@@ -6,6 +6,7 @@ import {
   startVaultFixtures,
   type VaultFixtures,
 } from "../../../../../tests/fixtures/vault-sites/server.ts";
+import { SECRET_REDACTION } from "../runtime.ts";
 import { chromiumArgsFor } from "../testing/browser.ts";
 import { expectAbsent } from "../testing/canary.ts";
 import { startVaultScenario, type VaultScenario } from "../testing/scenario.ts";
@@ -96,7 +97,9 @@ describe("a password carried in a URL (final review I2)", () => {
     // Positive control: the browser really sent the form-encoded password in the URL.
     expect(fx.requests.some((r) => r.path === "/welcome")).toBe(true);
     const requests = JSON.stringify(s.mock.requestsFor("get-form").map((r) => r.body));
-    expect(requests).toContain("/welcome?p=");
+    // The welcome page's URL reached the model's page header, and only redacted.
+    expect(requests).toContain("Welcome");
+    expect(requests).toContain(SECRET_REDACTION);
     const [transcript] = await s.owner
       .sql`select coalesce(string_agg(item::text, E'\\n'), '') as dump from run_transcript where run_id = ${runId}`;
     const [steps] = await s.owner
