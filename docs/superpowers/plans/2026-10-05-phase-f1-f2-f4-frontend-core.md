@@ -1,5 +1,7 @@
 # Phases F1, F2 and F4: Frontend Core Implementation Plan
 
+> **D36 (supersedes this plan):** OPENAI_EMBEDDINGS_KEY is removed; web uses OPENAI_API_KEY for query embeddings.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the MasterTutor web frontend's design system and app shell (F1), the Library, folder tree and note reader/editor (F2), and the Vault and Settings/Usage/Audit screens (F4). All of it is built against the Phase 0 oRPC contracts, with an in-process fixture backend and seeded data. Every screen passes Playwright layout-QA and axe checks at 1440, 1180, 1024, 820 and 390 px, in light and dark.

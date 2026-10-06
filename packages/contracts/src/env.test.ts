@@ -59,10 +59,11 @@ describe("parseEnv", () => {
 
 describe("least privilege per service (spec §13)", () => {
   const keys = (schema: { shape: Record<string, unknown> }) => Object.keys(schema.shape);
-  it("web never gets the vault private key, the n.eko admin secret or the agent's OpenAI key", () => {
+  it("web never gets the vault private key or the n.eko admin secret, and shares the single OpenAI key (D36)", () => {
     expect(keys(WebEnv)).not.toContain("VAULT_PRIVATE_KEY");
     expect(keys(WebEnv)).not.toContain("NEKO_ADMIN_SECRET");
-    expect(keys(WebEnv)).not.toContain("OPENAI_API_KEY");
+    expect(keys(WebEnv)).toContain("OPENAI_API_KEY");
+    expect(keys(WebEnv)).not.toContain("OPENAI_EMBEDDINGS_KEY");
   });
   it("agent never gets web-only secrets", () => {
     for (const key of [

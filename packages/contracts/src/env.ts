@@ -42,7 +42,7 @@ export const WebEnv = z.object({
   NEKO_MEMBER_SECRET: Secret,
   LIVE_COOKIE_SECRET: Secret,
   TURN_SECRET: Secret,
-  OPENAI_EMBEDDINGS_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().min(1),
   OPENAI_BASE_URL: z.url().optional(),
   ...S3Access,
 });
