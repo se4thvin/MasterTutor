@@ -18,7 +18,7 @@ import {
   type WaitReason,
 } from "@mastertutor/contracts";
 
-interface StepRow {
+export interface StepRow {
   seq: number;
   phase: StepPhase;
   state: StepState;
@@ -33,7 +33,7 @@ interface PendingApproval {
   request: ApprovalRequest;
   at: string;
 }
-interface ApprovalOutcome {
+export interface ApprovalOutcome {
   id: string;
   request: ApprovalRequest | null;
   status: ApprovalStatus;
@@ -52,7 +52,7 @@ interface DownloadItem {
   bytes: number;
   at: string;
 }
-interface RunError {
+export interface RunError {
   eventId: string;
   code: string;
   message: string;
@@ -67,7 +67,7 @@ interface ControlChange {
 // Types are exported by the first task that imports them (M7: no export without an importer).
 
 /** Everything the Run view renders, folded from RunDetail + run_steps + RunEvents. */
-interface RunModel {
+export interface RunModel {
   runId: string;
   goal: string;
   status: RunStatus;
