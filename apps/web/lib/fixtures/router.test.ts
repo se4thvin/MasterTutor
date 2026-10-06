@@ -223,7 +223,12 @@ describe("fixture runs (F3)", () => {
       allowedOrigins: ["https://example.com"],
     });
     expect(created).toMatchObject({ status: "queued", approvalMode: "ask", controller: "agent" });
-    expect((await api.runs.get({ runId: created.id })).goal).toBe("Capture example.com");
+    // The run keeps its scope: get reports the origins and target folder it was created with.
+    expect(await api.runs.get({ runId: created.id })).toMatchObject({
+      goal: "Capture example.com",
+      allowedOrigins: ["https://example.com"],
+      targetFolderId: null,
+    });
     expect((await api.runs.list({ status: null, limit: 20 })).items[0]?.id).toBe(created.id);
   });
 

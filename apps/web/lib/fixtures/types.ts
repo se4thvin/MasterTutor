@@ -24,6 +24,8 @@ export interface FixtureState {
   audit: VaultAuditView[];
   settings: SettingsView;
   runs: RunSummary[];
+  /** What runs.create was given that RunSummary does not carry, by run id. */
+  runScope: Record<string, { allowedOrigins: string[]; targetFolderId: string | null }>;
 }
 
 export interface FixtureContext extends SessionContext {
