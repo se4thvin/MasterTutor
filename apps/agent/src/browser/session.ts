@@ -9,6 +9,7 @@ import {
 import { abortable } from "../runtime/abortable.ts";
 import type { Log } from "../runtime/types.ts";
 import { DownloadGate } from "./download-gate.ts";
+import { PendingNavigations } from "./pending-navigations.ts";
 import { ControlGuard } from "./guard.ts";
 import { IsolatedWorlds } from "./isolated-world.ts";
 import { NavigationTracker } from "./navigation.ts";
@@ -69,6 +70,7 @@ export class BrowserSession {
   #policy: NetworkPolicy | null = null;
   #adopting: Promise<void> | null = null;
   #downloads: DownloadGate | null = null;
+  readonly #pendingNavigations = new PendingNavigations();
 
   private constructor(
     browser: Browser,
@@ -108,6 +110,8 @@ export class BrowserSession {
       throw error;
     }
     session.#adopt(page);
+    // Navigations are tracked from the start: one already under way when a click arms is not held.
+    await session.cdp();
     context.on("page", (opened) => {
       session.#adopting = session.#onNewPage(opened).finally(() => {
         session.#adopting = null;
@@ -130,9 +134,15 @@ export class BrowserSession {
     return this.#downloads;
   }
 
+  /** True while any frame of the page has a document-replacing navigation in flight. */
+  navigationPending(): boolean {
+    return this.#pendingNavigations.any();
+  }
+
   cdp(): Promise<CDPSession> {
     if (this.#cdp === null) {
       const attempt = this.#context.newCDPSession(this.#page).then(async (cdp) => {
+        this.#pendingNavigations.watch(cdp);
         await cdp.send("DOM.enable");
         // Frame events (Page.frameAttached/frameNavigated) for the typing guard.
         await cdp.send("Page.enable");
@@ -210,6 +220,7 @@ export class BrowserSession {
       await cdp.detach().catch(() => undefined);
       return null;
     }
+    this.#pendingNavigations.watch(cdp);
     void cdp.send("Page.enable").catch(() => undefined);
     return { id: info.targetInfo.targetId, worlds: new IsolatedWorlds(cdp) };
   }
@@ -316,6 +327,7 @@ export class BrowserSession {
     page.on("framenavigated", (frame) => this.#inProcess.delete(frame));
     page.once("close", () => this.#onClose(page));
     void page.bringToFront().catch(() => undefined);
+    void this.cdp().catch(() => undefined); // navigation tracking on the new tab
   }
 
   async #onNewPage(page: Page): Promise<void> {

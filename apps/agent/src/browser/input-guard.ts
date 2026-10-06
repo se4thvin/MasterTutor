@@ -401,7 +401,9 @@ async function armGuard(
         ),
         timeout(ARM_BUDGET_MS).then(() => false),
       ]);
-      return changed || !flushed;
+      // A navigation already under way when the guard armed is never held (its new document
+      // gets no guard): while any is in flight the page counts as changed.
+      return changed || !flushed || session.navigationPending();
     },
     focusMoved: async () =>
       home
