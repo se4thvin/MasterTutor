@@ -222,3 +222,14 @@ test.describe("Runs badge (StatusMark)", () => {
     ).toBe("0.001s");
   });
 });
+
+test("under reduced motion the toolbar hairline stays hidden at the top of the page", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/library");
+  const toolbar = page.locator(".toolbar").first();
+  await expect(toolbar).toBeVisible();
+  // The scroll-linked fade must keep its scroll mapping: hidden until the page scrolls.
+  expect(await toolbar.evaluate((el) => getComputedStyle(el, "::after").opacity)).toBe("0");
+});

@@ -1,3 +1,4 @@
+import { failChunksContaining } from "./helpers/chunks.ts";
 import type { Page } from "@playwright/test";
 import { movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, isWide, test } from "./helpers/test.ts";
@@ -194,4 +195,29 @@ test("the pill flies in from beyond the glyph and nothing clips it (I2)", async 
   const offsets = samples.filter(Boolean).map((v) => parseFloat(v));
   expect(Math.max(...offsets), samples.join(" | ")).toBeGreaterThan(16);
   await expect(sheet).toBeHidden();
+});
+
+test("if the move sheet can't load, Move to… says so and works on the next try", async ({
+  page,
+}) => {
+  let offline = true;
+  await failChunksContaining(page, "move-pill", () => offline);
+  await page.goto(OPT);
+  const card = page.locator('[data-qa="note-card"]').filter({ hasText: /Learning-rate warmup/ });
+  const openSheet = async () => {
+    await card.getByRole("button", { name: /Actions for Learning-rate warmup/ }).click();
+    await page.getByRole("menuitem", { name: "Move to…" }).click();
+  };
+  await openSheet();
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't open Move to…" })).toBeVisible();
+  await expect(card).toBeVisible();
+  offline = false;
+  // The retry is a reload: the bundler keeps a failed chunk for the page's lifetime.
+  await page
+    .getByRole("group")
+    .filter({ hasText: "Couldn't open Move to…" })
+    .getByRole("button", { name: "Reload" })
+    .click();
+  await openSheet();
+  await expect(page.getByRole("dialog", { name: "Move to…" })).toBeVisible();
 });

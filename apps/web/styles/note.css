@@ -228,6 +228,13 @@
     animation-duration: var(--motion-dur-shimmer);
     animation-timing-function: var(--motion-ease-out);
   }
+  /* Reduced motion: the picked block keeps a static highlight instead of the fading flash. */
+  @media (prefers-reduced-motion: reduce) {
+    .blk-flash::before {
+      opacity: 1;
+      animation-name: none;
+    }
+  }
   @keyframes flash {
     from {
       opacity: 1;

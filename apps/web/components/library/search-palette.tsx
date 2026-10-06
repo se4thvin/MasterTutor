@@ -2,6 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { Suspense } from "react";
+import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
 
 // The body (search, results, LayoutMotion) is fetched when the browser is idle, not on first load.
@@ -24,9 +25,11 @@ export function SearchPalette({
         <Dialog.Viewport className="palette-viewport">
           <Dialog.Popup className="palette glass">
             {open ? (
-              <Suspense fallback={null}>
-                <PaletteBody onDone={() => onOpenChange(false)} />
-              </Suspense>
+              <ChunkBoundary what="search" onFailed={() => onOpenChange(false)}>
+                <Suspense fallback={null}>
+                  <PaletteBody onDone={() => onOpenChange(false)} />
+                </Suspense>
+              </ChunkBoundary>
             ) : null}
           </Dialog.Popup>
         </Dialog.Viewport>
