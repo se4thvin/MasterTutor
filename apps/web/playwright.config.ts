@@ -7,7 +7,7 @@ const PORT = 3100;
 const baseURL = `http://localhost:${PORT}`;
 const testEnv = parseEnv(readFileSync(new URL("../../.env.test", import.meta.url), "utf8"));
 
-/** WebEnv for the fixture server. The DB and S3 addresses are never contacted in fixture mode. */
+/** WebEnv for the fixture server. The DB, S3 and OpenAI are never contacted in fixture mode. */
 const serverEnv: Record<string, string> = {
   DATABASE_URL: "postgres://web:unused@127.0.0.1:1/mastertutor",
   BETTER_AUTH_SECRET: testEnv["BETTER_AUTH_SECRET"] ?? "",
@@ -16,7 +16,8 @@ const serverEnv: Record<string, string> = {
   NEKO_MEMBER_SECRET: testEnv["NEKO_MEMBER_SECRET"] ?? "",
   LIVE_COOKIE_SECRET: testEnv["LIVE_COOKIE_SECRET"] ?? "",
   TURN_SECRET: testEnv["TURN_SECRET"] ?? "",
-  OPENAI_EMBEDDINGS_KEY: testEnv["OPENAI_EMBEDDINGS_KEY"] ?? "",
+  // D36: one OPENAI_API_KEY. The fixture API never calls OpenAI, so a placeholder satisfies WebEnv.
+  OPENAI_API_KEY: "unused-in-fixture-mode",
   S3_ENDPOINT: "http://127.0.0.1:1",
   S3_ACCESS_KEY_ID: testEnv["S3_WEB_ACCESS_KEY_ID"] ?? "",
   S3_SECRET_ACCESS_KEY: testEnv["S3_WEB_SECRET_ACCESS_KEY"] ?? "",
