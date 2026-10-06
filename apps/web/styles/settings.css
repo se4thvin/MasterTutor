@@ -1,0 +1,43 @@
+@layer components {
+  .slist {
+    max-width: 48rem;
+    padding-bottom: 5rem;
+  }
+  .group-title {
+    margin: 2rem 0.25rem 0.6rem;
+  }
+  .group-pad {
+    padding: 1.1rem;
+  }
+  .settings-value {
+    min-width: 0;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .row-link {
+    color: var(--label);
+    &:hover {
+      background: var(--fill-2);
+      text-decoration: none;
+    }
+    & > span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    & .ic {
+      color: var(--label-2);
+    }
+  }
+  .defaults {
+    display: grid;
+    gap: 1.25rem;
+  }
+  .defaults-budget {
+    display: grid;
+    gap: 0.9rem;
+    @variant md {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+}

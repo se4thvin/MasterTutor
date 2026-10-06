@@ -17,7 +17,7 @@ test("library search shows block hits with highlights and a recovery path", asyn
 });
 
 test("⌘K opens the palette from anywhere and Enter opens the block", async ({ page }) => {
-  await page.goto("/runs");
+  await page.goto("/settings");
   // The shortcut is attached in an effect; pressing before hydration would silently do nothing.
   await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
   await page.keyboard.press("ControlOrMeta+k");

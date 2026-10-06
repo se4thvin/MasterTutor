@@ -35,3 +35,20 @@ describe("base.css layering", () => {
     expect(focus).not.toContain("border-radius");
   });
 });
+
+describe("component stylesheets", () => {
+  const SHEETS = [
+    "components.css",
+    "overlays.css",
+    "shell.css",
+    "library.css",
+    "note.css",
+    "vault.css",
+    "settings.css",
+  ];
+  it.each(SHEETS)("%s keeps every rule inside @layer components", (sheet) => {
+    const blocks = topLevel(readFileSync(new URL(`./${sheet}`, import.meta.url), "utf8"));
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const prelude of blocks) expect(prelude).toBe("@layer components");
+  });
+});
