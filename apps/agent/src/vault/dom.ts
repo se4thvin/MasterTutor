@@ -71,11 +71,16 @@ const INSPECT_FN = `function () {
   const inputType = getter(HTMLInputElement.prototype, "type");
   const hasAttr = (x, name) => Element.prototype.hasAttribute.call(x, name);
   // elements leaves out image buttons (HTML spec): those submitting this form, inside it or
-  // linked by form=, are found through their own form getter (final review I1).
+  // linked by form=, are found through their own form getter (final review I1), searched in the
+  // form's own tree, which is a shadow root when the form lives in one (final re-review I1).
   const formOf = getter(HTMLInputElement.prototype, "form");
+  const treeOf = (form) => {
+    const root = Node.prototype.getRootNode.call(form);
+    const proto = root instanceof Document ? Document.prototype : DocumentFragment.prototype;
+    return Array.from(proto.querySelectorAll.call(root, "input"));
+  };
   const imageSubmitters = scope instanceof HTMLFormElement
-    ? Array.from(Document.prototype.querySelectorAll.call(e.ownerDocument, "input"))
-        .filter((x) => inputType.call(x) === "image" && formOf.call(x) === scope)
+    ? treeOf(scope).filter((x) => inputType.call(x) === "image" && formOf.call(x) === scope)
     : [];
   const controls = scope instanceof HTMLFormElement
     ? [...Array.from(elementsOf.call(scope)), ...imageSubmitters]

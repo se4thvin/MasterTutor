@@ -300,6 +300,20 @@ export const getForm = () =>
      <button id="submit" type="submit">Sign in</button></form>`,
   );
 
+/**
+ * The same, built inside an open shadow root: document.querySelectorAll never sees it (final
+ * re-review I1).
+ */
+export const offsiteImageSubmitInShadow = (formAction: string, outside: boolean) => {
+  const image = `<input id="go" type="image" alt="Sign in" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20"${outside ? ' form="f"' : ""} formaction="${esc(formAction)}">`;
+  const inner = `<form id="f" method="post" action="/password"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">${outside ? "" : image}</form>${outside ? image : ""}`;
+  return layout(
+    "Sign in",
+    `<div id="host"></div>
+     <script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(inner)};</script>`,
+  );
+};
+
 /** A reveal toggle next to the field, and an unrelated "Show details" button nearby (M6). */
 export const showDetails = () =>
   layout(

@@ -611,6 +611,33 @@ describe("fill_credential", () => {
     }
   });
 
+  it("names where an image submit button posts when the form lives in a shadow root (final re-review I1)", async () => {
+    for (const path of ["/offsite-image-shadow-inside", "/offsite-image-shadow-outside"]) {
+      await tb.page.goto(`${login}${path}`);
+      // Positive control: the browser itself would submit the form to evil through that button.
+      expect(
+        await tb.page.evaluate(() => {
+          const root = document.getElementById("host")!.shadowRoot!;
+          const image = root.getElementById("go") as HTMLInputElement;
+          return image.form === root.getElementById("f") ? image.formAction : null;
+        }),
+        path,
+      ).toBe(`${fx.origin("evil")}/collect`);
+      const d = deps();
+      expect(await ask(d, "site", "password", "#password"), path).toMatchObject({
+        postsTo: fx.origin("evil"),
+      });
+      expect(
+        await fillCredential(d, ctx(), {
+          alias: "site",
+          field: "password",
+          target: await refs.ref("#password"),
+        }),
+        path,
+      ).toEqual({ error: "approval_required" });
+    }
+  });
+
   it("in auto mode hands the page to a person, naming where the form posts (needs_human)", async () => {
     await tb.page.goto(`${login}/offsite-form`);
     const auto = ctx(policyApproval(fx.origin("evil")));
