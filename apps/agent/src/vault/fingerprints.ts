@@ -115,11 +115,25 @@ export function createSecretFingerprints(): SecretFingerprints {
     windows.set(parts.length, lengths);
   };
 
-  const register = (run: RunEntry, secret: string) => {
+  const registerForm = (run: RunEntry, secret: string) => {
     const words = secret.match(WORD) ?? [];
     if (words.length > 0) return add(run, run.windows, words);
     const tokens = secret.match(TOKEN) ?? [];
     if (tokens.length > 0) add(run, run.bareWindows, tokens);
+  };
+
+  /**
+   * A secret as typed, and as a URL carries it: percent-encoded (encodeURIComponent) and
+   * form-encoded (%XX, + for a space), as a GET form or a redirect puts it in the query. "%23"
+   * turns "#9" into the word "239", so each form is its own run of words (final review I2).
+   */
+  const register = (run: RunEntry, secret: string) => {
+    const forms = new Set([
+      secret,
+      encodeURIComponent(secret),
+      new URLSearchParams({ v: secret }).toString().slice("v=".length),
+    ]);
+    for (const form of forms) registerForm(run, form);
   };
 
   /** Spans of `text` where a registered run of parts occurs, whatever separates the parts. */

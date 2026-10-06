@@ -257,6 +257,10 @@ export async function startVaultFixtures(options: {
         return html(res, page.offsiteImageSubmit(`${origin("evil")}/collect`, false));
       case "GET /offsite-image-outside":
         return html(res, page.offsiteImageSubmit(`${origin("evil")}/collect`, true));
+      case "GET /get-form":
+        return html(res, page.getForm());
+      case "GET /welcome":
+        return html(res, page.message("Welcome"));
       case "GET /offsite-split":
         return html(
           res,

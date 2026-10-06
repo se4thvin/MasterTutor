@@ -38,6 +38,23 @@ describe("secret fingerprints (the mask source B1 consumes)", () => {
     expect(prints.forRun("run-b").redact("MARMOT4CANARY8VELVET")).toBe("MARMOT4CANARY8VELVET");
   });
 
+  it("redacts a secret percent-encoded in a URL, and form-encoded with + for spaces (final review I2)", () => {
+    const prints = createSecretFingerprints();
+    const secret = "Kestrel#9!pass word";
+    prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret });
+    const mask = prints.forRun("run-a");
+    for (const url of [
+      `https://a.example/signin?p=${encodeURIComponent(secret)}`,
+      "https://a.example/signin?p=Kestrel%239!pass%20word",
+      `https://a.example/signin?${new URLSearchParams({ p: secret }).toString()}`,
+      "https://a.example/signin?p=Kestrel%239%21pass+word&next=%2F",
+    ])
+      expect(mask.redact(url), url).toContain(SECRET_REDACTION);
+    expect(mask.redact("https://a.example/signin?p=Kestrel%2399!pass")).not.toContain(
+      SECRET_REDACTION,
+    );
+  });
+
   it("matches a secret with punctuation or spaces across any separators", () => {
     const prints = createSecretFingerprints();
     prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "p@ss-W0rd!" });
