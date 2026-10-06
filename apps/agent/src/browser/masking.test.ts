@@ -19,6 +19,8 @@ interface OopifFake {
   failures?: number;
   /** The frame's renderer never answers (a busy third-party frame). */
   hang?: boolean;
+  /** After it is forgotten, no new session can be attached (a transient attach failure). */
+  noReattach?: boolean;
 }
 interface FakeOptions {
   frames?: Array<{ id: string; securityOrigin: string; url?: string }>;
@@ -111,7 +113,8 @@ function fakeSession(options: FakeOptions = {}) {
     worlds: async () => ({ evaluate: async () => [] }),
     outOfProcessFrames: async () => {
       for (const id of Object.keys(options.oopif ?? {}))
-        if (!oopifSessions.has(id)) oopifSessions.set(id, { send: oopifSend(id) });
+        if (!oopifSessions.has(id) && !(forgotten.includes(id) && options.oopif![id]!.noReattach))
+          oopifSessions.set(id, { send: oopifSend(id) });
       return new Map([...oopifSessions].map(([id, own]) => [id, { cdp: own }]));
     },
     forgetFrame: async (frameId: string) => {
@@ -274,6 +277,21 @@ describe("out-of-process frames (R-E5, review I1/I2)", () => {
     const dirty = fakeSession({ oopif: { ad: { ax: [{ value: "echo hunter2-secret" }] } } });
     expect(await containsSecretText(dirty.session, secret, signal)).toBe(true);
     expect(dirty.count("oopif:Accessibility.getFullAXTree")).toBe(1);
+  });
+
+  it("fails closed when a still-live frame cannot be re-attached after a failure (N1)", async () => {
+    // The page tree omits out-of-process frames, so "not in the page tree" is not "gone".
+    const fake = fakeSession({
+      oopif: { ad: { ax: [{ value: "echo hunter2-secret" }], failures: 1, noReattach: true } },
+    });
+    expect(await containsSecretText(fake.session, secret, signal)).toBe(true);
+    expect(fake.forgotten).toEqual(["ad"]);
+  });
+
+  it("forgets (detaches) a frame whose read timed out, so hung reads do not pile up (N3)", async () => {
+    const fake = fakeSession({ oopif: { slow: { hang: true }, ok: { ax: [] } } });
+    expect(await containsSecretText(fake.session, secret, signal)).toBe(true);
+    expect(fake.forgotten).toEqual(["slow"]);
   });
 
   it("forgets a stale frame session and retries once; still failing fails closed (I2a)", async () => {
