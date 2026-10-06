@@ -1,0 +1,110 @@
+import type { ComputerAction, FunctionToolName, ScrollPosition } from "@mastertutor/contracts";
+import type { BlockedNavigation } from "../browser/network-policy.ts";
+import type { TargetDescription } from "../browser/page-helpers.ts";
+import type { BrowserStorageState } from "../browser/storage-state.ts";
+import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
+import type { ActionGate, ComputerRun } from "../tools/computer.ts";
+import type { ToolRun } from "../tools/registry.ts";
+
+export const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
+export const PLAIN_TARGET: TargetDescription = {
+  label: "",
+  tag: "div",
+  isFormSubmit: false,
+  formKind: null,
+  isSecretField: false,
+  editable: true,
+  interactive: false,
+};
+
+/** A scriptable LoopBrowser for loop and worker tests (no Chromium). */
+export class FakeLoopBrowser implements LoopBrowser {
+  url = "http://site.fixtures.test/";
+  title = "Fixture";
+  domHash = "d".repeat(64);
+  captcha = false;
+  phash = 1n;
+  scroll: ScrollPosition = { x: 0, y: 0 };
+  readonly targets = new Map<string, TargetDescription>();
+  /** Batches that ran to the end (every action passed the gate). */
+  readonly computerRuns: ComputerAction[][] = [];
+  /** Every single action that passed the gate, including those of a batch stopped later. */
+  readonly executed: ComputerAction[] = [];
+  readonly functionRuns: Array<{ name: string; args: unknown }> = [];
+  readonly navigations: string[] = [];
+  blocked: BlockedNavigation[] = [];
+  computerHook:
+    ((actions: readonly ComputerAction[], signal: AbortSignal) => Promise<void>) | null = null;
+  functionOutput = (name: string): string => JSON.stringify({ ok: true, tool: name });
+
+  async observe(signal: AbortSignal): Promise<Observation> {
+    signal.throwIfAborted();
+    return {
+      url: this.url,
+      title: this.title,
+      origin: new URL(this.url).origin,
+      domHash: this.domHash,
+      screenshot: { png: TINY_PNG, width: 1, height: 1, scale: 1, masked: 0, dropped: false },
+      phash: this.phash,
+      captcha: this.captcha,
+      scroll: { ...this.scroll },
+      videoTime: null,
+    };
+  }
+
+  async targetFor(
+    action: ComputerAction,
+    previous: TargetDescription | null,
+  ): Promise<TargetDescription | null> {
+    if (action.type === "click" || action.type === "double_click")
+      return this.targets.get(`${action.x},${action.y}`) ?? PLAIN_TARGET;
+    if (action.type === "type" || action.type === "keypress") return previous ?? PLAIN_TARGET;
+    return null;
+  }
+
+  async runComputer(
+    actions: readonly ComputerAction[],
+    signal: AbortSignal,
+    gate: ActionGate,
+  ): Promise<ComputerRun> {
+    let executed = 0;
+    for (const action of actions) {
+      if (!(await gate(action)))
+        return { executed, notes: ["Stopped before an action: it needs approval."] };
+      this.executed.push(action);
+      executed += 1;
+    }
+    this.computerRuns.push([...actions]);
+    await this.computerHook?.(actions, signal);
+    return { executed, notes: [] };
+  }
+
+  async runFunction(name: FunctionToolName, args: unknown, signal: AbortSignal): Promise<ToolRun> {
+    signal.throwIfAborted();
+    this.functionRuns.push({ name, args });
+    return { output: this.functionOutput(name), notesChanged: false };
+  }
+
+  async navigate(url: string): Promise<boolean> {
+    this.navigations.push(url);
+    this.url = url;
+    return true;
+  }
+
+  async restoreView(): Promise<void> {}
+
+  drainBlockedNavigations(): BlockedNavigation[] {
+    return this.blocked.splice(0);
+  }
+
+  async collectStorage(): Promise<BrowserStorageState> {
+    return { cookies: [], origins: [] };
+  }
+
+  async applyStorage(): Promise<() => Promise<void>> {
+    return async () => undefined;
+  }
+}
