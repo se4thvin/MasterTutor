@@ -1,0 +1,17 @@
+{
+  "budgetKb": 6,
+  "routes": {
+    "/": 203.1,
+    "/design": 387.5,
+    "/library": 384.6,
+    "/new": 374.2,
+    "/notes/[noteId]": 438.6,
+    "/runs": 374.2,
+    "/settings": 381,
+    "/settings/audit": 381.8,
+    "/settings/usage": 379.4,
+    "/sign-in": 220.1,
+    "/sign-up": 220.1,
+    "/vault": 385.2
+  }
+}

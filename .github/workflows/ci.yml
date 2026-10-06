@@ -89,6 +89,8 @@ jobs:
       # A production build (no WEB_FIXTURE_API) must ship no fixture code and no server env names.
       - run: pnpm --filter @mastertutor/web build
       - run: pnpm --filter @mastertutor/web check:bundle
+      # D43: delight is welcome, unbounded weight is not. Each route may grow at most budgetKb.
+      - run: pnpm --filter @mastertutor/web check:first-load
       - run: pnpm test:ui
       - if: failure()
         uses: actions/upload-artifact@v4
