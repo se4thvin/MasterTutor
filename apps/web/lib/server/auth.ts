@@ -8,6 +8,7 @@ import {
   WorkspaceClosedError,
   type Database,
 } from "@mastertutor/db";
+import { createLogger } from "@mastertutor/contracts/server";
 import { eq } from "drizzle-orm";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -20,10 +21,20 @@ export interface AuthDeps {
   secret: string;
   baseURL: string;
   signupOpen: boolean;
+  /** Test seam; defaults to the real bootstrap. */
+  ensureMember?: typeof ensureWorkspaceMember;
 }
 
+const log = createLogger({ service: "web" });
+
 /** v1 is one trusted workspace (D4): the first sign-up owns it; later sign-ups need AUTH_SIGNUP_OPEN. */
-export function createAuth({ db, secret, baseURL, signupOpen }: AuthDeps) {
+export function createAuth({
+  db,
+  secret,
+  baseURL,
+  signupOpen,
+  ensureMember = ensureWorkspaceMember,
+}: AuthDeps) {
   return betterAuth({
     secret,
     baseURL,
@@ -46,11 +57,21 @@ export function createAuth({ db, secret, baseURL, signupOpen }: AuthDeps) {
           // one user create the workspace; a loser is removed and refused.
           after: async (created) => {
             try {
-              await ensureWorkspaceMember(db, created.id, { joinExisting: signupOpen });
+              await ensureMember(db, created.id, { joinExisting: signupOpen });
             } catch (error) {
-              if (!(error instanceof WorkspaceClosedError)) throw error;
-              await db.delete(user).where(eq(user.id, created.id));
-              throw new APIError("FORBIDDEN", { message: "Sign-up is closed" });
+              // Never leave a user with no membership: it would make hasAnyUser lock sign-up for all.
+              try {
+                await db.delete(user).where(eq(user.id, created.id));
+              } catch {
+                log.error(
+                  { userId: created.id },
+                  "could not remove user after sign-up hook failure",
+                );
+              }
+              if (error instanceof WorkspaceClosedError) {
+                throw new APIError("FORBIDDEN", { message: "Sign-up is closed" });
+              }
+              throw error;
             }
           },
         },
