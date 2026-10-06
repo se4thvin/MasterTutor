@@ -15,14 +15,14 @@ afterEach(async () => {
   session = undefined;
 });
 
-async function interactive() {
+async function interactive(path = "/interactive.html") {
   session = await BrowserSession.connect({
     cdpBaseUrl: SLOT_CDP["browser-1"] ?? "",
     allowedOrigins: () => [SITE],
     testMode: true,
     log,
   });
-  await session.goto(`${SITE}/interactive.html`, signal);
+  await session.goto(`${SITE}${path}`, signal);
   await captureModelScreenshot(session, NO_MASK_SOURCES, signal);
   const result = await readPage(session, { mode: "interactive", sinceHash: null });
   if (!("elements" in result)) throw new Error("expected elements");
@@ -97,5 +97,45 @@ describe("read_page (spec §6, D20)", () => {
     await s.goto(`${SITE}/`, signal);
     const text = await readPage(s, { mode: "text", sinceHash: null });
     expect("text" in text && text.text).toContain("Plants convert light into chemical energy.");
+  });
+});
+
+describe("read_page review gaps (group C fix round)", () => {
+  it("never leaks editable text as an element name", async () => {
+    const { s, elements } = await interactive("/gaps.html");
+    expect(JSON.stringify(elements)).not.toContain("s3cr3t");
+    expect(
+      JSON.stringify(await readPage(s, { mode: "interactive", sinceHash: null })),
+    ).not.toContain("s3cr3t");
+    const editable = elements.find((element) => element.tag === "div" && element.name === "");
+    expect(editable).toBeDefined();
+  });
+
+  it("drops a label only when its control is itself listed with a point", async () => {
+    const wrapped = await interactive();
+    expect(
+      wrapped.elements.some(
+        (element) => element.tag === "label" && element.name.startsWith("Name"),
+      ),
+    ).toBe(false);
+    const gaps = await interactive("/gaps.html");
+    const custom = gaps.elements.find(
+      (element) => element.tag === "label" && element.name.startsWith("Custom check"),
+    );
+    expect(custom?.point).not.toBeNull();
+    expect(
+      gaps.elements.some((element) => element.tag === "input" && element.name.startsWith("Custom")),
+    ).toBe(false);
+  });
+
+  it("lists cursor:pointer divs and elements that straddle the fold", async () => {
+    const { s, elements } = await interactive("/gaps.html");
+    const div = byName(elements, "Pointer div");
+    expect(div.point).not.toBeNull();
+    await s.page.mouse.click(div.point!.x / s.lastScale, div.point!.y / s.lastScale);
+    expect(await s.page.locator("#cdiv-count").textContent()).toBe("1");
+    // The span inside the pointer div is not listed separately.
+    expect(elements.filter((element) => element.name.startsWith("Pointer div"))).toHaveLength(1);
+    expect(byName(elements, "Fold button").point).not.toBeNull();
   });
 });

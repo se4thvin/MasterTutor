@@ -44,6 +44,21 @@ describe("needsApproval (spec §5.5)", () => {
       needsApproval({ type: "keypress", keys: ["ENTER"] }, target({ formKind: "search" })),
     ).toBeNull();
   });
+  it("applies risky labels to Enter and Space on the focused element", () => {
+    const risky = target({ label: "Delete account" });
+    expect(needsApproval({ type: "keypress", keys: ["ENTER"] }, risky)).toMatchObject({
+      kind: "risky_click",
+      label: "Delete account",
+    });
+    expect(needsApproval({ type: "keypress", keys: ["SPACE"] }, risky)).toMatchObject({
+      kind: "risky_click",
+    });
+    expect(needsApproval({ type: "keypress", keys: ["enter"] }, risky)).not.toBeNull();
+    expect(
+      needsApproval({ type: "keypress", keys: ["SPACE"] }, target({ label: "Check" })),
+    ).toBeNull();
+    expect(needsApproval({ type: "keypress", keys: ["A"] }, risky)).toBeNull();
+  });
   it("builds contract-valid approval requests", () => {
     const need = needsApproval(click, target({ label: "Pay now" }));
     expect(approvalRequestFor(need!, "https://a.com/x", null)).toEqual({

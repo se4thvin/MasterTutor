@@ -84,7 +84,11 @@ export function readPageScript(
       const text = clean(
         ids
           .split(/\s+/)
-          .map((id) => root.getElementById(id)?.textContent ?? "")
+          .map((id) => {
+            const target = root.getElementById(id);
+            // An editable element must never name itself with its own (typed) content.
+            return target && !target.contains(el) ? (target.textContent ?? "") : "";
+          })
           .join(" "),
         200,
       );
@@ -104,6 +108,18 @@ export function readPageScript(
       );
     }
     if (el.tagName === "IMG") return clean(el.getAttribute("alt"), 200);
+    // Editable elements hold typed content (possibly secrets): never use their text as a name.
+    if (
+      (el as HTMLElement).isContentEditable === true ||
+      /^(textbox|combobox|searchbox)$/i.test(el.getAttribute("role") ?? "")
+    ) {
+      return clean(
+        el.getAttribute("placeholder") ??
+          el.getAttribute("data-placeholder") ??
+          el.getAttribute("title"),
+        200,
+      );
+    }
     const text = clean((el as HTMLElement).innerText ?? el.textContent, 200);
     if (text) return text;
     return clean(
@@ -147,14 +163,21 @@ export function readPageScript(
     ox: number,
     oy: number,
   ) => {
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
+    // Clamp to the visible part so elements straddling the fold still get a point.
+    const left = Math.max(r.left, -ox);
+    const right = Math.min(r.right, vw - ox);
+    const top = Math.max(r.top, -oy);
+    const bottom = Math.min(r.bottom, vh - oy);
+    if (right - left < 1 || bottom - top < 1) return null;
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+    const inset = (extent: number) => Math.min(4, extent / 2);
     const probes: Array<[number, number]> = [
       [cx, cy],
-      [r.left + 4, cy],
-      [r.right - 4, cy],
-      [cx, r.top + 4],
-      [cx, r.bottom - 4],
+      [left + inset(right - left), cy],
+      [right - inset(right - left), cy],
+      [cx, top + inset(bottom - top)],
+      [cx, bottom - inset(bottom - top)],
     ];
     for (const [x, y] of probes) {
       const px = x + ox;
@@ -173,11 +196,17 @@ export function readPageScript(
 
   const visit = (root: Document | ShadowRoot, ox: number, oy: number, depth: number) => {
     if (depth > 6) return;
-    for (const el of root.querySelectorAll(SELECTOR)) {
+    for (const el of root.querySelectorAll("*")) {
       if (seen.has(el)) continue;
-      seen.add(el);
       const view = el.ownerDocument.defaultView ?? window;
       const style = view.getComputedStyle(el);
+      if (!el.matches(SELECTOR)) {
+        // Clickable divs: computed cursor:pointer where the pointer starts, outside listed controls.
+        if (style.cursor !== "pointer" || el.closest(SELECTOR)) continue;
+        const parent = el.parentElement;
+        if (parent && view.getComputedStyle(parent).cursor === "pointer") continue;
+      }
+      seen.add(el);
       if (
         style.visibility === "hidden" ||
         style.visibility === "collapse" ||
@@ -228,9 +257,17 @@ export function readPageScript(
   };
   visit(document, 0, 0, 0);
 
-  let kept = found;
+  // A label is redundant when its control is itself listed with a point (opacity:0 custom
+  // checkboxes are not listed, so their label stays as the only target).
+  const listed = new Map(found.map((entry) => [entry.el, entry.raw]));
+  const entries = found.filter((entry) => {
+    if (entry.el.tagName !== "LABEL") return true;
+    const control = (entry.el as HTMLLabelElement).control;
+    return !(control && listed.get(control)?.point);
+  });
+  let kept = entries;
   if (kept.length > arg.max) {
-    kept = found
+    kept = entries
       .map((entry, index) => ({ entry, index }))
       .sort(
         (a, b) =>
