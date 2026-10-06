@@ -271,3 +271,13 @@ export const showDetails = () =>
      <button type="button" id="reveal" aria-label="Show password">Show</button></span>
      <button type="button" id="details">Show details</button></div></form>`,
   );
+
+/** A form whose own field named "action" shadows form.action in script (carry-over 2). */
+export const shadowedAction = (action: string) =>
+  layout(
+    "Sign in",
+    `<form method="post" action="${esc(action)}">
+     <input type="hidden" name="action" value="login">
+     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
+     <button id="submit" type="submit">Sign in</button></form>`,
+  );

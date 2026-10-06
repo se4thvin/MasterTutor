@@ -19,6 +19,11 @@ export interface VaultDeps {
   logins: LoginNotifier;
   /** IMAP messages whose code was already used, keyed item:uidValidity:uid (Review Focus 5). */
   imapUsed: Set<string>;
+  /**
+   * run + alias → where a refused off-origin form posts, so the next approve phase raises a real
+   * request a person can answer (carry-over 1). Cleared by the next successful fill.
+   */
+  offsiteForms: Map<string, string>;
   /** How long fill_credential(otp) watches the inbox, polling the code box, before asking the user. */
   otpImapWaitMs: number;
   /** AGENT_TEST_MODE: allows plain-text IMAP to loopback or `greenmail` only; never skips TLS checks. */

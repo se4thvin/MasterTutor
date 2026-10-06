@@ -74,7 +74,7 @@ describe("fill_credential", () => {
     await tb.page.goto(`${login}/password`);
     const logins: string[] = [];
     expect(
-      await fillApproval(deps(), { workspaceId: env.workspaceId }, tb.page.url(), {
+      await fillApproval(deps(), { id: runId, workspaceId: env.workspaceId }, tb.page.url(), {
         alias: "first",
         field: "username",
         target: "e1",
@@ -357,5 +357,73 @@ describe("fill_credential", () => {
     const [row] = await env.owner
       .sql`select count(*)::int as n from vault_audit where run_id = ${runId}`;
     expect(row?.n).toBe(0);
+  });
+
+  it("asks a person about an off-origin form, even for a granted alias (carry-over 1)", async () => {
+    await tb.page.goto(`${login}/offsite-form`);
+    const d = deps();
+    const call = async (approval: ReturnType<typeof humanApproval> | null) =>
+      fillCredential(d, ctx(approval), {
+        alias: "site",
+        field: "password",
+        target: await refs.ref("#password"),
+      });
+    expect(await call(null)).toEqual({ error: "approval_required" });
+    // The next approve phase raises a real request that names where the form posts.
+    expect(
+      await fillApproval(d, { id: runId, workspaceId: env.workspaceId }, tb.page.url(), {
+        alias: "site",
+        field: "password",
+        target: "e1",
+      }),
+    ).toEqual({
+      kind: "credential_first_use",
+      alias: "site",
+      origin: login,
+      postsTo: fx.origin("evil"),
+    });
+    // A policy (auto-mode) approval never clears the pin: a person must look.
+    expect(await call(policyApproval())).toEqual({ error: "needs_human" });
+    expect(await tb.page.inputValue("#password")).toBe("");
+    expect(await call(humanApproval(env.userId))).toEqual({ ok: true });
+    // Once filled, the request is not raised again for a same-origin page.
+    await tb.page.goto(`${login}/password`);
+    expect(
+      await fillApproval(d, { id: runId, workspaceId: env.workspaceId }, tb.page.url(), {
+        alias: "site",
+        field: "password",
+        target: "e1",
+      }),
+    ).toBeNull();
+  });
+
+  it("reads a form's real action even when a field named 'action' shadows it, and treats javascript: as off-origin (carry-over 2)", async () => {
+    for (const path of ["/shadowed-action", "/javascript-action"]) {
+      await tb.page.goto(`${login}${path}`);
+      expect(
+        await fillCredential(deps(), ctx(), {
+          alias: "site",
+          field: "password",
+          target: await refs.ref("#password"),
+        }),
+        path,
+      ).toEqual({ error: "approval_required" });
+    }
+  });
+
+  it("registers no masks when the value does not fit the boxes (N2)", async () => {
+    await env.seedItem({ alias: "shortpin", origin: login, secrets: { pin: "1234" } });
+    await grant("shortpin");
+    await tb.page.goto(`${login}/pin`);
+    const d = deps();
+    expect(
+      await fillCredential(d, ctx(), {
+        alias: "shortpin",
+        field: "pin",
+        target: await refs.ref("#pin0"),
+      }),
+    ).toEqual({ error: "fill_failed" });
+    expect(d.fingerprints.forRun(runId).nodeIds(await tb.session.cdp())).toEqual([]);
+    expect(d.fingerprints.forRun(runId).hasSecrets()).toBe(false);
   });
 });

@@ -60,9 +60,16 @@ const INSPECT_FN = `function () {
     if (rect.right + scrollX <= 0 || rect.bottom + scrollY <= 0) return false;
     return style.clipPath === "none" && (style.clip === "auto" || style.clip === "");
   };
-  // Where submitting this form sends it: the form's action and any submit button's formaction (M4).
+  // Where submitting this form sends it: the form's action and any submit button's formaction
+  // (M4), read through the prototype getters so a field named "action" cannot shadow them.
+  // A non-network scheme (javascript:, about:) has origin "null": off-origin, never trusted.
+  const getter = (proto, name) => Object.getOwnPropertyDescriptor(proto, name).get;
+  const actionOf = getter(HTMLFormElement.prototype, "action");
+  const formActionOf = (b) =>
+    getter(b instanceof HTMLButtonElement ? HTMLButtonElement.prototype : HTMLInputElement.prototype, "formAction").call(b);
+  const query = (root, selector) => Element.prototype.querySelectorAll.call(root, selector);
   const submits = scope
-    ? [scope.action, ...Array.from(scope.querySelectorAll("button[formaction], input[formaction]"), (b) => b.formAction)]
+    ? [actionOf.call(scope), ...Array.from(query(scope, "button[formaction], input[formaction]"), formActionOf)]
     : [];
   const formOrigins = Array.from(new Set(submits.map((url) => { try { return new URL(url, location.href).origin; } catch { return "invalid"; } })));
   return {
@@ -71,7 +78,7 @@ const INSPECT_FN = `function () {
     autocomplete: (e.getAttribute("autocomplete") || "").toLowerCase().split(/\\s+/).filter(Boolean),
     inputMode: (e.getAttribute("inputmode") || "").toLowerCase(),
     hints,
-    hasPasswordInScope: scope ? Array.from(scope.querySelectorAll("input")).some((x) => x.type === "password" && shown(x)) : false,
+    hasPasswordInScope: scope ? Array.from(query(scope, "input")).some((x) => x.type === "password" && shown(x)) : false,
     visible: shown(e),
     editable: !(e.disabled || e.readOnly),
     maxLength: tag === "input" ? e.maxLength : -1,
@@ -164,14 +171,18 @@ export async function openTarget(
   const { frameTree } = await cdp.send("Page.getFrameTree");
   for (const { id: frameId, loaderId } of frames(frameTree as FrameTree)) {
     const objectId = await worlds
-      .inContext(frameId, async (executionContextId) => {
-        const resolved = await cdp.send("DOM.resolveNode", {
-          backendNodeId,
-          executionContextId,
-          objectGroup: OBJECT_GROUP,
-        });
-        return resolved.object.objectId ?? null;
-      })
+      .inContext(
+        frameId,
+        async (executionContextId) => {
+          const resolved = await cdp.send("DOM.resolveNode", {
+            backendNodeId,
+            executionContextId,
+            objectGroup: OBJECT_GROUP,
+          });
+          return resolved.object.objectId ?? null;
+        },
+        loaderId,
+      )
       .catch(() => null);
     if (!objectId) continue;
     const own = await cdp
@@ -243,6 +254,12 @@ async function clearBoxes(boxes: readonly GroupBox[]): Promise<void> {
   );
 }
 
+/** One part per box (split boxes take a character each), or null when the value does not fit. */
+export function partsFor(group: readonly GroupBox[], text: string): string[] | null {
+  const parts = group.length === 1 ? [text] : Array.from(text);
+  return parts.length === group.length ? parts : null;
+}
+
 /**
  * Fills the boxes in order. The write is bound to each element, so it can never land in a
  * document that replaced this one. Any navigation before the last box, or a cross-origin one at
@@ -256,8 +273,8 @@ export async function fillGroup(
 ): Promise<FillOutcome> {
   const first = group[0];
   if (!first) return "failed";
-  const parts = group.length === 1 ? [text] : Array.from(text);
-  if (parts.length !== group.length) return "length_mismatch";
+  const parts = partsFor(group, text);
+  if (parts === null) return "length_mismatch";
   const { cdp } = first.node;
   const { frameTree } = await cdp.send("Page.getFrameTree");
   const watched = new Set([frameTree.frame.id, first.node.frameId]);

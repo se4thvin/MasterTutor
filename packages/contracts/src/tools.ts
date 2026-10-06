@@ -144,6 +144,8 @@ export const CREDENTIAL_ERROR_CODES = [
   "approval_required",
   "otp_unavailable",
   "field_not_stored",
+  /** Only a person can approve this use (a form that posts off-origin, in auto mode). */
+  "needs_human",
   "fill_failed",
 ] as const;
 export const CredentialErrorCode = z.enum(CREDENTIAL_ERROR_CODES);
