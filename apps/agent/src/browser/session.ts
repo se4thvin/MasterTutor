@@ -292,6 +292,9 @@ export class BrowserSession {
     this.#outOfProcess.clear();
     this.#inProcess = new WeakMap();
     this.navigations.attach(page);
+    // F2: a frame that navigates, even to the same URL (a reload after a crash), may come back in
+    // another process: probe it again rather than trust the cache.
+    page.on("framenavigated", (frame) => this.#inProcess.delete(frame));
     page.once("close", () => this.#onClose(page));
     void page.bringToFront().catch(() => undefined);
   }

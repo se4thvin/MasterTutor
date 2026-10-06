@@ -151,4 +151,25 @@ describe("BrowserSession", () => {
     expect((await s.outOfProcessFrames()).size).toBe(0);
     expect(attaches).toBe(first);
   });
+
+  it("re-probes an in-process frame that reloads at the same URL (F2: it may come back out of process)", async () => {
+    const s = await open();
+    await s.goto(`${SITE}/masking-xorigin.html`, new AbortController().signal);
+    await s.page.waitForSelector("iframe");
+    const child = s.page.frames().find((frame) => frame !== s.page.mainFrame())!;
+    await child.waitForLoadState("domcontentloaded");
+    let attaches = 0;
+    const original = s.context.newCDPSession.bind(s.context);
+    s.context.newCDPSession = async (target) => {
+      attaches += 1;
+      return original(target);
+    };
+    await s.outOfProcessFrames();
+    const first = attaches;
+    const reloaded = s.page.waitForEvent("framenavigated", (frame) => frame === child);
+    await child.evaluate(() => location.reload());
+    await reloaded;
+    await s.outOfProcessFrames();
+    expect(attaches).toBeGreaterThan(first);
+  });
 });

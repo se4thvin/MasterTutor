@@ -346,6 +346,15 @@ describe("out-of-process frames (R-E5, review I1/I2)", () => {
     expect(await pixel(shot.png, 150, 125)).toEqual([0, 0, 0]);
   });
 
+  it("still drops after the frame's session was swapped: fills are found by frame id (N2)", async () => {
+    const fake = fakeSession({ oopif: { login: { ax: [] } } });
+    // Registered on a session that has since been forgotten and replaced.
+    const mask: MaskSources = { ...sources(), filledFrames: () => ["login"] };
+    expect((await captureModelScreenshot(fake.session, mask, signal)).dropped).toBe(true);
+    const unrelated: MaskSources = { ...sources(), filledFrames: () => ["gone"] };
+    expect((await captureModelScreenshot(fake.session, unrelated, signal)).dropped).toBe(false);
+  });
+
   it("drops the page when the vault filled a field inside an out-of-process frame (I1)", async () => {
     const fake = fakeSession({ oopif: { login: { ax: [] } } });
     await fake.session.outOfProcessFrames();
