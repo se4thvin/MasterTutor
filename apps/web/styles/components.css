@@ -1,0 +1,12 @@
+@layer components {
+  .glass {
+    background: var(--glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+  }
+  .design-glass-demo {
+    background:
+      radial-gradient(circle at 20% 30%, var(--ambient), transparent 60%),
+      linear-gradient(135deg, var(--tint-wash), var(--signal-wash));
+  }
+}

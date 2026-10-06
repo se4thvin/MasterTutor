@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
     "test": "vitest run --project unit",
+    "test:ui": "pnpm --filter @mastertutor/web test:ui",
     "test:int": "vitest run --project integration",
     "env:init": "node scripts/env-init.ts",
     "compose:test": "docker compose --env-file .env.test -f compose.yml -f compose.test.yml",
