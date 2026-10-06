@@ -2,9 +2,11 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { useRouter } from "next/navigation";
-import { useState, type KeyboardEvent } from "react";
+import { m, useReducedMotion } from "motion/react";
+import { useState, type CSSProperties, type KeyboardEvent } from "react";
+import { LayoutMotion } from "@/components/motion/layout-motion.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
-import { cx } from "@/lib/cx.ts";
+import { transitions } from "@/lib/motion-tokens.ts";
 import { Highlight, hitHref } from "./search-results.tsx";
 import { useNoteSearch } from "./use-note-search.ts";
 
@@ -21,7 +23,11 @@ export function SearchPalette({
         <Dialog.Backdrop className="scrim" />
         <Dialog.Viewport className="palette-viewport">
           <Dialog.Popup className="palette glass">
-            {open ? <PaletteBody onDone={() => onOpenChange(false)} /> : null}
+            {open ? (
+              <LayoutMotion>
+                <PaletteBody onDone={() => onOpenChange(false)} />
+              </LayoutMotion>
+            ) : null}
           </Dialog.Popup>
         </Dialog.Viewport>
       </Dialog.Portal>
@@ -31,6 +37,7 @@ export function SearchPalette({
 
 function PaletteBody({ onDone }: { onDone: () => void }) {
   const router = useRouter();
+  const reduceMotion = useReducedMotion();
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(-1);
   const { hits, settledQuery, isFetching } = useNoteSearch(q, null);
@@ -91,10 +98,24 @@ function PaletteBody({ onDone }: { onDone: () => void }) {
               id={`palette-${i}`}
               role="option"
               aria-selected={i === active}
-              className={cx("hit", i === active && "hit-active")}
+              className="hit"
+              style={{ "--i": Math.min(i, 8) } as CSSProperties}
               onPointerEnter={() => setActive(i)}
               onClick={() => choose(i)}
             >
+              {i !== active ? null : reduceMotion ? (
+                // Reduced motion: no layoutId, since motion's instant layout transition would still
+                // paint one frame at the previous row.
+                <span className="hit-highlight" aria-hidden="true" />
+              ) : (
+                // One highlight that glides to the selected row (layoutId), Spotlight-style.
+                <m.span
+                  layoutId="palette-hit"
+                  className="hit-highlight"
+                  aria-hidden="true"
+                  transition={transitions.spring}
+                />
+              )}
               <b className="hit-title">{hit.title}</b>
               <span className="hit-snippet">
                 <Highlight text={hit.snippet} query={settledQuery} />

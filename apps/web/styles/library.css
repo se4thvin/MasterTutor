@@ -333,25 +333,24 @@
     position: relative;
     isolation: isolate;
   }
-  .hit-active::before {
-    content: "";
+  .hit-highlight {
     position: absolute;
     inset: 0;
     z-index: -1;
     border-radius: var(--r-sm);
     background: var(--fill-2);
-    animation-name: hit-select;
-    animation-duration: var(--motion-dur-micro);
-    animation-timing-function: var(--motion-ease-out);
   }
-  @keyframes hit-select {
+  .palette .hit {
+    animation-name: hit-in;
+    animation-duration: var(--motion-dur-base);
+    animation-timing-function: var(--motion-ease-out);
+    animation-fill-mode: both;
+    animation-delay: calc(var(--i, 0) * var(--motion-dur-stagger));
+  }
+  @keyframes hit-in {
     from {
       opacity: 0;
-      transform: scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: none;
+      translate: 0 0.25rem;
     }
   }
   .hit-title {

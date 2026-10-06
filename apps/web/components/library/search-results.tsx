@@ -1,7 +1,6 @@
 import type { SearchHit } from "@mastertutor/contracts";
 import Link from "next/link";
 import { Fragment } from "react";
-import { cx } from "@/lib/cx.ts";
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -22,28 +21,12 @@ export function Highlight({ text, query }: { text: string; query: string }) {
 export const hitHref = (hit: SearchHit) =>
   `/notes/${hit.noteId}${hit.blockId ? `#block-${hit.blockId}` : ""}`;
 
-export function SearchResults({
-  hits,
-  query,
-  activeIndex,
-  idPrefix,
-  onPick,
-}: {
-  hits: SearchHit[];
-  query: string;
-  activeIndex?: number;
-  idPrefix?: string;
-  onPick?: () => void;
-}) {
+export function SearchResults({ hits, query }: { hits: SearchHit[]; query: string }) {
   return (
     <ul className="hits" aria-label="Search results">
       {hits.map((hit, i) => (
-        <li
-          key={`${hit.noteId}-${hit.blockId ?? "note"}-${i}`}
-          id={idPrefix ? `${idPrefix}-${i}` : undefined}
-          className={cx("hit", activeIndex === i && "hit-active")}
-        >
-          <Link href={hitHref(hit)} onClick={onPick} className="hit-link">
+        <li key={`${hit.noteId}-${hit.blockId ?? "note"}-${i}`} className="hit">
+          <Link href={hitHref(hit)} className="hit-link">
             <b className="hit-title">{hit.title}</b>
             <span className="hit-snippet">
               <Highlight text={hit.snippet} query={query} />

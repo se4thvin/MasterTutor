@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+import { moved, movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 test("library search shows block hits with highlights and a recovery path", async ({ page }) => {
@@ -72,4 +74,46 @@ test("the search field follows the URL after a folder click and back/forward", a
   await expect(page.getByRole("list", { name: "Search results" })).toBeVisible();
   await page.goForward();
   await expect(field).toHaveValue("");
+});
+
+async function openPaletteWith(page: Page, query: string) {
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  const dialog = page.getByRole("dialog", { name: "Search notes" });
+  await dialog.getByRole("combobox").fill(query);
+  await expect(dialog.getByRole("option").nth(1)).toBeVisible();
+  await page.locator("html[data-layout-motion=ready]").waitFor({ state: "attached" });
+  return dialog;
+}
+
+test("the selection highlight glides between results", async ({ page }) => {
+  test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+  const dialog = await openPaletteWith(page, "warmup");
+  await page.keyboard.press("ArrowDown");
+  await expect(dialog.locator(".hit-highlight")).toHaveCount(1);
+  await startSampling(page, "glide", ".hit-highlight", "transform", 30);
+  await page.keyboard.press("ArrowDown");
+  const samples = await readSamples(page, "glide", 30);
+  expect(samples.some(moved), samples.join(" | ")).toBe(true);
+  await expect(dialog.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true");
+});
+
+test("under reduced motion the highlight jumps and results do not slide", async ({ page }) => {
+  test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const dialog = await openPaletteWith(page, "warmup");
+  expect(await movingAnimations(page, ".palette-list")).toEqual([]);
+  await page.keyboard.press("ArrowDown");
+  await startSampling(page, "jump", ".hit-highlight", "transform", 20);
+  await page.keyboard.press("ArrowDown");
+  const samples = await readSamples(page, "jump", 20);
+  expect(samples.filter(moved), samples.join(" | ")).toEqual([]);
+  await expect(dialog.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true");
+});
+
+test("the palette with results stays clean at every width", async ({ page }) => {
+  await openPaletteWith(page, "warmup");
+  await page.keyboard.press("ArrowDown");
+  await expectCleanScreen(page);
 });
