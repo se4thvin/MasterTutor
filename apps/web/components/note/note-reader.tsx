@@ -1,20 +1,31 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { ButtonLink } from "@/components/ui/button.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
+import { MEDIA } from "@/lib/breakpoints.ts";
+import { cx } from "@/lib/cx.ts";
 import { folderPath } from "@/lib/folders/tree.ts";
+import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
 import { libraryHref } from "@/lib/library/params.ts";
 import { formatDate } from "@/lib/notes/format.ts";
-import { MEDIA } from "@/lib/breakpoints.ts";
-import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
 import { BlockView } from "./block-view.tsx";
 import { MarginCallouts } from "./margin-callouts.tsx";
+import { SourcePane } from "./source-pane.tsx";
 import { SourceStrip } from "./source-strip.tsx";
+
+type View = "note" | "source";
+
+const LAYOUT_ITEMS: SegmentItem<View>[] = [
+  { value: "note", label: "Note", icon: "note" },
+  { value: "source", label: "Source | Note", icon: "split" },
+];
 
 export function NoteReader({ noteId }: { noteId: string }) {
   const { data, isPending, isError } = useQuery(orpc.notes.get.queryOptions({ input: { noteId } }));
@@ -23,7 +34,16 @@ export function NoteReader({ noteId }: { noteId: string }) {
   const [openBlockId, setOpenBlockId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
+  const [pinnedBlockId, setPinnedBlockId] = useState<string | null>(null);
   const wide = useMediaQuery(MEDIA.lg);
+  const search = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const view: View = search.get("view") === "source" ? "source" : "note";
+  const setView = (next: View) => {
+    if (next === "note") setPinnedBlockId(null);
+    router.replace(next === "source" ? `${pathname}?view=source` : pathname, { scroll: false });
+  };
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,6 +53,15 @@ export function NoteReader({ noteId }: { noteId: string }) {
     el.scrollIntoView({ block: "center" });
     setFlashId(el.dataset["blockId"] ?? null);
   }, [data]);
+
+  const focusNoteBlock = (id: string) => {
+    setPinnedBlockId(null);
+    setActiveBlockId(id);
+    document.getElementById(`block-${id}`)?.scrollIntoView({ block: "center" });
+    // Drop the class for a frame so the flash restarts on a repeat pick.
+    setFlashId(null);
+    requestAnimationFrame(() => setFlashId(id));
+  };
 
   if (isError) {
     return (
@@ -62,6 +91,9 @@ export function NoteReader({ noteId }: { noteId: string }) {
   }
 
   const path = data.note.folderId ? folderPath(folders, data.note.folderId) : [];
+  // The block to highlight in both panes: the hovered one, else the one "View in source" chose
+  // (hover events fired by the layout shift must not erase that choice).
+  const shownActive = activeBlockId ?? pinnedBlockId;
   const sourceById = new Map(data.sources.map((s) => [s.id, s]));
 
   return (
@@ -75,53 +107,70 @@ export function NoteReader({ noteId }: { noteId: string }) {
           ]}
         />
         <ToolbarSpacer />
+        <RubberSegment
+          aria-label="Layout"
+          size="sm"
+          fit="content"
+          items={LAYOUT_ITEMS}
+          value={view}
+          onChange={setView}
+        />
       </Toolbar>
-      <article className="reader" aria-labelledby="note-title">
-        <SourceStrip detail={data} />
-        <header className="reader-head">
-          {path.length ? (
-            <p className="eyebrow reader-eyebrow">{path.map((f) => f.name).join(" · ")}</p>
-          ) : null}
-          <h1 id="note-title" className="reader-title">
-            {data.note.title}
-          </h1>
-          {data.note.lede ? <p className="reader-lede">{data.note.lede}</p> : null}
-          <p className="t-foot">
-            {formatDate(data.note.createdAt)} · {data.blocks.length} blocks · filed by{" "}
-            {data.note.filedBy === "agent" ? "the agent" : "you"}
-          </p>
-        </header>
-        <div className="reader-body" ref={bodyRef}>
-          <div className="reader-content prose" data-qa-obstacle>
-            {data.blocks.map((block, i) => (
-              <BlockView
-                key={block.id}
-                block={block}
-                source={block.sourceId ? sourceById.get(block.sourceId) : undefined}
-                index={i}
-                active={activeBlockId === block.id}
+      <div className={cx("note-body", view === "source" && "note-body-split")}>
+        {view === "source" ? (
+          <SourcePane detail={data} activeBlockId={shownActive} onPick={focusNoteBlock} />
+        ) : null}
+        <article className="reader" aria-labelledby="note-title">
+          <SourceStrip detail={data} />
+          <header className="reader-head">
+            {path.length ? (
+              <p className="eyebrow reader-eyebrow">{path.map((f) => f.name).join(" · ")}</p>
+            ) : null}
+            <h1 id="note-title" className="reader-title">
+              {data.note.title}
+            </h1>
+            {data.note.lede ? <p className="reader-lede">{data.note.lede}</p> : null}
+            <p className="t-foot">
+              {formatDate(data.note.createdAt)} · {data.blocks.length} blocks · filed by{" "}
+              {data.note.filedBy === "agent" ? "the agent" : "you"}
+            </p>
+          </header>
+          <div className="reader-body" ref={bodyRef}>
+            <div className="reader-content prose" data-qa-obstacle>
+              {data.blocks.map((block, i) => (
+                <BlockView
+                  key={block.id}
+                  block={block}
+                  source={block.sourceId ? sourceById.get(block.sourceId) : undefined}
+                  index={i}
+                  active={shownActive === block.id}
+                  onActivate={setActiveBlockId}
+                  provenanceOpen={openBlockId === block.id}
+                  onProvenanceOpenChange={(open) => setOpenBlockId(open ? block.id : null)}
+                  editing={editingId === block.id}
+                  onEdit={() => setEditingId(block.id)}
+                  onEditDone={() => setEditingId(null)}
+                  onViewInSource={() => {
+                    setActiveBlockId(null);
+                    setPinnedBlockId(block.id);
+                    setView("source");
+                  }}
+                  flash={flashId === block.id}
+                />
+              ))}
+            </div>
+            {wide && view === "note" ? (
+              <MarginCallouts
+                blocks={data.blocks}
+                bodyRef={bodyRef}
+                activeBlockId={shownActive}
                 onActivate={setActiveBlockId}
-                provenanceOpen={openBlockId === block.id}
-                onProvenanceOpenChange={(open) => setOpenBlockId(open ? block.id : null)}
-                editing={editingId === block.id}
-                onEdit={() => setEditingId(block.id)}
-                onEditDone={() => setEditingId(null)}
-                onViewInSource={() => undefined}
-                flash={flashId === block.id}
+                onOpen={(id) => setOpenBlockId(id)}
               />
-            ))}
+            ) : null}
           </div>
-          {wide ? (
-            <MarginCallouts
-              blocks={data.blocks}
-              bodyRef={bodyRef}
-              activeBlockId={activeBlockId}
-              onActivate={setActiveBlockId}
-              onOpen={(id) => setOpenBlockId(id)}
-            />
-          ) : null}
-        </div>
-      </article>
+        </article>
+      </div>
     </>
   );
 }
