@@ -1,11 +1,38 @@
 "use client";
 
+import type { InfiniteData } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
 import { FolderTree } from "@/components/library/folder-tree.tsx";
+import { useMoveNote } from "@/components/library/use-move-note.ts";
+import { orpc } from "@/lib/api/client.ts";
+import type { NotesPage } from "@/lib/notes/cache.ts";
 import type { Viewer } from "@/lib/server/viewer.ts";
 import { KillBanner } from "./kill-banner.tsx";
 import { Sidebar } from "./sidebar.tsx";
+
+/** The sidebar tree has no note list of its own, so it finds the dropped note's folder in the cache. */
+function SidebarFolders() {
+  const move = useMoveNote();
+  const qc = useQueryClient();
+  return (
+    <FolderTree
+      onDropNote={(noteId, folderId) => {
+        const lists = qc.getQueriesData<InfiniteData<NotesPage> | NotesPage>({
+          queryKey: orpc.notes.list.key(),
+        });
+        const from =
+          lists
+            .flatMap(([, data]) =>
+              data ? ("pages" in data ? data.pages.flatMap((p) => p.items) : data.items) : [],
+            )
+            .find((n) => n.id === noteId)?.folderId ?? null;
+        void move(noteId, folderId, from);
+      }}
+    />
+  );
+}
 
 export function AppShell({ viewer, children }: { viewer: Viewer; children: ReactNode }) {
   const router = useRouter();
@@ -25,7 +52,7 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
         onSignOut={signOut}
         libraryTree={
           <Suspense>
-            <FolderTree onDropNote={() => undefined} />
+            <SidebarFolders />
           </Suspense>
         }
       />

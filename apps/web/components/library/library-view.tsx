@@ -1,11 +1,12 @@
 "use client";
 
-import type { SourceKind } from "@mastertutor/contracts";
+import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
@@ -22,7 +23,10 @@ import {
 import { KIND_LABEL } from "@/lib/notes/format.ts";
 import { FolderActions } from "./folder-actions.tsx";
 import { FolderTree } from "./folder-tree.tsx";
+import { MoveSheet } from "./move-sheet.tsx";
 import { NoteCard } from "./note-card.tsx";
+import { useDeleteNote } from "./use-delete-note.ts";
+import { useMoveNote } from "./use-move-note.ts";
 
 export function useLibraryScope() {
   const params = parseLibraryParams(useSearchParams());
@@ -107,12 +111,20 @@ export function LibraryView() {
         ? n.folderId === null
         : n.folderId === params.folder,
   );
+  const moveNote = useMoveNote();
+  const deleteNote = useDeleteNote();
+  const [moving, setMoving] = useState<NoteSummary | null>(null);
+  const [deleting, setDeleting] = useState<NoteSummary | null>(null);
+  const dropNote = (noteId: string, folderId: string | null) => {
+    const note = items.find((n) => n.id === noteId);
+    if (note) void moveNote(noteId, folderId, note.folderId);
+  };
   const set = (patch: Partial<LibraryParams>) =>
     router.replace(libraryHref({ ...params, ...patch }), { scroll: false });
 
   return (
     <>
-      <LibraryHeader onDropNote={() => undefined} />
+      <LibraryHeader onDropNote={dropNote} />
       <div className="wrap">
         <div className="libbar">
           <RubberSegment
@@ -166,12 +178,22 @@ export function LibraryView() {
                 note={note}
                 view={params.view}
                 index={i}
-                onMove={() => undefined}
-                onDelete={() => undefined}
+                onMove={setMoving}
+                onDelete={setDeleting}
               />
             ))}
           </div>
         )}
+        <MoveSheet note={moving} onClose={() => setMoving(null)} />
+        <ConfirmDialog
+          open={deleting !== null}
+          onOpenChange={(open) => !open && setDeleting(null)}
+          title={`Delete “${deleting?.title ?? ""}”?`}
+          description="This removes the note and its blocks. Its captured sources stay with any other notes."
+          confirmLabel="Delete Note"
+          destructive
+          onConfirm={() => deleting && void deleteNote(deleting)}
+        />
         {notes.hasNextPage ? (
           <div className="flex justify-center pb-12">
             <Button onClick={() => void notes.fetchNextPage()} disabled={notes.isFetchingNextPage}>
