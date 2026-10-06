@@ -120,3 +120,53 @@ test.describe("signed out", () => {
     expect(JSON.stringify(await res.json())).toContain("UNAUTHORIZED");
   });
 });
+
+test("signing out drops unsaved drafts, so the next person in this tab never sees them", async ({
+  page,
+  baseURL,
+}) => {
+  const note = `/notes/${ids.note(1)}`;
+  // User A's save fails, so the draft is kept (and the editor reopens with it).
+  await page.route("**/api/rpc/notes/updateBlock", (route) =>
+    route.fulfill({ status: 500, json: { json: { code: "INTERNAL_SERVER_ERROR" } } }),
+  );
+  await page.goto(note);
+  await page.getByRole("button", { name: /Provenance for block 3:/ }).click();
+  await page
+    .getByRole("dialog", { name: "Block provenance" })
+    .getByRole("button", { name: "Edit block" })
+    .click();
+  const editor = page.getByRole("textbox", { name: "Edit block" });
+  await editor.press("ControlOrMeta+a");
+  await editor.pressSequentially("User A's private draft.");
+  await editor.press("ControlOrMeta+Enter");
+  await expect(page.getByRole("textbox", { name: "Edit block" })).toContainText(
+    "User A's private draft.",
+  );
+
+  // A signs out from Settings.
+  await page.route("**/api/auth/sign-out", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "set-cookie": `${FIXTURE_AUTH_COOKIE}=signed-out; Path=/` },
+      json: { success: true },
+    }),
+  );
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/sign-in$/);
+  expect(
+    await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((k) => k.startsWith("mt:block-draft:")),
+    ),
+  ).toEqual([]);
+
+  // B signs in in the same tab and opens the same note: no editor, no draft.
+  await signInAgain(page);
+  await expect(page).toHaveURL(/\/library$/);
+  await page.goto(note);
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Edit block" })).toHaveCount(0);
+  await expect(page.locator("#main")).not.toContainText("User A's private draft.");
+  void baseURL;
+});

@@ -4,7 +4,8 @@
  * only: nothing secret is ever stored. Storage can be unavailable; then drafts live as long as
  * the page does.
  */
-const KEY = (blockId: string) => `mt:block-draft:${blockId}`;
+const PREFIX = "mt:block-draft:";
+const KEY = (blockId: string) => `${PREFIX}${blockId}`;
 const memory = new Map<string, string>();
 
 function storage(): Storage | null {
@@ -40,6 +41,22 @@ export function dropDraft(blockId: string): void {
     storage()?.removeItem(KEY(blockId));
   } catch {
     // Nothing to clean.
+  }
+}
+
+/**
+ * Forgets every draft in this tab. Explicit sign-out calls it, so the next person to sign in here
+ * (the workspace is shared) never sees unsaved text. An ended session keeps drafts on purpose:
+ * the same user is coming straight back.
+ */
+export function clearAllDrafts(): void {
+  memory.clear();
+  try {
+    const store = storage();
+    if (!store) return;
+    for (const key of Object.keys(store)) if (key.startsWith(PREFIX)) store.removeItem(key);
+  } catch {
+    // Nothing more can be done.
   }
 }
 
