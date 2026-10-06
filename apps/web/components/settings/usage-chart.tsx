@@ -1,5 +1,7 @@
+"use client";
+
 import type { UsageReport } from "@mastertutor/contracts";
-import type { CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { formatUsd, niceCeiling } from "@/lib/usage/summary.ts";
 
 const dayFormat = new Intl.DateTimeFormat("en-US", {
@@ -10,12 +12,36 @@ const dayFormat = new Intl.DateTimeFormat("en-US", {
 const dayLabel = (day: string) => dayFormat.format(new Date(`${day}T00:00:00Z`));
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
+/** Where each key moves focus, given the current bar and the bar count. */
+const KEY_STEP: Record<string, (index: number, last: number) => number> = {
+  ArrowLeft: (i) => Math.max(0, i - 1),
+  ArrowRight: (i, last) => Math.min(last, i + 1),
+  Home: () => 0,
+  End: (_i, last) => last,
+};
+
 /**
  * Single-series daily spend: accent bars, no legend, a tooltip on hover or focus for each bar,
  * and the same numbers as a table under "Show data". Bar heights are static CSS, not animated.
+ * The bars are one tab stop (roving tabindex, starting on the latest day); arrow keys, Home and
+ * End move between days, so 90 days never means 90 presses of Tab.
  */
 export function UsageChart({ perDay }: { perDay: UsageReport["perDay"] }) {
   const max = niceCeiling(Math.max(0, ...perDay.map((d) => d.usd)));
+  const bars = useRef<Array<HTMLSpanElement | null>>([]);
+  // Tracked by day, so a new range that no longer contains it falls back to the latest day.
+  const [activeDay, setActiveDay] = useState<string | null>(null);
+  const found = perDay.findIndex((d) => d.day === activeDay);
+  const active = found >= 0 ? found : perDay.length - 1;
+
+  const onKeyDown = (event: KeyboardEvent, index: number) => {
+    const step = KEY_STEP[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const next = step(index, perDay.length - 1);
+    setActiveDay(perDay[next]?.day ?? null);
+    bars.current[next]?.focus();
+  };
   const ticks = [...new Set([0, Math.floor(perDay.length / 2), perDay.length - 1])];
   return (
     <figure className="chart" aria-label="Daily spend">
@@ -32,9 +58,14 @@ export function UsageChart({ perDay }: { perDay: UsageReport["perDay"] }) {
               style={{ "--x": (i + 0.5) / perDay.length } as CSSProperties}
             >
               <span
+                ref={(el) => {
+                  bars.current[i] = el;
+                }}
                 data-qa="bar"
                 role="img"
-                tabIndex={0}
+                tabIndex={i === active ? 0 : -1}
+                onFocus={() => setActiveDay(d.day)}
+                onKeyDown={(e) => onKeyDown(e, i)}
                 className="chart-bar"
                 style={{ "--v": d.usd / max } as CSSProperties}
                 aria-label={`${dayLabel(d.day)}: ${formatUsd(d.usd)}, ${count(d.runs, "run")}`}

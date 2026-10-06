@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
+import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
@@ -21,7 +22,8 @@ const RANGES: SegmentItem<RangeKey>[] = [
 export function UsageView() {
   const [range, setRange] = useState<RangeKey>("30");
   const input = useMemo(() => rangeFor(Number(range), new Date()), [range]);
-  const { data } = useQuery(orpc.settings.usage.queryOptions({ input }));
+  const usage = useQuery(orpc.settings.usage.queryOptions({ input }));
+  const { data } = usage;
   const totals = data ? summarize(data) : null;
   return (
     <>
@@ -38,7 +40,13 @@ export function UsageView() {
       </Toolbar>
       <div className="wrap slist">
         <PageHead title="Usage" lede="What the agent spent, and how fast it worked." />
-        {!data || !totals ? (
+        {usage.isError && !data ? (
+          <LoadError
+            title="Couldn't load usage."
+            onRetry={() => void usage.refetch()}
+            retrying={usage.isFetching}
+          />
+        ) : !data || !totals ? (
           <div role="status" aria-busy="true" aria-label="Loading usage">
             <Skeleton className="h-64 rounded-lg" />
           </div>
