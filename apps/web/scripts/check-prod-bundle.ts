@@ -19,8 +19,12 @@ function* files(dir: string): Generator<string> {
   }
 }
 
-/** Strings that exist only in the fixture API (router copy and seed data). */
-const FIXTURE_MARKERS = ["Not available in fixture mode yet.", "Learning-rate warmup, explained"];
+/** Strings that exist only in fixture code: router copy, seed data, and the placeholder assets. */
+const FIXTURE_MARKERS = [
+  "Not available in fixture mode yet.",
+  "Learning-rate warmup, explained",
+  'fill="#c8e6c9"',
+];
 /**
  * Server-only env names from our WebEnv / AgentEnv schemas that must never reach the browser.
  * (BETTER_AUTH_SECRET is left out: better-auth's own client code names it in its env helper.)
