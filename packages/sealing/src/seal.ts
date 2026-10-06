@@ -21,11 +21,16 @@ export class SealError extends Error {
 
 /** Decodes VAULT_PUBLIC_KEY / VAULT_PRIVATE_KEY (standard base64 of 32 raw X25519 bytes). */
 export function decodeVaultKey(base64: string): Uint8Array {
+  // Buffer.from may decode into Node's shared pool slab: copy the key out, then zero it there.
   const bytes = Buffer.from(base64, "base64");
-  if (bytes.length !== VAULT_KEY_BYTES || bytes.toString("base64") !== base64) {
-    throw new SealError("bad_key");
+  try {
+    if (bytes.length !== VAULT_KEY_BYTES || bytes.toString("base64") !== base64) {
+      throw new SealError("bad_key");
+    }
+    return new Uint8Array(bytes);
+  } finally {
+    bytes.fill(0);
   }
-  return new Uint8Array(bytes);
 }
 
 /** Zeroes a buffer that held plaintext (spec §9: sodium.memzero after use). */

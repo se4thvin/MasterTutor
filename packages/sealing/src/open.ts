@@ -21,10 +21,17 @@ export async function generateVaultKeyPair(): Promise<{
 }> {
   const sodium = await getSodium();
   const pair = sodium.crypto_box_keypair();
-  return {
-    publicKeyBase64: Buffer.from(pair.publicKey).toString("base64"),
-    privateKeyBase64: Buffer.from(pair.privateKey).toString("base64"),
-  };
+  const privateCopy = Buffer.from(pair.privateKey);
+  try {
+    return {
+      publicKeyBase64: Buffer.from(pair.publicKey).toString("base64"),
+      privateKeyBase64: privateCopy.toString("base64"),
+    };
+  } finally {
+    // The base64 string is immutable and cannot be wiped; the bytes can (spec §9).
+    privateCopy.fill(0);
+    sodium.memzero(pair.privateKey);
+  }
 }
 
 /** Opens a box and checks its binding. The caller must wipe() the returned bytes. */

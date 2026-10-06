@@ -5,6 +5,7 @@ import { startTestDatabase, type TestDatabase } from "../testing.ts";
 import { ensureWorkspaceMember, workspaceIdOf } from "./workspace.ts";
 import {
   VaultAliasTaken,
+  VaultAuditCursorInvalid,
   VaultNotFound,
   appendVaultAudit,
   consumeOtpCode,
@@ -20,6 +21,7 @@ import {
   listVaultItems,
   loadBrowserSessions,
   loadSealedSecret,
+  putVaultSecret,
   removeVaultSecret,
   setVaultSecret,
   submitOtpCode,
@@ -35,6 +37,28 @@ let otherWorkspaceId: string;
 const userId = "u-vault";
 const origin = "https://learn.zybooks.com";
 const bytes = (n: number) => new Uint8Array([n, n, n]);
+let aliasCounter = 0;
+
+/** Every test makes its own item, so tests pass alone, reordered or shuffled (review 10). */
+async function newItem(
+  options: { secrets?: Parameters<typeof createVaultItem>[1]["secrets"]; grantedBy?: string } = {},
+): Promise<{ id: string; alias: string }> {
+  const alias = `item-${++aliasCounter}`;
+  const { id } = await createVaultItem(web.db, {
+    workspaceId,
+    alias,
+    origin,
+    label: alias,
+    imap: null,
+    secrets: options.secrets ?? [],
+    actor: userId,
+  });
+  if (options.grantedBy)
+    await insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: options.grantedBy });
+  return { id, alias };
+}
+const listed = async (alias: string) =>
+  (await listVaultItems(web.db, workspaceId)).find((row) => row.alias === alias);
 
 async function newRun(
   status: "queued" | "sleeping" | "completed" = "queued",
@@ -65,41 +89,26 @@ afterAll(async () => {
 
 describe("web side (as web_role)", () => {
   it("creates an item with sealed secrets, its fields and a create audit row", async () => {
-    const { id } = await createVaultItem(web.db, {
-      workspaceId,
-      alias: "zybooks",
-      origin,
-      label: "zyBooks",
-      imap: null,
+    const { id, alias } = await newItem({
       secrets: [
         { field: "username", sealed: bytes(1) },
         { field: "password", sealed: bytes(2) },
       ],
-      actor: userId,
     });
-    const [item] = await listVaultItems(web.db, workspaceId);
-    expect(item).toMatchObject({
-      id,
-      alias: "zybooks",
-      origin,
-      hasImap: false,
-      sessionSaved: false,
-    });
+    const item = await listed(alias);
+    expect(item).toMatchObject({ id, alias, origin, hasImap: false, sessionSaved: false });
     expect(item?.fields).toEqual(["username", "password"]);
-    const audit = await listVaultAudit(web.db, workspaceId, { limit: 10, cursor: null });
-    expect(audit.items[0]).toMatchObject({
-      action: "create",
-      alias: "zybooks",
-      approvedBy: userId,
-      outcome: "ok",
-    });
+    const rows =
+      await owner.sql`select action, approved_by, outcome from vault_audit where item_id = ${id}`;
+    expect(rows).toEqual([{ action: "create", approved_by: userId, outcome: "ok" }]);
   });
 
   it("rejects a duplicate alias", async () => {
+    const { alias } = await newItem();
     await expect(
       createVaultItem(web.db, {
         workspaceId,
-        alias: "zybooks",
+        alias,
         origin,
         label: "x",
         imap: null,
@@ -110,63 +119,73 @@ describe("web side (as web_role)", () => {
   });
 
   it("replaces and removes secrets, keeping fields in sync", async () => {
-    const item = await findVaultItemByAlias(agent.db, workspaceId, "zybooks");
+    const { id, alias } = await newItem({
+      secrets: [
+        { field: "username", sealed: bytes(1) },
+        { field: "password", sealed: bytes(2) },
+      ],
+    });
     await setVaultSecret(web.db, {
       workspaceId,
-      itemId: item!.id,
+      itemId: id,
       secret: { field: "password", sealed: bytes(3) },
       actor: userId,
     });
-    expect(await loadSealedSecret(agent.db, item!.id, "password")).toEqual(Buffer.from(bytes(3)));
+    expect(await loadSealedSecret(agent.db, id, "password")).toEqual(Buffer.from(bytes(3)));
     await setVaultSecret(web.db, {
       workspaceId,
-      itemId: item!.id,
+      itemId: id,
       secret: { field: "totp", sealed: bytes(4) },
       actor: userId,
     });
-    expect((await findVaultItemByAlias(agent.db, workspaceId, "zybooks"))?.fields).toEqual([
+    expect((await findVaultItemByAlias(agent.db, workspaceId, alias))?.fields).toEqual([
       "username",
       "password",
       "totp",
     ]);
-    await removeVaultSecret(web.db, {
-      workspaceId,
-      itemId: item!.id,
-      field: "totp",
-      actor: userId,
-    });
-    expect((await findVaultItemByAlias(agent.db, workspaceId, "zybooks"))?.fields).toEqual([
+    await removeVaultSecret(web.db, { workspaceId, itemId: id, field: "totp", actor: userId });
+    expect((await findVaultItemByAlias(agent.db, workspaceId, alias))?.fields).toEqual([
       "username",
       "password",
     ]);
-    expect(await loadSealedSecret(agent.db, item!.id, "totp")).toBeNull();
+    expect(await loadSealedSecret(agent.db, id, "totp")).toBeNull();
   });
 
   it("scopes every write to the caller's workspace", async () => {
-    const item = await findVaultItemByAlias(agent.db, workspaceId, "zybooks");
+    const { id } = await newItem();
     await expect(
       setVaultSecret(web.db, {
         workspaceId: otherWorkspaceId,
-        itemId: item!.id,
+        itemId: id,
         secret: { field: "pin", sealed: bytes(5) },
         actor: userId,
       }),
     ).rejects.toBeInstanceOf(VaultNotFound);
     await expect(
-      deleteVaultItem(web.db, { workspaceId: otherWorkspaceId, itemId: item!.id, actor: userId }),
+      deleteVaultItem(web.db, { workspaceId: otherWorkspaceId, itemId: id, actor: userId }),
     ).rejects.toBeInstanceOf(VaultNotFound);
   });
 
   it("reports and forgets a saved session", async () => {
+    const { alias } = await newItem();
+    await upsertBrowserSession(agent.db, { workspaceId, alias, origin, sealed: bytes(6) });
+    expect((await listed(alias))?.sessionSaved).toBe(true);
+    await forgetBrowserSession(web.db, { workspaceId, alias, origin, actor: userId });
+    expect((await listed(alias))?.sessionSaved).toBe(false);
+  });
+
+  it("marks a session saved only on the item it belongs to", async () => {
+    const saved = await newItem();
+    const other = await newItem();
     await upsertBrowserSession(agent.db, {
       workspaceId,
-      alias: "zybooks",
+      alias: saved.alias,
       origin,
-      sealed: bytes(6),
+      sealed: bytes(8),
     });
-    expect((await listVaultItems(web.db, workspaceId))[0]?.sessionSaved).toBe(true);
-    await forgetBrowserSession(web.db, { workspaceId, alias: "zybooks", origin, actor: userId });
-    expect((await listVaultItems(web.db, workspaceId))[0]?.sessionSaved).toBe(false);
+    expect((await listed(saved.alias))?.sessionSaved).toBe(true);
+    expect((await listed(other.alias))?.sessionSaved).toBe(false);
+    await forgetBrowserSession(web.db, { workspaceId, alias: saved.alias, origin, actor: userId });
   });
 
   it("pages the audit log newest first without overlap", async () => {
@@ -194,23 +213,31 @@ describe("web side (as web_role)", () => {
     expect(second.items.some((row) => ids.has(row.id))).toBe(false);
   });
 
+  it("refuses a malformed or impossible audit cursor instead of restarting or failing (review 6)", async () => {
+    const id = "0d857de5-7d4e-4b8a-9788-4dc60ab2890f";
+    for (const cursor of [
+      "garbage",
+      `2026-13-40T00:00:00.000Z|${id}`,
+      `2026-02-30T00:00:00.000Z|${id}`,
+    ]) {
+      await expect(
+        listVaultAudit(web.db, workspaceId, { limit: 2, cursor }),
+        cursor,
+      ).rejects.toBeInstanceOf(VaultAuditCursorInvalid);
+    }
+  });
+
   it("deletes an item with its secrets, grants and sessions, keeping its audit trail", async () => {
-    const item = await findVaultItemByAlias(agent.db, workspaceId, "zybooks");
-    await upsertBrowserSession(agent.db, {
-      workspaceId,
-      alias: "zybooks",
-      origin,
-      sealed: bytes(7),
-    });
-    await insertVaultGrant(agent.db, { itemId: item!.id, origin, approvedBy: userId });
-    await deleteVaultItem(web.db, { workspaceId, itemId: item!.id, actor: userId });
-    expect(await findVaultItemByAlias(agent.db, workspaceId, "zybooks")).toBeNull();
-    expect(await loadBrowserSessions(agent.db, workspaceId, [origin])).toEqual([]);
+    const { id, alias } = await newItem({ grantedBy: userId });
+    await upsertBrowserSession(agent.db, { workspaceId, alias, origin, sealed: bytes(7) });
+    await deleteVaultItem(web.db, { workspaceId, itemId: id, actor: userId });
+    expect(await findVaultItemByAlias(agent.db, workspaceId, alias)).toBeNull();
+    const sessions = await loadBrowserSessions(agent.db, workspaceId, [origin]);
+    expect(sessions.map((session) => session.alias)).not.toContain(alias);
     const [grants] =
-      await owner.sql`select count(*)::int as n from vault_grants where item_id = ${item!.id}`;
+      await owner.sql`select count(*)::int as n from vault_grants where item_id = ${id}`;
     expect(grants?.n).toBe(0);
-    const rows =
-      await owner.sql`select action from vault_audit where item_id = ${item!.id} order by at`;
+    const rows = await owner.sql`select action from vault_audit where item_id = ${id} order by at`;
     expect(rows.map((row) => row.action)).toContain("delete");
   });
 
@@ -218,7 +245,6 @@ describe("web side (as web_role)", () => {
     expect(await workspaceIdOf(web.db, userId)).toBe(workspaceId);
     expect(await workspaceIdOf(web.db, "nobody")).toBeNull();
   });
-
   it("submits an OTP code, requests a wake and notifies otp_ready", async () => {
     const runId = await newRun("sleeping");
     const listener = postgres(testDb.agentUrl, { max: 1 });
@@ -258,19 +284,33 @@ describe("web side (as web_role)", () => {
 
 describe("agent side (as agent_role)", () => {
   it("records grants once and reads who approved them", async () => {
-    const { id } = await createVaultItem(web.db, {
-      workspaceId,
-      alias: "site",
-      origin,
-      label: "Site",
-      imap: null,
-      secrets: [],
-      actor: userId,
-    });
+    const { id } = await newItem();
     expect(await getVaultGrantApprover(agent.db, id, origin)).toBeNull();
     await insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: userId });
     await insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: "someone-else" });
     expect(await getVaultGrantApprover(agent.db, id, origin)).toBe(userId);
+  });
+
+  it("writes a secret only into an item of the given workspace (review 9)", async () => {
+    const { id, alias } = await newItem();
+    await expect(
+      putVaultSecret(
+        agent.db,
+        { workspaceId: otherWorkspaceId, itemId: id },
+        {
+          field: "pin",
+          sealed: bytes(20),
+        },
+      ),
+    ).rejects.toBeInstanceOf(VaultNotFound);
+    expect(await loadSealedSecret(agent.db, id, "pin")).toBeNull();
+    await putVaultSecret(
+      agent.db,
+      { workspaceId, itemId: id },
+      { field: "pin", sealed: bytes(21) },
+    );
+    expect(await loadSealedSecret(agent.db, id, "pin")).toEqual(Buffer.from(bytes(21)));
+    expect((await findVaultItemByAlias(agent.db, workspaceId, alias))?.fields).toEqual(["pin"]);
   });
 
   it("recovers which aliases a run used from its successful fills", async () => {
@@ -295,35 +335,38 @@ describe("agent side (as agent_role)", () => {
   });
 
   it("loads sessions only for the requested origins", async () => {
-    await upsertBrowserSession(agent.db, { workspaceId, alias: "site", origin, sealed: bytes(11) });
-    await upsertBrowserSession(agent.db, { workspaceId, alias: "site", origin, sealed: bytes(12) });
+    const { alias } = await newItem({ grantedBy: userId });
+    await upsertBrowserSession(agent.db, { workspaceId, alias, origin, sealed: bytes(11) });
+    await upsertBrowserSession(agent.db, { workspaceId, alias, origin, sealed: bytes(12) });
     expect(await loadBrowserSessions(agent.db, workspaceId, ["https://elsewhere.example"])).toEqual(
       [],
     );
-    const [session] = await loadBrowserSessions(agent.db, workspaceId, [origin]);
+    const session = (await loadBrowserSessions(agent.db, workspaceId, [origin])).find(
+      (row) => row.alias === alias,
+    );
     expect(session?.sealed).toEqual(Buffer.from(bytes(12)));
   });
 
   it("loads a session only for an alias a human granted on that origin (S11)", async () => {
-    const { id } = await createVaultItem(web.db, {
-      workspaceId,
-      alias: "auto",
-      origin,
-      label: "Auto",
-      imap: null,
-      secrets: [],
-      actor: userId,
-    });
-    await upsertBrowserSession(agent.db, { workspaceId, alias: "auto", origin, sealed: bytes(13) });
+    const { id, alias } = await newItem();
+    await upsertBrowserSession(agent.db, { workspaceId, alias, origin, sealed: bytes(13) });
     const aliases = async () =>
       (await loadBrowserSessions(agent.db, workspaceId, [origin])).map((session) => session.alias);
-    expect(await aliases()).not.toContain("auto");
-    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias: "auto", origin })).toBe(false);
-    await owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, 'policy')`;
-    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias: "auto", origin })).toBe(false);
-    expect(await aliases()).not.toContain("auto");
-    await owner.sql`update vault_grants set approved_by = ${userId} where item_id = ${id}`;
-    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias: "auto", origin })).toBe(true);
-    expect(await aliases()).toContain("auto");
+    expect(await aliases()).not.toContain(alias);
+    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(false);
+    await owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, ${userId})`;
+    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(true);
+    expect(await aliases()).toContain(alias);
+  });
+
+  it("refuses a grant decided by policy, even from the owner role (review 8)", async () => {
+    const { id, alias } = await newItem();
+    await expect(
+      owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, 'policy')`,
+    ).rejects.toThrow(/vault_grants_human_approver/);
+    await expect(
+      insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: "policy" }),
+    ).rejects.toThrow();
+    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(false);
   });
 });

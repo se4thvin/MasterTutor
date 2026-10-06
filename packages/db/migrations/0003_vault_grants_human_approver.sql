@@ -1,0 +1,1 @@
+ALTER TABLE "vault_grants" ADD CONSTRAINT "vault_grants_human_approver" CHECK ("vault_grants"."approved_by" <> 'policy');
