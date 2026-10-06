@@ -3,6 +3,7 @@ import {
   ComputerAction,
   FUNCTION_TOOLS,
   FUNCTION_TOOL_NAMES,
+  pointerOf,
   type FunctionToolName,
   type StepAction,
 } from "@mastertutor/contracts";
@@ -191,7 +192,13 @@ export function describeCall(call: PendingCall, scale: number): StepAction | nul
   const more = call.actions.length > 1 ? ` (+${call.actions.length - 1} more)` : "";
   const point =
     "x" in first ? { x: Math.round(first.x / scale), y: Math.round(first.y / scale) } : null;
-  return { tool: "computer", summary: `${summarizeAction(first)}${more}`.slice(0, 300), point };
+  const pointer = pointerOf(first);
+  return {
+    tool: "computer",
+    summary: `${summarizeAction(first)}${more}`.slice(0, 300),
+    point,
+    ...(pointer ? { pointer } : {}),
+  };
 }
 
 export function callSignature(call: PendingCall): string {

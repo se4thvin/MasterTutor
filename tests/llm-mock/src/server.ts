@@ -159,7 +159,7 @@ export async function startLlmMock(
     body: MockRequestBody,
     name: string | null,
     output: unknown[],
-    usage: { input?: number; cached?: number; output?: number } = {},
+    usage: { input?: number; cached?: number; cacheWrite?: number; output?: number } = {},
   ) => {
     const id = nextId("resp");
     void name;
@@ -187,7 +187,10 @@ export async function startLlmMock(
       top_p: null,
       usage: {
         input_tokens: input,
-        input_tokens_details: { cached_tokens: usage.cached ?? 0, cache_write_tokens: 0 },
+        input_tokens_details: {
+          cached_tokens: usage.cached ?? 0,
+          cache_write_tokens: usage.cacheWrite ?? 0,
+        },
         output_tokens: out,
         output_tokens_details: { reasoning_tokens: 0 },
         total_tokens: input + out,

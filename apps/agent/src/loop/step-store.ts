@@ -243,7 +243,12 @@ export class StepStore {
             },
           });
         const action = step.action
-          ? { tool: step.action.tool, summary: step.action.summary, point: step.action.point }
+          ? {
+              tool: step.action.tool,
+              summary: step.action.summary,
+              point: step.action.point,
+              ...(step.action.pointer ? { pointer: step.action.pointer } : {}),
+            }
           : null;
         events.push({
           type: "step",
