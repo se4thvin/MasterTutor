@@ -12,3 +12,4 @@ Transcripts: `/private/tmp/claude-501/-Users-sethvin-nanayakkara-orca-workspaces
 | 2026-10-05-25-plan-f3-f5 | a5ec75395e4fa793a | docs/superpowers/plans/2026-10-05-phase-f3-f5-run-view-hero.md |
 | 2026-10-05-26-plan-7-10 | ae2a3247dcd5afe72 | docs/superpowers/plans/2026-10-05-phase-7-10-integration-qa-deploy-benchmark.md |
 | P0 group A impl | aef77c2c09d6c9f8e | .superpowers/sdd/2026-10-05-phase-0-foundations/group-a-report.md |
+- 28-dokploy-recon: done
