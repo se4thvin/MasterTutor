@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "../styles/tokens.css";
+@import "../styles/motion.css";
 @import "../styles/base.css";
 
 @theme inline {
@@ -47,6 +48,12 @@
   --text-shadow-*: initial;
   --blur-*: initial;
   --animate-*: initial;
+  --ease-*: initial;
+  --ease-out: var(--motion-ease-out);
+  --ease-in: var(--motion-ease-in);
+  --ease-cursor: var(--motion-ease-cursor);
+  --ease-spring: var(--motion-spring);
+  --ease-spring-soft: var(--motion-spring-soft);
   --breakpoint-*: initial;
   --breakpoint-sm: 26.3125rem;
   --breakpoint-md: 51.3125rem;
