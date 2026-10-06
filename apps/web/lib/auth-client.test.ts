@@ -23,7 +23,18 @@ describe("authErrorCopy", () => {
       "Use at least 12 characters.",
     );
   });
-  it("falls back politely", () => {
-    expect(authErrorCopy({ status: 500 }, "sign-up")).toBe("Couldn't reach the server. Try again.");
+  it("names the real failure: unexpected answers are not called a network problem (M14)", () => {
+    for (const status of [400, 500]) {
+      expect(authErrorCopy({ status }, "sign-up")).toBe("Couldn't create the account. Try again.");
+    }
+    expect(authErrorCopy({ status: 400, code: "INVALID_EMAIL" }, "sign-up")).toBe(
+      "Enter a valid email address.",
+    );
+    for (const mode of ["sign-up", "sign-in"] as const) {
+      expect(authErrorCopy({ status: 429 }, mode)).toBe(
+        "Too many attempts. Wait a moment and try again.",
+      );
+      expect(authErrorCopy({ network: true }, mode)).toBe("Couldn't reach the server. Try again.");
+    }
   });
 });
