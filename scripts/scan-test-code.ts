@@ -10,7 +10,10 @@ import { join, relative } from "node:path";
 const TEST_IMPORT =
   /\bfrom\s+["'](vitest|testcontainers|@playwright\/test)["']|\bimport\s*\(?\s*["'](vitest|testcontainers|@playwright\/test)["']/;
 
-export async function scanTestCode(root: string): Promise<string[]> {
+export async function scanTestCode(
+  root: string,
+  stats: { files: number } = { files: 0 },
+): Promise<string[]> {
   const offenders: string[] = [];
   async function visit(dir: string): Promise<void> {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -19,7 +22,7 @@ export async function scanTestCode(root: string): Promise<string[]> {
       if (entry.isDirectory()) {
         if (entry.name === "testing") offenders.push(relative(root, path));
         else await visit(path);
-      } else if (/\.test\.[cm]?[tj]sx?$/.test(entry.name)) {
+      } else if ((stats.files++, /\.test\.[cm]?[tj]sx?$/.test(entry.name))) {
         offenders.push(relative(root, path));
       } else if (
         /\.[cm]?[tj]sx?$/.test(entry.name) &&
@@ -39,7 +42,12 @@ if (import.meta.main) {
     process.stderr.write("usage: node scan-test-code.ts <dir>\n");
     process.exit(2);
   }
-  const offenders = await scanTestCode(root);
+  const stats = { files: 0 };
+  const offenders = await scanTestCode(root, stats);
   for (const path of offenders) process.stdout.write(`${path}\n`);
+  // The image check requires this line: a scan that never ran can never pass (review).
+  process.stdout.write(
+    `scan-test-code: scanned ${stats.files} files, ${offenders.length} offenders\n`,
+  );
   process.exit(offenders.length > 0 ? 1 : 0);
 }

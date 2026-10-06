@@ -13,6 +13,7 @@ function fakeCdp(owner: string, scripts: readonly string[]) {
   const contextOf = new Map<number, string>();
   const objectFrame = new Map<string, string>();
   let next = 1;
+  let childDocument = "L-child";
   const send = async (method: string, params?: Params) => {
     switch (method) {
       case "Page.getFrameTree":
@@ -21,7 +22,7 @@ function fakeCdp(owner: string, scripts: readonly string[]) {
             frame: { id: "main", loaderId: "L-main" },
             childFrames: [
               { frame: { id: "gone", loaderId: "L-gone" } },
-              { frame: { id: "child", loaderId: "L-child" } },
+              { frame: { id: "child", loaderId: childDocument } },
             ],
           },
         };
@@ -50,7 +51,14 @@ function fakeCdp(owner: string, scripts: readonly string[]) {
         throw new Error(`unexpected ${method}`);
     }
   };
-  return { cdp: { send } as unknown as CDPSession, worlds };
+  return {
+    cdp: { send } as unknown as CDPSession,
+    worlds,
+    /** The child frame loads a new document. */
+    navigate: () => {
+      childDocument = `L-child-${next++}`;
+    },
+  };
 }
 
 describe("openTarget", () => {
@@ -68,6 +76,14 @@ describe("openTarget", () => {
     const fake = fakeCdp("child", []);
     for (let i = 0; i < 3; i++) await openTarget(fake.cdp, 7);
     expect(fake.worlds).toEqual(["main", "child"]);
+  });
+
+  it("makes a new world once the frame shows a new document (N1)", async () => {
+    const fake = fakeCdp("child", []);
+    await openTarget(fake.cdp, 7);
+    fake.navigate();
+    expect(await openTarget(fake.cdp, 7)).toMatchObject({ frameId: "child" });
+    expect(fake.worlds).toEqual(["main", "child", "child"]);
   });
 
   it("reuses each frame's vault world instead of creating one per call (M2)", async () => {
