@@ -9,7 +9,7 @@ import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import type { MaskSources } from "../browser/masking.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash } from "../browser/phash.ts";
-import { captureModelScreenshot } from "../browser/screenshot.ts";
+import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
 import {
@@ -63,6 +63,37 @@ export async function detectCaptcha(page: Page): Promise<boolean> {
   return false;
 }
 
+const OBSERVE_ATTEMPTS = 3;
+
+/**
+ * One observation of one page (review M7). The URL is read first and re-checked last, so a
+ * navigation in between never pairs one page's screenshot with another page's URL and DOM hash: the
+ * capture is retaken on the new page. If the page is still moving after the last attempt, the
+ * observation carries the current URL with the screenshot withheld and no DOM hash or title.
+ */
+export async function observeOnOnePage(
+  readUrl: () => string,
+  capture: (url: string) => Promise<Observation>,
+): Promise<Observation> {
+  let url = readUrl();
+  for (let attempt = 1; ; attempt++) {
+    const observation = await capture(url);
+    const now = readUrl();
+    if (now === url) return observation;
+    if (attempt >= OBSERVE_ATTEMPTS)
+      return {
+        ...observation,
+        url: now,
+        origin: toOrigin(now),
+        title: "",
+        domHash: "",
+        screenshot: await withheldScreenshot(observation.screenshot),
+        phash: 0n,
+      };
+    url = now;
+  }
+}
+
 /** The loop's view of one slot browser (spec §3.3): observation, targets, tools and navigation. */
 export class SessionLoopBrowser implements LoopBrowser {
   readonly #session: BrowserSession;
@@ -88,16 +119,11 @@ export class SessionLoopBrowser implements LoopBrowser {
     this.#log = options.log;
   }
 
-  /**
-   * The URL is read first and re-checked last, so a navigation in between never pairs one page's
-   * screenshot with another page's URL and DOM hash; the capture is retried on the new page.
-   */
-  async observe(signal: AbortSignal): Promise<Observation> {
-    for (let attempt = 1; ; attempt++) {
-      const url = this.#session.page.url();
-      const observation = await this.#capture(url, signal);
-      if (this.#session.page.url() === url || attempt >= 3) return observation;
-    }
+  observe(signal: AbortSignal): Promise<Observation> {
+    return observeOnOnePage(
+      () => this.#session.page.url(),
+      (url) => this.#capture(url, signal),
+    );
   }
 
   async #capture(url: string, signal: AbortSignal): Promise<Observation> {

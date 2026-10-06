@@ -1,7 +1,7 @@
 /**
  * The only module allowed to import `openai` (data-minimisation policy D38, enforced by ESLint).
  * Every Responses call is stateless: `store:false`, and no `previous_response_id`, `metadata`,
- * `user` or `safety_identifier` ever leaves the process. Request bodies are never logged.
+ * `user`, `safety_identifier`, `conversation` or `background` ever leaves the process. Request bodies are never logged.
  *
  * Allowed endpoints are `responses.create`, `embeddings.create` and `audio.transcriptions.create`.
  * Only `responses` is exposed today; add the other two here when a phase needs them. Never expose
@@ -21,12 +21,17 @@ export type {
   Tool as ResponsesTool,
 } from "openai/resources/responses/responses";
 
-/** Fields that would make OpenAI keep or link our data; stripped from every Responses request. */
+/**
+ * Fields that would make OpenAI keep or link our data; stripped from every Responses request.
+ * `conversation` attaches the call to a stored Conversation; `background` needs stored responses.
+ */
 export const FORBIDDEN_RESPONSE_FIELDS = [
   "previous_response_id",
   "metadata",
   "user",
   "safety_identifier",
+  "conversation",
+  "background",
 ] as const;
 
 export type StatelessResponseParams = Omit<

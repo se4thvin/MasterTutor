@@ -65,6 +65,11 @@ export class SlotPool {
     return work;
   }
 
+  /** Waits for every slot restart in flight, so a stopping agent leaves no slot half-recycled. */
+  async drain(): Promise<void> {
+    await Promise.allSettled([...this.#inFlight.values()]);
+  }
+
   /** Boot and sweep: retire expired leases, then bring every restarting slot back. */
   async reconcile(): Promise<void> {
     const reclaimed = await this.#options.store.reclaimExpired(this.#options.slots);

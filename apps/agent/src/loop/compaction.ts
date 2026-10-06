@@ -11,7 +11,7 @@ export const COMPACTION_REQUEST =
   "Context is getting long. Summarize this run for a fresh context as compaction_summary JSON: the goal, the plan with done flags, progress so far, key facts (URLs, names, what is finished), and open questions.";
 
 export interface CompactionDeps {
-  caller: ModelCaller;
+  caller: Pick<ModelCaller, "call">;
   model: string;
   instructions: string;
   signal: AbortSignal;
@@ -90,7 +90,12 @@ export async function seedFromSummary(
   storage: Storage,
   summary: CompactionSummary,
   previousKeys: readonly string[],
-  current: { pageText: string; screenshot: string },
+  current: {
+    pageText: string;
+    screenshot: string;
+    /** This turn's messages from the user, carried verbatim: a summary must not paraphrase them. */
+    userMessages: readonly string[];
+  },
 ): Promise<ResponseInputItem[]> {
   const earlier = await Promise.all(
     previousKeys.slice(-2).map(async (key) => pngDataUrl(await storage.getBytes(key)).toString()),
@@ -100,6 +105,7 @@ export async function seedFromSummary(
       [
         "This run continues from a summary of earlier context. Earlier tool calls are finished; act on the current screen.",
         `Summary:\n${JSON.stringify(summary)}`,
+        ...current.userMessages,
         current.pageText,
         "Earlier screenshots, oldest first, then the current screen:",
       ],
