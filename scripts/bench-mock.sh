@@ -12,12 +12,9 @@ trap 'stop_stack --profile e2e --profile bench' EXIT
 "${DC[@]}" --profile e2e --profile bench up -d --build --wait --wait-timeout 600
 # The stack above is new, so an account file from an earlier run names a user it never had.
 rm -f .env.bench-account
-# On a CI slot the app is reached on the slot's TEST_HTTP_PORT, but its origin stays PUBLIC_URL (D48).
-env_test() { grep -E "^$1=" .env.test | cut -d= -f2 || true; }
-PORT="${TEST_HTTP_PORT:-$(env_test TEST_HTTP_PORT)}"
-ORIGIN="${PUBLIC_URL:-$(env_test PUBLIC_URL)}"
-pnpm bench init --stack test --base-url "http://localhost:${PORT:-18080}" \
-  --origin "${ORIGIN:-http://localhost:18080}"
+# The app's base URL is its origin, on a CI slot too: compose.test.yml sets BETTER_AUTH_URL from
+# the same TEST_HTTP_PORT (D48).
+pnpm bench init --stack test --base-url "$(stack_base_url)"
 pnpm bench run --suite fixtures --mock --only activities --track both --max-total-usd 10
 pnpm bench run --suite fixtures --mock --only activities --track computer_use \
   --approval-mode bypass --acknowledge-bypass --max-total-usd 10
