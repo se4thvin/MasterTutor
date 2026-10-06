@@ -86,7 +86,7 @@ export function createVault(options: VaultOptions): Vault {
       await passkeys.disarm(runId);
       fingerprints.forgetRun(runId);
       sessions.forgetRun(runId);
-      forgetFillState(deps, runId);
+      forgetFillState(deps, runId, deps.now());
     },
   };
 }

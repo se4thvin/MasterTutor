@@ -27,10 +27,13 @@ export function totpCode(seed: string, nowMs: number): string | null {
   }
 }
 
-/** The RFC 6238 time step a code at `nowMs` belongs to. */
-export function totpStep(seed: string, nowMs: number): number | null {
+/** The RFC 6238 time step a code at `nowMs` belongs to, and when that step's window ends. */
+export function totpWindow(seed: string, nowMs: number): { step: number; until: number } | null {
   const spec = parseTotpSeed(seed);
-  return spec ? Math.floor(nowMs / (spec.period * 1000)) : null;
+  if (!spec) return null;
+  const periodMs = spec.period * 1000;
+  const step = Math.floor(nowMs / periodMs);
+  return { step, until: (step + 1) * periodMs };
 }
 
 /**
