@@ -15,15 +15,25 @@ const THREE_BAN = {
   message: "three may be imported only from components/hero/.",
 };
 const LUCIDE_BAN = { group: ["lucide-react"], message: "Use <Icon> from components/ui/icon.tsx." };
-const MOTION_COMPONENT_BAN = {
-  name: "motion/react",
+const MOTION_COMPONENT_BAN = ["motion/react", "motion/react-client"].map((name) => ({
+  name,
   importNames: ["motion"],
   message: "Use m.* inside LazyMotion (spec §11.4).",
-};
+}));
 const webImports = (patterns) => [
   "error",
-  { paths: [MOTION_COMPONENT_BAN], patterns: [ANIMATION_BANS, ...patterns] },
+  { paths: MOTION_COMPONENT_BAN, patterns: [ANIMATION_BANS, ...patterns] },
 ];
+
+/** Dynamic import() is how banned libraries usually sneak in; it needs its own selector. */
+const dynamicImportBan = (groups) => [
+  "error",
+  {
+    selector: `ImportExpression[source.value=/^(${groups.join("|")})(\\/|$)/]`,
+    message: "This library may not be imported here, dynamically or statically (spec §11.3–11.4).",
+  },
+];
+const ALL_BANNED = ["gsap", "ogl", "framer-motion", "matter-js", "@react-three", "@hugeicons"];
 
 export default defineConfig(
   {
@@ -83,6 +93,7 @@ export default defineConfig(
       "motion/no-raw-motion": "error",
       "motion/no-raw-motion-classes": "error",
       "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN]),
+      "no-restricted-syntax": dynamicImportBan([...ALL_BANNED, "three", "lucide-react"]),
     },
   },
   {
@@ -95,11 +106,17 @@ export default defineConfig(
   },
   {
     files: ["apps/web/components/ui/icons.ts"],
-    rules: { "no-restricted-imports": webImports([THREE_BAN]) },
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN]),
+      "no-restricted-syntax": dynamicImportBan([...ALL_BANNED, "three"]),
+    },
   },
   {
     files: ["apps/web/components/hero/**"],
-    rules: { "no-restricted-imports": webImports([LUCIDE_BAN]) },
+    rules: {
+      "no-restricted-imports": webImports([LUCIDE_BAN]),
+      "no-restricted-syntax": dynamicImportBan([...ALL_BANNED, "lucide-react"]),
+    },
   },
   prettier,
 );

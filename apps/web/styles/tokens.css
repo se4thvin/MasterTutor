@@ -1,5 +1,6 @@
 /* Design tokens: spec §11.1, run 12, D25. Components read these through Tailwind @theme or var(). */
 /* light */
+/* --label-3 is decorative only (not AA text); use --label-2 for text. */
 :root {
   color-scheme: light;
   --bg: #fafafa;

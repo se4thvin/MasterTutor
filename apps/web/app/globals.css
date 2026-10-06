@@ -20,12 +20,14 @@
   --color-on-tint: var(--on-tint);
   --color-tint-wash: var(--tint-wash);
   --color-signal: var(--signal);
+  --color-on-signal: var(--on-signal);
   --color-signal-wash: var(--signal-wash);
   --color-ok: var(--ok);
   --color-ok-wash: var(--ok-wash);
   --color-warn: var(--warn);
   --color-warn-wash: var(--warn-wash);
   --color-danger: var(--danger);
+  --color-on-danger: var(--on-danger);
   --color-danger-wash: var(--danger-wash);
   --font-*: initial;
   --font-sans: var(--font-ui);

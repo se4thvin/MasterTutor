@@ -3,6 +3,7 @@
  * Usage: node scripts/generate-motion-css.ts        (writes the file)
  */
 import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { spring } from "motion";
 import { durations, easings, press, springs } from "../lib/motion-tokens.ts";
 
@@ -66,7 +67,7 @@ export function renderMotionCss(): string {
   return lines.join("\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   writeFileSync(new URL("../styles/motion.css", import.meta.url), renderMotionCss());
   console.log("wrote styles/motion.css");
 }
