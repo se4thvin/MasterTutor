@@ -6,6 +6,7 @@
 @import "../styles/overlays.css";
 @import "../styles/shell.css";
 @import "../styles/library.css";
+@import "../styles/note.css";
 
 @theme inline {
   --color-*: initial;
