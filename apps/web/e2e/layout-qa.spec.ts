@@ -28,6 +28,21 @@ test.describe("layout detector self-test", () => {
     expect(await findLayoutIssues(page)).toEqual([]);
   });
 
+  test("flags text clipped by its own overflow:hidden box", async ({ page }) => {
+    await page.setContent(
+      `<div style="width:60px;overflow:hidden;white-space:nowrap">long text that is cut off</div>`,
+    );
+    expect((await findLayoutIssues(page)).join("\n")).toContain("text clipped by its own box");
+  });
+
+  test("ellipsis exempts only text, not other clipped content", async ({ page }) => {
+    await page.setContent(`
+      <div style="width:80px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">
+        <span style="display:inline-block;width:200px;height:10px;background:red"><svg width="200" height="10"></svg></span>
+      </div>`);
+    expect((await findLayoutIssues(page)).join("\n")).toContain("clipped by");
+  });
+
   test("ignores ::after hit-area overflow and hidden Base UI inputs", async ({ page }) => {
     await page.setContent(`
       <style>.hit{position:relative;white-space:nowrap}.hit::after{content:"";position:absolute;inset:-0.25rem}</style>
