@@ -12,7 +12,7 @@ import {
 } from "@mastertutor/contracts";
 import type { Database } from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
-import type { ResponseInputItem } from "openai/resources/responses/responses";
+import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
@@ -34,7 +34,7 @@ import {
 import { addUsage, usageDelta } from "../llm/pricing.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
-import { ChainLost, ContextOverflow, interruptionOf } from "../runtime/errors.ts";
+import { ContextOverflow, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import {
   actionItem,
@@ -60,12 +60,13 @@ import {
 } from "./call-result.ts";
 import {
   seedFromSummary,
-  summarizeChain,
+  summarizeContext,
   summarizeTranscript,
   type Compacted,
 } from "./compaction.ts";
 import type { RunHooks } from "./hooks.ts";
 import type { LoopBrowser, Observation } from "./loop-browser.ts";
+import { buildModelInput, rehydrateImages } from "./model-input.ts";
 import { lastInputTokens, readRunControl, type RunSnapshot } from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
 import {
@@ -406,21 +407,27 @@ export class RunLoop {
     const messages = await loadUserMessages(db, runId, this.#userCursor);
     const cursor = messages.at(-1)?.id ?? this.#userCursor;
     const extra = this.#firstTurn ? await hooks.promptContext(this.#run) : [];
-    let input = this.#buildInput(
+    const pending = this.#buildInput(
       obs,
       messages.map((message) => message.text),
       extra,
     );
-    let previous = this.#run.previousResponseId;
+    const history = await loadTranscript(db, runId);
     const transcript: TranscriptEntry[] = [];
     const deltas: Usage[] = [];
-    const record = (dir: "in" | "out", items: readonly unknown[], responseId: string | null) => {
+    const record = (
+      dir: "in" | "out",
+      items: readonly unknown[],
+      responseId: string | null,
+      mark?: "compaction" | "seed",
+    ) => {
       for (const item of items)
         transcript.push({
           dir,
           item: item as Record<string, unknown>,
           responseId,
           userEventId: dir === "in" ? cursor : null,
+          ...(mark ? { mark } : {}),
         });
     };
     const compactionDeps = {
@@ -429,54 +436,52 @@ export class RunLoop {
       instructions: AGENT_INSTRUCTIONS,
       signal,
     };
-    const reseed = async (compacted: Compacted) => {
-      record("in", compacted.input, null);
-      record("out", compacted.call.reply.output, compacted.call.reply.id);
+    /** Starts a fresh context from a summary; this turn's outputs were answered inside the compaction. */
+    const seed = async (compacted: Compacted): Promise<ResponseInputItem[]> => {
+      record("in", pending, null, "compaction");
+      record("out", compacted.call.reply.output, compacted.call.reply.id, "compaction");
       deltas.push(usageDelta(compacted.call.model, compacted.call.reply.usage, 0));
       // Only this run's own transcript screenshots are rehydrated (Group D: resolveGarageRef).
-      const keys = recentScreenshotKeys(await loadTranscript(db, runId), runId, 2);
-      return seedFromSummary(storage, compacted.summary, keys, {
+      const keys = recentScreenshotKeys(history, runId, 2);
+      const items = await seedFromSummary(storage, compacted.summary, keys, {
         pageText: this.#pageHeader(obs),
         screenshot: pngDataUrl(obs.screenshot.png),
       });
+      record("in", items, null, "seed");
+      return items;
     };
-    /** Rebuild from run_transcript: the chain is gone or too long to summarize through. */
+    /** Rebuild from the run_transcript text log when the context itself is too large to send. */
     const rebuild = async () =>
-      reseed(
-        await summarizeTranscript(
-          compactionDeps,
-          await loadTranscript(db, runId),
-          this.#run.goal,
-          input,
-        ),
-      );
-    const recoverable = (error: unknown) =>
-      error instanceof ChainLost || error instanceof ContextOverflow;
+      seed(await summarizeTranscript(compactionDeps, history, this.#run.goal, pending));
+    let compacted = false;
+    let input: ResponseInputItem[] = [];
     const request = () => ({
       model: this.#run.model,
       instructions: AGENT_INSTRUCTIONS,
       input,
-      previousResponseId: previous,
       format: "agent_turn" as const,
-      withTools: true,
     });
     const obtain = async (): Promise<ModelCall> => {
-      if (previous !== null && this.#lastInputTokens > config.compactionInputTokens) {
+      // Stateless (D37): the whole context is rebuilt from run_transcript for every request.
+      const context = await rehydrateImages(buildModelInput(history, pending), runId, storage);
+      if (history.length > 0 && this.#lastInputTokens > config.compactionInputTokens) {
+        compacted = true;
         try {
-          input = await reseed(await summarizeChain(compactionDeps, previous, input));
+          input = await seed(await summarizeContext(compactionDeps, context));
         } catch (error) {
-          if (!recoverable(error)) throw error;
+          if (!(error instanceof ContextOverflow)) throw error;
           input = await rebuild();
         }
-        previous = null;
+      } else {
+        input = context;
       }
       try {
         return await caller.call(request(), signal);
       } catch (error) {
-        // ChainLost → rebuild from run_transcript; ContextOverflow → compact now (once).
-        if (!recoverable(error)) throw error;
+        // context_length_exceeded → compact now (once).
+        if (!(error instanceof ContextOverflow) || compacted) throw error;
+        compacted = true;
         input = await rebuild();
-        previous = null;
         return caller.call(request(), signal);
       }
     };
@@ -488,7 +493,7 @@ export class RunLoop {
       if (deltas.length > 0) await this.#charge(deltas).catch(() => undefined);
       throw error;
     }
-    record("in", input, null);
+    if (!compacted) record("in", pending, null);
     record("out", call.reply.output, call.reply.id);
     const parsed = parseModelOutput(call.reply.output);
     const delta = usageDelta(call.model, call.reply.usage);
@@ -497,7 +502,6 @@ export class RunLoop {
     this.#run = {
       ...this.#run,
       model: call.model,
-      previousResponseId: call.reply.id,
       plan: parsed.turn?.planUpdate ?? this.#run.plan,
       usage: deltas.reduce(addUsage, this.#run.usage),
     };
@@ -520,7 +524,6 @@ export class RunLoop {
       ],
       transcript,
       run: {
-        previousResponseId: call.reply.id,
         plan: this.#run.plan,
         usage,
         model: call.model,

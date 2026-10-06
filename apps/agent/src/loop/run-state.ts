@@ -22,7 +22,6 @@ export interface RunSnapshot {
   usage: Usage;
   allowedOrigins: string[];
   plan: Plan | null;
-  previousResponseId: string | null;
   noteId: string | null;
 }
 
@@ -37,7 +36,6 @@ export function snapshotOf(row: RunRecord): RunSnapshot {
     usage: row.usage,
     allowedOrigins: [...row.allowedOrigins],
     plan: row.plan ?? null,
-    previousResponseId: row.previousResponseId ?? null,
     noteId: row.noteId ?? null,
   };
 }

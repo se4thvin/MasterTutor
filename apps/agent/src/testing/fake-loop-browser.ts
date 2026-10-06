@@ -27,6 +27,7 @@ export class FakeLoopBrowser implements LoopBrowser {
   domHash = "d".repeat(64);
   captcha = false;
   phash = 1n;
+  png: Buffer = TINY_PNG;
   scroll: ScrollPosition = { x: 0, y: 0 };
   readonly targets = new Map<string, TargetDescription>();
   /** Batches that ran to the end (every action passed the gate). */
@@ -49,7 +50,7 @@ export class FakeLoopBrowser implements LoopBrowser {
       title: this.title,
       origin: new URL(this.url).origin,
       domHash: this.domHash,
-      screenshot: { png: TINY_PNG, width: 1, height: 1, scale: 1, masked: 0, dropped: false },
+      screenshot: { png: this.png, width: 1, height: 1, scale: 1, masked: 0, dropped: false },
       phash: this.phash,
       captcha: this.captcha,
       scroll: { ...this.scroll },

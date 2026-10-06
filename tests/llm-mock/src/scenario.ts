@@ -21,6 +21,8 @@ export type MockOutput =
 export interface MockRequestBody {
   model?: string;
   previous_response_id?: string | null;
+  store?: boolean;
+  include?: string[];
   input?: unknown;
   tools?: Array<{ type: string; name?: string }>;
   text?: { format?: { name?: string } };
@@ -33,6 +35,8 @@ export interface RecordedRequest {
   turn: number | null;
   body: MockRequestBody;
   at: number;
+  /** Request path, for the data-policy guard (only allowlisted OpenAI endpoints). */
+  path: string;
 }
 
 export interface MockTurn {

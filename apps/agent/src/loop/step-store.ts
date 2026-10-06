@@ -23,7 +23,6 @@ import type { Tx } from "../runtime/types.ts";
 import { externalizeImages, type TranscriptEntry } from "./transcript.ts";
 
 export interface RunPatch {
-  previousResponseId?: string | null;
   plan?: Plan | null;
   usage?: Usage;
   budget?: Budget;
@@ -146,9 +145,6 @@ export class StepStore {
         .update(runs)
         .set({
           lastActivityAt: sql`now()`,
-          ...(patch.previousResponseId !== undefined
-            ? { previousResponseId: patch.previousResponseId }
-            : {}),
           ...(patch.plan !== undefined ? { plan: patch.plan } : {}),
           ...(patch.usage ? { usage: patch.usage } : {}),
           ...(patch.budget ? { budget: patch.budget } : {}),

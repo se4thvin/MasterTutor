@@ -1,6 +1,5 @@
 import { FUNCTION_TOOLS, FUNCTION_TOOL_NAMES, type FunctionToolName } from "@mastertutor/contracts";
-import { zodResponsesFunction } from "openai/helpers/zod";
-import type { Tool as ResponsesTool } from "openai/resources/responses/responses";
+import { zodResponsesFunction, type ResponsesTool } from "./openai.ts";
 
 export const TOOL_DESCRIPTIONS: Record<FunctionToolName, string> = {
   read_page:

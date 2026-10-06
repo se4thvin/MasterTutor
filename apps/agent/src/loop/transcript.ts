@@ -13,6 +13,11 @@ export const TranscriptEntry = z.object({
   item: z.record(z.string(), z.unknown()),
   responseId: z.string().nullable(),
   userEventId: z.string().nullable(),
+  /**
+   * `compaction`: a compaction exchange (never replayed to the model). `seed`: the input that starts
+   * a fresh context after a compaction; model input is rebuilt from the last seed on (D37).
+   */
+  mark: z.enum(["compaction", "seed"]).optional(),
 });
 export type TranscriptEntry = z.infer<typeof TranscriptEntry>;
 
@@ -149,6 +154,8 @@ export function transcriptAsText(entries: readonly TranscriptEntry[], maxChars =
         return `tool result: ${String(item.output).slice(0, 2_000)}`;
       case "computer_call_output":
         return "tool result: [screenshot]";
+      case "reasoning":
+        return null;
       default: {
         const content = Array.isArray(item.content)
           ? (item.content as Array<Record<string, unknown>>)
@@ -160,6 +167,6 @@ export function transcriptAsText(entries: readonly TranscriptEntry[], maxChars =
       }
     }
   });
-  const joined = lines.join("\n");
+  const joined = lines.filter((line) => line !== null).join("\n");
   return joined.length > maxChars ? joined.slice(-maxChars) : joined;
 }

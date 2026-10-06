@@ -16,6 +16,7 @@ interface ScenarioState {
   elements: Array<{ name: string; point: { x: number; y: number } | null }>;
 }
 
+const FORBIDDEN_FIELDS = ["previous_response_id", "metadata", "user", "safety_identifier"];
 const TAG = /\[scenario:([a-z0-9_-]+)\]/i;
 
 async function readJson(request: IncomingMessage): Promise<MockRequestBody> {
@@ -54,10 +55,8 @@ export async function startLlmMock(
 ): Promise<LlmMock> {
   const scenarios = new Map<string, Scenario>();
   const states = new Map<string, ScenarioState>();
-  const chains = new Map<string, string>();
-  /** Every call_id the mock has issued, and the calls each response left waiting for an output. */
+  /** Every call_id the mock has issued; replayed calls and outputs must refer to one of them. */
   const issued = new Set<string>();
-  const pending = new Map<string, Set<string>>();
   const requests: RecordedRequest[] = [];
   const failures: string[] = [];
   let counter = 0;
@@ -111,6 +110,7 @@ export async function startLlmMock(
           return {
             type: "reasoning",
             id: nextId("rs"),
+            encrypted_content: `enc_${counter.toString(36)}`,
             summary: output.text ? [{ type: "summary_text", text: output.text }] : [],
           };
         case "function":
@@ -152,15 +152,11 @@ export async function startLlmMock(
     usage: { input?: number; cached?: number; output?: number } = {},
   ) => {
     const id = nextId("resp");
-    if (name) chains.set(id, name);
-    const calls = new Set<string>();
+    void name;
     for (const item of output as Array<{ type?: string; call_id?: string }>) {
-      if ((item.type === "function_call" || item.type === "computer_call") && item.call_id) {
-        calls.add(item.call_id);
+      if ((item.type === "function_call" || item.type === "computer_call") && item.call_id)
         issued.add(item.call_id);
-      }
     }
-    pending.set(id, calls);
     const input = usage.input ?? 1_000;
     const out = usage.output ?? 100;
     send(response, 200, {
@@ -189,25 +185,35 @@ export async function startLlmMock(
     });
   };
 
-  /** The real API rejects tool outputs without a call and calls without an output. */
+  /**
+   * Stateless requests carry the whole context, so pairing is checked across the whole input: every
+   * output follows its call, and every call is answered exactly once (the real API rejects both).
+   */
   const pairingProblem = (body: MockRequestBody): string | null => {
     const items = Array.isArray(body.input) ? (body.input as Array<Record<string, unknown>>) : [];
-    const outputIds = new Set<string>();
-    const callIds = new Set<string>();
+    const open = new Set<string>();
+    const answered = new Set<string>();
     for (const item of items) {
       const id = typeof item.call_id === "string" ? item.call_id : null;
       if (!id) continue;
-      if (item.type === "function_call_output" || item.type === "computer_call_output") {
-        if (!issued.has(id)) return `No tool call found for call_id ${id}.`;
-        outputIds.add(id);
-      } else if (item.type === "function_call" || item.type === "computer_call") {
-        callIds.add(id);
+      if (item.type === "function_call" || item.type === "computer_call") {
+        if (!issued.has(id)) return `Unknown call_id ${id}.`;
+        open.add(id);
+      } else if (item.type === "function_call_output" || item.type === "computer_call_output") {
+        if (!issued.has(id) || !open.has(id) || answered.has(id))
+          return `No tool call found for call_id ${id}.`;
+        open.delete(id);
+        answered.add(id);
       }
     }
-    const waiting = body.previous_response_id ? pending.get(body.previous_response_id) : undefined;
-    for (const id of [...(waiting ?? []), ...callIds]) {
-      if (!outputIds.has(id)) return `No tool output found for call_id ${id}.`;
-    }
+    for (const id of open) return `No tool output found for call_id ${id}.`;
+    return null;
+  };
+
+  /** openai-data-policy.md: stateless and anonymous, or the request is refused. */
+  const policyProblem = (body: MockRequestBody): string | null => {
+    if (body.store !== false) return "store must be false.";
+    for (const field of FORBIDDEN_FIELDS) if (field in body) return `${field} must not be sent.`;
     return null;
   };
 
@@ -215,23 +221,32 @@ export async function startLlmMock(
     void (async () => {
       if (request.method === "GET" && request.url === "/__mock/requests")
         return send(response, 200, requests);
-      if (request.method !== "POST" || request.url !== "/v1/responses")
+      const path = request.url ?? "";
+      if (request.method !== "POST" || path !== "/v1/responses") {
+        requests.push({ scenario: null, turn: null, body: {}, at: Date.now(), path });
         return send(response, 404, { error: { message: "not found" } });
+      }
       const body = await readJson(request);
-      const tagged = TAG.exec(JSON.stringify(body.input ?? ""))?.[1] ?? null;
-      const name =
-        tagged ??
-        (body.previous_response_id ? (chains.get(body.previous_response_id) ?? null) : null);
+      // Routing: the [scenario:x] tag of the goal (first user message) or of a compaction seed.
+      const name = TAG.exec(JSON.stringify(body.input ?? ""))?.[1] ?? null;
       const scenario = name ? scenarios.get(name) : undefined;
       const state = name ? states.get(name) : undefined;
       if (!scenario || !state || !name) {
-        requests.push({ scenario: null, turn: null, body, at: Date.now() });
+        requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
         return send(response, 404, {
           error: { message: "no scenario for this request", type: "invalid_request_error" },
         });
       }
+      const policy = policyProblem(body);
+      if (policy) {
+        requests.push({ scenario: name, turn: null, body, at: Date.now(), path });
+        failures.push(`${name} request: ${policy}`);
+        return send(response, 400, {
+          error: { message: policy, type: "invalid_request_error", param: null, code: null },
+        });
+      }
       if (body.text?.format?.name === "compaction_summary") {
-        requests.push({ scenario: name, turn: null, body, at: Date.now() });
+        requests.push({ scenario: name, turn: null, body, at: Date.now(), path });
         const summary = scenario.compaction ?? {
           goal: `[scenario:${name}] resumed`,
           plan: { items: [] },
@@ -251,7 +266,7 @@ export async function startLlmMock(
       }
       const pairing = pairingProblem(body);
       if (pairing) {
-        requests.push({ scenario: name, turn: null, body, at: Date.now() });
+        requests.push({ scenario: name, turn: null, body, at: Date.now(), path });
         failures.push(`${name} request: ${pairing}`);
         return send(response, 400, {
           error: { message: pairing, type: "invalid_request_error", param: "input", code: null },
@@ -259,7 +274,7 @@ export async function startLlmMock(
       }
       const index = state.cursor;
       state.cursor += 1;
-      const recorded: RecordedRequest = { scenario: name, turn: index, body, at: Date.now() };
+      const recorded: RecordedRequest = { scenario: name, turn: index, body, at: Date.now(), path };
       requests.push(recorded);
       const elements = latestElements(body);
       if (elements) state.elements = elements;

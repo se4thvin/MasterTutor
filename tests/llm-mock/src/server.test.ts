@@ -12,7 +12,7 @@ async function post(body: unknown) {
   const response = await fetch(`${mock!.url}/v1/responses`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ store: false, ...(body as Record<string, unknown>) }),
   });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
@@ -20,7 +20,7 @@ async function post(body: unknown) {
 const userInput = (text: string) => [{ role: "user", content: [{ type: "input_text", text }] }];
 
 describe("llm-mock", () => {
-  it("plays a scenario turn by turn and follows previous_response_id", async () => {
+  it("plays a scenario turn by turn from full stateless inputs", async () => {
     mock = await startLlmMock({
       scenarios: [
         {
@@ -62,10 +62,11 @@ describe("llm-mock", () => {
         },
       ],
     });
+    const history = [...userInput("[scenario:basic] go"), call];
     const second = await post({
       model: "gpt-6-astra",
-      previous_response_id: first.body.id,
       input: [
+        ...history,
         {
           type: "function_call_output",
           call_id: call.call_id,
@@ -80,8 +81,14 @@ describe("llm-mock", () => {
     const clickCall = (second.body.output as Array<Record<string, unknown>>)[0]!;
     const third = await post({
       model: "gpt-6-astra",
-      previous_response_id: second.body.id,
       input: [
+        ...history,
+        {
+          type: "function_call_output",
+          call_id: call.call_id,
+          output: "{}",
+        },
+        clickCall,
         {
           type: "computer_call_output",
           call_id: clickCall.call_id,
@@ -96,9 +103,9 @@ describe("llm-mock", () => {
       reason: "Finished",
       planUpdate: null,
     });
-    expect(
-      (await post({ model: "x", previous_response_id: third.body.id, input: [] })).status,
-    ).toBe(409);
+    expect((await post({ model: "x", input: userInput("[scenario:basic] again") })).status).toBe(
+      409,
+    );
     expect(mock.requestsFor("basic")).toHaveLength(4);
   });
 
@@ -147,18 +154,20 @@ describe("llm-mock", () => {
     });
     const first = await post({ input: userInput("[scenario:pairing]") });
     const call = (first.body.output as Array<Record<string, unknown>>)[0]!;
-    const unpaired = await post({ previous_response_id: first.body.id, input: [] });
+    const history = [...userInput("[scenario:pairing]"), call];
+    const unpaired = await post({ input: history });
     expect(unpaired.status).toBe(400);
     const unknown = await post({
-      previous_response_id: first.body.id,
-      input: [{ type: "function_call_output", call_id: "call_nope", output: "{}" }],
+      input: [...history, { type: "function_call_output", call_id: "call_nope", output: "{}" }],
     });
     expect(unknown.status).toBe(400);
-    expect(mock.failures).toHaveLength(2);
-    const ok = await post({
-      previous_response_id: first.body.id,
-      input: [{ type: "function_call_output", call_id: call.call_id, output: "{}" }],
-    });
+    const output = { type: "function_call_output", call_id: call.call_id, output: "{}" };
+    const twice = await post({ input: [...history, output, output] });
+    expect(twice.status).toBe(400);
+    const before = await post({ input: [...userInput("[scenario:pairing]"), output, call] });
+    expect(before.status).toBe(400);
+    expect(mock.failures).toHaveLength(4);
+    const ok = await post({ input: [...history, output] });
     expect(ok.status).toBe(200);
   });
 
@@ -169,5 +178,28 @@ describe("llm-mock", () => {
     expect(output[0]).toMatchObject({ type: "reasoning" });
     expect(output[1]).toMatchObject({ type: "computer_call", action: { type: "screenshot" } });
     expect(output[1]).not.toHaveProperty("actions");
+  });
+
+  it("refuses stored, chained or identified requests (openai-data-policy.md)", async () => {
+    mock = await startLlmMock({
+      scenarios: [
+        { name: "policy", turns: [{ outputs: [{ type: "turn", status: "done", reason: "ok" }] }] },
+      ],
+    });
+    const input = userInput("[scenario:policy]");
+    for (const extra of [
+      { store: true },
+      { store: undefined },
+      { previous_response_id: "resp_1" },
+      { metadata: { runId: "r" } },
+      { user: "u" },
+      { safety_identifier: "s" },
+    ])
+      expect((await post({ input, ...extra })).status).toBe(400);
+    expect(mock.failures).toHaveLength(6);
+    expect((await post({ input })).status).toBe(200);
+    const other = await fetch(`${mock.url}/v1/files`, { method: "POST", body: "{}" });
+    expect(other.status).toBe(404);
+    expect(mock.requests.at(-1)?.path).toBe("/v1/files");
   });
 });
