@@ -92,7 +92,7 @@ These close the open questions in `STATE.md`:
      - Each slot's `socat` exposes Chromium CDP on `browser-N:9223`. Headed Chrome binds 9222 to loopback only.
      - PulseAudio listens on TCP 4713, with an ACL that allows only the `agent` container.
      - n.eko listens on 8080.
-     - Only `agent` may connect to 9223 and 4713; slots run a startup iptables rule allowing the agent IP only. Only `web` and Traefik may connect to 8080.
+     - Only `agent` may connect to 9223 and 4713; slots run a startup iptables rule allowing the agent IP only. Only `agent`, `web` and Traefik may connect to 8080 (the agent's LiveView drives n.eko admin).
    - **Traefik** joins `cdp` only to reach slots on 8080.
    - **Slots are not on `backend`**, so a browser can never reach Postgres, Garage or `web`'s app port.
    - **`egress`** gives the slots internet access.

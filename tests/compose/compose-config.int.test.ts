@@ -130,6 +130,14 @@ describe("compose.yml", () => {
     expect(base.services.agent!.cap_drop).toEqual(["ALL"]);
   });
 
+  it("lets agent, web and Traefik reach n.eko on every slot", () => {
+    for (const slot of slots) {
+      expect(env(base.services[slot]!).NEKO_ALLOWED_IPS).toBe(
+        "172.30.231.10,172.30.231.11,172.30.231.12",
+      );
+    }
+  });
+
   it("defines slots once: only name and media port differ, and only media is published", () => {
     slots.forEach((slot, index) => {
       const service = base.services[slot]!;

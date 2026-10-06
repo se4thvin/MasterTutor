@@ -2,7 +2,7 @@
 # Browser-slot entrypoint. It:
 #   1. derives the n.eko member passwords;
 #   2. installs the network filter;
-#   3. wipes any previous browser state;
+#   3. wipes any previous browser state (never /downloads, see below);
 #   4. execs n.eko's supervisord.
 set -euo pipefail
 
@@ -68,7 +68,7 @@ if ! ipv6_disabled; then
   } || { echo "slot-entrypoint: cannot disable or filter IPv6" >&2; exit 70; }
 fi
 
-# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from web/Traefik, CDP (9223)
+# Ingress is default-DROP. Allowed: loopback, replies, n.eko (8080) from agent/web/Traefik, CDP (9223)
 # and PulseAudio (4713) from the agent, and the WebRTC mux port when configured.
 iptables -F INPUT
 iptables -F OUTPUT
@@ -95,10 +95,13 @@ for cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 169.254.0.0/16 172.16.0.0/12 192.
   iptables -A OUTPUT -d "$cidr" -j REJECT
 done
 
-# Compose restarts the same container, so wipe every previous-run trace: the profile, downloads,
+# Compose restarts the same container, so wipe every previous-run trace: the profile,
 # the home-directory state Chromium writes outside the profile, and stray /tmp entries.
+# /downloads is deliberately NOT wiped: that volume is shared by every slot and the agent, so a
+# wipe here would delete other slots' in-flight downloads. The agent deletes /downloads/<runId>
+# when a run is released.
 mkdir -p /tmp/chromium-profile /downloads /home/neko
-find /tmp/chromium-profile /downloads -mindepth 1 -delete
+find /tmp/chromium-profile -mindepth 1 -delete
 rm -rf /home/neko/Downloads /home/neko/.pki /home/neko/.cache /home/neko/.config
 find /tmp -mindepth 1 -maxdepth 1 ! -name chromium-profile -exec rm -rf {} +
 chown neko:neko /tmp/chromium-profile /downloads

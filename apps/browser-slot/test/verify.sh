@@ -84,7 +84,7 @@ pass "raw secrets scrubbed before supervisord"
 [[ "$(docker exec -u neko "$SLOT" sh -c 'DISPLAY=:99.0 xdotool getdisplaygeometry')" == "1280 800" ]] || fail "display is not 1280x800"
 pass "display 1280x800"
 
-chromium_cmdlines="$(docker exec "$SLOT" sh -c 'for p in $(pgrep -f /usr/lib/chromium/chromium); do tr "\0" " " < /proc/$p/cmdline; echo; done')" \
+chromium_cmdlines="$(docker exec "$SLOT" sh -c 'for p in $(pgrep -f "^/usr/lib/chromium/chromium"); do tr "\0" " " < /proc/$p/cmdline; echo; done')" \
   || fail "could not read Chromium command lines"
 [[ -n "$chromium_cmdlines" ]] || fail "no Chromium process matched (sandbox check would be vacuous)"
 if grep -q -- '--no-sandbox' <<<"$chromium_cmdlines"; then fail "Chromium runs with --no-sandbox"; fi
@@ -110,7 +110,7 @@ ipv6_state="$(docker exec -u root "$SLOT" sh -c 'if [ ! -e /proc/sys/net/ipv6/co
 if [[ "$ipv6_state" == "ip6tables" ]] && docker exec "$SLOT" curl -s -6 -m 3 -o /dev/null "http://[fd00:ec2::254]/"; then fail "slot reached an IPv6 address"; fi
 pass "IPv6 closed ($ipv6_state)"
 
-docker exec "$SLOT" touch /tmp/chromium-profile/previous-run-marker /downloads/previous-run-marker /tmp/previous-run-marker
+docker exec "$SLOT" touch /tmp/chromium-profile/previous-run-marker /tmp/previous-run-marker
 docker exec -u neko "$SLOT" sh -c 'mkdir -p /home/neko/.pki && touch /home/neko/.pki/previous-run-marker'
 docker exec "$SLOT" pkill -INT -f '^/usr/lib/chromium/chromium' || true
 for _ in $(seq 1 20); do
@@ -121,7 +121,7 @@ done
 pass "container exits with Chromium"
 docker start "$SLOT" >/dev/null
 wait_healthy || fail "slot did not come back healthy"
-for marker in /tmp/chromium-profile /downloads /home/neko/.pki /tmp; do
+for marker in /tmp/chromium-profile /home/neko/.pki /tmp; do
   if docker exec "$SLOT" test -e "$marker/previous-run-marker"; then fail "previous-run state survived the restart in $marker"; fi
 done
 pass "fresh profile after restart"
