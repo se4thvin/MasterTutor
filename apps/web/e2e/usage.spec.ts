@@ -1,3 +1,4 @@
+import { movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 test("usage shows totals, an accessible daily chart and per-run spend", async ({ page }) => {
@@ -76,4 +77,76 @@ test("usage that fails to load offers Retry", async ({ page }) => {
       name: "Retry",
     }),
   ).toBeVisible({ timeout: 10_000 });
+});
+
+test("the chart is a labelled group that tells keyboard users about the arrow keys (parked)", async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date("2026-10-05T12:00:00Z"));
+  await page.goto("/settings/usage");
+  const group = page.getByRole("group", { name: "Spend per day" });
+  await expect(group).toHaveAccessibleDescription(/arrow keys/);
+  const hint = page.locator("#chart-keys");
+  await expect(hint).toHaveCSS("opacity", "0");
+  await group.locator("[data-qa='bar']").last().focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(hint).toHaveCSS("opacity", "1");
+  await expectCleanScreen(page);
+});
+
+test("tiles roll to their values and bars grow from the baseline", async ({ page }) => {
+  test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+  await page.clock.setFixedTime(new Date("2026-10-05T12:00:00Z"));
+  await page.goto("/settings/usage");
+  await expect(page.locator(".tile .rnum").first()).toBeVisible();
+  // W2: Spend's last digit keeps its key across ranges, so it rolls rather than remounts; first
+  // make sure the value really changes between the two ranges.
+  const spend = page.locator(".tile").filter({ hasText: "Spend" }).locator(".sr-only");
+  const before = await spend.innerText();
+  await startSampling(
+    page,
+    "roll",
+    ".tile:first-child .rnum-col:last-child .rnum-strip",
+    "translate",
+    30,
+  );
+  await page
+    .getByRole("radiogroup", { name: "Range" })
+    .getByRole("radio", { name: "7 days" })
+    .click();
+  await expect(spend).not.toHaveText(before);
+  await expect(page.locator("[data-qa='bar']")).toHaveCount(7);
+  await expect(page.locator("[data-qa='bar']").first()).toHaveCSS("animation-name", "bar-grow");
+  const rolled = await readSamples(page, "roll", 30);
+  expect(new Set(rolled).size, rolled.join(" | ")).toBeGreaterThan(2);
+});
+
+test("switching ranges keeps the tiles clean and readable (Review Focus 3)", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-10-05T12:00:00Z"));
+  await page.goto("/settings/usage");
+  const spend = page.locator(".tile").filter({ hasText: "Spend" }).locator(".sr-only");
+  for (const range of ["7 days", "90 days", "30 days"]) {
+    await page
+      .getByRole("radiogroup", { name: "Range" })
+      .getByRole("radio", { name: range })
+      .click();
+    await expect(spend).toHaveText(/^\$\d[\d,]*\.\d{2}$/);
+    await expectCleanScreen(page);
+  }
+});
+
+test("under reduced motion the numbers and bars do not move", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.clock.setFixedTime(new Date("2026-10-05T12:00:00Z"));
+  await page.goto("/settings/usage");
+  await expect(page.locator("[data-qa='bar']")).toHaveCount(30);
+  await page
+    .getByRole("radiogroup", { name: "Range" })
+    .getByRole("radio", { name: "7 days" })
+    .click();
+  expect(await movingAnimations(page, ".slist")).toEqual([]);
+  await expect(page.locator(".tile .rnum-strip").first()).toHaveCSS(
+    "transition-property",
+    "opacity",
+  );
 });

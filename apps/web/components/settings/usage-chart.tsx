@@ -22,7 +22,8 @@ const KEY_STEP: Record<string, (index: number, last: number) => number> = {
 
 /**
  * Single-series daily spend: accent bars, no legend, a tooltip on hover or focus for each bar,
- * and the same numbers as a table under "Show data". Bar heights are static CSS, not animated.
+ * and the same numbers as a table under "Show data". Bars grow from the baseline (scale) on a
+ * left-to-right wave.
  * The bars are one tab stop (roving tabindex, starting on the latest day); arrow keys, Home and
  * End move between days, so 90 days never means 90 presses of Tab.
  */
@@ -45,12 +46,18 @@ export function UsageChart({ perDay }: { perDay: UsageReport["perDay"] }) {
   const ticks = [...new Set([0, Math.floor(perDay.length / 2), perDay.length - 1])];
   return (
     <figure className="chart" aria-label="Daily spend">
-      <div className="chart-plot">
+      <div
+        className="chart-plot"
+        role="group"
+        aria-label="Spend per day"
+        aria-describedby="chart-keys"
+      >
         <div className="chart-axis" aria-hidden="true">
           <span>{formatUsd(max)}</span>
           <span>{formatUsd(0)}</span>
         </div>
-        <ol className="chart-bars">
+        {/* Keyed by range, so a new range replays the bars' growth. */}
+        <ol className="chart-bars" key={`${perDay[0]?.day ?? ""}-${perDay.length}`}>
           {perDay.map((d, i) => (
             <li
               key={d.day}
@@ -84,6 +91,9 @@ export function UsageChart({ perDay }: { perDay: UsageReport["perDay"] }) {
           <span key={i}>{perDay[i] ? dayLabel(perDay[i].day) : ""}</span>
         ))}
       </div>
+      <p id="chart-keys" className="chart-keys t-foot">
+        Use the arrow keys to move between days, and Home or End for the first or last.
+      </p>
       <details className="chart-data">
         <summary className="btn btn-plain">Show data</summary>
         <div className="table-scroll">

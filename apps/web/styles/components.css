@@ -762,4 +762,32 @@
     background: currentColor;
     transform-origin: left center;
   }
+  /* RollingNumber: odometer digits that move on translate only (bits/rolling-number.tsx). */
+  .rnum {
+    display: inline-flex;
+    font-variant-numeric: tabular-nums;
+  }
+  .rnum-track {
+    display: inline-flex;
+    height: 1.15em;
+    line-height: 1.15em;
+  }
+  .rnum-col {
+    display: inline-block;
+    width: 1ch;
+    height: 1.15em;
+    overflow: hidden;
+  }
+  .rnum-strip {
+    display: flex;
+    flex-direction: column;
+    translate: 0 calc(var(--d, 0) * -1.15em);
+    transition-property: translate;
+    transition-duration: var(--motion-spring-soft-dur);
+    transition-timing-function: var(--motion-spring-soft);
+    & > span {
+      height: 1.15em;
+      text-align: center;
+    }
+  }
 }
