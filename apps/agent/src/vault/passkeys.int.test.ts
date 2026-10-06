@@ -251,14 +251,16 @@ describe("passkeys", () => {
     await env.owner.sql`delete from vault_grants`;
     await b.page.goto(`${login}/webauthn/login`);
     const runId = await env.newRun([login]);
-    expect(
-      await passkeys.approval({ workspaceId: env.workspaceId }, b.page.url(), { alias: "site" }),
-    ).toEqual({
+    const ctx = toolContext({ runId, workspaceId: env.workspaceId, session: b.session });
+    // The tool asks against the live page in the approve phase (N8): no URL is handed in.
+    expect(await passkeys.approval(ctx, { alias: "site" })).toEqual({
       kind: "credential_first_use",
       alias: "site",
       origin: login,
     });
-    const ctx = toolContext({ runId, workspaceId: env.workspaceId, session: b.session });
+    await b.page.goto(`${fx.origin("lookalike")}/webauthn/login`).catch(() => undefined);
+    expect(await passkeys.approval(ctx, { alias: "site" })).toBeNull();
+    await b.page.goto(`${login}/webauthn/login`);
     expect(await passkeys.use(ctx, { alias: "site" })).toEqual({ error: "approval_required" });
   });
 
