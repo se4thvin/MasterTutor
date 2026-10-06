@@ -12,10 +12,16 @@ import {
 } from "./run-model.ts";
 import { untrustedText } from "./untrusted-text.ts";
 
+/** A chat message is shown whole up to this many characters. */
+const MAX_MESSAGE = 2_000;
+
 interface PendingMessage {
+  /** The client id: one entry per sent message, however often it is listed. */
   key: string;
   text: string;
   afterEventId: string | null;
+  /** When the user sent it (stable across renders). */
+  sentAt: string;
 }
 
 type TimelineItem =
@@ -47,7 +53,10 @@ type TimelineItem =
 
 interface ThinkingState {
   label: string;
+  /** When the current spell of thinking began: the first observe/decide since the last act. */
   since: string;
+  /** When it ended (the act began); null while still thinking. */
+  until: string | null;
   working: boolean;
 }
 
@@ -137,29 +146,37 @@ export function timelineItems(
     items.push({
       kind: "message",
       key: `msg-${m.eventId}`,
-      text: m.text,
+      // Any member's chat can carry bidi overrides or invisible characters (S6).
+      text: untrustedText(m.text, MAX_MESSAGE),
       ts: clock(m.at),
       at: m.at,
       pending: false,
     });
   }
+  // Each echo clears at most one pending copy; a client id is listed once.
+  const echoes = new Set<string>();
+  const seen = new Set<string>();
   for (const p of pending) {
-    const echoed = model.messages.some(
+    if (seen.has(p.key)) continue;
+    seen.add(p.key);
+    const echo = model.messages.find(
       (m) =>
+        !echoes.has(m.eventId) &&
         m.text === p.text &&
         (p.afterEventId === null || compareEventIds(m.eventId, p.afterEventId) > 0),
     );
-    if (!echoed) {
-      const at = new Date().toISOString();
-      items.push({
-        kind: "message",
-        key: `pending-${p.key}`,
-        text: p.text,
-        ts: clock(at),
-        at,
-        pending: true,
-      });
+    if (echo) {
+      echoes.add(echo.eventId);
+      continue;
     }
+    items.push({
+      kind: "message",
+      key: `pending-${p.key}`,
+      text: untrustedText(p.text, MAX_MESSAGE),
+      ts: clock(p.sentAt),
+      at: p.sentAt,
+      pending: true,
+    });
   }
   for (const o of model.outcomes) {
     items.push({
@@ -195,22 +212,21 @@ export function timelineItems(
 
 export function thinkingState(model: RunModel): ThinkingState | null {
   if (model.status !== "running" || model.controller !== "agent") return null;
+  // The spell of thinking since the last act (I2): its start never moves between observe and
+  // decide, and it ends when the next act begins.
+  const lastActIndex = model.steps.findLastIndex((s) => s.phase === "act" && s.state !== "started");
+  const spell = model.steps.slice(lastActIndex + 1);
+  const firstThought = spell.find((s) => s.phase === "observe" || s.phase === "decide");
   const last = model.steps.at(-1);
+  const since = firstThought?.at ?? model.steps[lastActIndex]?.at ?? model.createdAt;
   if (last?.phase === "act" && last.state === "started") {
-    return { label: "Thinking about the next step", since: last.at, working: false };
+    return { label: "Thinking about the next step", since, until: last.at, working: false };
   }
-  if (last && (last.phase === "observe" || last.phase === "decide") && last.state === "started") {
-    return {
-      label: untrustedText(last.caption, 160) || "Thinking about the next step",
-      since: last.at,
-      working: true,
-    };
-  }
-  return {
-    label: "Thinking about the next step",
-    since: last?.at ?? model.createdAt,
-    working: true,
-  };
+  const thought =
+    last && (last.phase === "observe" || last.phase === "decide") && last.state === "started"
+      ? untrustedText(last.caption, 160)
+      : "";
+  return { label: thought || "Thinking about the next step", since, until: null, working: true };
 }
 
 export function summaryLabel(model: RunModel): string {

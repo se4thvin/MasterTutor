@@ -1,7 +1,7 @@
 "use client";
 
 import { useReducedMotion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cubicBezier } from "@/lib/easing.ts";
 import { easings } from "@/lib/motion-tokens.ts";
 import { arcControl, pointOnArc, travelMs, type Point } from "./cursor-path.ts";
@@ -19,7 +19,24 @@ interface AgentCursorProps {
 }
 
 /** The only agent cursor: CDP input never moves the X cursor (spec §10.2). Event-driven, not per frame. */
+/**
+ * Whether the click ring plays: once per pointer step. A step whose ring was hidden is not replayed
+ * when the cursor shows again (`suppressed` remembers it).
+ */
+export function pulseState(
+  suppressed: number | null,
+  pulseKey: number | null,
+  visible: boolean,
+): { suppressed: number | null; show: boolean } {
+  if (pulseKey === null) return { suppressed, show: false };
+  if (!visible) return { suppressed: pulseKey, show: false };
+  return { suppressed, show: pulseKey !== suppressed };
+}
+
 export function AgentCursor({ target, pulseKey, hidden, thinking }: AgentCursorProps) {
+  const [suppressed, setSuppressed] = useState<number | null>(null);
+  const pulse = pulseState(suppressed, pulseKey, target !== null && !hidden);
+  if (pulse.suppressed !== suppressed) setSuppressed(pulse.suppressed);
   const reduce = useReducedMotion();
   const ref = useRef<HTMLDivElement>(null);
   const at = useRef<Point | null>(null);
@@ -62,12 +79,12 @@ export function AgentCursor({ target, pulseKey, hidden, thinking }: AgentCursorP
         </div>
         <span className="acur-who">Agent</span>
       </div>
-      {pulseKey !== null && target && !hidden ? (
+      {pulse.show ? (
         <span
           key={pulseKey}
           data-testid="click-pulse"
           className="acur-pulse"
-          style={{ left: target.x, top: target.y }}
+          style={{ left: target?.x, top: target?.y }}
         />
       ) : null}
     </div>

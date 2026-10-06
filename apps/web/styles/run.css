@@ -111,6 +111,18 @@
     animation-timing-function: var(--motion-ease-out);
     animation-fill-mode: forwards;
   }
+  /* Reduced motion: no growing ring, but a brief fade still marks the click (an opacity
+     transition survives the global rule; the 1ms animation would leave nothing to see). */
+  @media (prefers-reduced-motion: reduce) {
+    .acur-pulse {
+      animation-name: none;
+      transform: scale(0.5);
+      transition-property: opacity;
+      @starting-style {
+        opacity: 0.35;
+      }
+    }
+  }
   @keyframes acur-pulse {
     from {
       transform: scale(1);

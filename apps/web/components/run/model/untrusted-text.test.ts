@@ -27,4 +27,14 @@ describe("untrustedText (S6)", () => {
     expect(untrustedText(undefined)).toBe("");
     expect(untrustedText("\u200B")).toBe("");
   });
+
+  it("strips invisible fillers that are not format characters (Hangul fillers, braille blank)", () => {
+    expect(untrustedText("a\u115Fb\u1160c\u3164d\uFFA0e\u2800f")).toBe("abcdef");
+  });
+
+  it("caps runs of combining marks so a label cannot tower over the line", () => {
+    // "x" has no precomposed accented form, so NFKC leaves every mark in place.
+    const zalgo = "x" + "\u0301".repeat(50) + "b";
+    expect(untrustedText(zalgo)).toBe("x" + "\u0301".repeat(4) + "b");
+  });
 });

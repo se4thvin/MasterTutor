@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AgentCursor } from "./agent-cursor.tsx";
+import { AgentCursor, pulseState } from "./agent-cursor.tsx";
 
 const render = (props: Partial<Parameters<typeof AgentCursor>[0]>) =>
   renderToStaticMarkup(
@@ -31,5 +31,21 @@ describe("AgentCursor", () => {
     expect(render({ pulseKey: 10 })).toContain("left:120px;top:80px");
     expect(render({ pulseKey: null })).not.toContain("click-pulse");
     expect(render({ pulseKey: 10, hidden: true })).not.toContain("click-pulse");
+  });
+});
+
+describe("pulseState: the click ring plays once per pointer step", () => {
+  it("does not replay when the cursor is hidden and shown again with the same step", () => {
+    let suppressed: number | null = null;
+    const step = (pulseKey: number | null, visible: boolean) => {
+      const next = pulseState(suppressed, pulseKey, visible);
+      suppressed = next.suppressed;
+      return next.show;
+    };
+    expect(step(10, true)).toBe(true);
+    expect(step(10, false)).toBe(false);
+    expect(step(10, true)).toBe(false);
+    expect(step(11, true)).toBe(true);
+    expect(step(null, true)).toBe(false);
   });
 });

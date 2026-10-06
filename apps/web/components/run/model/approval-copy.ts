@@ -157,16 +157,32 @@ export function approvalCopy(request: ApprovalRequest): ApprovalCopy {
         body: `From ${pageHost(request.url)}. Downloads are kept with the run, not on your computer.`,
         details: [["Link", untrustedText(request.url, 300)]],
       };
-    case "credential_first_use":
+    case "credential_first_use": {
+      const alias = untrustedText(request.alias, 64);
+      const details: (readonly [string, string])[] = [
+        ["Site", request.origin],
+        ["Alias", alias],
+      ];
+      const body = "The vault fills the sign-in. The agent only sees the alias, never the values.";
+      // The form posts elsewhere: where the credential would go is the fact to decide on (I1).
+      if (request.postsTo) {
+        const destination = pageHost(request.postsTo);
+        return {
+          ...none,
+          tone: "warn",
+          title: `Send your ${alias} sign-in to ${destination}?`,
+          body,
+          risk: "This form sends your sign-in to a different site than the one you're on. Deny unless you trust it.",
+          details: [...details, ["Sends to", destination]],
+        };
+      }
       return {
         ...none,
-        title: `Sign in to ${pageHost(request.origin)} as ${untrustedText(request.alias, 64)}?`,
-        body: "The vault fills the sign-in. The agent only sees the alias, never the values.",
-        details: [
-          ["Site", request.origin],
-          ["Alias", untrustedText(request.alias, 64)],
-        ],
+        title: `Sign in to ${pageHost(request.origin)} as ${alias}?`,
+        body,
+        details,
       };
+    }
     case "new_origin":
       return {
         ...none,
