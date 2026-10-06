@@ -422,4 +422,137 @@
     padding: 1rem;
     color: var(--label-2);
   }
+  /* Folder tiles: the current folder's subfolders (FolderFloat, D43). */
+  .ftiles-title {
+    margin: 1.75rem 0 0.75rem;
+  }
+  .ftiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(8.5rem, 100%), 1fr));
+    gap: 1.25rem 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ftile {
+    display: block;
+    min-width: 0;
+    border-radius: var(--r-lg);
+    color: var(--folder-ink);
+    outline-offset: 0.25rem;
+    &:hover {
+      text-decoration: none;
+    }
+  }
+  .ff {
+    --ff-tab: 0.875rem;
+    display: block;
+    padding-top: var(--ff-tab);
+  }
+  .ff-body {
+    position: relative;
+    display: block;
+    aspect-ratio: 200 / 148;
+  }
+  .ff-back {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-lg);
+    background: var(--folder-back);
+    transform: perspective(37.5rem) rotateX(8deg);
+    transform-origin: 50% 100%;
+    &::before {
+      content: "";
+      position: absolute;
+      top: calc(-1 * var(--ff-tab));
+      left: 0;
+      width: 42%;
+      height: calc(var(--ff-tab) + var(--r-lg));
+      border-radius: var(--r-lg) var(--r-lg) 0 0;
+      background: inherit;
+    }
+  }
+  .ff-paper {
+    position: absolute;
+    top: 10%;
+    inset-inline: 8%;
+    height: 50%;
+    border-radius: var(--r-sm);
+    background: var(--folder-paper);
+    box-shadow: var(--e1);
+    opacity: 0;
+    translate: 0 0.625rem;
+    transition-property: opacity, translate;
+    transition-duration: var(--motion-dur-base), var(--motion-spring-dur);
+    transition-timing-function: var(--motion-ease-out), var(--motion-spring);
+  }
+  .ff-paper-2 {
+    top: 16%;
+    inset-inline: 14%;
+    transition-delay: var(--motion-dur-stagger);
+  }
+  .ff-front {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.2rem;
+    height: 76%;
+    padding: 0.75rem 0.9rem;
+    border-radius: var(--r-lg);
+    background: linear-gradient(180deg, var(--folder-front-hi), var(--folder-front) 60%);
+    box-shadow: var(--folder-shadow);
+    transform: perspective(37.5rem) rotateX(-16deg);
+    transform-origin: 50% 100%;
+    transition-property: transform;
+    transition-duration: var(--motion-spring-dur);
+    transition-timing-function: var(--motion-spring);
+  }
+  .ff-label {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ff-sub {
+    font-size: 0.6875rem;
+    color: var(--folder-ink-2);
+  }
+  /* Open: on hover or keyboard focus of the tile, or while a drop hovers it (data-open). */
+  .ftile:focus-visible .ff-paper,
+  .ff[data-open] .ff-paper {
+    opacity: 1;
+    translate: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .ftile:hover .ff-paper {
+      opacity: 1;
+      translate: none;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .ftile:focus-visible .ff-front,
+    .ff[data-open] .ff-front {
+      transform: perspective(37.5rem) rotateX(-34deg);
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .ftile:hover .ff-front {
+        transform: perspective(37.5rem) rotateX(-34deg);
+      }
+    }
+    .ff[data-receive] .ff-body {
+      animation-name: ff-gulp;
+      animation-duration: var(--motion-dur-receive);
+      animation-timing-function: var(--motion-ease-out);
+    }
+  }
+  @keyframes ff-gulp {
+    40% {
+      scale: 1.04;
+    }
+  }
 }

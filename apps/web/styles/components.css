@@ -19,7 +19,8 @@
     .row-link,
     .recent-item,
     .callout,
-    .src-pick
+    .src-pick,
+    .ftile
   ) {
     --press-scale: var(--motion-press-row);
   }
@@ -37,7 +38,8 @@
     .row-link,
     .recent-item,
     .callout,
-    .src-pick
+    .src-pick,
+    .ftile
   ) {
     transition-property: scale;
     transition-duration: var(--motion-dur-press);
@@ -59,7 +61,8 @@
       .row-link,
       .recent-item,
       .callout,
-      .src-pick
+      .src-pick,
+      .ftile
     ):active:not(:disabled, [aria-disabled="true"]) {
     scale: var(--press-scale);
   }
@@ -79,7 +82,8 @@
         .row-link,
         .recent-item,
         .callout,
-        .src-pick
+        .src-pick,
+        .ftile
       ):active:not(:disabled, [aria-disabled="true"]) {
       scale: none;
       opacity: 0.7;
