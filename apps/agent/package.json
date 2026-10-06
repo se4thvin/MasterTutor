@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "start": "node src/main.ts"
+    "start": "node src/main.ts",
+    "vault:rotate": "node src/bin/vault-rotate.ts"
   },
   "dependencies": {
     "@mastertutor/contracts": "workspace:*",
