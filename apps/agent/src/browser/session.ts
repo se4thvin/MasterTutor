@@ -60,6 +60,7 @@ export class BrowserSession {
   readonly #log: Log;
   #page: Page;
   #cdp: Promise<CDPSession> | null = null;
+  #browserCdp: Promise<CDPSession> | null = null;
   #worlds: Promise<IsolatedWorlds> | null = null;
   /** Out-of-process frames (R29-1): their own CDP session's worlds and CDP frame id. */
   readonly #outOfProcess = new Map<Frame, Promise<{ id: string; worlds: IsolatedWorlds } | null>>();
@@ -155,6 +156,18 @@ export class BrowserSession {
       });
     }
     return this.#cdp;
+  }
+
+  /** A browser-level CDP session (the Browser.* domain, e.g. downloads), opened once per lease. */
+  browserCdp(): Promise<CDPSession> {
+    if (this.#browserCdp === null) {
+      const attempt = this.#browser.newBrowserCDPSession();
+      this.#browserCdp = attempt;
+      attempt.catch(() => {
+        if (this.#browserCdp === attempt) this.#browserCdp = null;
+      });
+    }
+    return this.#browserCdp;
   }
 
   /**

@@ -25,7 +25,7 @@ import { instantClock, type Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { BrowserControl } from "../slots/lifecycle.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
-import { FakeLoopBrowser } from "../testing/fake-loop-browser.ts";
+import { FakeLoopBrowser, unavailableBrowserCdp } from "../testing/fake-loop-browser.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { crashSupervisor } from "../testing/crash.ts";
 import { waitFor } from "../testing/wait.ts";
@@ -113,7 +113,12 @@ async function start(
       const browser = browsers.get(run().id) ?? new FakeLoopBrowser();
       browser.guard = guard;
       browsers.set(run().id, browser);
-      return { browser, close: async () => undefined };
+      return {
+        browser,
+        session: null,
+        browserCdp: unavailableBrowserCdp,
+        close: async () => undefined,
+      };
     },
   });
   await supervisor.start();
@@ -848,5 +853,184 @@ describe("RunWorker + Supervisor", () => {
     await owner.sql`insert into otp_codes (run_id, sealed) values (${run.id}, ${Buffer.from([4])})`;
     await owner.sql.notify("otp_ready", encodeNotify("otp_ready", { runId: run.id }));
     await until(run.id, (r) => r.status === "completed", "completed after the code");
+  });
+});
+
+describe("B6 seams (A2)", () => {
+  const hangUntilAborted = (_actions: unknown, signal: AbortSignal) =>
+    new Promise<never>((_, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason)),
+    );
+  const eventsOf = async (id: string) =>
+    (
+      await owner.db
+        .select()
+        .from(runEvents)
+        .where(eq(runEvents.runId, id))
+        .orderBy(asc(runEvents.id))
+    ).map((e) => e.payload);
+
+  it("a takeover the live view cannot deliver returns control to the agent, never agent_error (F3)", async () => {
+    const seen: Array<{ afterRestore: boolean }> = [];
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async (_slot, _runId, context) => {
+            seen.push(context);
+            return { ok: false, code: "takeover_failed" };
+          },
+          onAgentControl: async () => undefined,
+        },
+      },
+    });
+    const { run, browser } = await queue([click, done]);
+    browser.computerHook = hangUntilAborted;
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("agent"), {
+      label: "control back to the agent",
+    });
+    browser.computerHook = null;
+    await until(run.id, (r) => r.status === "completed", "completed without any hand back");
+    const events = await eventsOf(run.id);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "takeover_failed" }),
+    );
+    expect(events.filter((e) => e.type === "control")).toEqual([
+      { type: "control", holder: "agent" },
+    ]);
+    expect(await row(run.id)).toMatchObject({ controller: "agent", controlUserId: null });
+    expect(seen).toEqual([{ afterRestore: false }]);
+  });
+
+  it("a throwing onUserControl is a failed takeover too, not a failed run (F3)", async () => {
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async () => {
+            throw new Error("n.eko unreachable");
+          },
+          onAgentControl: async () => undefined,
+        },
+      },
+    });
+    const { run, browser } = await queue([click, done]);
+    browser.computerHook = hangUntilAborted;
+    await waitFor(
+      async () => (await stepsOf(run.id)).some((s) => s.phase === "act" && s.state === "started"),
+      { label: "acting" },
+    );
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("agent"), {
+      label: "reverted",
+    });
+    browser.computerHook = null;
+    await until(run.id, (r) => r.status === "completed", "completed");
+    expect((await row(run.id)).error).toBeNull();
+  });
+
+  it("tells onUserControl when the takeover arrives with a fresh lease (sleeping run woken)", async () => {
+    const seen: Array<{ afterRestore: boolean }> = [];
+    await start({
+      hooks: {
+        control: {
+          onUserControl: async (_slot, _runId, context) => {
+            seen.push(context);
+            return { ok: true };
+          },
+          onAgentControl: async () => undefined,
+        },
+      },
+    });
+    const name = `w${++counter}`;
+    mock.setScenarios([{ name, turns: [done] }]);
+    const run = await insertRun(owner.db, {
+      workspaceId,
+      goal: `[scenario:${name}] task`,
+      status: "sleeping",
+      controller: "user",
+    });
+    browsers.set(run.id, new FakeLoopBrowser());
+    await owner.db
+      .update(runs)
+      .set({ wakeRequestedAt: sql`now()` })
+      .where(eq(runs.id, run.id));
+    await owner.sql.notify(
+      "run_wake",
+      encodeNotify("run_wake", { runId: run.id, reason: "takeover" }),
+    );
+    await waitFor(async () => (await controlEvents(run.id)).includes("user"), { label: "held" });
+    expect(seen).toEqual([{ afterRestore: true }]);
+    await handBackTo(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after hand back");
+  });
+
+  it("calls onLeased before the first navigation, onLeaseEnding(slotReleased) on release, and B3's onReleased(runId) after (F5)", async () => {
+    const calls: string[] = [];
+    await start({
+      hooks: {
+        onLeased: async (slot) => {
+          calls.push(
+            `leased ${slot.slotName} ${browsers.get(slot.runId)?.navigations.length ?? -1} ${slot.session}`,
+          );
+        },
+        onLeaseEnding: async (slot) => {
+          calls.push(`ending ${slot.slotName} ${slot.slotReleased}`);
+        },
+        onReleased: async (runId) => {
+          calls.push(`released ${runId}`);
+        },
+      },
+    });
+    const { run } = await queue([done]);
+    await until(run.id, (r) => r.status === "completed", "completed");
+    await waitFor(() => calls.length === 3, { label: "all lifecycle hooks" });
+    const slot = /^leased (browser-[12]) 0 null$/.exec(calls[0]!)?.[1];
+    expect(slot).toBeDefined();
+    expect(calls.slice(1)).toEqual([`ending ${slot} true`, `released ${run.id}`]);
+  });
+
+  it("a failed takeover while an approval is pending keeps it pending and the run waiting(approval) (B3 A5 + F3)", async () => {
+    const { clock } = gatedClock();
+    await start(
+      {
+        hooks: {
+          control: {
+            onUserControl: async () => ({ ok: false, code: "takeover_failed" }),
+            onAgentControl: async () => undefined,
+          },
+        },
+      },
+      clock,
+    );
+    const { run, browser } = await queue([click, done], "ask", (b) =>
+      b.targets.set("10,20", riskyTarget),
+    );
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === "approval", "pending");
+    await takeOver(run.id);
+    await waitFor(async () => (await controlEvents(run.id)).includes("agent"), {
+      label: "reverted",
+    });
+    expect(await row(run.id)).toMatchObject({
+      status: "waiting",
+      waitReason: "approval",
+      controller: "agent",
+      controlUserId: null,
+    });
+    // Every committed transition emits status{…}: none may say running once the approval waited.
+    const statuses = (await eventsOf(run.id)).flatMap((e) =>
+      e.type === "status" ? [`${e.status}:${e.waitReason}`] : [],
+    );
+    const waited = statuses.indexOf("waiting:approval");
+    expect(waited).toBeGreaterThanOrEqual(0);
+    expect(statuses.slice(waited)).not.toContain("running:null");
+    expect(statuses.at(-1)).toBe("waiting:approval");
+    expect(
+      (await owner.db.select().from(approvals).where(eq(approvals.runId, run.id)))[0]?.status,
+    ).toBe("pending");
+    expect(browser.computerRuns).toEqual([]);
   });
 });

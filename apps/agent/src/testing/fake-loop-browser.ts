@@ -195,3 +195,7 @@ export class FakeLoopBrowser implements LoopBrowser {
     };
   }
 }
+
+/** Fakes have no real browser: lease hooks that need Browser.* CDP must not run against them. */
+export const unavailableBrowserCdp = (): Promise<never> =>
+  Promise.reject(new Error("fake browsers have no browser-level CDP session"));
