@@ -7,3 +7,5 @@ export * from "./queries/settings.ts";
 export * from "./queries/vault.ts";
 export * from "./queries/events.ts";
 export * from "./queries/control.ts";
+export * from "./queries/live.ts";
+export * from "./queries/downloads.ts";
