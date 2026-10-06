@@ -20,6 +20,7 @@ export function MoveSheet({ note, onClose }: { note: NoteSummary | null; onClose
       description={note ? `Choose a folder for “${note.title}”.` : undefined}
     >
       <FolderPickList
+        key={note?.id ?? "none"}
         root={{ label: "Unfiled", icon: "unfiled" }}
         folders={rows}
         currentId={note?.folderId}

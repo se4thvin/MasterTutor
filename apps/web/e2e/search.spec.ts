@@ -102,6 +102,18 @@ test("the selection highlight glides between results", async ({ page }) => {
 test("under reduced motion the highlight jumps and results do not slide", async ({ page }) => {
   test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
   await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  // The last result has the longest stagger delay: it must never paint offset (I-3).
+  await startSampling(page, "stagger", ".palette-list .hit:last-of-type", "translate", 90);
+  await page.getByRole("dialog", { name: "Search notes" }).getByRole("combobox").fill("warmup");
+  const offsets = (await readSamples(page, "stagger", 90)).filter(Boolean);
+  expect(offsets.length, "the results rendered while sampling").toBeGreaterThan(0);
+  expect(
+    offsets.filter((v) => v !== "none" && !/^0px( 0px)?$/.test(v)),
+    offsets.join(" | "),
+  ).toEqual([]);
   const dialog = await openPaletteWith(page, "warmup");
   expect(await movingAnimations(page, ".palette-list")).toEqual([]);
   await page.keyboard.press("ArrowDown");

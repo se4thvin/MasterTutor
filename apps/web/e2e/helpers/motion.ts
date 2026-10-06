@@ -10,9 +10,10 @@ const MOVING = ["transform", "translate", "scale", "rotate"];
 type SampleStore = { __samples?: Record<string, string[]> };
 
 /**
- * Animations and transitions (CSS or WAAPI) longer than 1ms, on elements inside `selector`, whose
- * keyframes move something. Under reduced motion this must be [] (motion.css cuts animations to
- * 1ms and transitions to opacity). Motion's rAF springs are not listed; sample those instead.
+ * Animations and transitions (CSS or WAAPI) longer than 1ms, or delayed by more than 1ms, on
+ * elements inside `selector`, whose keyframes move something. Under reduced motion this must be []
+ * (motion.css cuts animations to 1ms with no delay, and transitions to opacity). Motion's rAF
+ * springs are not listed; sample those instead.
  */
 export async function movingAnimations(page: Page, selector: string): Promise<string[]> {
   return page.evaluate(
@@ -23,7 +24,9 @@ export async function movingAnimations(page: Page, selector: string): Promise<st
         const target = effect?.target;
         if (!effect || !(target instanceof Element) || !scopes.some((s) => s.contains(target)))
           return [];
-        if (Number(effect.getComputedTiming().duration ?? 0) <= 1) return [];
+        // A 1ms animation still moves if a delay holds its offset from-frame on screen first.
+        const timing = effect.getComputedTiming();
+        if (Number(timing.duration ?? 0) <= 1 && Number(timing.delay ?? 0) <= 1) return [];
         const moves = effect
           .getKeyframes()
           .some((frame) => moving.some((p) => p in frame && frame[p] !== "none"));
