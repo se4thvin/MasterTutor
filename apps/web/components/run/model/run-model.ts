@@ -28,7 +28,7 @@ export interface StepRow {
   action: StepAction | null;
   at: string;
 }
-interface PendingApproval {
+export interface PendingApproval {
   id: string;
   request: ApprovalRequest;
   at: string;

@@ -8,6 +8,9 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { api } from "@/lib/api/client.ts";
 import { BrowserFrame } from "./browser/browser-frame.tsx";
+import type { ApprovalDecisionInput } from "@mastertutor/contracts";
+import { ApprovalSheet } from "./approval/approval-sheet.tsx";
+import { approvalCopy } from "./model/approval-copy.ts";
 import { HandBackSheet } from "./browser/hand-back-sheet.tsx";
 import type { LiveStatus } from "./browser/live-frame.tsx";
 import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
@@ -25,6 +28,7 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
   const [replaySeq, setReplaySeq] = useState<number | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("off");
   const [handBackOpen, setHandBackOpen] = useState(false);
+  const [deciding, setDeciding] = useState<ReadonlySet<string>>(() => new Set());
 
   // After a Reconnecting episode, open the live view again (B6 §8).
   const [liveEpoch, setLiveEpoch] = useState(0);
@@ -47,7 +51,12 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
     toast({ title: INFO_ERROR_COPY[infoCode] ?? "The agent reported a problem." });
   }, [infoKey, infoCode, toast]);
 
-  const view: RunModel | null = model;
+  // Optimistic decisions: a decided approval leaves at once and comes back if the RPC fails.
+  const view: RunModel | null = useMemo(
+    () =>
+      model ? { ...model, approvals: model.approvals.filter((a) => !deciding.has(a.id)) } : null,
+    [model, deciding],
+  );
   const shotSteps = useMemo(
     () => (view ? view.steps.filter((s) => s.screenshotKey !== null) : []),
     [view],
@@ -73,6 +82,20 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
   const resume = useCallback(() => {
     api.runs.resume({ runId }).catch(() => toast({ title: "Couldn't resume the run. Try again." }));
   }, [runId, toast]);
+  const decide = useCallback(
+    (input: ApprovalDecisionInput) => {
+      setDeciding((s) => new Set(s).add(input.approvalId));
+      api.runs.decideApproval(input).catch(() => {
+        setDeciding((s) => {
+          const next = new Set(s);
+          next.delete(input.approvalId);
+          return next;
+        });
+        toast({ title: "Couldn't send your answer. The approval is still waiting for you." });
+      });
+    },
+    [toast],
+  );
 
   const crumbs = [{ label: "Runs", href: "/runs" }, { label: shortRunId(runId) }];
   if (loadError) {
@@ -144,6 +167,23 @@ export function RunView({ runId }: { runId: string; viewerId: string | null }) {
               liveEpoch={liveEpoch}
               liveStatus={liveStatus}
               onLiveStatus={setLiveStatus}
+              approval={
+                state === "approval" && view.approvals[0] ? (
+                  <ApprovalSheet
+                    key={view.approvals[0].id}
+                    runId={runId}
+                    approval={view.approvals[0]}
+                    count={view.approvals.length}
+                    onDecide={decide}
+                    onTakeOver={startTakeover}
+                  />
+                ) : null
+              }
+              spotlight={
+                state === "approval" && view.approvals[0]
+                  ? approvalCopy(view.approvals[0].request).spotlight
+                  : null
+              }
               showCallouts
               onHandBack={() => setHandBackOpen(true)}
               onTakeControl={startTakeover}
