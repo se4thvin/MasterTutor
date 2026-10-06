@@ -12,6 +12,8 @@ const JOIN = "\u0000";
 export interface FilledNodes {
   cdp: CDPSession;
   frameId: string;
+  /** The filled document (CDP loaderId), so a frame stays marked only while it shows it. */
+  loaderId: string;
   backendNodeIds: readonly number[];
 }
 
@@ -31,6 +33,7 @@ export function isScannableSecret(secret: string): boolean {
 interface FilledNode {
   cdp: CDPSession;
   frameId: string;
+  loaderId: string;
   backendNodeId: number;
 }
 
@@ -40,8 +43,11 @@ interface RunEntry {
   digests: Set<string>;
   /** Word count → joined lengths of registered secrets: a cheap filter before hashing. */
   windows: Map<number, Set<number>>;
-  /** Whether a secret without letters or digits is registered (then whole tokens are checked). */
-  bare: boolean;
+  /**
+   * The same for secrets without letters or digits, matched as runs of whitespace-separated
+   * tokens (review 14: "!! ##" matches across any spacing).
+   */
+  bareWindows: Map<number, Set<number>>;
   unwatch: Map<CDPSession, () => void>;
 }
 
@@ -72,7 +78,7 @@ export function createSecretFingerprints(): SecretFingerprints {
         nodes: [],
         digests: new Set(),
         windows: new Map(),
-        bare: false,
+        bareWindows: new Map(),
         unwatch: new Map(),
       };
       runs.set(runId, found);
@@ -100,42 +106,45 @@ export function createSecretFingerprints(): SecretFingerprints {
     });
   };
 
+  /** Records a secret as a run of parts (words, or tokens for symbol-only secrets). */
+  const add = (run: RunEntry, windows: Map<number, Set<number>>, parts: readonly string[]) => {
+    const joined = parts.join(JOIN);
+    run.digests.add(digest(joined));
+    const lengths = windows.get(parts.length) ?? new Set<number>();
+    lengths.add(joined.length);
+    windows.set(parts.length, lengths);
+  };
+
   const register = (run: RunEntry, secret: string) => {
     const words = secret.match(WORD) ?? [];
-    if (words.length === 0) {
-      const token = secret.trim();
-      if (token !== "") {
-        run.digests.add(digest(token));
-        run.bare = true;
+    if (words.length > 0) return add(run, run.windows, words);
+    const tokens = secret.match(TOKEN) ?? [];
+    if (tokens.length > 0) add(run, run.bareWindows, tokens);
+  };
+
+  /** Spans of `text` where a registered run of parts occurs, whatever separates the parts. */
+  const find = (
+    run: RunEntry,
+    windows: Map<number, Set<number>>,
+    parts: readonly RegExpExecArray[],
+    spans: Array<[number, number]>,
+  ) => {
+    for (const [count, lengths] of windows) {
+      for (let i = 0; i + count <= parts.length; i++) {
+        const window = parts.slice(i, i + count);
+        const joined = window.map((part) => part[0]).join(JOIN);
+        if (!lengths.has(joined.length) || !run.digests.has(digest(joined))) continue;
+        const first = window[0]!;
+        const last = window[count - 1]!;
+        spans.push([first.index, last.index + last[0].length]);
       }
-      return;
     }
-    const joined = words.join(JOIN);
-    run.digests.add(digest(joined));
-    const lengths = run.windows.get(words.length) ?? new Set<number>();
-    lengths.add(joined.length);
-    run.windows.set(words.length, lengths);
   };
 
   const redact = (run: RunEntry, text: string): string => {
     const spans: Array<[number, number]> = [];
-    const words = [...text.matchAll(WORD)];
-    for (const [count, lengths] of run.windows) {
-      for (let i = 0; i + count <= words.length; i++) {
-        const window = words.slice(i, i + count);
-        const joined = window.map((word) => word[0]).join(JOIN);
-        if (!lengths.has(joined.length) || !run.digests.has(digest(joined))) continue;
-        const first = window[0]!;
-        const last = window[count - 1]!;
-        spans.push([first.index ?? 0, (last.index ?? 0) + last[0].length]);
-      }
-    }
-    if (run.bare) {
-      for (const token of text.matchAll(TOKEN)) {
-        if (run.digests.has(digest(token[0])))
-          spans.push([token.index ?? 0, (token.index ?? 0) + token[0].length]);
-      }
-    }
+    find(run, run.windows, [...text.matchAll(WORD)], spans);
+    if (run.bareWindows.size > 0) find(run, run.bareWindows, [...text.matchAll(TOKEN)], spans);
     if (spans.length === 0) return text;
     let out = "";
     let cursor = 0;
@@ -150,7 +159,12 @@ export function createSecretFingerprints(): SecretFingerprints {
     remember(runId, { filled, secret }) {
       const run = entry(runId);
       for (const backendNodeId of filled.backendNodeIds)
-        run.nodes.push({ cdp: filled.cdp, frameId: filled.frameId, backendNodeId });
+        run.nodes.push({
+          cdp: filled.cdp,
+          frameId: filled.frameId,
+          loaderId: filled.loaderId,
+          backendNodeId,
+        });
       if (run.nodes.length > MAX_NODES_PER_RUN)
         run.nodes.splice(0, run.nodes.length - MAX_NODES_PER_RUN);
       watch(run, filled.cdp);
@@ -158,7 +172,12 @@ export function createSecretFingerprints(): SecretFingerprints {
     },
     forRun: (runId) => ({
       // N2: keyed by frame id too, so a fill survives its frame's CDP session being replaced.
-      filledFrames: () => [...new Set((runs.get(runId)?.nodes ?? []).map((node) => node.frameId))],
+      filledFrames: () => {
+        const frames = new Map<string, { frameId: string; loaderId: string }>();
+        for (const { frameId, loaderId } of runs.get(runId)?.nodes ?? [])
+          frames.set(`${frameId}\u0000${loaderId}`, { frameId, loaderId });
+        return [...frames.values()];
+      },
       nodeIds: (cdp) =>
         (runs.get(runId)?.nodes ?? [])
           .filter((node) => node.cdp === cdp)

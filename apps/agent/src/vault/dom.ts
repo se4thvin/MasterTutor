@@ -28,6 +28,8 @@ export interface TargetNode {
   readonly cdp: CDPSession;
   readonly objectId: string;
   readonly frameId: string;
+  /** The document the node belongs to (CDP loaderId of its frame). */
+  readonly loaderId: string;
 }
 
 export interface GroupBox {
@@ -100,12 +102,12 @@ const DISABLE_TOGGLES_FN = `function () {
 }`;
 
 interface FrameTree {
-  frame: { id: string };
+  frame: { id: string; loaderId: string };
   childFrames?: FrameTree[];
 }
 
-function frameIds(tree: FrameTree): string[] {
-  return [tree.frame.id, ...(tree.childFrames ?? []).flatMap(frameIds)];
+function frames(tree: FrameTree): FrameTree["frame"][] {
+  return [tree.frame, ...(tree.childFrames ?? []).flatMap(frames)];
 }
 
 async function isolatedContext(cdp: CDPSession, frameId: string): Promise<number> {
@@ -123,13 +125,13 @@ export async function openTarget(
   backendNodeId: number,
 ): Promise<TargetNode | null> {
   const { frameTree } = await cdp.send("Page.getFrameTree");
-  for (const frameId of frameIds(frameTree)) {
+  for (const { id: frameId, loaderId } of frames(frameTree as FrameTree)) {
     const executionContextId = await isolatedContext(cdp, frameId);
     const resolved = await cdp
       .send("DOM.resolveNode", { backendNodeId, executionContextId, objectGroup: OBJECT_GROUP })
       .catch(() => null);
     const objectId = resolved?.object.objectId;
-    if (objectId) return { cdp, objectId, frameId };
+    if (objectId) return { cdp, objectId, frameId, loaderId };
   }
   return null;
 }
@@ -166,7 +168,12 @@ export async function describeGroup(target: TargetNode): Promise<GroupBox[]> {
   const nodes = properties
     .filter((p) => /^\d+$/.test(p.name) && p.value?.objectId)
     .sort((a, b) => Number(a.name) - Number(b.name))
-    .map((p) => ({ cdp: target.cdp, objectId: p.value!.objectId!, frameId: target.frameId }));
+    .map((p) => ({
+      cdp: target.cdp,
+      objectId: p.value!.objectId!,
+      frameId: target.frameId,
+      loaderId: target.loaderId,
+    }));
   return Promise.all(
     nodes.map(async (node) => {
       const info = await callOn(node, INSPECT_FN, [], TargetInfo);

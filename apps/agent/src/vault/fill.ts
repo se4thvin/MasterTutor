@@ -66,6 +66,7 @@ async function fillInto(
       filled: {
         cdp: first.node.cdp,
         frameId: first.node.frameId,
+        loaderId: first.node.loaderId,
         backendNodeIds: group.map((box) => box.backendNodeId),
       },
       secret: SECRET_FIELDS.has(field) ? text : null,

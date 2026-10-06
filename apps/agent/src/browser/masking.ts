@@ -20,11 +20,19 @@ export interface MaskSources {
   /** True while the run has secret values registered (the text scan runs only then). */
   hasSecrets(): boolean;
   /** `text` with every registered secret value replaced by SECRET_REDACTION; `text` itself when none occurs. */
-  redact(text: string): string; /**
-   * CDP frame ids holding vault-filled nodes, whatever session registered them (N2): a frame
-   * whose CDP session was replaced still counts as filled. Optional: no fills, no frames.
+  redact(text: string): string;
+  /**
+   * Frames holding vault-filled nodes, by CDP frame id and the document (loaderId) filled, whatever
+   * session registered them (N2): a frame whose CDP session was replaced still counts as filled
+   * while it shows that document. Optional: no fills, no frames.
    */
-  filledFrames?(): readonly string[];
+  filledFrames?(): readonly FilledFrame[];
+}
+
+/** A frame's document the vault filled into: CDP frame id plus that document's loaderId. */
+export interface FilledFrame {
+  frameId: string;
+  loaderId: string;
 }
 
 export const SECRET_REDACTION = "[secret]";
@@ -236,9 +244,18 @@ export async function hasFilledOutOfProcessFrame(
   session: BrowserSession,
   sources: MaskSources,
 ): Promise<boolean> {
-  const filledFrames = new Set(sources.filledFrames?.() ?? []);
-  for (const [frameId, worlds] of await session.outOfProcessFrames())
-    if (filledFrames.has(frameId) || sources.nodeIds(worlds.cdp).length > 0) return true;
+  const filled = sources.filledFrames?.() ?? [];
+  for (const [frameId, worlds] of await session.outOfProcessFrames()) {
+    if (sources.nodeIds(worlds.cdp).length > 0) return true;
+    const documents = filled.filter((frame) => frame.frameId === frameId);
+    if (documents.length === 0) continue;
+    // Filled only while the frame still shows a filled document (review 1): a navigation since
+    // (seen only by a session that was replaced) ends the mark. Unreadable: fail closed.
+    const tree = await worlds.cdp.send("Page.getFrameTree").catch(() => null);
+    const loaderId = (tree?.frameTree.frame as { loaderId?: string } | undefined)?.loaderId;
+    if (loaderId === undefined || documents.some((frame) => frame.loaderId === loaderId))
+      return true;
+  }
   return false;
 }
 

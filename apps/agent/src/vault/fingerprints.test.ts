@@ -5,9 +5,10 @@ import { createSecretFingerprints, isScannableSecret } from "./fingerprints.ts";
 import { SECRET_REDACTION } from "./runtime.ts";
 
 const fakeCdp = () => new EventEmitter() as unknown as CDPSession & EventEmitter;
-const filled = (cdp: CDPSession, ids: number[], frameId = "main") => ({
+const filled = (cdp: CDPSession, ids: number[], frameId = "main", loaderId = "doc-1") => ({
   cdp,
   frameId,
+  loaderId,
   backendNodeIds: ids,
 });
 
@@ -46,6 +47,15 @@ describe("secret fingerprints (the mask source B1 consumes)", () => {
     expect(mask.redact("phrase: correct\nhorse   battery staple")).toBe(
       `phrase: ${SECRET_REDACTION} staple`,
     );
+  });
+
+  it("matches a symbol-only secret with spaces across any whitespace (review 14)", () => {
+    const prints = createSecretFingerprints();
+    prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "!! ##" });
+    const mask = prints.forRun("run-a");
+    expect(mask.redact("value: !! ## end")).toBe(`value: ${SECRET_REDACTION} end`);
+    expect(mask.redact("value: !!\n  ## end")).toBe(`value: ${SECRET_REDACTION} end`);
+    expect(mask.redact("value: !! #")).toBe("value: !! #");
   });
 
   it("matches a secret with no letters or digits as a whole token", () => {
@@ -121,7 +131,7 @@ describe("secret fingerprints (the mask source B1 consumes)", () => {
     const mask = prints.forRun("run-a");
     // The frame's session was swapped (forgotten after a failed read): ids still find it.
     expect(mask.nodeIds(fakeCdp())).toEqual([]);
-    expect(mask.filledFrames?.()).toEqual(["oopif-1"]);
+    expect(mask.filledFrames?.()).toEqual([{ frameId: "oopif-1", loaderId: "doc-1" }]);
     before.emit("Page.frameDetached", { frameId: "oopif-1" });
     expect(mask.filledFrames?.()).toEqual([]);
     expect(prints.forRun("run-b").filledFrames?.()).toEqual([]);
