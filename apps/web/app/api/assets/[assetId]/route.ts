@@ -21,7 +21,8 @@ export async function GET(_request: Request, ctx: { params: Promise<{ assetId: s
   const { assetId } = await ctx.params;
   if (!Uuid.safeParse(assetId).success) return new Response(null, { status: 404 });
   if (!(await getViewer())) return new Response(null, { status: 401 });
-  if (!getWebEnv().WEB_FIXTURE_API) return new Response(null, { status: 501 });
+  if (!(__FIXTURE_BUILD__ && getWebEnv().WEB_FIXTURE_API))
+    return new Response(null, { status: 501 });
   const { FIXTURE_ASSETS } = await import("@/lib/fixtures/assets.ts");
   const dataUri = FIXTURE_ASSETS.get(assetId);
   if (!dataUri) return new Response(null, { status: 404 });

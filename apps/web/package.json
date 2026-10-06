@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json",
     "test:ui": "playwright test",
-    "motion:css": "node scripts/generate-motion-css.ts"
+    "motion:css": "node scripts/generate-motion-css.ts",
+    "check:bundle": "node scripts/check-prod-bundle.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
