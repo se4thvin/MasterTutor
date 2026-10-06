@@ -25,11 +25,15 @@ export const isWide = (page: Page) => (page.viewportSize()?.width ?? 0) > 1180;
 async function settle(page: Page): Promise<void> {
   await page.evaluate(async () => {
     await document.fonts.ready;
-    // Only document-timeline animations can finish; scroll()/view() timelines never do.
+    // Only running document-timeline animations can finish: scroll()/view() timelines never do,
+    // and a paused one (a hovered or focused toast countdown) waits for the user, not for us.
     const finite = document
       .getAnimations()
       .filter(
-        (a) => a.timeline === document.timeline && a.effect?.getTiming().iterations !== Infinity,
+        (a) =>
+          a.timeline === document.timeline &&
+          a.playState !== "paused" &&
+          a.effect?.getTiming().iterations !== Infinity,
       );
     await Promise.all(finite.map((a) => a.finished.catch(() => undefined)));
   });
