@@ -20,6 +20,7 @@ import {
 } from "@mastertutor/contracts";
 import { ids } from "./ids.ts";
 import type { FixtureState, NoteRecord } from "./types.ts";
+import { recordedSummary } from "./run-recording.ts";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const at = (day: string, time = "17:00:00") => `${day}T${time}.000Z`;
@@ -613,16 +614,7 @@ function runs(): RunSummary[] {
     finishedAt,
   });
   return [
-    run(
-      1,
-      "Take notes on week 3 of the ML course, every lecture, figure and table",
-      "running",
-      0.84,
-      23,
-      at("2026-10-05", "16:55:00"),
-      null,
-      null,
-    ),
+    recordedSummary(),
     run(
       2,
       "Capture the learning-rate warmup article verbatim",
