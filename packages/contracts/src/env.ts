@@ -45,6 +45,8 @@ export const WebEnv = z.object({
   OPENAI_EMBEDDINGS_KEY: z.string().min(1),
   OPENAI_BASE_URL: z.url().optional(),
   ...S3Access,
+  /** Test-only: serve the in-memory fixture API (apps/web/lib/fixtures). Never set in compose files. */
+  WEB_FIXTURE_API: Flag,
 });
 export type WebEnv = z.infer<typeof WebEnv>;
 
