@@ -46,9 +46,13 @@ test("undo toast runs its action, dismisses with Escape and announces politely",
 }) => {
   await page.goto("/design#toasts");
   await page.getByRole("button", { name: "Show undo toast" }).click();
-  const toast = page.getByRole("status").filter({ hasText: "Moved to Papers" });
+  const toast = page.getByRole("group").filter({ hasText: "Moved to Papers" });
   await expect(toast).toBeVisible();
-  await expect(toast).toHaveAttribute("aria-live", "polite");
+  // The live region is the persistent container, so inserted toasts are announced.
+  await expect(page.getByRole("region", { name: "Notifications" })).toHaveAttribute(
+    "aria-live",
+    "polite",
+  );
   // Focus pauses the countdown, so the audit below cannot outlive the toast.
   await toast.focus();
   // The entrance spring is JavaScript, which settle() cannot see: wait for full opacity.
@@ -69,15 +73,15 @@ test("undo toast runs its action, dismisses with Escape and announces politely",
   await expect(toast).toBeHidden();
 
   await page.getByRole("button", { name: "Show undo toast" }).click();
-  await page.getByRole("status").filter({ hasText: "Moved to Papers" }).focus();
+  await page.getByRole("group").filter({ hasText: "Moved to Papers" }).focus();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("status").filter({ hasText: "Moved to Papers" })).toBeHidden();
+  await expect(page.getByRole("group").filter({ hasText: "Moved to Papers" })).toBeHidden();
 });
 
 test("a hovered toast pauses its countdown", async ({ page }) => {
   await page.goto("/design#toasts");
   await page.getByRole("button", { name: "Show undo toast" }).click();
-  const toast = page.getByRole("status").filter({ hasText: "Moved to Papers" });
+  const toast = page.getByRole("group").filter({ hasText: "Moved to Papers" });
   await expect(toast).toBeVisible();
   await toast.hover();
   const state = () =>
@@ -88,4 +92,18 @@ test("a hovered toast pauses its countdown", async ({ page }) => {
   await expect.poll(state).toBe("paused");
   await page.mouse.move(0, 0);
   await expect.poll(state).toBe("running");
+});
+
+test("a menu opened inside a sheet is stacked above it", async ({ page }) => {
+  await page.goto("/design#overlays");
+  await page.getByRole("button", { name: "Open sheet" }).click();
+  await page.getByRole("button", { name: "Folder options" }).click();
+  const item = page.getByRole("menuitem", { name: "New folder" });
+  await expect(item).toBeVisible();
+  const onTop = await item.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return hit !== null && el.contains(hit);
+  });
+  expect(onTop).toBe(true);
 });

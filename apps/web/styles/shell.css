@@ -117,12 +117,15 @@
     & ul {
       display: flex;
       justify-content: space-around;
-      margin: 0;
+      max-width: 32rem;
+      margin: 0 auto;
       padding: 0;
       list-style: none;
       @variant md {
         flex-direction: column;
         gap: 2px;
+        max-width: none;
+        margin: 0;
       }
     }
   }
@@ -152,6 +155,9 @@
     }
     &[aria-current="page"] {
       color: var(--tint-text);
+      & .ic {
+        fill: color-mix(in srgb, var(--tint) 18%, transparent);
+      }
     }
     @variant md {
       flex-direction: row;
@@ -168,6 +174,9 @@
       &[aria-current="page"] {
         background: var(--fill);
         color: var(--label);
+        & .ic {
+          fill: none;
+        }
       }
     }
     @variant lg {
@@ -213,10 +222,20 @@
       margin-left: auto;
     }
   }
+  /* Visually hidden below lg so the live-run count is still read aloud beside the dot. */
   .nav-meta-text {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
     @variant lg {
-      display: inline;
+      position: static;
+      width: auto;
+      height: auto;
+      overflow: visible;
+      clip: auto;
     }
   }
   .live-dot {

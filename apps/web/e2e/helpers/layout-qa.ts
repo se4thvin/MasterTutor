@@ -39,6 +39,18 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
       (el.textContent ?? "").trim() !== "" &&
       !el.querySelector("svg,img,input,button,canvas,video");
 
+    // The standard sr-only pattern: a 1px box that clips its text on purpose. It is still read aloud.
+    const isVisuallyHidden = (el: Element): boolean => {
+      const s = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return (
+        r.width <= 1 + TOL &&
+        r.height <= 1 + TOL &&
+        (s.clip !== "auto" || s.clipPath !== "none") &&
+        s.overflowX !== "visible"
+      );
+    };
+
     const root = document.documentElement;
     if (root.scrollWidth > root.clientWidth + TOL) {
       issues.push(`page scrolls sideways (${root.scrollWidth}px > ${root.clientWidth}px)`);
@@ -50,6 +62,7 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
         !el.parentElement?.closest("svg") &&
         // Base UI renders a hidden native input beside its custom controls; it is never seen.
         !el.matches('input[aria-hidden="true"]') &&
+        !isVisuallyHidden(el) &&
         visible(el),
     );
     for (const el of elements) {

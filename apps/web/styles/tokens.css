@@ -61,6 +61,10 @@
   --r-pill: 62.4375rem;
   --r-frame: 0.875rem;
   --hit: 2.75rem;
+  --z-scrim: 90;
+  --z-sheet: 100;
+  --z-toast: 110;
+  --z-popover: 120;
   --sidebar-w: 15.5rem;
   --rail-w: 4.5rem;
   --tabbar-h: 3.5rem;

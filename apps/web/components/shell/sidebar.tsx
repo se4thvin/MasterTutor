@@ -46,9 +46,7 @@ export function Sidebar({
                   aria-current={active ? "page" : undefined}
                 >
                   <Icon name={item.icon} />
-                  <span className="nav-label" data-qa-allow-clip>
-                    {item.label}
-                  </span>
+                  <span className="nav-label">{item.label}</span>
                   {item.href === "/runs" && liveCount > 0 ? (
                     <span className="nav-meta">
                       <span className="live-dot" aria-hidden="true" />
