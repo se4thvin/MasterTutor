@@ -20,7 +20,7 @@ export function SearchPalette({
       <Dialog.Portal>
         <Dialog.Backdrop className="scrim" />
         <Dialog.Viewport className="palette-viewport">
-          <Dialog.Popup className="palette">
+          <Dialog.Popup className="palette glass">
             {open ? <PaletteBody onDone={() => onOpenChange(false)} /> : null}
           </Dialog.Popup>
         </Dialog.Viewport>

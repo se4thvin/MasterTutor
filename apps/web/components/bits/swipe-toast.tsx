@@ -165,7 +165,7 @@ export function SwipeToast({
   return (
     <m.div
       ref={cardRef}
-      className={cx("toast", tone === "danger" && "toast-danger")}
+      className={cx("toast glass", tone === "danger" && "toast-danger")}
       role="group"
       aria-label="Notification"
       tabIndex={0}

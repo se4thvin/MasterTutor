@@ -41,6 +41,12 @@
   --glass-side: rgb(246 246 248 / 0.78);
   --glass-line: rgb(0 0 0 / 0.07);
   --blur: saturate(180%) blur(24px);
+  --switch-thumb: #ffffff;
+  --kbd-on-tint: rgb(255 255 255 / 0.2);
+  --shimmer: rgb(255 255 255 / 0.45);
+  --art-shadow: drop-shadow(0 8px 16px rgb(0 0 0 / 0.1));
+  --art-shadow-lift: drop-shadow(0 8px 16px rgb(0 0 0 / 0.14));
+  --art-shadow-soft: drop-shadow(0 6px 12px rgb(0 0 0 / 0.08));
   --scrim: rgb(0 0 0 / 0.18);
   --ambient: rgb(0 113 227 / 0.16);
   --e1: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.05);
@@ -114,6 +120,10 @@
     --glass: rgb(22 22 23 / 0.72);
     --glass-side: rgb(28 28 30 / 0.74);
     --glass-line: rgb(255 255 255 / 0.08);
+    --shimmer: rgb(255 255 255 / 0.06);
+    --art-shadow: drop-shadow(0 8px 16px rgb(0 0 0 / 0.45));
+    --art-shadow-lift: drop-shadow(0 8px 16px rgb(0 0 0 / 0.55));
+    --art-shadow-soft: drop-shadow(0 6px 12px rgb(0 0 0 / 0.35));
     --scrim: rgb(0 0 0 / 0.45);
     --ambient: rgb(41 151 255 / 0.12);
     --e1: 0 0 0 0.5px rgb(255 255 255 / 0.1);

@@ -24,7 +24,7 @@ export function Sidebar({
   const live = useQuery(orpc.runs.list.queryOptions({ input: { status: "running", limit: 20 } }));
   const liveCount = live.data?.items.length ?? 0;
   return (
-    <aside className="sidebar" aria-label="Sidebar">
+    <aside className="sidebar glass" aria-label="Sidebar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true">
           <Icon name="agentNote" size="sm" />

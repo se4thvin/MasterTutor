@@ -55,9 +55,7 @@
     z-index: 10;
     display: flex;
     padding: 0.25rem 0.5rem calc(0.25rem + env(safe-area-inset-bottom));
-    background: var(--glass-side);
-    backdrop-filter: var(--blur);
-    -webkit-backdrop-filter: var(--blur);
+    --glass-bg: var(--glass-side);
     border-top: 0.5px solid var(--glass-line);
     @variant md {
       order: 0;

@@ -33,9 +33,6 @@
     overflow: auto;
     padding: 0.5rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
     border-radius: var(--r-xl) var(--r-xl) 0 0;
-    background: var(--glass);
-    backdrop-filter: var(--blur);
-    -webkit-backdrop-filter: var(--blur);
     box-shadow: var(--e3);
     outline: none;
     transition-property: transform, opacity;
@@ -201,9 +198,6 @@
     overflow: hidden;
     padding: 0.9rem 0.6rem 0.9rem 1rem;
     border-radius: var(--r-md);
-    background: var(--glass);
-    backdrop-filter: var(--blur);
-    -webkit-backdrop-filter: var(--blur);
     box-shadow: var(--e3);
     font-size: 0.8125rem;
     pointer-events: auto;
