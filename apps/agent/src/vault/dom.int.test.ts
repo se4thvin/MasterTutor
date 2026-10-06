@@ -170,6 +170,15 @@ describe("isolated-world DOM layer", () => {
     expect(box?.info.origin).toBe(fx.origin("other"));
   });
 
+  it("sees fields and submit buttons linked to the form by form= from outside it (review I1)", async () => {
+    await tb.page.goto(`${fx.origin("login")}/offsite-outside-button`);
+    const [username] = await describeGroup(await target("#username"));
+    expect(username?.info.hasPasswordInScope).toBe(true);
+    expect(username?.info.formOrigins).toContain(fx.origin("evil"));
+    const [password] = await describeGroup(await target("#password"));
+    expect(password?.info.formOrigins).toContain(fx.origin("evil"));
+  });
+
   it("treats invisible password decoys and invisible fields as hidden (M3)", async () => {
     await tb.page.goto(`${fx.origin("login")}/hidden-decoys`);
     expect((await describeGroup(await target("#user")))[0]?.info.hasPasswordInScope).toBe(false);

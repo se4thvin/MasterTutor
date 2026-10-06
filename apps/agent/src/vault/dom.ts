@@ -60,16 +60,24 @@ const INSPECT_FN = `function () {
     if (rect.right + scrollX <= 0 || rect.bottom + scrollY <= 0) return false;
     return style.clipPath === "none" && (style.clip === "auto" || style.clip === "");
   };
-  // Where submitting this form sends it: the form's action and any submit button's formaction
-  // (M4), read through the prototype getters so a field named "action" cannot shadow them.
-  // A non-network scheme (javascript:, about:) has origin "null": off-origin, never trusted.
+  // Where submitting this form sends it: the form's action and every submitter's formaction
+  // (M4), read through the prototype getters so a field named "action" or "elements" cannot
+  // shadow them. The form's own elements list includes controls outside it linked by form=
+  // (review I1). A non-network scheme (javascript:, about:) has origin "null": off-origin.
   const getter = (proto, name) => Object.getOwnPropertyDescriptor(proto, name).get;
   const actionOf = getter(HTMLFormElement.prototype, "action");
+  const elementsOf = getter(HTMLFormElement.prototype, "elements");
+  const buttonType = getter(HTMLButtonElement.prototype, "type");
+  const inputType = getter(HTMLInputElement.prototype, "type");
+  const hasAttr = (x, name) => Element.prototype.hasAttribute.call(x, name);
+  const controls = scope instanceof HTMLFormElement ? Array.from(elementsOf.call(scope)) : [];
+  const isSubmitter = (x) =>
+    (x instanceof HTMLButtonElement && buttonType.call(x) === "submit") ||
+    (x instanceof HTMLInputElement && ["submit", "image"].includes(inputType.call(x)));
   const formActionOf = (b) =>
     getter(b instanceof HTMLButtonElement ? HTMLButtonElement.prototype : HTMLInputElement.prototype, "formAction").call(b);
-  const query = (root, selector) => Element.prototype.querySelectorAll.call(root, selector);
-  const submits = scope
-    ? [actionOf.call(scope), ...Array.from(query(scope, "button[formaction], input[formaction]"), formActionOf)]
+  const submits = scope instanceof HTMLFormElement
+    ? [actionOf.call(scope), ...controls.filter((x) => isSubmitter(x) && hasAttr(x, "formaction")).map(formActionOf)]
     : [];
   const formOrigins = Array.from(new Set(submits.map((url) => { try { return new URL(url, location.href).origin; } catch { return "invalid"; } })));
   return {
@@ -78,7 +86,7 @@ const INSPECT_FN = `function () {
     autocomplete: (e.getAttribute("autocomplete") || "").toLowerCase().split(/\\s+/).filter(Boolean),
     inputMode: (e.getAttribute("inputmode") || "").toLowerCase(),
     hints,
-    hasPasswordInScope: scope ? Array.from(query(scope, "input")).some((x) => x.type === "password" && shown(x)) : false,
+    hasPasswordInScope: controls.some((x) => x instanceof HTMLInputElement && inputType.call(x) === "password" && shown(x)),
     visible: shown(e),
     editable: !(e.disabled || e.readOnly),
     maxLength: tag === "input" ? e.maxLength : -1,

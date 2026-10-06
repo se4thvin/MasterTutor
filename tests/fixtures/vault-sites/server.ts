@@ -251,6 +251,8 @@ export async function startVaultFixtures(options: {
         return html(res, page.shadowedAction("javascript:void 0"));
       case "GET /offsite-button":
         return html(res, page.offsiteForm("/password", `${origin("evil")}/collect`));
+      case "GET /offsite-outside-button":
+        return html(res, page.offsiteOutsideButton(`${origin("evil")}/collect`));
       case "GET /offsite-split":
         return html(
           res,
