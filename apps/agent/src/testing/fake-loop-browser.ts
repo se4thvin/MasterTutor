@@ -58,6 +58,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   actionHook: ((action: ComputerAction) => void | Promise<void>) | null = null;
   /** True for an action the gate allowed but the executor still refuses when it presses. */
   dispatchHold: ((action: ComputerAction) => boolean) | null = null;
+  /** The executor hands the page to the user at this action (returns the reason), or null. */
+  handOverOn: ((action: ComputerAction) => string | null) | null = null;
   /** The worker's control guard, checked before every input and screenshot like the real session. */
   guard: ControlGuard | null = null;
   /** How often the storage-state restore script was removed again. */
@@ -102,10 +104,23 @@ export class FakeLoopBrowser implements LoopBrowser {
     for (const action of actions) {
       const verdict = await gate(action);
       this.verdicts.push(verdict);
-      if (!verdict) return { executed, notes: ["Stopped before an action: it needs approval."] };
+      if (!verdict)
+        return {
+          executed,
+          notes: ["Stopped before an action: it needs approval."],
+          handOver: null,
+        };
       // The executor's own hold at the moment it presses (B1 round 5): allowed, yet not run.
       if (this.dispatchHold?.(action))
-        return { executed, notes: ["Stopped before an action: its target changed."] };
+        return {
+          executed,
+          notes: ["Stopped before an action: its target changed."],
+          handOver: null,
+        };
+      // A page the executor cannot act on safely even with approval (B1 breaker fix 2).
+      const handOver = this.handOverOn?.(action) ?? null;
+      if (handOver)
+        return { executed: executed + 1, notes: ["Nothing was clicked: handed over."], handOver };
       this.guard?.assertAgent(signal);
       this.executed.push(action);
       executed += 1;
@@ -113,7 +128,7 @@ export class FakeLoopBrowser implements LoopBrowser {
     }
     this.computerRuns.push([...actions]);
     await this.computerHook?.(actions, signal);
-    return { executed, notes: [] };
+    return { executed, notes: [], handOver: null };
   }
 
   async runFunction(

@@ -58,6 +58,7 @@ import {
   type PendingApproval,
 } from "./approvals.ts";
 import {
+  HANDED_OVER,
   INTERRUPTED,
   NOT_STARTED,
   OTP_PENDING,
@@ -107,6 +108,15 @@ export interface RunLoopDeps {
   log: Log;
   /** True once the worker's local lease deadline has passed: no model call after it (I2). */
   leaseExpired?: () => boolean;
+}
+
+/** What running one call did: its result, and whether the run must wait for the user. */
+interface Executed {
+  result: CallResult;
+  ran: boolean;
+  wait: "otp" | null;
+  /** The executor handed the page to the user (the reason to show): the run waits for a takeover. */
+  handOver: string | null;
 }
 
 /** One thing in a model turn that needs its own approval (security ruling: one approval per risky item). */
@@ -842,10 +852,7 @@ export class RunLoop {
    * Runs one call. Every action of a batch is re-gated at execution time except the ones the user
    * (or policy) explicitly approved; a refused one stops the batch (Review Focus 3).
    */
-  async #execute(
-    call: PendingCall,
-    signal: AbortSignal,
-  ): Promise<{ result: CallResult; ran: boolean; wait: "otp" | null }> {
+  async #execute(call: PendingCall, signal: AbortSignal): Promise<Executed> {
     if (call.kind === "computer") {
       const refusals: string[] = [];
       const clicked: Array<{ index: number; label: string }> = [];
@@ -908,10 +915,11 @@ export class RunLoop {
         result: { kind: "computer", notes: [...run.notes, ...refusals], acknowledged },
         ran: run.executed > 0,
         wait: null,
+        handOver: run.handOver,
       };
     }
     if (!isFunctionTool(call.name))
-      return { result: notRun(call, "Unknown tool."), ran: false, wait: null };
+      return { result: notRun(call, "Unknown tool."), ran: false, wait: null, handOver: null };
     // The decision for exactly this call (same call id and arguments), so a tool can tell a human
     // approval (a lasting vault grant) from a policy one (this call only).
     const decision = this.#decided.get(functionItem(call.callId));
@@ -921,7 +929,12 @@ export class RunLoop {
         : null;
     const run = await this.#deps.browser.runFunction(call.name, call.args, signal, approval);
     if (run.notesChanged) this.#notesChanged = true;
-    return { result: { kind: "function", output: run.output }, ran: true, wait: run.wait };
+    return {
+      result: { kind: "function", output: run.output },
+      ran: true,
+      wait: run.wait,
+      handOver: null,
+    };
   }
 
   async #act(signal: AbortSignal): Promise<StepOutcome> {
@@ -929,8 +942,14 @@ export class RunLoop {
     const obs = this.#obs();
     let ran = false;
     let wait: "otp" | null = null;
+    let handOver: string | null = null;
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
+      // The page is beyond what the agent can act on safely: nothing after runs; the user takes over.
+      if (handOver) {
+        this.#results.set(call.callId, notRun(call, HANDED_OVER));
+        continue;
+      }
       // A call asked for a one-time code: nothing after it runs before the user supplies one.
       if (wait) {
         this.#results.set(call.callId, notRun(call, OTP_PENDING));
@@ -946,7 +965,7 @@ export class RunLoop {
         callId: call.callId,
       };
       await store.commit({ steps: [{ seq, phase: "act", state: "started", action }] });
-      let executed: { result: CallResult; ran: boolean; wait: "otp" | null };
+      let executed: Executed;
       try {
         executed = await this.#execute(call, signal);
       } catch (error) {
@@ -960,6 +979,7 @@ export class RunLoop {
       }
       ran ||= executed.ran;
       wait ??= executed.wait;
+      handOver ??= executed.handOver;
       this.#results.set(call.callId, executed.result);
       const storage = await browser.collectStorage().catch(() => null);
       await store.commit({
@@ -998,6 +1018,7 @@ export class RunLoop {
         `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
       );
     }
+    if (handOver) return this.#wait("takeover", handOver);
     if (wait) return this.#wait("otp", "A one-time code is needed to sign in");
     // The page (URL, DOM, position) is part of the signature: scrolling or paging is not a loop.
     const signature = `${this.#calls.map(callSignature).join("|")}@${obs.url}#${obs.domHash}#${obs.scroll.x},${obs.scroll.y}`;
