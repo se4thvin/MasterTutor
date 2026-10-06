@@ -100,7 +100,10 @@ export async function startLlmMock(
             id: nextId("cu"),
             call_id: nextId("call"),
             status: "completed",
-            actions: [{ type: "click", x: element.point.x, y: element.point.y, button: "left" }],
+            actions: [
+              { type: "click", x: element.point.x, y: element.point.y, button: "left" },
+              ...(output.then ?? []),
+            ],
             pending_safety_checks: [],
           };
         }

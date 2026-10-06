@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import { pageExpression, type IsolatedWorlds } from "./isolated-world.ts";
-import type { PageHelpers, TargetDescription } from "./page-helpers.ts";
+import { createHash, randomUUID } from "node:crypto";
+import type { IsolatedWorlds } from "./isolated-world.ts";
+import { FRAME_OWNERS, type PageHelpers, type TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
 
 export interface HitTest {
@@ -9,268 +9,141 @@ export interface HitTest {
   snap: { x: number; y: number } | null;
 }
 
-/** One frame's view: either a target, or "the point/focus is inside a frame I cannot read". */
-export interface FrameScan extends HitTest {
-  origin: string;
-  /** The path of the cross-origin frame element the scan stopped at; null when it did not stop. */
-  opaqueFrame: string | null;
-}
-
 export interface ScrollState {
-  /** Every scrollable ancestor of the point, innermost first, with its scroll offsets. */
+  /** Every scrollable ancestor of the point and each document's scroller, with scroll offsets. */
   chain: Array<{ key: string; top: number; left: number }>;
 }
 
-export function hitTestScript(
-  arg: { x: number; y: number; radius: number },
+/** One document's view of a point, or of focus. */
+interface Scan {
+  origin: string;
+  /** The document's scroll offset: CDP hit tests take document coordinates. */
+  scroll: { x: number; y: number };
+  /** The walk stopped at a frame owner (target describes it); its document is scanned next. */
+  owner: boolean;
+  target: TargetDescription | null;
+  snap: { x: number; y: number } | null;
+  chain: ScrollState["chain"];
+}
+
+/**
+ * The element at a point (in this document's viewport) or with focus, through open shadow roots.
+ * A frame owner ends the walk: the agent maps into the frame over CDP, never by page arithmetic.
+ * The element found is kept under `key` for the CDP steps that follow.
+ */
+export function scanScript(
+  arg: {
+    point: { x: number; y: number } | null;
+    key: string;
+    owners: string[];
+    snap: boolean;
+    scroll: boolean;
+  },
   h: PageHelpers,
-): FrameScan {
+): Scan {
   const SELECTOR =
     "a[href], button, input, select, textarea, summary, label, [role=button], [role=link], [role=checkbox], [role=radio], [role=tab], [role=menuitem], [role=option], [role=switch], [onclick]";
-  const deep = (x: number, y: number): Element | null => {
+  const isOwner = (el: Element) => arg.owners.includes(el.tagName);
+  const at = (x: number, y: number): Element | null => {
     let root: Document | ShadowRoot = document;
-    let ox = 0;
-    let oy = 0;
     let found: Element | null = null;
-    for (let depth = 0; depth < 10; depth++) {
-      const hit: Element | null = root.elementFromPoint(x - ox, y - oy);
+    for (let depth = 0; depth < 32; depth++) {
+      const hit: Element | null = root.elementFromPoint(x, y);
       if (!hit || hit === found) break;
       found = hit;
-      if (hit.shadowRoot) {
-        root = hit.shadowRoot;
-        continue;
-      }
-      if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
-        try {
-          const doc: Document | null = (hit as HTMLIFrameElement).contentDocument ?? null;
-          // Only a plain frame maps by offset; any other stops here for the CDP mapping (N5).
-          if (doc && h.frameIsPlain(hit)) {
-            const r = hit.getBoundingClientRect();
-            ox += r.left + (hit as HTMLElement).clientLeft;
-            oy += r.top + (hit as HTMLElement).clientTop;
-            root = doc;
-            continue;
-          }
-        } catch {
-          // Cross-origin frame.
-        }
-      }
-      break;
+      if (!hit.shadowRoot || isOwner(hit)) break;
+      root = hit.shadowRoot;
     }
     return found;
   };
-  const origin = location.origin;
-  const hit = deep(arg.x, arg.y);
-  if (!hit) return { target: null, snap: null, origin, opaqueFrame: null };
-  // A cross-origin frame the page script cannot read: the agent looks inside it over CDP (R29-1).
-  if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
-    let readable: boolean;
-    try {
-      readable = ((hit as HTMLIFrameElement).contentDocument ?? null) !== null;
-    } catch {
-      readable = false;
-    }
-    if (!readable || !h.frameIsPlain(hit))
-      return { target: null, snap: null, origin, opaqueFrame: h.describeTarget(hit).path };
+  let el: Element | null;
+  if (arg.point) el = at(arg.point.x, arg.point.y);
+  else {
+    el = document.activeElement;
+    while (el && !isOwner(el) && el.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+    if (el === document.body || el === document.documentElement) el = null;
   }
-  const target = h.describeTarget(hit);
-  if (target.interactive) return { target, snap: null, origin, opaqueFrame: null };
+  const keep = (found: Element) => {
+    (globalThis as unknown as { __mtFound?: unknown }).__mtFound = { key: arg.key, el: found };
+  };
+  // Scroll chaining counts as an effect: every scrollable ancestor, then the document's scroller.
+  const chain: ScrollState["chain"] = [];
+  if (arg.scroll) {
+    for (let node: Element | null = el; node;) {
+      const style = getComputedStyle(node);
+      const scrollable =
+        node !== document.documentElement &&
+        node !== document.body &&
+        ((/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) ||
+          (/(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth));
+      if (scrollable)
+        chain.push({
+          key: `${node.tagName}#${node.id}.${String(node.className)}`,
+          top: node.scrollTop,
+          left: node.scrollLeft,
+        });
+      const root = node.getRootNode();
+      node = node.parentElement ?? (root instanceof ShadowRoot ? root.host : null);
+    }
+    const scroller = document.scrollingElement ?? document.documentElement;
+    chain.push({ key: "document", top: scroller.scrollTop, left: scroller.scrollLeft });
+  }
+  const scan: Scan = {
+    origin: location.origin,
+    scroll: { x: scrollX, y: scrollY },
+    owner: false,
+    target: null,
+    snap: null,
+    chain,
+  };
+  if (!el) return scan;
+  keep(el);
+  const target = h.describeTarget(el);
+  if (isOwner(el)) return { ...scan, owner: true, target };
+  if (!arg.snap || !arg.point || target.interactive) return { ...scan, target };
   // cursor:pointer elements count as interactive (matching read_page), where the pointer starts.
-  const candidates = [...document.querySelectorAll("*")].filter((el) => {
-    if (el.matches(SELECTOR)) return true;
-    if (getComputedStyle(el).cursor !== "pointer" || el.closest(SELECTOR)) return false;
-    const parent = el.parentElement;
-    return !parent || getComputedStyle(parent).cursor !== "pointer";
-  });
-  const near = candidates.filter((el) => {
-    const r = el.getBoundingClientRect();
+  const { x, y } = arg.point;
+  const radius = 12;
+  const near = [...document.querySelectorAll("*")].filter((candidate) => {
+    if (!candidate.matches(SELECTOR)) {
+      if (getComputedStyle(candidate).cursor !== "pointer" || candidate.closest(SELECTOR))
+        return false;
+      const parent = candidate.parentElement;
+      if (parent && getComputedStyle(parent).cursor === "pointer") return false;
+    }
+    const r = candidate.getBoundingClientRect();
     return (
       r.width > 0 &&
       r.height > 0 &&
-      arg.x >= r.left - arg.radius &&
-      arg.x <= r.right + arg.radius &&
-      arg.y >= r.top - arg.radius &&
-      arg.y <= r.bottom + arg.radius
+      x >= r.left - radius &&
+      x <= r.right + radius &&
+      y >= r.top - radius &&
+      y <= r.bottom + radius
     );
   });
-  if (near.length !== 1) return { target, snap: null, origin, opaqueFrame: null };
+  if (near.length !== 1) return { ...scan, target };
   const only = near[0]!;
   const r = only.getBoundingClientRect();
-  const center = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  const check = deep(center.x, center.y);
-  if (!check || (check !== only && !only.contains(check)))
-    return { target, snap: null, origin, opaqueFrame: null };
-  return { target: h.describeTarget(only), snap: center, origin, opaqueFrame: null };
+  const center = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  const check = at(center.x, center.y);
+  if (!check || (check !== only && !only.contains(check))) return { ...scan, target };
+  keep(only);
+  return { ...scan, target: h.describeTarget(only), snap: center };
 }
 
-/** The cross-origin frame element at the point (same walk as hitTestScript), for a CDP handle. */
-export function frameAtPointScript(arg: { x: number; y: number }, h: PageHelpers): Element | null {
-  let root: Document | ShadowRoot = document;
-  let ox = 0;
-  let oy = 0;
-  let found: Element | null = null;
-  for (let depth = 0; depth < 10; depth++) {
-    const hit: Element | null = root.elementFromPoint(arg.x - ox, arg.y - oy);
-    if (!hit || hit === found) break;
-    found = hit;
-    if (hit.shadowRoot) {
-      root = hit.shadowRoot;
-      continue;
-    }
-    if (!["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName))
-      break;
-    let doc: Document | null;
-    try {
-      doc = (hit as HTMLIFrameElement).contentDocument ?? null;
-    } catch {
-      doc = null;
-    }
-    if (!doc || !h.frameIsPlain(hit)) return hit;
-    const r = hit.getBoundingClientRect();
-    ox += r.left + (hit as HTMLElement).clientLeft;
-    oy += r.top + (hit as HTMLElement).clientTop;
-    root = doc;
-  }
-  return null;
-}
-
-/** The focused cross-origin frame element (same walk as focusScript), for a CDP handle. */
-export function focusedFrameScript(): Element | null {
-  let active: Element | null = document.activeElement;
-  for (let depth = 0; depth < 10 && active; depth++) {
-    if (active.shadowRoot?.activeElement) {
-      active = active.shadowRoot.activeElement;
-      continue;
-    }
-    if (!["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(active.tagName))
-      return null;
-    let doc: Document | null;
-    try {
-      doc = (active as HTMLIFrameElement).contentDocument ?? null;
-    } catch {
-      doc = null;
-    }
-    if (!doc) return active;
-    active = doc.activeElement;
-  }
-  return null;
-}
-
-export function focusScript(_arg: null, h: PageHelpers): FrameScan {
-  let active: Element | null = document.activeElement;
-  for (let depth = 0; depth < 10 && active; depth++) {
-    if (active.shadowRoot?.activeElement) {
-      active = active.shadowRoot.activeElement;
-      continue;
-    }
-    if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(active.tagName)) {
-      let doc: Document | null;
-      try {
-        doc = (active as HTMLIFrameElement).contentDocument ?? null;
-      } catch {
-        doc = null;
-      }
-      // Focus inside a cross-origin frame: the agent looks inside it over CDP (R29-1).
-      if (!doc)
-        return {
-          target: null,
-          snap: null,
-          origin: location.origin,
-          opaqueFrame: h.describeTarget(active).path,
-        };
-      const inner = doc.activeElement;
-      if (inner && inner.tagName !== "BODY") {
-        active = inner;
-        continue;
-      }
-    }
-    break;
-  }
-  const none = { target: null, snap: null, origin: location.origin, opaqueFrame: null };
-  if (!active || active === document.body || active === document.documentElement) return none;
-  return { ...none, target: h.describeTarget(active) };
-}
-
-export function scrollStateScript(arg: { x: number; y: number }, h: PageHelpers): ScrollState {
-  // Deepest element at the point through open shadow roots and same-origin frames.
-  let root: Document | ShadowRoot = document;
-  let ox = 0;
-  let oy = 0;
-  let el: Element | null = null;
-  for (let depth = 0; depth < 10; depth++) {
-    const hit: Element | null = root.elementFromPoint(arg.x - ox, arg.y - oy);
-    if (!hit || hit === el) break;
-    el = hit;
-    if (hit.shadowRoot) {
-      root = hit.shadowRoot;
-      continue;
-    }
-    if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
-      try {
-        const doc: Document | null = (hit as HTMLIFrameElement).contentDocument ?? null;
-        if (doc && h.frameIsPlain(hit)) {
-          const r = hit.getBoundingClientRect();
-          ox += r.left + (hit as HTMLElement).clientLeft;
-          oy += r.top + (hit as HTMLElement).clientTop;
-          root = doc;
-          continue;
-        }
-      } catch {
-        // Cross-origin frame.
-      }
-    }
-    break;
-  }
-  // Every scrollable ancestor (shadow hosts and frame elements included) plus each frame's
-  // scrolling element, so scroll chaining counts as an effect.
-  const chain: ScrollState["chain"] = [];
-  const docs = new Set<Document>();
-  let index = 0;
-  while (el) {
-    const doc: Document = el.ownerDocument;
-    if (el === doc.documentElement || el === doc.body) {
-      if (!docs.has(doc)) {
-        docs.add(doc);
-        const scroller = doc.scrollingElement ?? doc.documentElement;
-        chain.push({ key: `doc${index}`, top: scroller.scrollTop, left: scroller.scrollLeft });
-      }
-    } else {
-      const style = (doc.defaultView ?? window).getComputedStyle(el);
-      const scrollable =
-        (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight) ||
-        (/(auto|scroll)/.test(style.overflowX) && el.scrollWidth > el.clientWidth);
-      if (scrollable) {
-        chain.push({
-          key: `${el.tagName}#${el.id}.${String(el.className)}`,
-          top: el.scrollTop,
-          left: el.scrollLeft,
-        });
-      }
-    }
-    index += 1;
-    let next: Element | null = el.parentElement;
-    if (!next) {
-      const rootNode = el.getRootNode();
-      if (rootNode instanceof ShadowRoot) next = rootNode.host;
-    }
-    if (!next) {
-      try {
-        next = doc.defaultView?.frameElement ?? null;
-      } catch {
-        next = null;
-      }
-    }
-    el = next;
-  }
-  if (chain.length === 0) {
-    const scroller = document.scrollingElement ?? document.documentElement;
-    chain.push({ key: "doc0", top: scroller.scrollTop, left: scroller.scrollLeft });
-  }
-  return { chain };
-}
+/** Whether a node from the browser's own hit test is (inside) the element kept under `key`. */
+const IS_KEPT = `function (key) {
+  const kept = globalThis.__mtFound;
+  if (!kept || kept.key !== key) return false;
+  let node = this instanceof Node ? this : this.element ?? null; // a ::before box is its element's
+  for (; node; node = node.parentNode ?? node.host ?? null) if (node === kept.el) return true;
+  return false;
+}`;
 
 const MAX_FRAME_DEPTH = 4;
-export const OPAQUE_FRAME_LABEL = "Embedded page that could not be inspected";
+/** A frame that does not answer within this is uninspectable, so a hung frame never stalls a step. */
+const FRAME_BUDGET_MS = 1_000;
+const OPAQUE_FRAME_LABEL = "Embedded page that could not be inspected";
 
 /** The record context leaves the browser module only as a digest (R29-3). */
 function digest(...parts: string[]): string {
@@ -293,82 +166,108 @@ function opaqueTarget(path: string, topUrl: string): TargetDescription {
 }
 
 /**
- * Classifies the element at a point, or with focus, through cross-origin frames (R29-1): the page
- * script stops at a frame it cannot read, and the same script runs again inside that frame over
- * CDP (the parent session with the frame id when in process, the frame's own session when out of
- * process). The path carries the frame chain with origins; any failure yields an opaque target
- * that needs approval (fail closed). Same-origin pages pay nothing extra.
+ * Classifies the element at a point, or with focus, through every kind of frame (R29-1, N1, N5).
+ * Each document is scanned by the same page script, which stops at a frame owner. The point is then
+ * mapped into the frame through the owner's real content quad (CDP), one level at a time, and the
+ * frame's document is scanned in its own world (the parent session with the frame id in process,
+ * the frame's own session out of process). Before trusting a session's answer, the browser's own
+ * hit test at the point (DOM.getNodeForLocation) must land on the same element. Any doubt (a quad
+ * that is not a plain rectangle, a disagreement, a failure, a frame too deep or too slow) yields
+ * an opaque target, which needs approval.
  */
 async function resolve(
   session: BrowserSession,
   point: { x: number; y: number } | null,
-): Promise<HitTest & { world: { worlds: IsolatedWorlds; frameId: string | undefined } }> {
+  options: { scroll: boolean },
+): Promise<HitTest & ScrollState> {
   const topUrl = session.page.url();
   let worlds = await session.worlds();
   let frameId: string | undefined;
-  let base = point; // the point in the coordinates of the current CDP session's root frame
-  let local = point; // the point in the coordinates of the current frame
-  let chain = "";
-  let ownSession: string | null = null; // the cached out-of-process frame we are inside, if any
+  let base = point; // in the viewport of the current CDP session's root frame
+  let local = point; // in the viewport of the current frame
+  let rootScroll = { x: 0, y: 0 };
+  let path = "";
+  let ownSession: string | null = null; // the out-of-process frame we are inside, if any
+  const chain: ScrollState["chain"] = [];
+  let late: Promise<never> | null = null;
+  const inTime = <T>(work: Promise<T>): Promise<T> => {
+    late ??= new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("frame did not answer in time")), FRAME_BUDGET_MS).unref();
+    });
+    late.catch(() => undefined);
+    return Promise.race([work, late]);
+  };
   const opaque = () => {
     if (ownSession) void session.forgetFrame(ownSession);
-    return { target: opaqueTarget(chain, topUrl), snap: null, world: { worlds, frameId } };
+    return { target: opaqueTarget(path, topUrl), snap: null, chain };
+  };
+  const confirm = async (at: { x: number; y: number }, key: string) => {
+    const { backendNodeId } = await worlds.cdp.send("DOM.getNodeForLocation", {
+      x: Math.round(at.x + rootScroll.x),
+      y: Math.round(at.y + rootScroll.y),
+    });
+    if (!(await worlds.callOnNode(backendNodeId, IS_KEPT, key, frameId)))
+      throw new Error("the browser's own hit test disagrees");
   };
   for (let depth = 0; ; depth++) {
-    let scan: FrameScan;
+    const key = randomUUID();
+    let scan: Scan;
     try {
-      scan = local
-        ? await worlds.evaluate(hitTestScript, { ...local, radius: 12 }, frameId)
-        : await worlds.evaluate(focusScript, null, frameId);
+      const scanning = worlds.evaluate(
+        scanScript,
+        { point: local, key, owners: FRAME_OWNERS, snap: depth === 0, scroll: options.scroll },
+        frameId,
+      );
+      scan = depth === 0 ? await scanning : await inTime(scanning);
     } catch (error) {
       // The top page itself failing is a real error; a frame failing is uninspectable (N3).
       if (depth === 0) throw error;
       return opaque();
     }
-    if (depth > 0) chain += `@${scan.origin}>`;
-    if (scan.opaqueFrame === null) {
-      // Inside a frame, nothing at the mapped point means the mapping cannot be trusted (N1).
-      if (depth > 0 && local && scan.target === null) return opaque();
-      const target = scan.target && {
-        ...scan.target,
-        path: `${chain}${scan.target.path}`,
-        context: digest(chain, scan.target.context, topUrl),
-      };
-      // A snap point is only meaningful in the top frame's coordinates.
-      return { target, snap: depth === 0 ? scan.snap : null, world: { worlds, frameId } };
-    }
-    chain += scan.opaqueFrame;
-    if (depth >= MAX_FRAME_DEPTH) return opaque();
+    if (frameId === undefined) rootScroll = scan.scroll;
+    if (depth > 0) path += `@${scan.origin}>`;
+    chain.push(...scan.chain.map((entry) => ({ ...entry, key: `${depth}:${entry.key}` })));
+    const confirming = base !== null && !options.scroll;
     try {
-      const expression = local
-        ? pageExpression(frameAtPointScript, local)
-        : pageExpression(focusedFrameScript, null);
-      const objectId = await worlds.evaluateHandle(expression, frameId);
+      if (!scan.owner) {
+        // Inside a frame, nothing at the mapped point means the mapping cannot be trusted (N1).
+        if (depth > 0 && local && !scan.target) return opaque();
+        if (confirming && scan.target) await inTime(confirm(scan.snap ?? base!, key));
+        const target = scan.target && {
+          ...scan.target,
+          path: `${path}${scan.target.path}`,
+          context: digest(path, scan.target.context, topUrl),
+        };
+        // A snap point is only meaningful in the top frame's coordinates.
+        return { target, snap: depth === 0 ? scan.snap : null, chain };
+      }
+      path += scan.target!.path;
+      if (depth >= MAX_FRAME_DEPTH) return opaque();
+      const objectId = await inTime(
+        worlds.evaluateHandle(
+          `(() => { const kept = globalThis.__mtFound; return kept && kept.key === ${JSON.stringify(key)} ? kept.el : null; })()`,
+          frameId,
+        ),
+      );
       if (!objectId) throw new Error("frame element gone");
-      const { node } = await worlds.cdp.send("DOM.describeNode", { objectId });
+      const { node } = await inTime(worlds.cdp.send("DOM.describeNode", { objectId }));
       const child = node.frameId;
       if (!child) throw new Error("no content frame");
-      let inner = local;
-      if (base) {
-        inner = await intoFrame(worlds, objectId, base);
-        if (inner === null) throw new Error("the point cannot be mapped into the frame");
-      }
-      const inProcess = await worlds
-        .evaluate(() => true, null, child)
-        .then(() => true)
-        .catch(() => false);
-      if (inProcess) {
+      const inner = base && (await inTime(intoFrame(worlds, objectId, base)));
+      if (base && !inner) throw new Error("the point cannot be mapped into the frame");
+      const own = await inTime(session.frameWorlds(child));
+      if (!own) {
         frameId = child;
         local = inner;
-      } else {
-        const own = await session.frameWorlds(child);
-        if (!own) throw new Error("no session for the frame");
-        worlds = own;
-        ownSession = child;
-        frameId = undefined;
-        base = inner;
-        local = inner;
+        continue;
       }
+      // Leaving this session: its own hit test must land on the frame owner first.
+      if (confirming) await inTime(confirm(base!, key));
+      worlds = own;
+      ownSession = child;
+      frameId = undefined;
+      base = inner;
+      local = inner;
     } catch {
       return opaque();
     }
@@ -376,10 +275,11 @@ async function resolve(
 }
 
 /**
- * Maps a point (in the session root's coordinates) into the frame's own document, through its real
- * geometry (N1): the content quad from DOM.getBoxModel is post-transform (border, padding, CSS
- * scale and ancestor frames included), and the untransformed content size gives the scale. A
- * rotated or skewed frame, or a point outside its content, returns null (the caller fails closed).
+ * Maps a point (in the session root's viewport) into the frame's own document through its real
+ * geometry: the owner's content quad from DOM.getBoxModel is post-transform (border, padding, CSS
+ * scale, zoom and ancestor frames included), and its untransformed content size gives the scale.
+ * Unless the quad is an axis-aligned, non-flipped rectangle (no rotation, flip, skew or 3D) and the
+ * point inside it, this returns null and the caller fails closed.
  */
 async function intoFrame(
   worlds: IsolatedWorlds,
@@ -429,128 +329,20 @@ export async function hitTest(
   session: BrowserSession,
   point: { x: number; y: number },
 ): Promise<HitTest> {
-  const { target, snap } = await resolve(session, point);
+  const { target, snap } = await resolve(session, point, { scroll: false });
   return { target, snap };
 }
 
 export async function focusTarget(session: BrowserSession): Promise<TargetDescription | null> {
-  return (await resolve(session, null)).target;
+  return (await resolve(session, null, { scroll: false })).target;
 }
 
 export async function scrollState(
   session: BrowserSession,
   point: { x: number; y: number },
 ): Promise<ScrollState | null> {
-  return (await session.worlds()).evaluate(scrollStateScript, point).catch(() => null);
-}
-
-type BlockHandle = { remove(): void };
-
-/**
- * While armed, printable keystrokes and text insertions aimed at a secret field are cancelled
- * inside the page (isolated world listeners, capture phase), so focus that moves mid-typing
- * (auto-advance, Tab) can never deliver model-typed text to a password, OTP or PIN input.
- * Armed only around the executor's own typing, so credential filling (B3) is unaffected.
- */
-/**
- * While armed, keystrokes and text insertions are cancelled inside the page (isolated world
- * listeners, capture phase): in the document that had focus when typing began ("home"), only those
- * aimed at a secret field; in every other document, all of them, so text a page script redirects
- * mid-typing into another document (a frame's password field) is never delivered. Armed only
- * around the executor's own typing, so credential filling (B3) is unaffected.
- */
-export function armSecretBlockScript(arg: { home: boolean }, h: PageHelpers): void {
-  const slot = globalThis as unknown as {
-    __mtSecretBlock?: BlockHandle;
-    __mtStart?: Element | null;
-  };
-  slot.__mtSecretBlock?.remove();
-  slot.__mtStart = document.activeElement;
-  const guard = (event: Event) => {
-    const target = event.composedPath()[0];
-    if (!arg.home || (target instanceof Element && h.isSecretField(target))) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-  };
-  const onKey = (event: Event) => {
-    const key = event as KeyboardEvent;
-    if (key.key.length === 1 && !key.ctrlKey && !key.metaKey) guard(event);
-  };
-  const onInput = (event: Event) => {
-    if ((event as InputEvent).inputType.startsWith("insert")) guard(event);
-  };
-  addEventListener("keydown", onKey, true);
-  addEventListener("keypress", onKey, true);
-  addEventListener("beforeinput", onInput, true);
-  slot.__mtSecretBlock = {
-    remove() {
-      removeEventListener("keydown", onKey, true);
-      removeEventListener("keypress", onKey, true);
-      removeEventListener("beforeinput", onInput, true);
-    },
-  };
-}
-
-const FRAME_OWNERS = ["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"];
-
-/** Whether this document holds the focused element itself (not just a frame that contains it). */
-export function focusProbeScript(owners: string[]): { holds: boolean; focused: boolean } {
-  const active = document.activeElement;
-  return { holds: !!active && !owners.includes(active.tagName), focused: document.hasFocus() };
-}
-
-/** In the home document: has focus left it (into a frame, or out to another document)? */
-export function focusMovedScript(owners: string[]): boolean {
-  const slot = globalThis as unknown as { __mtStart?: Element | null };
-  const active = document.activeElement;
-  if (active && owners.includes(active.tagName)) return true;
-  const idle = !active || active === document.body || active === document.documentElement;
-  return idle && slot.__mtStart !== active;
-}
-
-export function disarmSecretBlockScript(): void {
-  const slot = globalThis as unknown as { __mtSecretBlock?: BlockHandle };
-  slot.__mtSecretBlock?.remove();
-  delete slot.__mtSecretBlock;
-}
-
-/**
- * Arms the block in every document of the page (top, in-process and out-of-process frames). The
- * home is the document holding the focused element (the top document if none claims it).
- * `focusMoved()` reports whether a page script moved focus into another document since.
- */
-export async function armSecretBlock(session: BrowserSession): Promise<{
-  focusMoved: () => Promise<boolean>;
-  disarm: () => Promise<void>;
-}> {
-  const documents = await session.documents();
-  const probes = await Promise.all(
-    documents.map((doc) =>
-      doc.worlds.evaluate(focusProbeScript, FRAME_OWNERS, doc.frameId).catch(() => null),
-    ),
+  return resolve(session, point, { scroll: true }).then(
+    ({ chain }) => ({ chain }),
+    () => null,
   );
-  let homeIndex = probes.findIndex((probe) => probe?.holds && probe.focused);
-  if (homeIndex < 0) homeIndex = 0;
-  const home = documents[homeIndex];
-  await Promise.all(
-    documents.map((doc, index) =>
-      doc.worlds
-        .evaluate(armSecretBlockScript, { home: index === homeIndex }, doc.frameId)
-        .catch(() => undefined),
-    ),
-  );
-  return {
-    focusMoved: async () =>
-      home
-        ? home.worlds.evaluate(focusMovedScript, FRAME_OWNERS, home.frameId).catch(() => true)
-        : false,
-    disarm: async () => {
-      await Promise.all(
-        documents.map((doc) =>
-          doc.worlds.evaluate(disarmSecretBlockScript, null, doc.frameId).catch(() => undefined),
-        ),
-      );
-    },
-  };
 }

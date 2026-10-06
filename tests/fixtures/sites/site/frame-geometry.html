@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Frame geometry</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      #box {
+        position: absolute;
+        left: 40px;
+        top: 40px;
+      }
+      .owner,
+      .sized {
+        display: block;
+        width: 300px;
+        height: 200px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="box"></div>
+    <script>
+      // ?variant=…: the same Cancel/Delete widget (/widget.html) in a frame, under one geometry.
+      const variant = new URLSearchParams(location.search).get("variant");
+      const isolated = "http://other.fixtures-isolated.test";
+      const owner = (src, style = "", tag = "iframe") =>
+        tag === "iframe"
+          ? `<iframe class="owner" title="Account" src="${src}" style="${style}"></iframe>`
+          : `<${tag} class="owner" type="text/html" ${tag === "object" ? "data" : "src"}="${src}" style="${style}"></${tag}>`;
+      const wrap = (style, inner, shadow = false) =>
+        `<div class="sized" ${shadow ? "data-shadow" : ""} style="${style}">${inner}</div>`;
+      const half = "transform: scale(0.5); transform-origin: 0 0";
+      const widget = "/widget.html";
+      const variants = {
+        // Mapped through the real geometry: the agent classifies the element really hit.
+        scale: owner(widget, half),
+        object: owner(widget, half, "object"),
+        embed: owner(widget, half, "embed"),
+        zoom: owner(widget, "zoom: 1.5; width: 200px; height: 160px"),
+        padding: owner(widget, "padding: 20px"),
+        "ancestor-zoom": wrap("zoom: 0.5", owner(widget, "border: 4px solid; padding: 6px")),
+        "shadow-scale": wrap(half, owner(widget), true),
+        "cross-origin-scale": owner(`${isolated}/widget.html`, half),
+        // Same-origin (scaled) → cross-origin out of process (bordered, padded, scaled) →
+        // same-origin inside it (bordered, scaled) → the widget.
+        nested: owner(
+          "/frame-geometry.html?variant=nested-inner",
+          "transform: scale(0.8); transform-origin: 0 0; width: 520px; height: 420px",
+        ),
+        "nested-inner": owner(
+          `${isolated}/scaled-widget.html`,
+          "border: 3px solid; padding: 2px; transform: scale(0.9); transform-origin: 0 0; width: 400px; height: 300px",
+        ),
+        "scroll-page": owner(widget, half),
+        "scroll-container": `<div id="scroller" style="width: 400px; height: 250px; overflow: auto"><div style="height: 150px"></div>${owner(widget, "transform: scale(0.75); transform-origin: 0 0")}<div style="height: 600px"></div></div>`,
+        "scroll-inside": owner(`${widget}?scroll=1`, half),
+        // Flipped, rotated or 3D: not a plain rectangle, so acting inside needs approval.
+        flip: owner(widget, "scale: 1 -1"),
+        rotate: owner(widget, "rotate: 180deg"),
+        "ancestor-rotate": wrap("rotate: 180deg", owner(widget)),
+        "offset-rotate": wrap(
+          "offset-path: path('M150,100 L151,100'); offset-rotate: 180deg",
+          owner(widget),
+        ),
+        "shadow-flip": wrap("transform: scaleY(-1)", owner(widget), true),
+        "shadow-rotate": wrap("transform: rotate(180deg)", owner(widget), true),
+        "flip-3d": owner(widget, "transform: perspective(600px) rotateY(180deg)"),
+        "cross-origin-flip": owner(`${isolated}/widget.html`, "scale: 1 -1"),
+      };
+      const box = document.getElementById("box");
+      box.innerHTML = variants[variant] ?? "";
+      for (const host of box.querySelectorAll("[data-shadow]")) {
+        const inner = host.innerHTML;
+        host.innerHTML = "";
+        host.attachShadow({ mode: "open" }).innerHTML = inner;
+      }
+      if (variant === "scroll-page") {
+        document.body.style.height = "3000px";
+        box.style.top = "500px";
+        addEventListener("load", () => scrollTo(0, 450));
+      }
+      if (variant === "scroll-container")
+        addEventListener("load", () => (document.getElementById("scroller").scrollTop = 120));
+    </script>
+  </body>
+</html>

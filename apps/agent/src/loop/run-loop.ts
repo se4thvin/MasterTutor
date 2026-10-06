@@ -839,7 +839,9 @@ export class RunLoop {
         }
         const target = await this.#deps.browser.targetFor(action, null);
         const need = needsApproval(action, target);
-        if (need === null) return true;
+        // "approved" tells the executor a person approved this action (after a restore the page
+        // may no longer show why: a frame that hangs is only found when typing is guarded).
+        if (need === null) return decision?.approved ? "approved" : true;
         // An approval covers what was approved, not the batch index: the same kind and label on
         // the same element (M10).
         if (
@@ -850,7 +852,7 @@ export class RunLoop {
           // ...and on the same record: an approval for Alice's row never deletes Bobby (R29-3).
           (decision.context === null || decision.context === (target?.context ?? null))
         )
-          return true;
+          return "approved";
         if (decision) refusals.push(`Action ${index + 1} (${action.type}): ${TARGET_CHANGED}`);
         return false;
       };
