@@ -303,6 +303,82 @@
       opacity: 0.35;
     }
   }
+  /* StatusMark: one mark, five states; only opacity and scale change (bits/status-mark.tsx). */
+  .smark {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--smark-size, 1rem);
+    height: var(--smark-size, 1rem);
+    color: var(--label-2);
+    & svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    & :is(circle, path) {
+      transform-box: fill-box;
+      transform-origin: center;
+      transition-property: opacity, scale;
+      transition-duration: var(--motion-dur-base), var(--motion-spring-dur);
+      transition-timing-function: var(--motion-ease-out), var(--motion-spring);
+    }
+  }
+  .smark-ring {
+    stroke-dasharray: 2.4 3.3;
+    opacity: 0.6;
+  }
+  .smark-disc,
+  .smark-dot {
+    fill: currentColor;
+    stroke: none;
+    opacity: 0;
+    scale: 0.5;
+  }
+  .smark-check,
+  .smark-cross {
+    opacity: 0;
+    scale: 0.6;
+  }
+  .smark:not([data-status="pending"]) .smark-ring {
+    opacity: 0;
+  }
+  .smark[data-status="running"] {
+    color: var(--signal);
+    & .smark-dot {
+      opacity: 1;
+      scale: 1;
+      animation-name: pulse;
+      animation-duration: var(--motion-dur-pulse);
+      animation-timing-function: var(--motion-ease-out);
+      animation-iteration-count: infinite;
+    }
+  }
+  .smark:is([data-status="done"], [data-status="failed"]) .smark-disc {
+    opacity: 0.14;
+    scale: 1;
+  }
+  .smark[data-status="done"] {
+    color: var(--ok);
+    & .smark-check {
+      opacity: 1;
+      scale: 1;
+      transition-delay: var(--motion-dur-stagger);
+    }
+  }
+  .smark[data-status="failed"] {
+    color: var(--danger);
+  }
+  .smark:is([data-status="failed"], [data-status="cancelled"]) .smark-cross {
+    opacity: 1;
+    scale: 1;
+    transition-delay: var(--motion-dur-stagger);
+  }
   @keyframes pop-in {
     from {
       opacity: 0;
