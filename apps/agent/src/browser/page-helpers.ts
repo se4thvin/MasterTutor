@@ -45,7 +45,7 @@ export function isSecretField(el: Element): boolean {
     input.placeholder,
   ].join(" ");
   if (
-    /\b(pin|otp|passcode|one[-_ ]?time|2fa|mfa|totp|verification[-_ ]?code|security[-_ ]?code)\b/i.test(
+    /(^|[^a-z])(pin|otp|passcode|password|passwd|pwd|one[-_ ]?time|2fa|mfa|totp|verification[-_ ]?code|security[-_ ]?code)([^a-z]|$)/i.test(
       hint,
     )
   ) {

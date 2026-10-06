@@ -4,6 +4,7 @@ import {
   collectMaskBoxes,
   containsSecretText,
   drawMasks,
+  hasCrossOriginFrames,
   sameBoxes,
   type Box,
   type MaskSources,
@@ -73,11 +74,26 @@ export async function captureModelScreenshot(
   signal: AbortSignal,
 ): Promise<ModelScreenshot> {
   let layout = await session.layout();
+  const drop = async () => {
+    const dropped = await blackFrame(layout);
+    session.lastScale = dropped.scale;
+    return dropped;
+  };
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     session.guard.assertAgent(signal);
     await session.page.bringToFront();
     layout = await session.layout();
+    const secrets = sources.secretValues();
+    // While secrets are registered, inputs inside cross-origin frames cannot be scanned or boxed
+    // from this target, so any such frame makes the screenshot undeliverable.
+    if (
+      (secrets.length > 0 || sources.nodeIds().length > 0) &&
+      (await hasCrossOriginFrames(session))
+    ) {
+      return drop();
+    }
     const before = await collectMaskBoxes(session, sources);
+    if (before.unverifiable > 0) return drop();
     session.guard.assertAgent(signal);
     const { data } = await (
       await session.cdp()
@@ -87,16 +103,24 @@ export async function captureModelScreenshot(
       captureBeyondViewport: false,
     });
     const after = await collectMaskBoxes(session, sources);
-    if (!sameBoxes(before, after)) continue;
-    const secrets = sources.secretValues();
-    const shot =
-      secrets.length > 0 && (await containsSecretText(session, secrets))
-        ? await blackFrame(layout)
-        : await finalize(Buffer.from(data, "base64"), layout, after);
+    if (after.unverifiable > 0) return drop();
+    if (!sameBoxes(before.boxes, after.boxes)) continue;
+    // A resize between reading the layout and capturing would misalign every mask: retake.
+    const raw = Buffer.from(data, "base64");
+    const meta = await sharp(raw).metadata();
+    const settled = await session.layout();
+    if (settled.width !== layout.width || settled.height !== layout.height) continue;
+    if (
+      !meta.width ||
+      !meta.height ||
+      Math.abs(meta.width / layout.width - meta.height / layout.height) > 0.02
+    ) {
+      continue;
+    }
+    if (secrets.length > 0 && (await containsSecretText(session, secrets))) return drop();
+    const shot = await finalize(raw, layout, after.boxes);
     session.lastScale = shot.scale;
     return shot;
   }
-  const dropped = await blackFrame(layout);
-  session.lastScale = dropped.scale;
-  return dropped;
+  return drop();
 }

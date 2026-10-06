@@ -1,5 +1,12 @@
+import type { BrowserContext, Route } from "playwright-core";
 import { describe, expect, it } from "vitest";
-import { PrivateHostCheck, isFixtureHost, isPrivateAddress } from "./network-policy.ts";
+import {
+  PrivateHostCheck,
+  installNetworkPolicy,
+  isAllowedNavigationScheme,
+  isFixtureHost,
+  isPrivateAddress,
+} from "./network-policy.ts";
 
 describe("isPrivateAddress", () => {
   it.each([
@@ -65,11 +72,24 @@ describe("PrivateHostCheck", () => {
     expect(await check.isPrivate("example.com")).toBe(false);
     expect(lookups).toBe(2);
   });
-  it("treats unresolvable names as not private (the slot's iptables is the second layer)", async () => {
+  it("fails closed when the lookup errors", async () => {
     const check = new PrivateHostCheck(async () => {
       throw new Error("ENOTFOUND");
     });
-    expect(await check.isPrivate("nowhere.invalid")).toBe(false);
+    expect(await check.isPrivate("nowhere.invalid")).toBe(true);
+  });
+  it("bounds its cache", async () => {
+    let lookups = 0;
+    const check = new PrivateHostCheck(async () => {
+      lookups += 1;
+      return ["93.184.216.34"];
+    });
+    for (let i = 0; i < 600; i++) await check.isPrivate(`h${i}.example`);
+    expect(lookups).toBe(600);
+    await check.isPrivate("h599.example"); // recent: cached
+    expect(lookups).toBe(600);
+    await check.isPrivate("h0.example"); // evicted: looked up again
+    expect(lookups).toBe(601);
   });
 });
 
@@ -78,5 +98,86 @@ describe("isFixtureHost", () => {
     expect(isFixtureHost("site.fixtures.test")).toBe(true);
     expect(isFixtureHost("fixtures.test")).toBe(true);
     expect(isFixtureHost("fixtures.test.evil.com")).toBe(false);
+  });
+});
+
+describe("isAllowedNavigationScheme", () => {
+  it.each(["http://a.test/", "https://a.test/", "about:blank"])("allows %s", (url) =>
+    expect(isAllowedNavigationScheme(url)).toBe(true),
+  );
+  it.each([
+    "file:///etc/hosts",
+    "view-source:http://a.test/",
+    "chrome://settings",
+    "data:text/html,x",
+    "javascript:1",
+    "about:srcdoc",
+    "nonsense",
+  ])("refuses %s", (url) => expect(isAllowedNavigationScheme(url)).toBe(false));
+});
+
+describe("installNetworkPolicy routing", () => {
+  type Handler = (route: Route) => Promise<void>;
+  async function harness(allowed: string[] = ["http://ok.test"]) {
+    let handler: Handler | undefined;
+    const context = {
+      route: async (_glob: string, h: Handler) => void (handler = h),
+      on: () => undefined,
+    } as unknown as BrowserContext;
+    const blocked: unknown[] = [];
+    await installNetworkPolicy(context, {
+      allowedOrigins: () => allowed,
+      testMode: false,
+      onBlockedNavigation: (b) => blocked.push(b),
+      resolveHost: async () => ["93.184.216.34"],
+    });
+    const run = async (
+      url: string,
+      request: { navigation: boolean; main: boolean; throws?: boolean },
+    ) => {
+      const result: string[] = [];
+      const route = {
+        request: () => ({
+          url: () => url,
+          isNavigationRequest: () => {
+            if (request.throws) throw new Error("frame detached");
+            return request.navigation;
+          },
+          frame: () => ({ parentFrame: () => (request.main ? null : {}) }),
+        }),
+        abort: async () => void result.push("abort"),
+        continue: async () => void result.push("continue"),
+      } as unknown as Route;
+      await handler!(route);
+      return result[0];
+    };
+    return { run, blocked };
+  }
+
+  it.each([
+    "file:///etc/hosts",
+    "view-source:http://ok.test/",
+    "chrome://settings",
+    "data:text/html,hi",
+  ])("aborts a top-level navigation to %s", async (url) => {
+    const { run } = await harness();
+    expect(await run(url, { navigation: true, main: true })).toBe("abort");
+  });
+  it("lets about:blank and non-navigation non-http requests through", async () => {
+    const { run } = await harness();
+    expect(await run("about:blank", { navigation: true, main: true })).toBe("continue");
+    expect(await run("data:image/png;base64,AAAA", { navigation: false, main: true })).toBe(
+      "continue",
+    );
+  });
+  it("fails closed when the request cannot be inspected", async () => {
+    const { run, blocked } = await harness();
+    expect(await run("http://evil.test/", { navigation: true, main: true, throws: true })).toBe(
+      "abort",
+    );
+    expect(await run("file:///etc/hosts", { navigation: true, main: true, throws: true })).toBe(
+      "abort",
+    );
+    expect(blocked).toEqual([{ url: "http://evil.test/", origin: "http://evil.test" }]);
   });
 });

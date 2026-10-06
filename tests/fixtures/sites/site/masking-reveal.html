@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Masking reveal fixture</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px sans-serif;
+      }
+      input {
+        position: absolute;
+        height: 28px;
+        font-size: 18px;
+        left: 40px;
+        width: 240px;
+      }
+    </style>
+  </head>
+  <body>
+    <input id="pw" name="password" type="password" value="open-sesame" style="top: 40px" />
+    <input id="memo" aria-label="Memo" value="s3cret-memo" style="top: 100px" />
+    <input id="plain" aria-label="Plain" value="visible text" style="top: 160px" />
+    <iframe
+      id="inner"
+      style="position: absolute; left: 40px; top: 220px; width: 300px; height: 60px; border: 0"
+      srcdoc="<input aria-label='Inner' value='inner-secret'>"
+    ></iframe>
+  </body>
+</html>

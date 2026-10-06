@@ -12,8 +12,11 @@ import { IsolatedWorlds } from "./isolated-world.ts";
 import { NavigationTracker } from "./navigation.ts";
 import {
   installNetworkPolicy,
+  isAllowedNavigationScheme,
   type BlockedNavigation,
   type HostResolver,
+  type NetworkPolicy,
+  type PrivateConnection,
 } from "./network-policy.ts";
 
 export interface Layout {
@@ -48,6 +51,8 @@ export class BrowserSession {
   #cdp: Promise<CDPSession> | null = null;
   #worlds: Promise<IsolatedWorlds> | null = null;
   #blocked: BlockedNavigation[] = [];
+  #privateHits: PrivateConnection[] = [];
+  #policy: NetworkPolicy | null = null;
   #adopting: Promise<void> | null = null;
 
   private constructor(
@@ -69,12 +74,18 @@ export class BrowserSession {
     if (!context) throw new Error("the slot browser has no default context");
     const page = context.pages().at(-1) ?? (await context.newPage());
     const session = new BrowserSession(browser, context, page, options);
-    await installNetworkPolicy(context, {
-      allowedOrigins: options.allowedOrigins,
-      testMode: options.testMode,
-      onBlockedNavigation: (block) => session.#blocked.push(block),
-      resolveHost: options.resolveHost,
-    });
+    try {
+      session.#policy = await installNetworkPolicy(context, {
+        allowedOrigins: options.allowedOrigins,
+        testMode: options.testMode,
+        onBlockedNavigation: (block) => session.#blocked.push(block),
+        onPrivateConnection: (hit) => session.#onPrivateConnection(hit),
+        resolveHost: options.resolveHost,
+      });
+    } catch (error) {
+      await browser.close().catch(() => undefined);
+      throw error;
+    }
     session.#adopt(page);
     context.on("page", (opened) => {
       session.#adopting = session.#onNewPage(opened).finally(() => {
@@ -93,15 +104,28 @@ export class BrowserSession {
   }
 
   cdp(): Promise<CDPSession> {
-    this.#cdp ??= this.#context.newCDPSession(this.#page).then(async (cdp) => {
-      await cdp.send("DOM.enable");
-      return cdp;
-    });
+    if (this.#cdp === null) {
+      const attempt = this.#context.newCDPSession(this.#page).then(async (cdp) => {
+        await cdp.send("DOM.enable");
+        return cdp;
+      });
+      this.#cdp = attempt;
+      // A failed attempt must not be cached forever.
+      attempt.catch(() => {
+        if (this.#cdp === attempt) this.#cdp = null;
+      });
+    }
     return this.#cdp;
   }
 
   worlds(): Promise<IsolatedWorlds> {
-    this.#worlds ??= this.cdp().then((cdp) => new IsolatedWorlds(cdp));
+    if (this.#worlds === null) {
+      const attempt = this.cdp().then((cdp) => new IsolatedWorlds(cdp));
+      this.#worlds = attempt;
+      attempt.catch(() => {
+        if (this.#worlds === attempt) this.#worlds = null;
+      });
+    }
     return this.#worlds;
   }
 
@@ -119,12 +143,15 @@ export class BrowserSession {
   /** Navigates the active tab; false when blocked or failed (never throws for network errors). */
   async goto(url: string, signal: AbortSignal): Promise<boolean> {
     this.guard.assertAgent(signal);
+    if (!isAllowedNavigationScheme(url)) return false;
+    const hitsBefore = this.#privateHits.length;
     try {
       await abortable(
         this.#page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }),
         signal,
       );
-      return true;
+      await abortable(this.#policy?.settled() ?? Promise.resolve(), signal);
+      return this.#privateHits.length === hitsBefore;
     } catch {
       if (signal.aborted) throw signal.reason;
       this.#log.debug({ errorCode: "navigation_failed" }, "navigation failed");
@@ -136,6 +163,10 @@ export class BrowserSession {
     return this.#adopting ?? Promise.resolve();
   }
 
+  drainPrivateConnections(): PrivateConnection[] {
+    return this.#privateHits.splice(0);
+  }
+
   drainBlockedNavigations(): BlockedNavigation[] {
     return this.#blocked.splice(0);
   }
@@ -143,6 +174,13 @@ export class BrowserSession {
   /** Disconnects Playwright only. Recycling the browser is the slot pool's job (Browser.close). */
   async close(): Promise<void> {
     await this.#browser.close().catch(() => undefined);
+  }
+
+  /** A response came from a private address: record it and leave the page (iptables is the boundary; this is defence in depth). */
+  #onPrivateConnection(hit: PrivateConnection): void {
+    this.#privateHits.push(hit);
+    this.#log.warn({ errorCode: "private_connection" }, "response from a private address");
+    if (hit.topLevel) void this.#page.goto("about:blank").catch(() => undefined);
   }
 
   #adopt(page: Page): void {
