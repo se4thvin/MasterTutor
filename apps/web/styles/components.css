@@ -547,59 +547,59 @@
     padding: 0 0.55rem;
     font-size: 0.75rem;
   }
-}
-.scheck {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-  min-height: var(--hit);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--label);
-  &:disabled {
-    cursor: default;
+  .scheck {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: var(--hit);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--label);
+    &:disabled {
+      cursor: default;
+    }
   }
-}
-.scheck-box {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 1.375rem;
-  height: 1.375rem;
-  overflow: hidden;
-  border-radius: 0.4375rem;
-}
-.scheck-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: inset 0 0 0 2px var(--hairline);
-}
-.scheck-fill {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--ok);
-}
-.scheck-tick {
-  position: relative;
-  width: 70%;
-  height: 70%;
-  fill: none;
-  stroke: var(--bg);
-  stroke-width: 2.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.scheck-label {
-  position: relative;
-}
-.scheck-rule {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1.5px;
-  background: currentColor;
-  transform-origin: left center;
+  .scheck-box {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 1.375rem;
+    height: 1.375rem;
+    overflow: hidden;
+    border-radius: 0.4375rem;
+  }
+  .scheck-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 2px var(--hairline);
+  }
+  .scheck-fill {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--ok);
+  }
+  .scheck-tick {
+    position: relative;
+    width: 70%;
+    height: 70%;
+    fill: none;
+    stroke: var(--bg);
+    stroke-width: 2.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .scheck-label {
+    position: relative;
+  }
+  .scheck-rule {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1.5px;
+    background: currentColor;
+    transform-origin: left center;
+  }
 }
