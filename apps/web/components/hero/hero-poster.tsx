@@ -1,5 +1,5 @@
 /** Static composition (page → lens → note): the loading, reduced-motion and no-WebGL state (run 16). */
-function PosterArt() {
+export function PosterArt() {
   return (
     <div className="hero-poster">
       <div className="hero-page">
@@ -24,14 +24,6 @@ function PosterArt() {
         <i />
         <i />
       </div>
-    </div>
-  );
-}
-
-export function HeroPoster() {
-  return (
-    <div className="hero" data-hero="" aria-hidden="true">
-      <PosterArt />
     </div>
   );
 }

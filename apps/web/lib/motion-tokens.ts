@@ -7,6 +7,10 @@ export const springs = {
   spring: { type: "spring", stiffness: 400, damping: 30, mass: 1 },
   /** Softer spring for sheets and the PiP. */
   springSoft: { type: "spring", stiffness: 260, damping: 30, mass: 1 },
+  /** 3D hero (run 16): calm pointer parallax. */
+  heroParallax: { type: "spring", stiffness: 60, damping: 13, mass: 1 },
+  /** 3D hero: the lens leans toward the focused composer. */
+  heroAttention: { type: "spring", stiffness: 170, damping: 22, mass: 1 },
 } as const;
 
 /** Milliseconds. */
@@ -33,12 +37,15 @@ export const durations = {
   drift: 2600,
   /** One turn of the Reconnecting spinner (the only spinner, spec §11.4). */
   spin: 1000,
+  /** Poster → 3D crossfade (run 16). */
+  heroReveal: 700,
 } as const;
 
 export const easings = {
   out: [0.16, 1, 0.3, 1],
   in: [0.4, 0, 1, 1],
   cursor: [0.2, 0.8, 0.2, 1],
+  standard: [0.4, 0, 0.2, 1],
 } as const;
 
 export const press = { scale: 0.96, iconScale: 0.92, rowScale: 0.98 } as const;

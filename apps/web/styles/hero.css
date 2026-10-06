@@ -194,4 +194,28 @@
       width: 52%;
     }
   }
+  /* 3D hero (F5 Task 19): the poster crossfades to the canvas once the scene is compiled. */
+  .hero-poster,
+  .hero-canvas {
+    transition-property: opacity;
+    transition-duration: var(--motion-dur-hero-reveal);
+    transition-timing-function: var(--motion-ease-out);
+  }
+  .hero-canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+  }
+  .hero[data-live] .hero-canvas {
+    opacity: 1;
+  }
+  .hero[data-live] .hero-poster {
+    opacity: 0;
+  }
+  .hero[data-blink] .hero-dot {
+    opacity: 0.35;
+  }
 }
