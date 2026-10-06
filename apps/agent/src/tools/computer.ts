@@ -27,12 +27,11 @@ export const SECRET_FIELD_REFUSAL =
 const TYPE_CHUNK = 24;
 const SCROLL_STEP = 240;
 
-/** One printable key, optionally with Shift: it would type a character into the focused field. */
-function isPrintable(keys: readonly string[]): boolean {
+/** True when the combo would type a character: no Ctrl/Alt/Meta and any non-modifier key is printable. */
+function typesText(keys: readonly string[]): boolean {
   const names = keys.map((key) => normalizeCombo([key]));
   if (names.some((name) => ["CTRL", "ALT", "META"].includes(name))) return false;
-  const rest = names.filter((name) => name !== "SHIFT");
-  return rest.length === 1 && (rest[0]?.length === 1 || rest[0] === "SPACE");
+  return names.some((name) => name !== "SHIFT" && (name.length === 1 || name === "SPACE"));
 }
 
 const step = (remaining: number) =>
@@ -337,10 +336,11 @@ export class ComputerExecutor {
       throw error;
     }
     this.#session.guard.assertAgent(signal);
-    if (isPrintable(keys)) {
-      // A lone printable key types a character: refuse it in a secret field like `type` does.
-      if ((await focusTarget(this.#session))?.isSecretField)
-        return this.#refuse(SECRET_FIELD_REFUSAL);
+    // Printable keys type characters: refuse them in a secret field like `type` does. Any key
+    // aimed at an editable element runs with the in-page secret-field cancel listeners armed.
+    const focus = await focusTarget(this.#session);
+    if (typesText(keys) && focus?.isSecretField) return this.#refuse(SECRET_FIELD_REFUSAL);
+    if (focus?.editable || focus?.isSecretField) {
       await armSecretBlock(this.#session);
       try {
         await this.#session.page.keyboard.press(combo);

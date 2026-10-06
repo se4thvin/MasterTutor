@@ -313,4 +313,38 @@ describe("ComputerExecutor review gaps (group C fix round)", () => {
     ).rejects.toThrow("boom");
     expect(ups).toBe(1);
   });
+
+  it("refuses multi-key presses that would type into a secret field", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    await executor.execute(click(await point(s, "Second")), signal);
+    for (const keys of [
+      ["A", "B"],
+      ["SHIFT", "A", "B"],
+      ["SPACE", "A"],
+      ["1", "2"],
+    ]) {
+      expect(await executor.execute({ type: "keypress", keys }, signal)).toBe(SECRET_FIELD_REFUSAL);
+    }
+    expect(await s.page.inputValue("#second")).toBe("");
+    // Shortcuts with Ctrl/Meta and non-printing combos stay allowed.
+    expect(await executor.execute({ type: "keypress", keys: ["CTRL", "A"] }, signal)).toBeNull();
+    // An editable field still takes multi-key presses.
+    await executor.execute(click(await point(s, "First")), signal);
+    await executor.execute({ type: "keypress", keys: ["A", "B"] }, signal);
+    expect(await s.page.inputValue("#first")).toBe("ab");
+  });
+
+  it("snaps near misses onto cursor:pointer divs like read_page lists them", async () => {
+    const { s, executor } = await setup("/gaps.html");
+    const rect = await s.page.evaluate(() => {
+      const r = document.getElementById("cdiv")!.getBoundingClientRect();
+      return { right: r.right, midY: r.top + r.height / 2 };
+    });
+    const miss = {
+      x: Math.round((rect.right + 8) * s.lastScale),
+      y: Math.round(rect.midY * s.lastScale),
+    };
+    expect(await executor.execute(click(miss), signal)).toBeNull();
+    expect(await text(s, "#cdiv-count")).toBe("1");
+  });
 });
