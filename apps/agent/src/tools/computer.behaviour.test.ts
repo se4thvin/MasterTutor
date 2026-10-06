@@ -6,7 +6,7 @@ import { hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { captureModelScreenshot } from "../browser/screenshot.ts";
 import { BrowserSession } from "../browser/session.ts";
-import { ARM_BUDGET_MS, typingGuardIncomplete } from "../browser/typing-guard.ts";
+import { ARM_BUDGET_MS, typingGuardIncomplete } from "../browser/input-guard.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { waitFor } from "../testing/wait.ts";
@@ -457,7 +457,9 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
       // The loop's next classification asks a person first (runs.behaviour covers that flow)...
       expect(typingGuardIncomplete(s)).toBe(true);
       // ...and once a person approved it, it runs.
-      expect(await executor.execute(action, signal, true)).toBeNull();
+      expect(
+        await executor.execute(action, signal, { target: null, personApproved: true }),
+      ).toBeNull();
       expect(await value(s, null, "code")).toBe(typed);
     },
   );
@@ -504,4 +506,41 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
       expect(await value(s, null, "code")).toBe(refusal === UNRESPONSIVE_REFUSAL ? "" : "1234");
     },
   );
+});
+
+describe("ComputerExecutor on a page that changes under the pointer (fix round 5)", () => {
+  it.each([
+    ["/widget.html?swap=15", { x: 100, y: 70 }],
+    ["/jumping-frame.html?period=15", { x: 140, y: 110 }],
+  ])("%s: across 60 clicks the gate allowed on Cancel, none reaches Delete", async (path, at) => {
+    const { s, executor } = await setup(path);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const hits = { cancel: 0, delete: 0, refused: 0 };
+    for (let i = 0; i < 60; i++) {
+      // The loop's gate: only "Cancel" runs without approval, and it hands its classification on.
+      const gate = async () => {
+        const { target } = await hitTest(s, at);
+        return target?.label === "Cancel" && !target.opaqueFrame
+          ? { target, personApproved: false }
+          : false;
+      };
+      const run = await executor.run([click(at)], signal, gate);
+      if (run.executed === 1 && run.notes.length > 0) hits.refused += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      for (const frame of s.page.frames()) {
+        const clicked = await frame
+          .evaluate(() => {
+            const holder = window as { __clicked?: string };
+            const value = holder.__clicked;
+            holder.__clicked = undefined;
+            return value;
+          })
+          .catch(() => undefined);
+        if (clicked === "cancel" || clicked === "delete") hits[clicked] += 1;
+      }
+    }
+    console.info(JSON.stringify({ metric: "toctou_clicks", path, ...hits }));
+    expect(hits.delete).toBe(0);
+    expect(hits.cancel).toBeGreaterThan(0);
+  });
 });

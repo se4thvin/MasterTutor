@@ -8,21 +8,28 @@ export const ARM_BUDGET_MS = 250;
 const MAX_DOCUMENTS = 64;
 
 /**
- * Keystrokes the executor sends are guarded inside the page while it types: in the document holding
- * the focused element ("home") only those aimed at a secret field are cancelled; in every other
- * document all of them, so text a page script redirects mid-typing into another document (a frame's
- * password field) is never delivered. Armed only around the executor's own typing, so credential
- * filling (B3) is unaffected.
+ * The executor's own input is guarded inside the page, in every document, while it is sent.
+ * - Typing: in the document holding the focused element ("home") only keystrokes aimed at a secret
+ *   field are cancelled; in every other document all of them, so text a page script redirects
+ *   mid-typing into another document (a frame's password field) is never delivered.
+ * - A click: pointer events are cancelled unless they reach the element the hit test classified
+ *   (kept by the scan), so a page that moves or swaps elements between the check and the press
+ *   never gets an unchecked click (TOCTOU), whichever document the press lands in.
+ * Armed only around the executor's own input, so a person's input and credential filling (B3) are
+ * unaffected.
  */
-export interface TypingGuard {
+export interface InputGuard {
   /** False when some document did not arm within the budget, or there were too many: fail closed. */
   readonly complete: boolean;
   /** True once a document was added or replaced since arming: it is not armed, so stop typing. */
   readonly changed: boolean;
   /** Whether a page script moved focus out of the home document since arming. */
   focusMoved(): Promise<boolean>;
-  /** Disarms every document an arm was sent to. Never throws; never waits on a hung document. */
-  disarm(): Promise<void>;
+  /**
+   * Disarms every document an arm was sent to; resolves true when a document cancelled input.
+   * Never throws; never waits on a hung document.
+   */
+  disarm(): Promise<boolean>;
 }
 
 /** Sessions whose last arm could not cover every document (until an arm covers them all again). */
@@ -33,36 +40,68 @@ export function typingGuardIncomplete(session: BrowserSession): boolean {
   return incomplete.has(session);
 }
 
-/** Installs the guard in this document; returns whether it is the home document. */
-export function armScript(arg: { owners: string[]; forceHome: boolean }, h: PageHelpers): boolean {
-  const slot = globalThis as unknown as { __mtGuard?: { remove(): void }; __mtStart?: unknown };
+const POINTER_EVENTS = [
+  "pointerdown",
+  "mousedown",
+  "pointerup",
+  "mouseup",
+  "click",
+  "auxclick",
+  "dblclick",
+  "contextmenu",
+];
+
+/**
+ * Installs the guard in this document (`click`: the key the hit test kept its element under, or
+ * null for typing); returns whether this is the home document for typing.
+ */
+export function armScript(
+  arg: { owners: string[]; forceHome: boolean; click: string | null; pointerEvents: string[] },
+  h: PageHelpers,
+): boolean {
+  const slot = globalThis as unknown as {
+    __mtGuard?: { remove(): void };
+    __mtStart?: unknown;
+    __mtFound?: { key: string; el: Element };
+    __mtCancelled?: boolean;
+  };
   slot.__mtGuard?.remove();
-  const active = document.activeElement;
-  const home =
-    arg.forceHome || (!!active && !arg.owners.includes(active.tagName) && document.hasFocus());
-  slot.__mtStart = active;
-  const guard = (event: Event) => {
-    const target = event.composedPath()[0];
-    if (!home || (target instanceof Element && h.isSecretField(target))) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
+  slot.__mtCancelled = false;
+  const cancel = (event: Event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    slot.__mtCancelled = true;
   };
-  const onKey = (event: Event) => {
-    const key = event as KeyboardEvent;
-    if (key.key.length === 1 && !key.ctrlKey && !key.metaKey) guard(event);
-  };
-  const onInput = (event: Event) => {
-    if ((event as InputEvent).inputType.startsWith("insert")) guard(event);
-  };
-  addEventListener("keydown", onKey, true);
-  addEventListener("keypress", onKey, true);
-  addEventListener("beforeinput", onInput, true);
+  const listeners: Array<[string, (event: Event) => void]> = [];
+  let home = false;
+  if (arg.click !== null) {
+    const kept = slot.__mtFound?.key === arg.click ? slot.__mtFound.el : null;
+    const onPointer = (event: Event) => {
+      if (!kept || !event.composedPath().includes(kept)) cancel(event);
+    };
+    for (const type of arg.pointerEvents) listeners.push([type, onPointer]);
+  } else {
+    const active = document.activeElement;
+    home =
+      arg.forceHome || (!!active && !arg.owners.includes(active.tagName) && document.hasFocus());
+    slot.__mtStart = active;
+    const guard = (event: Event) => {
+      const target = event.composedPath()[0];
+      if (!home || (target instanceof Element && h.isSecretField(target))) cancel(event);
+    };
+    const onKey = (event: Event) => {
+      const key = event as KeyboardEvent;
+      if (key.key.length === 1 && !key.ctrlKey && !key.metaKey) guard(event);
+    };
+    const onInput = (event: Event) => {
+      if ((event as InputEvent).inputType.startsWith("insert")) guard(event);
+    };
+    listeners.push(["keydown", onKey], ["keypress", onKey], ["beforeinput", onInput]);
+  }
+  for (const [type, listener] of listeners) addEventListener(type, listener, true);
   slot.__mtGuard = {
     remove() {
-      removeEventListener("keydown", onKey, true);
-      removeEventListener("keypress", onKey, true);
-      removeEventListener("beforeinput", onInput, true);
+      for (const [type, listener] of listeners) removeEventListener(type, listener, true);
     },
   };
   return home;
@@ -77,10 +116,12 @@ export function focusMovedScript(owners: string[]): boolean {
   return idle && slot.__mtStart !== active;
 }
 
-export function disarmScript(): void {
-  const slot = globalThis as unknown as { __mtGuard?: { remove(): void } };
+/** Removes the guard; returns whether it cancelled any input. */
+export function disarmScript(): boolean {
+  const slot = globalThis as unknown as { __mtGuard?: { remove(): void }; __mtCancelled?: boolean };
   slot.__mtGuard?.remove();
   delete slot.__mtGuard;
+  return slot.__mtCancelled === true;
 }
 
 type Doc = { worlds: IsolatedWorlds; frameId: string };
@@ -94,10 +135,24 @@ const FRAME_EVENTS = ["Page.frameAttached", "Page.frameNavigated"] as const;
  * document an arm was sent to is disarmed in order on its own session, so a late arm can never
  * outlive the guard and cancel a person's keystrokes.
  */
-export async function armTypingGuard(
+export function armTypingGuard(session: BrowserSession, signal: AbortSignal): Promise<InputGuard> {
+  return armGuard(session, signal, null);
+}
+
+/** Arms the click guard for the element the last hit test kept under `key` (HitTest.key). */
+export function armClickGuard(
   session: BrowserSession,
   signal: AbortSignal,
-): Promise<TypingGuard> {
+  key: string,
+): Promise<InputGuard> {
+  return armGuard(session, signal, key);
+}
+
+async function armGuard(
+  session: BrowserSession,
+  signal: AbortSignal,
+  click: string | null,
+): Promise<InputGuard> {
   signal.throwIfAborted();
   let settled = false;
   let changed = false;
@@ -109,7 +164,11 @@ export async function armTypingGuard(
   const send = (doc: Doc, forceHome: boolean) => {
     sent.push(doc);
     return doc.worlds
-      .evaluate(armScript, { owners: FRAME_OWNERS, forceHome }, doc.frameId)
+      .evaluate(
+        armScript,
+        { owners: FRAME_OWNERS, forceHome, click, pointerEvents: POINTER_EVENTS },
+        doc.frameId,
+      )
       .then((isHome) => {
         answered.add(doc);
         if (isHome) home ??= doc;
@@ -137,20 +196,25 @@ export async function armTypingGuard(
     const others = [...(await session.outOfProcessFrames()).values()];
     await Promise.all([topArm, ...others.map(armSession)]);
     // No document claimed focus (a background window): the top document is home, as before.
-    if (!home && !settled) await send({ worlds: top, frameId: await top.mainFrameId() }, true);
+    if (click === null && !home && !settled)
+      await send({ worlds: top, frameId: await top.mainFrameId() }, true);
     return true;
   };
 
-  const disarmAll = (): Promise<void> => {
+  const disarmAll = async (): Promise<boolean> => {
     settled = true;
     for (const worlds of watched) for (const event of FRAME_EVENTS) worlds.cdp.off(event, onChange);
     // Sent in order after each arm on the same session. Only documents that answered are awaited,
     // and never past the budget.
     const done = sent.map((doc) =>
-      doc.worlds.evaluate(disarmScript, null, doc.frameId).catch(() => undefined),
+      doc.worlds.evaluate(disarmScript, null, doc.frameId).catch(() => false),
     );
     const waited = done.filter((_, index) => answered.has(sent[index]!));
-    return Promise.race([Promise.all(waited).then(() => undefined), timeout(ARM_BUDGET_MS)]);
+    const cancelled = await Promise.race([
+      Promise.all(waited),
+      timeout(ARM_BUDGET_MS).then(() => [false]),
+    ]);
+    return cancelled.includes(true);
   };
 
   let onAbort: () => void = () => undefined;
@@ -174,7 +238,7 @@ export async function armTypingGuard(
   settled = true;
   if (complete) incomplete.delete(session);
   else incomplete.add(session);
-  let disarming: Promise<void> | null = null;
+  let disarming: Promise<boolean> | null = null;
   return {
     complete,
     get changed() {

@@ -873,10 +873,17 @@ export class RunLoop {
         }
         if (target && (action.type === "click" || action.type === "double_click"))
           clicked.push({ index, label: target.label });
-        // "approved" tells the executor a person approved this action (after a restore the page
-        // may no longer show why: a frame that hangs is only found when typing is guarded).
-        if (need === null) return decision?.approved ? "approved" : true;
-        return "approved";
+        // Only a person's approval of this very element (path and record) lets typing run with an
+        // incomplete guard; a policy approval in auto mode never does. After a restore the page
+        // may no longer show why approval was needed (a hung frame), so need may be null here.
+        const personApproved =
+          decision?.approved === true &&
+          decision.decidedBy !== POLICY_DECIDER &&
+          decision.target !== null &&
+          decision.target === (target?.path ?? null) &&
+          (decision.context === null || decision.context === (target?.context ?? null));
+        // The executor holds a click to this classification at the moment it presses (TOCTOU).
+        return { target, personApproved };
       };
       const run = await this.#deps.browser.runComputer(call.actions, signal, gate);
       // Only clicks that actually ran (B3 logout detection, F10).

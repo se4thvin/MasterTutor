@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Jumping frame</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      iframe {
+        position: absolute;
+        left: 40px;
+        top: 40px;
+        width: 300px;
+        height: 200px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe title="Account" src="http://other.fixtures-isolated.test/widget.html"></iframe>
+    <script>
+      // ?period=N: a hostile page moves the cross-site widget 50 px up and back every N ms, so a
+      // point over its "Cancel" lands on "Delete account" half the time.
+      const frame = document.querySelector("iframe");
+      let up = false;
+      setInterval(
+        () => {
+          up = !up;
+          frame.style.top = up ? "-10px" : "40px";
+        },
+        Number(new URLSearchParams(location.search).get("period") ?? 15),
+      );
+    </script>
+  </body>
+</html>

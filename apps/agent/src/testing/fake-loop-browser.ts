@@ -43,6 +43,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   focused: TargetDescription | null = null;
   /** Batches that ran to the end (every action passed the gate). */
   readonly computerRuns: ComputerAction[][] = [];
+  /** What the gate answered for each action it was asked about. */
+  readonly verdicts: Array<Awaited<ReturnType<ActionGate>>> = [];
   /** Every single action that passed the gate, including those of a batch stopped later. */
   readonly executed: ComputerAction[] = [];
   readonly functionRuns: Array<{ name: string; args: unknown }> = [];
@@ -96,8 +98,9 @@ export class FakeLoopBrowser implements LoopBrowser {
   ): Promise<ComputerRun> {
     let executed = 0;
     for (const action of actions) {
-      if (!(await gate(action)))
-        return { executed, notes: ["Stopped before an action: it needs approval."] };
+      const verdict = await gate(action);
+      this.verdicts.push(verdict);
+      if (!verdict) return { executed, notes: ["Stopped before an action: it needs approval."] };
       this.guard?.assertAgent(signal);
       this.executed.push(action);
       executed += 1;

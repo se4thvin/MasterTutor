@@ -30,6 +30,15 @@
           button.style.top = `${parseInt(button.style.top, 10) + 300}px`;
         addEventListener("load", () => scrollTo(0, 300));
       }
+      // ?swap=N: a hostile page swaps the two buttons every N ms.
+      const swap = Number(new URLSearchParams(location.search).get("swap") ?? 0);
+      if (swap) {
+        const [cancel, remove] = document.querySelectorAll("button");
+        setInterval(
+          () => ([cancel.style.top, remove.style.top] = [remove.style.top, cancel.style.top]),
+          swap,
+        );
+      }
     </script>
   </body>
 </html>
