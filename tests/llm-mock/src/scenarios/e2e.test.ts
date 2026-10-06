@@ -1,3 +1,4 @@
+import { FUNCTION_TOOLS } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import type { RecordedRequest } from "../scenario.ts";
 import { E2E_SCENARIO, E2E_SCENARIOS } from "./e2e.ts";
@@ -40,5 +41,19 @@ describe("E2E scenarios served by the llm-mock service", () => {
     expect(() => check(E2E_SCENARIO.riskyDeny)(pageText("d", "Account deleted"))).toThrow();
     expect(() => check(E2E_SCENARIO.riskyApprove)(pageText("a", "Account deleted"))).not.toThrow();
     expect(() => check(E2E_SCENARIO.riskyApprove)(pageText("a", "Study tips"))).toThrow();
+  });
+
+  it("scripts only tool calls the agent accepts: every function call parses against its contract", () => {
+    for (const scenario of SCENARIOS)
+      for (const turn of scenario.turns)
+        for (const output of turn.outputs ?? []) {
+          if (output.type !== "function") continue;
+          const tool = FUNCTION_TOOLS[output.name as keyof typeof FUNCTION_TOOLS];
+          expect(tool, `${scenario.name}: ${output.name}`).toBeDefined();
+          const parsed = tool.args.safeParse(output.args);
+          expect(parsed.success, `${scenario.name}: ${output.name} ${parsed.error?.message}`).toBe(
+            true,
+          );
+        }
   });
 });

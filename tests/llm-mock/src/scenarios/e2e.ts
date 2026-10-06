@@ -22,11 +22,17 @@ export const E2E_ALIAS = { login: "fixture-login", imap: "fixture-imap" } as con
 
 const readInteractive: MockTurn = {
   outputs: [
-    { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+    {
+      type: "function",
+      name: "read_page",
+      args: { mode: "interactive", sinceHash: null, offset: null },
+    },
   ],
 };
 const readText: MockTurn = {
-  outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+  outputs: [
+    { type: "function", name: "read_page", args: { mode: "text", sinceHash: null, offset: null } },
+  ],
 };
 const click = (name: string): MockTurn => ({ outputs: [{ type: "click_named", name }] });
 const fill = (alias: string, field: string, name: string): MockTurn => ({
