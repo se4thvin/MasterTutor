@@ -8,7 +8,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 
 ## Current phase
 
-**Build (goal D32).** All plans are written (docs/superpowers/plans/). Phase 0 is COMPLETE (8e8152d..3448ce1; final review running). Backend track runs in the main worktree (next: B1, then B3, B6, B2/4/5). The frontend track runs in `.worktrees/fe` (branch fe-track; F1/F2/F4 then F3/F5) and merges back per phase. Ledgers live in each worktree's `.superpowers/sdd/<plan>/progress.md`. After that: Phase 7 integration, then Phase 10 benchmark.
+**Build (goal D32).** Phase 0, B1 (agent runtime) and F1/F2/F4 (frontend core) are COMPLETE. The frontend was merged into `agentic-notes-browser-agent` at 546aedd, and B1 has one last targeted hit-test fix (N5) in flight. All B3/B6/B2-B4-B5 pre-flights are done, and reconciliation amendments are being drafted into `.superpowers/plan-drafts/`. The frontend track continues in `.worktrees/fe` (fe-track, fast-forwarded to 546aedd): it is running the React Bits delight-pass plan (D43) and the F3/F5 pre-flight. Order from here: B3, then B6, then B2/B4/B5 in parallel with the delight pass and F3/F5, then Phase 7, Phase 8 and the Phase 10 benchmark. Ledgers live in each worktree's `.superpowers/sdd/<plan>/progress.md`.
 
 ## Decisions (user-confirmed)
 
