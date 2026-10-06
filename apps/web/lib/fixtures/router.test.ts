@@ -1,0 +1,194 @@
+import { createRouterClient } from "@orpc/server";
+import { describe, expect, it } from "vitest";
+import { liveRouter } from "../server/rpc/live-router.ts";
+import { FIXTURE_VIEWER } from "../server/viewer.ts";
+import { fixtureNamespaceFrom } from "./cookies.ts";
+import { ids } from "./ids.ts";
+import { fixtureRouter } from "./router.ts";
+import { stateFor } from "./store.ts";
+
+let counter = 0;
+function client() {
+  counter += 1;
+  const ns = `test-${counter}`;
+  return {
+    ns,
+    api: createRouterClient(fixtureRouter, { context: { ns, viewer: FIXTURE_VIEWER } }),
+  };
+}
+
+describe("session", () => {
+  it("rejects every call without a viewer as UNAUTHORIZED, in both routers", async () => {
+    const fixture = createRouterClient(fixtureRouter, { context: { ns: "x", viewer: null } });
+    await expect(fixture.settings.get({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(fixture.vault.list({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const live = createRouterClient(liveRouter, { context: { viewer: null } });
+    await expect(live.settings.get({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const signedIn = createRouterClient(liveRouter, { context: { viewer: FIXTURE_VIEWER } });
+    await expect(signedIn.settings.get({})).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
+  });
+});
+
+describe("fixture notes", () => {
+  it("lists by folder, unfiled and kind, newest first, with pagination", async () => {
+    const { api } = client();
+    const all = await api.notes.list({ limit: 4 });
+    expect(all.items).toHaveLength(4);
+    expect(all.nextCursor).toBe("4");
+    const unfiled = await api.notes.list({ folder: "unfiled" });
+    expect(unfiled.items.every((n) => n.folderId === null)).toBe(true);
+    const pdfs = await api.notes.list({ kind: "pdf" });
+    expect(pdfs.items.map((n) => n.sourceKinds)).toEqual([["pdf"]]);
+    const opt = await api.notes.list({ folder: ids.folder(2) });
+    expect(opt.items.map((n) => n.title)).toContain("Learning-rate warmup, explained");
+  });
+
+  it("returns a rich note with ordered blocks of every captured type", async () => {
+    const { api } = client();
+    const detail = await api.notes.get({ noteId: ids.note(1) });
+    const types = new Set(detail.blocks.map((b) => b.type));
+    for (const type of [
+      "heading",
+      "paragraph",
+      "list",
+      "quote",
+      "code",
+      "table",
+      "math",
+      "image",
+      "figure",
+      "commentary",
+    ]) {
+      expect(types.has(type as never), type).toBe(true);
+    }
+    const positions = detail.blocks.map((b) => b.position);
+    expect([...positions].sort()).toEqual(positions);
+  });
+
+  it('orders blocks by position bytes (Postgres "C"), not by locale', async () => {
+    const { ns, api } = client();
+    const record = stateFor(ns).notes.find((r) => r.note.id === ids.note(1));
+    if (!record) throw new Error("missing fixture note");
+    const keys = ["aa", "aA", "a0", "Zz"];
+    record.blocks = record.blocks
+      .slice(0, keys.length)
+      .map((b, i) => ({ ...b, position: keys[i] ?? "" }));
+    const detail = await api.notes.get({ noteId: ids.note(1) });
+    expect(detail.blocks.map((b) => b.position)).toEqual(["Zz", "a0", "aA", "aa"]);
+  });
+
+  it("searches block text and returns a snippet", async () => {
+    const { api } = client();
+    const { items } = await api.notes.search({ q: "grad_norm" });
+    expect(items[0]).toMatchObject({ noteId: ids.note(1) });
+    expect(items[0]?.snippet).toContain("grad_norm");
+  });
+
+  it("keeps the original on edit and flips fidelity when the last review clears", async () => {
+    const { api } = client();
+    const detail = await api.notes.get({ noteId: ids.note(1) });
+    const para = detail.blocks.find((b) => b.type === "paragraph" && !b.edited);
+    const edited = await api.notes.updateBlock({ blockId: para!.id, markdown: "Changed." });
+    expect(edited).toMatchObject({
+      edited: true,
+      markdown: "Changed.",
+      originalMarkdown: para!.markdown,
+    });
+    const review = detail.blocks.find((b) => !b.verified)!;
+    expect((await api.notes.markVerified({ blockId: review.id })).verified).toBe(true);
+    expect((await api.notes.get({ noteId: ids.note(1) })).note.fidelity).toBe("verified");
+  });
+
+  it("moves notes and records the user as filer", async () => {
+    const { api } = client();
+    await api.notes.move({ noteId: ids.note(1), folderId: null });
+    const { note } = await api.notes.get({ noteId: ids.note(1) });
+    expect(note).toMatchObject({ folderId: null, filedBy: "user" });
+    await expect(
+      api.notes.move({ noteId: ids.note(1), folderId: ids.folder(999) }),
+    ).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+});
+
+describe("fixture folders", () => {
+  it("rejects cycles, depth and duplicate names", async () => {
+    const { api } = client();
+    await expect(
+      api.folders.move({ folderId: ids.folder(1), parentId: ids.folder(3) }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    await expect(
+      api.folders.create({ name: "optimization", parentId: ids.folder(1) }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+  });
+
+  it("deletes a subtree and unfiles its notes", async () => {
+    const { api } = client();
+    await api.folders.delete({ folderId: ids.folder(1) });
+    const { folders } = await api.folders.tree({});
+    expect(folders.map((x) => x.id)).not.toContain(ids.folder(3));
+    expect((await api.notes.get({ noteId: ids.note(1) })).note.folderId).toBeNull();
+  });
+});
+
+describe("fixture vault (Review Focus 2)", () => {
+  it("keeps field names only, never values, and audits the create", async () => {
+    const { api, ns } = client();
+    const canary = "canary-secret-7f3a9c";
+    const item = await api.vault.create({
+      alias: "canary",
+      origin: "learn.example.edu",
+      label: "Canary",
+      secrets: { username: "someone@example.test", password: canary },
+    });
+    expect(item).toMatchObject({
+      origin: "https://learn.example.edu",
+      fields: ["username", "password"],
+    });
+    expect(JSON.stringify(stateFor(ns))).not.toContain(canary);
+    expect(JSON.stringify(item)).not.toContain(canary);
+    const audit = await api.vault.audit({ limit: 1 });
+    expect(audit.items[0]).toMatchObject({ alias: "canary", action: "create" });
+  });
+
+  it("rejects duplicate aliases", async () => {
+    const { api } = client();
+    await expect(
+      api.vault.create({ alias: "github", origin: "https://github.com", label: "x", secrets: {} }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("forgets a saved session", async () => {
+    const { api } = client();
+    await api.vault.forgetSession({ alias: "github", origin: "https://github.com" });
+    const { items } = await api.vault.list({});
+    expect(items.find((i) => i.alias === "github")?.sessionSaved).toBe(false);
+  });
+});
+
+describe("fixture settings and isolation", () => {
+  it("toggles the kill switch per namespace only", async () => {
+    const a = client();
+    const b = client();
+    expect((await a.api.settings.setKillSwitch({ on: true })).killSwitch).toBe(true);
+    expect((await b.api.settings.get({})).killSwitch).toBe(false);
+  });
+
+  it("reports usage for every day in range", async () => {
+    const { api } = client();
+    const report = await api.settings.usage({ from: "2026-09-01", to: "2026-09-30" });
+    expect(report.perDay).toHaveLength(30);
+    expect(report.perDay[0]?.day).toBe("2026-09-01");
+  });
+
+  it("reads the namespace from the cookie header", () => {
+    expect(fixtureNamespaceFrom("a=1; mt_fixture_ns=abc-123")).toBe("abc-123");
+    expect(fixtureNamespaceFrom("mt_fixture_ns=../../x")).toBe("default");
+    expect(fixtureNamespaceFrom(null)).toBe("default");
+  });
+});

@@ -1,0 +1,75 @@
+@import "tailwindcss";
+@import "../styles/tokens.css";
+@import "../styles/motion.css";
+@import "../styles/base.css";
+@import "../styles/components.css";
+@import "../styles/overlays.css";
+@import "../styles/shell.css";
+@import "../styles/library.css";
+@import "../styles/note.css";
+@import "../styles/vault.css";
+@import "../styles/settings.css";
+
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg-2);
+  --color-elevated: var(--elevated);
+  --color-label: var(--label);
+  --color-label-2: var(--label-2);
+  --color-label-3: var(--label-3);
+  --color-hairline: var(--hairline);
+  --color-sep: var(--sep);
+  --color-fill: var(--fill);
+  --color-fill-2: var(--fill-2);
+  --color-tint: var(--tint);
+  --color-tint-text: var(--tint-text);
+  --color-on-tint: var(--on-tint);
+  --color-tint-wash: var(--tint-wash);
+  --color-signal: var(--signal);
+  --color-on-signal: var(--on-signal);
+  --color-signal-wash: var(--signal-wash);
+  --color-ok: var(--ok);
+  --color-ok-wash: var(--ok-wash);
+  --color-warn: var(--warn);
+  --color-warn-wash: var(--warn-wash);
+  --color-danger: var(--danger);
+  --color-on-danger: var(--on-danger);
+  --color-danger-wash: var(--danger-wash);
+  --font-*: initial;
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+  --text-*: initial;
+  --radius-*: initial;
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-pill: var(--r-pill);
+  --radius-frame: var(--r-frame);
+  --shadow-*: initial;
+  --shadow-e1: var(--e1);
+  --shadow-e2: var(--e2);
+  --shadow-e3: var(--e3);
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --text-shadow-*: initial;
+  --blur-*: initial;
+  --animate-*: initial;
+  --ease-*: initial;
+  --ease-out: var(--motion-ease-out);
+  --ease-in: var(--motion-ease-in);
+  --ease-cursor: var(--motion-ease-cursor);
+  --ease-spring: var(--motion-spring);
+  --ease-spring-soft: var(--motion-spring-soft);
+  --breakpoint-*: initial;
+  --breakpoint-sm: 26.3125rem;
+  --breakpoint-md: 51.3125rem;
+  --breakpoint-lg: 73.8125rem;
+}
+
+/* A theme key named --font-display would alias itself, so the utility reads the token directly. */
+@utility font-display {
+  font-family: var(--font-display);
+}

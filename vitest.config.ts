@@ -1,11 +1,18 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const exclude = ["**/node_modules/**", "**/.next/**"];
 
 export default defineConfig({
+  // next.config.ts defines this for web builds; tests run as a production (non-fixture) build.
+  define: { __FIXTURE_BUILD__: "false" },
+  resolve: {
+    alias: [{ find: /^@\//, replacement: fileURLToPath(new URL("./apps/web/", import.meta.url)) }],
+  },
   test: {
     projects: [
       {
+        extends: true,
         test: {
           name: "unit",
           include: [
@@ -18,6 +25,7 @@ export default defineConfig({
         },
       },
       {
+        extends: true,
         test: {
           name: "integration",
           include: ["packages/**/*.int.test.ts", "apps/**/*.int.test.ts", "tests/**/*.int.test.ts"],
