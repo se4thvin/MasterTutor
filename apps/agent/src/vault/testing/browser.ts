@@ -105,14 +105,19 @@ export function refMap(tb: TestBrowser): {
   };
 }
 
-export const humanApproval = (userId: string): CallApproval => ({
+/** A person approved a credential_first_use card; `postsTo` is the destination it named, if any. */
+export const humanApproval = (userId: string, postsTo: string | null = null): CallApproval => ({
   kind: "credential_first_use",
   decidedBy: userId,
+  label: postsTo,
+  decidedAt: Date.now(),
 });
 
-export const policyApproval = (): CallApproval => ({
+export const policyApproval = (postsTo: string | null = null): CallApproval => ({
   kind: "credential_first_use",
   decidedBy: POLICY_DECIDER,
+  label: postsTo,
+  decidedAt: Date.now(),
 });
 
 export function toolContext(input: {

@@ -1012,7 +1012,7 @@ describe("RunLoop (spec §5.3)", () => {
     expect(turns).toHaveLength(3);
   });
 
-  describe("function-tool approvals (hooks.functionApproval)", () => {
+  describe("function-tool approvals (the tool's own approval request)", () => {
     const readPage: MockTurn = {
       outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
     };
@@ -1024,9 +1024,8 @@ describe("RunLoop (spec §5.3)", () => {
       }) as const;
 
     it("asks for a function call's approval, then runs it once approved", async () => {
-      const { run, browser, loop, reload } = await setup([readPage, doneExpecting("tool")], {
-        hooks: { functionApproval: firstUse },
-      });
+      const { run, browser, loop, reload } = await setup([readPage, doneExpecting("tool")]);
+      browser.functionApproval = firstUse;
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
       const [request] = await approvalRows(run.id);
       expect(request).toMatchObject({ kind: "credential_first_use", status: "pending" });
@@ -1041,10 +1040,11 @@ describe("RunLoop (spec §5.3)", () => {
     });
 
     it("answers a denied function call as not run and never runs it", async () => {
-      const { run, browser, loop, reload } = await setup(
-        [readPage, doneExpecting("the user denied this action")],
-        { hooks: { functionApproval: firstUse } },
-      );
+      const { run, browser, loop, reload } = await setup([
+        readPage,
+        doneExpecting("the user denied this action"),
+      ]);
+      browser.functionApproval = firstUse;
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
       await decideApproval(run.id, "denied");
       const resumed = await reload();
@@ -1053,29 +1053,65 @@ describe("RunLoop (spec §5.3)", () => {
       expect(browser.functionRuns).toEqual([]);
     });
 
-    it("hands a human decision to the tool with who decided it (F4, W4)", async () => {
-      const { run, browser, loop, reload } = await setup([readPage, done()], {
-        hooks: { functionApproval: firstUse },
-      });
+    it("hands a human decision to the tool with who decided it and when (F4, W4)", async () => {
+      const { run, browser, loop, reload } = await setup([readPage, done()]);
+      browser.functionApproval = firstUse;
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
       await decideApproval(run.id, "approved");
       const resumed = await reload();
       await resumed.resume(new AbortController().signal);
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       expect(browser.functionApprovals).toEqual([
-        { kind: "credential_first_use", decidedBy: "user-1" },
+        {
+          kind: "credential_first_use",
+          decidedBy: "user-1",
+          label: null,
+          decidedAt: expect.any(Number),
+        },
       ]);
     });
 
     it("hands a policy decision to the tool as decided by policy (auto mode, D33)", async () => {
       const { browser, loop } = await setup([readPage, done()], {
         approvalMode: "auto_within_allowlist",
-        hooks: { functionApproval: firstUse },
       });
+      browser.functionApproval = firstUse;
       expect(await drive(loop)).toEqual({ kind: "completed" });
       expect(browser.functionApprovals).toEqual([
-        { kind: "credential_first_use", decidedBy: "policy" },
+        {
+          kind: "credential_first_use",
+          decidedBy: "policy",
+          label: null,
+          decidedAt: expect.any(Number),
+        },
       ]);
+    });
+
+    it("binds each call's approval to the destination its own card named (T10-12 I1)", async () => {
+      const twoFills: MockTurn = {
+        outputs: [
+          { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+          { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+        ],
+      };
+      const { run, browser, reload, ...first } = await setup([twoFills, done()]);
+      let loop = first.loop;
+      // Each call's card names where its own form posts.
+      const shown = ["https://evil.example", "https://other.example"];
+      browser.functionApproval = async (_name, args) => ({
+        kind: "credential_first_use",
+        alias: "school",
+        origin: "http://site.fixtures.test",
+        postsTo: (args as { mode: string }).mode === "text" ? shown[0] : shown[1],
+      });
+      for (let card = 0; card < 2; card++) {
+        expect(await drive(loop), `card ${card}`).toEqual({ kind: "waiting", reason: "approval" });
+        await decideApproval(run.id, "approved");
+        loop = await reload();
+        await loop.resume(new AbortController().signal);
+      }
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.functionApprovals.map((approval) => approval?.label)).toEqual(shown);
     });
 
     it("hands no approval to a call that needed none", async () => {

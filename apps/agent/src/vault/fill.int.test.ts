@@ -40,6 +40,16 @@ const deps = (logins: string[] = []) =>
   });
 const ctx = (approval = null as ReturnType<typeof humanApproval> | null, signal?: AbortSignal) =>
   toolContext({ runId, workspaceId: env.workspaceId, session: tb.session, approval, signal });
+/** One approve-phase question, asked against the page as it is now. */
+const ask = async (
+  d: ReturnType<typeof deps>,
+  alias: string,
+  field: "username" | "password",
+  selector: string,
+) => fillApproval(d, ctx(), { alias, field, target: await refs.ref(selector) });
+/** A person's approval of exactly the card they were shown. */
+const approve = (card: Awaited<ReturnType<typeof fillApproval>>) =>
+  humanApproval(env.userId, card?.kind === "credential_first_use" ? (card.postsTo ?? null) : null);
 async function grant(alias: string) {
   await env.owner.sql`insert into vault_grants (item_id, origin, approved_by)
                       select id, ${login}, ${env.userId} from vault_items where alias = ${alias}`;
@@ -74,10 +84,10 @@ describe("fill_credential", () => {
     await tb.page.goto(`${login}/password`);
     const logins: string[] = [];
     expect(
-      await fillApproval(deps(), { id: runId, workspaceId: env.workspaceId }, tb.page.url(), {
+      await fillApproval(deps(), ctx(), {
         alias: "first",
         field: "username",
-        target: "e1",
+        target: await refs.ref("#email"),
       }),
     ).toEqual({ kind: "credential_first_use", alias: "first", origin: login });
     expect(
@@ -332,8 +342,11 @@ describe("fill_credential", () => {
       const [row] = await env.owner
         .sql`select action, outcome from vault_audit where run_id = ${runId} order by at desc limit 1`;
       expect(row).toMatchObject({ action: "denied", outcome: "form_action_offsite" });
+      // The next approve phase shows where the form posts; a person approves that destination.
+      const card = await ask(d, "site", "password", "#password");
+      expect(card, path).toMatchObject({ postsTo: fx.origin("evil") });
       expect(
-        await fillCredential(d, ctx(humanApproval(env.userId)), {
+        await fillCredential(d, ctx(approve(card)), {
           alias: "site",
           field: "password",
           target: await refs.ref("#password"),
@@ -371,12 +384,12 @@ describe("fill_credential", () => {
         target: await refs.ref("#password"),
       });
     expect(await call(null)).toEqual({ error: "approval_required" });
-    // The next approve phase raises a real request that names where the form posts.
+    // The approve phase raises a real request naming where the form posts, even for a granted alias.
     expect(
-      await fillApproval(d, { id: runId, workspaceId: env.workspaceId }, tb.page.url(), {
+      await fillApproval(d, ctx(), {
         alias: "site",
         field: "password",
-        target: "e1",
+        target: await refs.ref("#password"),
       }),
     ).toEqual({
       kind: "credential_first_use",
@@ -385,16 +398,16 @@ describe("fill_credential", () => {
       postsTo: fx.origin("evil"),
     });
     // A policy (auto-mode) approval never clears the pin: a person must look.
-    expect(await call(policyApproval())).toEqual({ error: "needs_human" });
+    expect(await call(policyApproval(fx.origin("evil")))).toEqual({ error: "needs_human" });
     expect(await tb.page.inputValue("#password")).toBe("");
-    expect(await call(humanApproval(env.userId))).toEqual({ ok: true });
+    expect(await call(humanApproval(env.userId, fx.origin("evil")))).toEqual({ ok: true });
     // Once filled, the request is not raised again for a same-origin page.
     await tb.page.goto(`${login}/password`);
     expect(
-      await fillApproval(d, { id: runId, workspaceId: env.workspaceId }, tb.page.url(), {
+      await fillApproval(d, ctx(), {
         alias: "site",
         field: "password",
-        target: "e1",
+        target: await refs.ref("#password"),
       }),
     ).toBeNull();
   });
@@ -429,54 +442,111 @@ describe("fill_credential", () => {
     expect(d.fingerprints.forRun(runId).hasSecrets()).toBe(false);
   });
 
-  it("a first-use approval that never named the destination does not clear an off-origin form (I1)", async () => {
-    await env.seedItem({ alias: "fresh", origin: login, secrets: { password: account.password } });
+  it("fills nothing of a same-turn username and password pair without a card naming the destination (T10-12 I1)", async () => {
+    await env.seedItem({
+      alias: "pair",
+      origin: login,
+      secrets: { username: account.email, password: account.password },
+    });
     await tb.page.goto(`${login}/offsite-form`);
     const d = deps();
-    const run = { id: runId, workspaceId: env.workspaceId };
-    const call = async () =>
-      fillCredential(d, ctx(humanApproval(env.userId)), {
-        alias: "fresh",
+    // One approve phase raises both cards before either call acts; each names where the form posts.
+    const cards = [
+      await ask(d, "pair", "username", "#username"),
+      await ask(d, "pair", "password", "#password"),
+    ];
+    for (const card of cards)
+      expect(card).toEqual({
+        kind: "credential_first_use",
+        alias: "pair",
+        origin: login,
+        postsTo: fx.origin("evil"),
+      });
+    // Approvals of cards that named no destination clear neither call, first or second.
+    for (const [field, selector] of [
+      ["username", "#username"],
+      ["password", "#password"],
+    ] as const)
+      expect(
+        await fillCredential(d, ctx(humanApproval(env.userId)), {
+          alias: "pair",
+          field,
+          target: await refs.ref(selector),
+        }),
+        field,
+      ).toEqual({ error: "approval_required" });
+    expect([await tb.page.inputValue("#username"), await tb.page.inputValue("#password")]).toEqual([
+      "",
+      "",
+    ]);
+    // The cards that named it do.
+    expect(
+      await fillCredential(d, ctx(approve(cards[0]!)), {
+        alias: "pair",
+        field: "username",
+        target: await refs.ref("#username"),
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      await fillCredential(d, ctx(approve(cards[1]!)), {
+        alias: "pair",
         field: "password",
         target: await refs.ref("#password"),
-      });
-    // The first card was a plain first use: no destination on it.
-    expect(
-      await fillApproval(d, run, tb.page.url(), {
-        alias: "fresh",
-        field: "password",
-        target: "e1",
       }),
-    ).toEqual({
-      kind: "credential_first_use",
-      alias: "fresh",
+    ).toEqual({ ok: true });
+  });
+
+  it("refuses every call of a turn once the page swaps the destination its cards named (T10-12 I1)", async () => {
+    await env.seedItem({
+      alias: "swap",
       origin: login,
+      secrets: { username: account.email, password: account.password },
     });
-    expect(await call()).toEqual({ error: "approval_required" });
-    expect(await tb.page.inputValue("#password")).toBe("");
-    const ask = () =>
-      fillApproval(d, run, tb.page.url(), { alias: "fresh", field: "password", target: "e1" });
-    expect(await ask()).toMatchObject({ postsTo: fx.origin("evil") });
-    // The page swaps the destination after the card named it: asked again, naming the new one.
+    await tb.page.goto(`${login}/offsite-form`);
+    const d = deps();
     const other = fx.origin("other");
-    await tb.page.evaluate(
-      (to) => document.querySelector("form")!.setAttribute("action", `${to}/collect`),
-      other,
-    );
-    expect(await call()).toEqual({ error: "approval_required" });
-    expect(
-      await fillApproval(d, run, tb.page.url(), {
-        alias: "fresh",
-        field: "password",
-        target: "e1",
-      }),
-    ).toMatchObject({ postsTo: other });
-    expect(await call()).toEqual({ ok: true });
+    const swap = () =>
+      tb.page.evaluate(
+        (to) => document.querySelector("form")!.setAttribute("action", `${to}/collect`),
+        other,
+      );
+    const fill = async (card: Awaited<ReturnType<typeof ask>>, field: "username" | "password") =>
+      fillCredential(d, ctx(approve(card)), {
+        alias: "swap",
+        field,
+        target: await refs.ref(`#${field}`),
+      });
+
+    // Swapped after the approve phase, before any call acts: both refused.
+    let cards = [
+      await ask(d, "swap", "username", "#username"),
+      await ask(d, "swap", "password", "#password"),
+    ];
+    await swap();
+    expect(await fill(cards[0]!, "username")).toEqual({ error: "approval_required" });
+    expect(await fill(cards[1]!, "password")).toEqual({ error: "approval_required" });
+    expect([await tb.page.inputValue("#username"), await tb.page.inputValue("#password")]).toEqual([
+      "",
+      "",
+    ]);
+
+    // Swapped between the two calls: the first fills, the second is refused.
+    await tb.page.goto(`${login}/offsite-form`);
+    cards = [
+      await ask(d, "swap", "username", "#username"),
+      await ask(d, "swap", "password", "#password"),
+    ];
+    expect(await fill(cards[0]!, "username")).toEqual({ ok: true });
+    await swap();
+    expect(await fill(cards[1]!, "password")).toEqual({ error: "approval_required" });
+    expect(await tb.page.inputValue("#password")).toBe("");
+    // The next card names the new destination.
+    expect(await ask(d, "swap", "password", "#password")).toMatchObject({ postsTo: other });
   });
 
   it("in auto mode hands the page to a person, naming where the form posts (needs_human)", async () => {
     await tb.page.goto(`${login}/offsite-form`);
-    const auto = ctx(policyApproval());
+    const auto = ctx(policyApproval(fx.origin("evil")));
     expect(
       await fillCredential(deps(), auto, {
         alias: "site",
@@ -496,9 +566,8 @@ describe("fill_credential", () => {
       field: "password",
       target: await refs.ref("#password"),
     });
-    expect(d.offsiteForms.size).toBe(1);
     expect(d.signInStarted.size).toBe(1);
     forgetFillState(d, runId);
-    expect([d.offsiteForms.size, d.signInStarted.size, d.totpSteps.size]).toEqual([0, 0, 0]);
+    expect([d.signInStarted.size, d.totpSteps.size]).toEqual([0, 0]);
   });
 });

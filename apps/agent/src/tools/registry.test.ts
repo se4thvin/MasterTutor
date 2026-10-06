@@ -82,7 +82,12 @@ describe("ToolRegistry", () => {
         return { error: "otp_unavailable" as const };
       },
     });
-    const approval: CallApproval = { kind: "credential_first_use", decidedBy: "user-1" };
+    const approval: CallApproval = {
+      kind: "credential_first_use",
+      decidedBy: "user-1",
+      label: null,
+      decidedAt: null,
+    };
     const result = await new ToolRegistry([fill], log).run(
       "fill_credential",
       { alias: "site", field: "otp", target: "e1" },

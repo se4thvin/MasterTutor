@@ -22,8 +22,8 @@ import {
 } from "./dom.ts";
 import { fieldAccepts } from "./field-rules.ts";
 import { approvedBy, credentialApproval } from "./grants.ts";
-import type { ToolContext } from "./runtime.ts";
-import { obtainOtp } from "./otp.ts";
+import type { ApprovalContext, ToolContext } from "./runtime.ts";
+import { codeFirstSignInStart, obtainOtp } from "./otp.ts";
 import { NOT_STORED, withItemSecret } from "./secrets.ts";
 import { msUntilFreshWindow, totpCode, totpStep } from "./totp.ts";
 
@@ -45,29 +45,59 @@ const runAliasKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
 
 /** Drops a finished run's fill state (RunHooks.onReleased, Task 13). */
 export function forgetFillState(
-  deps: Pick<VaultDeps, "offsiteForms" | "signInStarted" | "totpSteps">,
+  deps: Pick<VaultDeps, "signInStarted" | "totpSteps">,
   runId: string,
 ): void {
   const prefix = `${runId}\u0000`;
-  for (const map of [deps.offsiteForms, deps.signInStarted, deps.totpSteps])
+  for (const map of [deps.signInStarted, deps.totpSteps])
     for (const key of map.keys()) if (key.startsWith(prefix)) map.delete(key);
 }
 
+/** Where the target's form would send the value, when that is anywhere but the item's origin. */
+const offsiteDestination = (group: readonly GroupBox[], origin: string) =>
+  group.flatMap((box) => box.info.formOrigins).find((destination) => destination !== origin);
+
+/** The page's current answer for `ref`; undefined when the form posts home or the ref is gone. */
+async function currentDestination(
+  deps: VaultDeps,
+  ctx: ApprovalContext,
+  ref: string,
+  origin: string,
+): Promise<string | undefined> {
+  const resolved = await deps.resolveRef(ctx.session, ref);
+  const target = resolved && (await openTarget(resolved.cdp, resolved.backendNodeId));
+  if (!target) return undefined;
+  try {
+    return offsiteDestination(await describeGroup(target), origin);
+  } finally {
+    await releaseTargets(target.cdp);
+  }
+}
+
 /**
- * RunHooks.functionApproval for fill_credential (spec §5.5 credential_first_use). A fill refused
- * because its form posts off the item's origin asks again, naming the destination, even for a
- * granted alias, so a person can approve that one use (carry-over 1).
+ * fill_credential's approve phase (spec §5.5 credential_first_use). The card names where the
+ * target's form posts whenever that is off the item's origin, for every call and even for a
+ * granted alias (carry-over 1): the act phase fills only while the form still posts to the
+ * destination this very card showed (T10-12 I1). A page it cannot inspect gets a plain card, and
+ * the act phase refuses any off-origin form that card did not name.
  */
 export async function fillApproval(
   deps: VaultDeps,
-  run: { id: string; workspaceId: string },
-  url: string,
+  ctx: ApprovalContext,
   args: FillCredentialArgs,
 ): Promise<ApprovalRequest | null> {
-  const item = await findVaultItemByAlias(deps.db, run.workspaceId, args.alias);
+  const item = await findVaultItemByAlias(deps.db, ctx.workspaceId, args.alias);
   if (!item) return null;
-  const postsTo = deps.offsiteForms.get(runAliasKey(run.id, item.alias));
-  if (postsTo !== undefined && toOrigin(url) === item.origin)
+  const url = ctx.session.page.url();
+  if (toOrigin(url) !== item.origin) return null;
+  const postsTo = await currentDestination(deps, ctx, args.target, item.origin).catch(
+    (error: unknown) => {
+      ctx.signal.throwIfAborted();
+      deps.log.warn({ alias: item.alias, reason: (error as Error).name }, "form check failed");
+      return undefined;
+    },
+  );
+  if (postsTo !== undefined)
     return { kind: "credential_first_use", alias: item.alias, origin: item.origin, postsTo };
   return credentialApproval(deps, url, item);
 }
@@ -118,17 +148,22 @@ async function withCredentialValue(
       return result === NOT_STORED ? "field_not_stored" : result;
     }
     case "totp": {
+      // Never the code this sign-in already typed: the next time step instead (RFC 6238 §5.2).
+      // The wait (up to a period) happens with the seed closed (N5).
+      const key = runAliasKey(ctx.runId, item.alias);
+      const wait = await withItemSecret(deps, ctx.workspaceId, item, "totp", async (seed) =>
+        msUntilFreshWindow(seed, deps.now(), deps.totpSteps.get(key)),
+      );
+      if (wait === NOT_STORED) return "field_not_stored";
+      if (wait === null) return "fill_failed";
+      if (wait > 0) await deps.sleep(wait, ctx.signal);
+      ctx.session.guard.assertAgent(ctx.signal);
       const result = await withItemSecret(
         deps,
         ctx.workspaceId,
         item,
         "totp",
         async (seed): Promise<FillOutcome | CredentialErrorCode> => {
-          // Never the code this sign-in already typed: the next time step instead (RFC 6238 §5.2).
-          const key = runAliasKey(ctx.runId, item.alias);
-          const wait = msUntilFreshWindow(seed, deps.now(), deps.totpSteps.get(key));
-          if (wait === null) return "fill_failed";
-          if (wait > 0) await deps.sleep(wait, ctx.signal);
           const now = deps.now();
           const code = totpCode(seed, now);
           const step = totpStep(seed, now);
@@ -195,9 +230,14 @@ export async function fillCredential(
   // Spec §5.3 and M8: a held or aborted run never reaches a decryption.
   ctx.session.guard.assertAgent(ctx.signal);
   if (!item) return refuse("unknown_alias");
-  // This sign-in started at its first fill: one-time codes mailed earlier never count.
+  // This sign-in started at its first fill (or shortly before, when that fill is the code
+  // itself): one-time codes mailed earlier never count.
   const signIn = runAliasKey(ctx.runId, item.alias);
-  if (!deps.signInStarted.has(signIn)) deps.signInStarted.set(signIn, deps.now());
+  if (!deps.signInStarted.has(signIn))
+    deps.signInStarted.set(
+      signIn,
+      args.field === "otp" ? await codeFirstSignInStart(deps, ctx) : deps.now(),
+    );
   if (toOrigin(ctx.session.page.url()) !== item.origin) return refuse("origin_mismatch");
   const ref = await deps.resolveRef(ctx.session, args.target);
   if (!ref) return refuse("fill_failed", "target_not_found");
@@ -209,25 +249,18 @@ export async function fillCredential(
     if (group.some((box) => box.info.origin !== item.origin)) return refuse("frame_mismatch");
     if (!group.every((box) => fieldAccepts(args.field, box.info)))
       return refuse("field_type_mismatch");
-    // A form that submits anywhere but the item's origin needs a person's approval of this very
-    // call (M4). The policy never clears it: auto mode hands over to a person instead.
-    const postsTo = group
-      .flatMap((box) => box.info.formOrigins)
-      .find((origin) => origin !== item.origin);
+    // A form that submits anywhere but the item's origin needs a person's approval of a card that
+    // named that very destination (M4, T10-12 I1). The policy never clears it: auto mode hands
+    // over to a person instead.
+    const postsTo = offsiteDestination(group, item.origin);
     if (postsTo !== undefined) {
       const approval = ctx.approval?.kind === "credential_first_use" ? ctx.approval : null;
-      if (approval?.decidedBy === POLICY_DECIDER) {
+      if (approval?.label !== postsTo) return refuse("approval_required", "form_action_offsite");
+      if (approval.decidedBy === POLICY_DECIDER) {
         ctx.requestHandOver(
           `This sign-in form sends the credential to ${postsTo}, not ${item.origin}: a person must decide.`,
         );
         return refuse("needs_human", "form_action_offsite");
-      }
-      // A person's approval clears the pin only for the destination their card named (I1); a
-      // first approval, or a destination changed since, is asked again naming the current one.
-      const shown = deps.offsiteForms.get(signIn);
-      if (approval === null || shown !== postsTo) {
-        deps.offsiteForms.set(signIn, postsTo);
-        return refuse("approval_required", "form_action_offsite");
       }
     }
     const approver = await approvedBy(deps, ctx.approval, item, ctx.session.page.url());
@@ -255,7 +288,6 @@ export async function fillCredential(
       default:
         return refuse(outcome);
     }
-    deps.offsiteForms.delete(runAliasKey(ctx.runId, item.alias));
     await record("fill", "ok", approver);
     deps.logins.noteLogin(ctx.runId, item.alias, item.origin);
     deps.log.info({ alias: item.alias, field: args.field }, "fill_credential ok");

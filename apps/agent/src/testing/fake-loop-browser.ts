@@ -1,5 +1,6 @@
 import {
   toOrigin,
+  type ApprovalRequest,
   type ComputerAction,
   type FunctionToolName,
   type ScrollPosition,
@@ -132,6 +133,10 @@ export class FakeLoopBrowser implements LoopBrowser {
     await this.computerHook?.(actions, signal);
     return { executed, notes: [], handOver: null };
   }
+
+  /** The approval request a function call raises in the approve phase (none by default). */
+  functionApproval: (name: FunctionToolName, args: unknown) => Promise<ApprovalRequest | null> =
+    async () => null;
 
   async runFunction(
     name: FunctionToolName,

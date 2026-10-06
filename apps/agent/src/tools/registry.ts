@@ -2,7 +2,8 @@ import { toOrigin, type FunctionToolName } from "@mastertutor/contracts";
 import { NO_MASK_SOURCES, redactDeep, type MaskSources } from "../browser/masking.ts";
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
-import type { RegisteredTool, ToolContext } from "./types.ts";
+import type { ApprovalRequest } from "@mastertutor/contracts";
+import type { ApprovalContext, RegisteredTool, ToolContext } from "./types.ts";
 import { wrapUntrusted } from "./untrusted.ts";
 
 export interface ToolRun {
@@ -33,6 +34,15 @@ export class ToolRegistry {
     for (const tool of tools) this.#tools.set(tool.name, tool);
     this.#log = log;
     this.#mask = mask;
+  }
+
+  /** The approve phase's question for one call (spec §5.3), or null when it needs none. */
+  async approval(
+    name: FunctionToolName,
+    args: unknown,
+    ctx: ApprovalContext,
+  ): Promise<ApprovalRequest | null> {
+    return (await this.#tools.get(name)?.approval(ctx, args)) ?? null;
   }
 
   async run(

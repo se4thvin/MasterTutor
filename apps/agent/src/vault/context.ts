@@ -17,13 +17,8 @@ export interface VaultDeps {
   resolveRef(session: BrowserSession, ref: string): Promise<ResolvedTarget | null>;
   fingerprints: SecretFingerprints;
   logins: LoginNotifier;
-  /** IMAP messages whose code was already used, keyed item:uidValidity:uid (Review Focus 5). */
-  imapUsed: Set<string>;
-  /**
-   * run + alias → where a refused off-origin form posts, so the next approve phase raises a real
-   * request a person can answer (carry-over 1). Cleared by the next successful fill.
-   */
-  offsiteForms: Map<string, string>;
+  /** IMAP messages whose code was already used → when, keyed mailbox|uidValidity|uid (N3). */
+  imapUsed: Map<string, number>;
   /** run + alias → when this sign-in started (its first fill_credential): older mail never counts. */
   signInStarted: Map<string, number>;
   /** run + alias → the TOTP time step last filled, so a code is never typed twice. */

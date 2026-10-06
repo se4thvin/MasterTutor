@@ -82,7 +82,8 @@ export const splitPin = (length: number, autoSubmit: boolean) =>
 export const emailOtp = () =>
   layout(
     "Email code",
-    `<button id="send" type="button">Email me a code</button><p id="sent"></p>
+    `<label for="email">Email</label><input id="email" type="email" autocomplete="username">
+     <button id="send" type="button">Email me a code</button><p id="sent"></p>
      <form method="post" action="/email-otp"><fieldset class="boxes"><legend>Enter the code we emailed you</legend>
      ${boxes("otp", 6, "c", 'autocomplete="one-time-code" inputmode="numeric"', "Code digit")}</fieldset>
      <button id="submit" type="submit">Verify</button></form>
@@ -258,6 +259,7 @@ export const offsiteForm = (action: string, formAction: string | null) =>
   layout(
     "Sign in",
     `<form method="post" action="${esc(action)}">
+     <label for="username">Email</label><input id="username" name="username" type="email" autocomplete="username">
      <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">
      <button id="submit" type="submit"${formAction ? ` formaction="${esc(formAction)}"` : ""}>Sign in</button></form>`,
   );

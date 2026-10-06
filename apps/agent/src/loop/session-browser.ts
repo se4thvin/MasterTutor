@@ -217,6 +217,17 @@ export class SessionLoopBrowser implements LoopBrowser {
     return this.#executor.run(actions, signal, gate);
   }
 
+  functionApproval(name: FunctionToolName, args: unknown, signal: AbortSignal) {
+    const run = this.#run();
+    return this.#registry.approval(name, args, {
+      runId: run.id,
+      workspaceId: run.workspaceId,
+      session: this.#session,
+      signal,
+      log: this.#log,
+    });
+  }
+
   runFunction(
     name: FunctionToolName,
     args: unknown,

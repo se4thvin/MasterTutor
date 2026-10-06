@@ -1,4 +1,3 @@
-import type { ApprovalRequest } from "@mastertutor/contracts";
 import { NO_MASK_SOURCES, type MaskSources } from "../browser/masking.ts";
 import type { Log } from "../runtime/types.ts";
 import type { RegisteredTool } from "../tools/types.ts";
@@ -22,11 +21,6 @@ export interface RunHooks {
   maskSources(runId: string): MaskSources;
   control: ControlTransitions;
   functionTools: readonly RegisteredTool[];
-  functionApproval(
-    call: { name: string; args: unknown },
-    run: RunSnapshot,
-    url: string,
-  ): Promise<ApprovalRequest | null>;
   promptContext(run: RunSnapshot): Promise<string[]>;
   /** After an executed computer click (B3 logout detection): the target's accessible name and the page URL. */
   onClick(run: RunSnapshot, click: { label: string; url: string }): Promise<void>;
@@ -40,7 +34,6 @@ export const DEFAULT_HOOKS: RunHooks = {
   maskSources: () => NO_MASK_SOURCES,
   control: { onUserControl: async () => undefined, onAgentControl: async () => undefined },
   functionTools: [],
-  functionApproval: async () => null,
   promptContext: async () => [],
   onClick: async () => undefined,
   onReleased: async () => undefined,
