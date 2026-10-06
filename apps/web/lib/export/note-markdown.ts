@@ -7,21 +7,36 @@ const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
 /** Device names Windows reserves, with or without an extension. */
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
-const MAX_NAME_CHARS = 120;
+const EXTENSION = ".md";
+/** NAME_MAX on Linux and macOS is 255 bytes for the whole name, extension included. */
+const MAX_NAME_BYTES = 255 - EXTENSION.length;
+
+const utf8 = new TextEncoder();
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** The longest prefix of whole graphemes that fits in `maxBytes` of UTF-8. */
+function capBytes(value: string, maxBytes: number): string {
+  let out = "";
+  let used = 0;
+  for (const { segment } of graphemes.segment(value)) {
+    used += utf8.encode(segment).length;
+    if (used > maxBytes) break;
+    out += segment;
+  }
+  return out;
+}
 
 export function exportFileName(title: string): string {
   const clean = title
+    // Bidi controls (RLO and friends) make a name display as something it is not.
+    .replace(/\p{Bidi_Control}/gu, "")
     .replace(/\p{Cc}/gu, " ")
     .replace(/[\\/:*?"<>|#^[\]]/g, "")
     .replace(/\s+/g, " ")
     .replace(/^[\s.]+|[\s.]+$/g, "");
-  // Cap by code point so a surrogate pair is never split.
-  const capped = Array.from(clean)
-    .slice(0, MAX_NAME_CHARS)
-    .join("")
-    .replace(/[\s.]+$/, "");
-  const name = WINDOWS_RESERVED.test(capped) ? `_${capped}` : capped;
-  return `${name || "note"}.md`;
+  const safe = WINDOWS_RESERVED.test(clean) ? `_${clean}` : clean;
+  const name = capBytes(safe, MAX_NAME_BYTES).replace(/[\s.]+$/, "");
+  return `${name || "note"}${EXTENSION}`;
 }
 
 /** Source text cannot pose as our provenance comments: `<!-- mt:` becomes `<!-- mt-src:`. */
