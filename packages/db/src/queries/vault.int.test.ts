@@ -377,6 +377,14 @@ describe("agent side (as agent_role)", () => {
     expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(false);
   });
 
+  it("refuses a grant decided by bypass mode too (D44, m7)", async () => {
+    const { id, alias } = await newItem();
+    await expect(
+      owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, 'bypass')`,
+    ).rejects.toThrow(/vault_grants_human_approver/);
+    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(false);
+  });
+
   it("migration 0003 removes existing policy grants before adding its CHECK (review 15)", async () => {
     const { readFile } = await import("node:fs/promises");
     const migration = await readFile(

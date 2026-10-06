@@ -49,13 +49,30 @@ const Count = z.number().int().nonnegative();
 
 /* ---------------------------------- runs ---------------------------------- */
 
-export const CreateRunInput = z.object({
-  goal: z.string().trim().min(1).max(4_000),
-  allowedOrigins: z.array(OriginInput).min(1).max(50),
-  budget: Budget.optional(),
-  targetFolderId: Uuid.nullable().default(null),
-  approvalMode: ApprovalMode.default("ask"),
-});
+/**
+ * Bypass mode (D44) is an explicit opt-in: the request must say it was shown the warning, so no
+ * client reaches it by sending the mode alone.
+ */
+const BypassAcknowledged = z.literal(true).optional();
+const bypassNeedsAcknowledgement = (input: {
+  approvalMode: string;
+  bypassAcknowledged?: true | undefined;
+}) => input.approvalMode !== "bypass" || input.bypassAcknowledged === true;
+const BYPASS_UNACKNOWLEDGED = {
+  message: "Bypass mode needs bypassAcknowledged: true (the user saw the warning)",
+  path: ["bypassAcknowledged"],
+};
+
+export const CreateRunInput = z
+  .object({
+    goal: z.string().trim().min(1).max(4_000),
+    allowedOrigins: z.array(OriginInput).min(1).max(50),
+    budget: Budget.optional(),
+    targetFolderId: Uuid.nullable().default(null),
+    approvalMode: ApprovalMode.default("ask"),
+    bypassAcknowledged: BypassAcknowledged,
+  })
+  .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED);
 export type CreateRunInput = z.infer<typeof CreateRunInput>;
 
 export const ListRunsInput = PageInput.extend({ status: RunStatus.nullable().default(null) });
@@ -361,14 +378,17 @@ export const BenchmarkView = z.object({
   createdAt: IsoDateTime,
 });
 export type BenchmarkView = z.infer<typeof BenchmarkView>;
-export const CreateBenchmarkInput = z.object({
-  name: z.string().trim().min(1).max(120),
-  task: z.string().trim().min(1).max(4_000),
-  allowedOrigins: z.array(OriginInput).min(1).max(50),
-  approvalMode: ApprovalMode.default("auto_within_allowlist"),
-  budget: Budget.optional(),
-  successCriteria: z.string().trim().min(1).max(4_000),
-});
+export const CreateBenchmarkInput = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    task: z.string().trim().min(1).max(4_000),
+    allowedOrigins: z.array(OriginInput).min(1).max(50),
+    approvalMode: ApprovalMode.default("auto_within_allowlist"),
+    bypassAcknowledged: BypassAcknowledged,
+    budget: Budget.optional(),
+    successCriteria: z.string().trim().min(1).max(4_000),
+  })
+  .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED);
 export type CreateBenchmarkInput = z.infer<typeof CreateBenchmarkInput>;
 export const BenchmarkRef = z.object({ benchmarkId: Uuid });
 export type BenchmarkRef = z.infer<typeof BenchmarkRef>;

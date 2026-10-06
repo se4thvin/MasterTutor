@@ -22,6 +22,8 @@ export interface GateVerdict {
   target: TargetDescription | null;
   /** A person (not policy) approved this action on this very element: typing may then run with an incomplete guard. */
   personApproved: boolean;
+  /** This click (or Enter) starts a download that was approved: let exactly it through, at the press. */
+  allowDownload?: string;
 }
 /** false: do not run; true: run (no classification to hold it to); or the gate's verdict. */
 export type ActionGate = (action: ComputerAction) => Promise<boolean | GateVerdict>;
@@ -44,6 +46,8 @@ export const PAGE_TOO_COMPLEX_REFUSAL =
 export const SECRET_FIELD_REFUSAL =
   "Refused: typing into password, one-time-code or PIN fields is not allowed. Use fill_credential with the vault alias and the field's element ref.";
 const TYPE_CHUNK = 24;
+/** How long a click waits for frames mid-navigation to commit before it is refused. */
+const NAVIGATION_SETTLE_MS = 1_000;
 const SCROLL_STEP = 240;
 
 /** True when the combo would type a character: no Ctrl/Alt/Meta and any non-modifier key is printable. */
@@ -170,6 +174,8 @@ export class ComputerExecutor {
       case "scroll":
         return this.#scroll(action, signal);
       case "keypress":
+        if (verdict?.allowDownload)
+          await this.#session.downloads.allowOnce((url) => url === verdict.allowDownload);
         return this.#keypress(action.keys, signal, approved);
       case "type":
         return this.#type(action.text, signal, approved);
@@ -210,12 +216,19 @@ export class ComputerExecutor {
     const mouse = this.#session.page.mouse;
     this.#session.guard.assertAgent(signal);
     await mouse.move(point.x, point.y);
+    // A frame mid-navigation refuses the click (its next document is not guarded): give a page
+    // whose frames load all the time a moment to settle, then check what is under the pointer.
+    for (let waited = 0; waited < NAVIGATION_SETTLE_MS && this.#session.navigationPending();)
+      waited += await pause(25, signal).then(() => 25);
     const hit = await hitTest(this.#session, point);
     // The page may have changed since the gate classified this click (TOCTOU): if anything
     // differs, nothing is pressed and the model's next click is gated again.
     if (verdict && !sameTarget(verdict.target, markUnguarded(this.#session, hit.target)))
       return this.#refuse(TARGET_MOVED_REFUSAL);
     if (hit.snap) await mouse.move(hit.snap.x, hit.snap.y);
+    // Only now that the press will go to the approved link (m6).
+    if (verdict?.allowDownload)
+      await this.#session.downloads.allowOnce((url) => url === verdict.allowDownload);
     // ...and from here to the press, the page itself cancels a press that reaches anything but
     // the element just classified. (Inside an uninspectable frame there is none to hold it to:
     // that click was approved as it is.)

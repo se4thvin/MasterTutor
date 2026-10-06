@@ -5,6 +5,7 @@
 #   - private egress is blocked;
 #   - the display is 1280x800;
 #   - n.eko passwords are derived from the shared secrets;
+#   - downloads fail closed without the agent, and File System Access is blocked;
 #   - the profile is fresh after Chromium exits.
 # Usage: bash apps/browser-slot/test/verify.sh
 set -euo pipefail
@@ -160,6 +161,16 @@ if grep -q -- '--no-sandbox' <<<"$chromium_cmdlines"; then fail "Chromium runs w
 docker exec "$SLOT" sh -c 'r=$(pgrep -f "type=renderer" | head -1); test -n "$r" && a=$(readlink /proc/1/ns/user) && b=$(readlink /proc/$r/ns/user) && test -n "$a" && test -n "$b" && test "$a" != "$b"' \
   || fail "renderer shares the container user namespace or its ns link is unreadable (sandbox off)"
 pass "Chromium sandbox on"
+
+# Downloads fail closed when no agent holds the browser (I3): Chromium's own default target is the
+# root-owned "/", so only the agent's CDP allowAndName into /downloads/<runId> can save a file.
+# The File System Access API (a native save dialog writing anywhere) is blocked (m1).
+policies="$(docker exec "$SLOT" cat /etc/chromium/policies/managed/policies.json)"
+grep -q '"DownloadDirectory": "/"' <<<"$policies" || fail "no fail-closed DownloadDirectory policy"
+grep -q '"DefaultFileSystemWriteGuardSetting": 2' <<<"$policies" || fail "File System Access writes not blocked"
+grep -q '"DefaultFileSystemReadGuardSetting": 2' <<<"$policies" || fail "File System Access reads not blocked"
+if docker exec -u neko "$SLOT" touch /download-probe 2>/dev/null; then fail "the default download directory is writable"; fi
+pass "downloads fail closed without the agent; File System Access blocked"
 
 from_ip "$PREFIX.10" -o /dev/null "http://$PREFIX.40/" || fail "control: peer not reachable from the test network"
 if docker exec "$SLOT" curl -s -m 3 -o /dev/null "http://$PREFIX.40/"; then fail "slot reached a private address"; fi

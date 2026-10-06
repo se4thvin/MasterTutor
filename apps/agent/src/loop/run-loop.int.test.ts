@@ -25,6 +25,7 @@ import { runtimeConfig } from "../runtime/config.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser, PLAIN_TARGET } from "../testing/fake-loop-browser.ts";
+import { UNGUARDED_CLICK_REFUSAL } from "../tools/computer.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { withHooks, type RunHooks } from "./hooks.ts";
 import { RunLoop, type StepOutcome } from "./run-loop.ts";
@@ -370,11 +371,19 @@ describe("RunLoop (spec §5.3)", () => {
     };
 
     it("asks a person about a download the page started, then allows only that one", async () => {
-      const { run, browser, loop, reload } = await setup([
-        click(),
-        doneExpecting("the user approved downloading"),
-      ]);
-      browser.computerHook = async () => void browser.blockedDownloads.push(attempt);
+      const again: MockTurn = {
+        ...click(),
+        check: (r) => {
+          if (!JSON.stringify(r.body.input).includes("the user approved downloading"))
+            throw new Error("not told");
+        },
+      };
+      const { run, browser, loop, reload } = await setup([click(), again, done()]);
+      let once = true;
+      browser.computerHook = async () => {
+        if (once) browser.blockedDownloads.push(attempt);
+        once = false;
+      };
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
       expect(await approvalRows(run.id)).toMatchObject([
         {
@@ -392,7 +401,10 @@ describe("RunLoop (spec §5.3)", () => {
       const resumed = await reload();
       await resumed.resume(new AbortController().signal);
       expect(await drive(resumed)).toEqual({ kind: "completed" });
-      expect(browser.allowedDownloads).toEqual(["https://site.fixtures.test/files/r.csv"]);
+      // Let through at the next act (when the model repeats it), as the card showed it.
+      expect(browser.allowedDownloads).toEqual([
+        { kind: "download", url: "https://site.fixtures.test/files/r.csv", filename: "_r.csv" },
+      ]);
     });
 
     it("never lets auto mode's policy approve a download: it is denied, recorded and reported", async () => {
@@ -427,11 +439,11 @@ describe("RunLoop (spec §5.3)", () => {
       await decideApproval(run.id, "approved");
       const resumed = await reload();
       browser.targets.set("10,20", link);
-      browser.actionHook = async () =>
-        void expect(browser.allowedDownloads).toEqual([link.download.url]);
       await resumed.resume(new AbortController().signal);
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       expect(browser.executed).toHaveLength(1);
+      // Let through by the executor at the press itself.
+      expect(browser.allowedDownloads).toEqual([{ url: link.download.url }]);
     });
   });
 
@@ -1563,11 +1575,14 @@ describe("RunLoop (spec §5.3)", () => {
 
     it("approves a risky click, a new origin and a download without asking, each recorded as bypass", async () => {
       const { run, browser, loop } = await setup(
-        [click(), doneExpecting("allowed by this run's bypass mode")],
+        [click(), click(30, 40), doneExpecting("allowed by this run's bypass mode")],
         bypass,
       );
       browser.targets.set("10,20", risky("Delete account"));
+      let once = true;
       browser.computerHook = async () => {
+        if (!once) return;
+        once = false;
         browser.blocked.push({
           url: "http://other.fixtures.test/a",
           origin: "http://other.fixtures.test",
@@ -1578,9 +1593,11 @@ describe("RunLoop (spec §5.3)", () => {
         });
       };
       expect(await drive(loop)).toEqual({ kind: "completed" });
-      expect(browser.executed).toHaveLength(1);
+      expect(browser.executed).toHaveLength(2);
       expect(browser.navigations).toEqual(["http://other.fixtures.test/a"]);
-      expect(browser.allowedDownloads).toEqual(["http://site.fixtures.test/files/r.csv"]);
+      expect(browser.allowedDownloads).toMatchObject([
+        { url: "http://site.fixtures.test/files/r.csv", filename: "r.csv" },
+      ]);
       expect(
         (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
       ).toEqual([
@@ -1633,6 +1650,22 @@ describe("RunLoop (spec §5.3)", () => {
         .where(eq(runs.id, run.id));
       await expect(loop.step(new AbortController().signal)).rejects.toBeInstanceOf(ControlHeld);
       expect(mock.requestsFor(name)).toHaveLength(0);
+    });
+
+    it("sends a click the page could not guard to a person, not back to the policy (m10)", async () => {
+      const { run, browser, loop } = await setup([click(), click()], bypass);
+      browser.targets.set("10,20", { ...risky("Cancel"), opaqueFrame: true });
+      let first = true;
+      browser.refuseWith = () => {
+        const note = first ? UNGUARDED_CLICK_REFUSAL : null;
+        first = false;
+        return note;
+      };
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      expect((await approvalRows(run.id)).map((row) => [row.status, row.decidedBy])).toEqual([
+        ["approved", "bypass"],
+        ["pending", null],
+      ]);
     });
 
     it("still waits for a person at a budget hit (a spending cap, not an action)", async () => {

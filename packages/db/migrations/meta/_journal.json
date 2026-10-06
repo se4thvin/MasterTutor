@@ -43,6 +43,13 @@
       "when": 1791309465231,
       "tag": "0005_live_control_user",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791312843338,
+      "tag": "0006_vault_grants_no_bypass",
+      "breakpoints": true
     }
   ]
 }

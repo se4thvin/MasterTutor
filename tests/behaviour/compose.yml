@@ -15,6 +15,9 @@ x-slot: &slot
     - seccomp=../../apps/browser-slot/seccomp/chromium.json
   tmpfs:
     - /tmp/chromium-profile:uid=1000,gid=1000,mode=0700
+  # The downloads volume on a host folder, so a test (the agent's side) sees what the slot saved.
+  volumes:
+    - ${BEHAVIOUR_DOWNLOADS:-/tmp/mastertutor-behaviour-downloads}:/downloads
   networks: [behaviour]
   depends_on:
     fixtures:

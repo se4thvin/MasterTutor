@@ -28,6 +28,7 @@ import {
   needsApproval,
   type ApprovalNeed,
 } from "../guardrails/policy.ts";
+import { UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL } from "../tools/computer.ts";
 import type { CallApproval } from "../tools/types.ts";
 import { wrapUntrusted } from "../tools/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
@@ -150,6 +151,8 @@ const TO_RUNNING: Transition = {
 const DENIED = "Not run: the user denied this action.";
 const TAKEOVER_FAILED =
   "Taking control needs the live view to be open and connected. Open it, then try again.";
+/** Refusals that only a person's approval can lift (the page could not be guarded). */
+const UNGUARDED_REFUSALS: readonly string[] = [UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL];
 const downloadBlockedNote = (url: string) =>
   `Executor: a download of ${downloadUrlForCard(url)} was blocked: nothing was saved. Downloads need the user's approval.`;
 /** Waits a takeover leaves on the row (M7): hand-back re-observes whether they still hold. */
@@ -205,6 +208,10 @@ export class RunLoop {
   #userCursor: string | null;
   #pending: PendingApproval | null = null;
   #notesChanged = false;
+  /** Approved download cards, let through at the start of the next act (the model repeats it). */
+  #downloadAllowances: Array<{ url: string; filename: string | null }> = [];
+  /** A click was refused for an unguarded page: the next approvals go to a person (m10). */
+  #personNext = false;
   #lastTick: number | null = null;
   /** run_transcript as stored, loaded once and appended after each commit (M5). */
   #history: TranscriptEntry[] = [];
@@ -737,6 +744,8 @@ export class RunLoop {
     const items = (await this.#riskyItems(this.#obs().url, signal)).filter(
       (item) => !this.#decided.has(item.item) && !this.#unreachable(item),
     );
+    const toPerson = this.#personNext;
+    this.#personNext = false;
     if (items.length === 0) {
       if (this.#decided.size === 0)
         await this.#deps.store.commit({
@@ -751,9 +760,11 @@ export class RunLoop {
     const originAllowed = origin !== null && this.#run.allowedOrigins.includes(origin);
     for (const item of items) {
       if (this.#results.has(item.callId) || this.#unreachable(item)) continue;
-      const decision = item.safetyChecks
-        ? decideSafetyChecks(this.#run.approvalMode, item.safetyChecks, originAllowed)
-        : decideByPolicy(this.#run.approvalMode, item.request.kind);
+      const decision = toPerson
+        ? "ask"
+        : item.safetyChecks
+          ? decideSafetyChecks(this.#run.approvalMode, item.safetyChecks, originAllowed)
+          : decideByPolicy(this.#run.approvalMode, item.request.kind);
       if (decision === "ask") {
         // Items are in order (safety checks first); nothing after this is decided until a person answers.
         ask = item;
@@ -910,13 +921,20 @@ export class RunLoop {
           decision.target !== null &&
           decision.target === (target?.path ?? null) &&
           (decision.context === null || decision.context === (target?.context ?? null));
-        // This very download was approved (by a person, or bypass mode): it is let through, once.
-        if (need?.kind === "download" && decision?.approved === true)
-          await this.#deps.browser.allowDownload(need.url);
-        // The executor holds a click to this classification at the moment it presses (TOCTOU).
-        return { target, personApproved };
+        // The executor holds a click to this classification at the moment it presses (TOCTOU);
+        // this very download, if approved, is let through only then (once).
+        return {
+          target,
+          personApproved,
+          ...(need?.kind === "download" && decision?.approved === true
+            ? { allowDownload: need.url }
+            : {}),
+        };
       };
       const run = await this.#deps.browser.runComputer(call.actions, signal, gate);
+      // Refused because the page could not be guarded: only a person's approval lets it run, so
+      // the policy (auto or bypass) must not approve the retry again (m10).
+      if (run.notes.some((note) => UNGUARDED_REFUSALS.includes(note))) this.#personNext = true;
       // Only clicks that actually ran (B3 logout detection, F10). The click already happened, so a
       // failing hook is logged and the act still commits (M4).
       for (const click of clicked) {
@@ -973,6 +991,8 @@ export class RunLoop {
     let ran = false;
     let wait: "otp" | null = null;
     let handOver: string | null = null;
+    // Downloads approved since the last act: the model repeats what started them now.
+    for (const card of this.#downloadAllowances.splice(0)) await browser.allowDownload(card);
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
       // The page is beyond what the agent can act on safely: nothing after runs; the user takes over.
@@ -1036,9 +1056,10 @@ export class RunLoop {
         );
         continue;
       }
-      if (decision === "approved") {
+      if (decision === "approved" && !wait && !handOver) {
         // Bypass mode (D44): the origin is allowed for the rest of the run and opened. The network
-        // policy still applies to it (no private ranges).
+        // policy still applies to it (no private ranges). Never while the page is being handed
+        // over or a code is awaited (m4).
         await this.#recordPolicy(request, decision);
         this.#run = {
           ...this.#run,
@@ -1071,7 +1092,7 @@ export class RunLoop {
       const decision = decideByPolicy(this.#run.approvalMode, "download");
       if (decision === "approved") {
         await this.#recordPolicy(request, decision);
-        await browser.allowDownload(entry.url);
+        if (request.kind === "download") this.#downloadAllowances.push(request);
         this.#notes.push(
           `Executor: downloading ${downloadUrlForCard(entry.url)} was allowed by this run's bypass mode. Do the action that started it again to save it.`,
         );
@@ -1203,7 +1224,8 @@ export class RunLoop {
         run: base.run,
       });
       if (approved) {
-        await this.#deps.browser.allowDownload(request.url);
+        // Exactly the download the card showed (it may start again under a new blob URL).
+        this.#downloadAllowances.push(request);
         this.#notes.push(
           `Executor: the user approved downloading ${request.filename ?? request.url}. Do the action that started it again to save it.`,
         );
