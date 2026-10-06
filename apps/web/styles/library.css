@@ -19,7 +19,7 @@
     &:hover {
       background: var(--fill-2);
     }
-    & > .ic {
+    & > :is(.ic, .fmark) {
       color: var(--tint-text);
     }
     @media (pointer: coarse) {
@@ -48,6 +48,45 @@
   .tree-row-drop {
     box-shadow: inset 0 0 0 2px var(--tint);
     background: var(--tint-wash);
+  }
+  /* Folder glyph: floats on row hover, lifts its lid while it can take a drop (FolderMark). */
+  .fmark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    & > .ic {
+      grid-area: 1 / 1;
+      transition-property: opacity;
+      transition-duration: var(--motion-dur-micro);
+      transition-timing-function: var(--motion-ease-out);
+    }
+  }
+  .fmark-open {
+    opacity: 0;
+  }
+  /* A lid-less mark (All notes, Unfiled, Top level) keeps its only glyph and just rises. */
+  .fmark[data-lift]:has(.fmark-open) .fmark-shut {
+    opacity: 0;
+  }
+  .fmark[data-lift] .fmark-open {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .fmark {
+      transition-property: translate, rotate, scale;
+      transition-duration: var(--motion-spring-dur);
+      transition-timing-function: var(--motion-spring);
+    }
+    .fmark[data-lift] {
+      translate: 0 -0.125rem;
+      scale: 1.15;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      :is(.tree-row, .move-row):hover .fmark:not([data-lift]) {
+        translate: 0 -0.0625rem;
+        rotate: -8deg;
+      }
+    }
   }
   .tree-disclosure {
     display: grid;

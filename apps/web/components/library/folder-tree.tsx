@@ -14,6 +14,7 @@ import {
   folderPath,
   type FolderNode,
 } from "@/lib/folders/tree.ts";
+import { FolderMark } from "./folder-mark.tsx";
 import { useMoveFolder } from "./use-move-folder.ts";
 import { libraryHref, parseLibraryParams, type LibraryScope } from "@/lib/library/params.ts";
 
@@ -261,7 +262,11 @@ export function FolderTree({
             ) : (
               <span className="tree-disclosure" aria-hidden="true" />
             )}
-            <Icon name={row.icon} size="sm" />
+            <FolderMark
+              name={row.icon}
+              openName={row.node ? "folderOpen" : null}
+              lift={dropKey === row.key}
+            />
             <span className="tree-label">{row.label}</span>
           </li>
         );
