@@ -109,26 +109,43 @@ function isUniqueViolation(error: unknown): boolean {
 
 /* --------------------------------- reads ---------------------------------- */
 
+/** The columns of a vault list row: the item plus whether mail settings and a session exist. */
+const listRowColumns = {
+  ...itemColumns,
+  hasImap: sql<boolean>`${vaultItems.imap} is not null`,
+  // Spelled out with table names: drizzle renders an interpolated column unqualified, which
+  // inside this subquery would resolve to bs.* and match every session in the workspace.
+  sessionSaved: sql<boolean>`exists (
+    select 1 from browser_sessions bs
+    where bs.workspace_id = vault_items.workspace_id
+      and bs.alias = vault_items.alias
+      and bs.origin = vault_items.origin)`,
+  createdAt: vaultItems.createdAt,
+};
+
 export async function listVaultItems(
   db: Database,
   workspaceId: string,
 ): Promise<VaultItemListRow[]> {
   return db
-    .select({
-      ...itemColumns,
-      hasImap: sql<boolean>`${vaultItems.imap} is not null`,
-      // Spelled out with table names: drizzle renders an interpolated column unqualified, which
-      // inside this subquery would resolve to bs.* and match every session in the workspace.
-      sessionSaved: sql<boolean>`exists (
-        select 1 from browser_sessions bs
-        where bs.workspace_id = vault_items.workspace_id
-          and bs.alias = vault_items.alias
-          and bs.origin = vault_items.origin)`,
-      createdAt: vaultItems.createdAt,
-    })
+    .select(listRowColumns)
     .from(vaultItems)
     .where(eq(vaultItems.workspaceId, workspaceId))
     .orderBy(vaultItems.alias);
+}
+
+/** One item's list row, or null when it is not in this workspace. */
+export async function getVaultItemListRow(
+  db: DbExecutor,
+  workspaceId: string,
+  itemId: string,
+): Promise<VaultItemListRow | null> {
+  const [row] = await db
+    .select(listRowColumns)
+    .from(vaultItems)
+    .where(and(eq(vaultItems.workspaceId, workspaceId), eq(vaultItems.id, itemId)))
+    .limit(1);
+  return row ?? null;
 }
 
 export async function getVaultItem(

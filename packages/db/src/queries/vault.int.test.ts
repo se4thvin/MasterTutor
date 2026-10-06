@@ -18,6 +18,7 @@ import {
   listRunCredentialUses,
   listVaultAudit,
   hasHumanVaultGrant,
+  getVaultItemListRow,
   listVaultItems,
   loadBrowserSessions,
   loadSealedSecret,
@@ -101,6 +102,12 @@ describe("web side (as web_role)", () => {
     const rows =
       await owner.sql`select action, approved_by, outcome from vault_audit where item_id = ${id}`;
     expect(rows).toEqual([{ action: "create", approved_by: userId, outcome: "ok" }]);
+  });
+
+  it("reads one item's list row by id, scoped to the workspace (review 10)", async () => {
+    const { id, alias } = await newItem({ secrets: [{ field: "password", sealed: bytes(1) }] });
+    expect(await getVaultItemListRow(web.db, workspaceId, id)).toEqual(await listed(alias));
+    expect(await getVaultItemListRow(web.db, otherWorkspaceId, id)).toBeNull();
   });
 
   it("rejects a duplicate alias", async () => {
@@ -368,5 +375,28 @@ describe("agent side (as agent_role)", () => {
       insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: "policy" }),
     ).rejects.toThrow();
     expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(false);
+  });
+
+  it("migration 0003 removes existing policy grants before adding its CHECK (review 15)", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const migration = await readFile(
+      new URL("../../migrations/0003_vault_grants_human_approver.sql", import.meta.url),
+      "utf8",
+    );
+    const { id, alias } = await newItem();
+    await owner.sql.begin(async (tx) => {
+      // As a database that ran 0002 only: no CHECK yet, and a policy grant already written.
+      await tx`alter table vault_grants drop constraint vault_grants_human_approver`;
+      await tx`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, 'policy')`;
+      for (const statement of migration.split("--> statement-breakpoint"))
+        await tx.unsafe(statement);
+    });
+    expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(false);
+    const [rows] =
+      await owner.sql`select count(*)::int as n from vault_grants where approved_by = 'policy'`;
+    expect(rows?.n).toBe(0);
+    await expect(
+      owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, 'policy')`,
+    ).rejects.toThrow(/vault_grants_human_approver/);
   });
 });
