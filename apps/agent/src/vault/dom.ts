@@ -70,7 +70,16 @@ const INSPECT_FN = `function () {
   const buttonType = getter(HTMLButtonElement.prototype, "type");
   const inputType = getter(HTMLInputElement.prototype, "type");
   const hasAttr = (x, name) => Element.prototype.hasAttribute.call(x, name);
-  const controls = scope instanceof HTMLFormElement ? Array.from(elementsOf.call(scope)) : [];
+  // elements leaves out image buttons (HTML spec): those submitting this form, inside it or
+  // linked by form=, are found through their own form getter (final review I1).
+  const formOf = getter(HTMLInputElement.prototype, "form");
+  const imageSubmitters = scope instanceof HTMLFormElement
+    ? Array.from(Document.prototype.querySelectorAll.call(e.ownerDocument, "input"))
+        .filter((x) => inputType.call(x) === "image" && formOf.call(x) === scope)
+    : [];
+  const controls = scope instanceof HTMLFormElement
+    ? [...Array.from(elementsOf.call(scope)), ...imageSubmitters]
+    : [];
   const isSubmitter = (x) =>
     (x instanceof HTMLButtonElement && buttonType.call(x) === "submit") ||
     (x instanceof HTMLInputElement && ["submit", "image"].includes(inputType.call(x)));
