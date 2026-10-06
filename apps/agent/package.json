@@ -1,0 +1,16 @@
+{
+  "name": "@mastertutor/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@mastertutor/contracts": "workspace:*",
+    "@mastertutor/db": "workspace:*",
+    "@mastertutor/storage": "workspace:*",
+    "zod": "4.6.5"
+  }
+}
