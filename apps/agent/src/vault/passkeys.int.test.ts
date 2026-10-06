@@ -1,11 +1,13 @@
-import { findVaultItemByAlias, putVaultSecret } from "@mastertutor/db";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { findVaultItemByAlias, putVaultSecret, vaultAudit } from "@mastertutor/db";
 import { sealValue } from "@mastertutor/sealing";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   startVaultFixtures,
   type VaultFixtures,
 } from "../../../../tests/fixtures/vault-sites/server.ts";
-import { createPasskeys } from "./passkeys.ts";
+import { StoredPasskey, createPasskeys } from "./passkeys.ts";
+import { withItemSecret } from "./secrets.ts";
 import {
   humanApproval,
   launchTestBrowser,
@@ -31,6 +33,26 @@ async function browser(): Promise<TestBrowser> {
     secureOrigins: [fx.origin("login"), fx.origin("lookalike")],
   });
   return tb;
+}
+/** Records the CDP calls the vault makes on this browser, and the authenticator it creates. */
+async function watchCdp(b: TestBrowser) {
+  const cdp = await b.session.cdp();
+  const sent: string[] = [];
+  const created: string[] = [];
+  const send = cdp.send.bind(cdp);
+  cdp.send = (async (method: string, params?: object) => {
+    sent.push(method);
+    const result = await send(method as never, params as never);
+    if (method === "WebAuthn.addVirtualAuthenticator")
+      created.push((result as { authenticatorId: string }).authenticatorId);
+    return result;
+  }) as typeof cdp.send;
+  const gone = async () =>
+    send("WebAuthn.getCredentials", { authenticatorId: created.at(-1)! }).then(
+      () => false,
+      () => true,
+    );
+  return { cdp, sent, created, send, gone };
 }
 const status = (b: TestBrowser) => b.page.textContent("#status").catch(() => null);
 
@@ -95,6 +117,116 @@ describe("passkeys", () => {
         ).map((row) => row.outcome),
       )
       .toEqual(["armed", "asserted"]);
+  });
+
+  it("removes the authenticator once the site has asserted (review)", async () => {
+    const passkeys = createPasskeys(env.deps());
+    const b = await browser();
+    await b.page.goto(`${login}/webauthn/login`);
+    const watch = await watchCdp(b);
+    const runId = await env.newRun([login]);
+    const ctx = toolContext({
+      runId,
+      workspaceId: env.workspaceId,
+      session: b.session,
+      approval: humanApproval(env.userId),
+    });
+    expect(await passkeys.use(ctx, { alias: "site" })).toEqual({ ok: true });
+    expect(await watch.gone()).toBe(false);
+    await b.page.click("#passkey-login");
+    await expect.poll(() => status(b)).toBe("Signed in with passkey");
+    await expect.poll(watch.gone).toBe(true);
+  });
+
+  it("disarms an unused authenticator when the arm window ends (review)", async () => {
+    const passkeys = createPasskeys(env.deps(), { armMs: 300 });
+    const b = await browser();
+    await b.page.goto(`${login}/webauthn/login`);
+    const watch = await watchCdp(b);
+    const runId = await env.newRun([login]);
+    const ctx = toolContext({
+      runId,
+      workspaceId: env.workspaceId,
+      session: b.session,
+      approval: humanApproval(env.userId),
+    });
+    expect(await passkeys.use(ctx, { alias: "site" })).toEqual({ ok: true });
+    await expect.poll(watch.gone, { timeout: 3_000 }).toBe(true);
+  });
+
+  it("seals only credentials for the item's own RP after an assertion (review)", async () => {
+    const passkeys = createPasskeys(env.deps());
+    const b = await browser();
+    await b.page.goto(`${login}/webauthn/login`);
+    const watch = await watchCdp(b);
+    const runId = await env.newRun([login]);
+    const ctx = toolContext({
+      runId,
+      workspaceId: env.workspaceId,
+      session: b.session,
+      approval: humanApproval(env.userId),
+    });
+    expect(await passkeys.use(ctx, { alias: "site" })).toEqual({ ok: true });
+    // A credential for another RP lands in the armed authenticator before the ceremony.
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    await watch.send("WebAuthn.addCredential", {
+      authenticatorId: watch.created.at(-1)!,
+      credential: {
+        credentialId: randomBytes(16).toString("base64"),
+        isResidentCredential: true,
+        rpId: "evil.fixtures-isolated.test",
+        userHandle: Buffer.from("intruder").toString("base64"),
+        privateKey: privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"),
+        signCount: 0,
+      },
+    });
+    await b.page.click("#passkey-login");
+    await expect.poll(() => status(b)).toBe("Signed in with passkey");
+    await expect.poll(watch.gone).toBe(true);
+    const item = (await findVaultItemByAlias(env.agent.db, env.workspaceId, "site"))!;
+    const stored = await withItemSecret(
+      env.deps(),
+      env.workspaceId,
+      item,
+      "passkey",
+      async (text) => StoredPasskey.array().parse(JSON.parse(text)),
+    );
+    expect(Array.isArray(stored) && stored.map((passkey) => passkey.rpId)).toEqual([
+      "login.fixtures.test",
+    ]);
+  });
+
+  it("disarms when the arm cannot be audited (review)", async () => {
+    const db = env.agent.db;
+    // Every audit insert works except the "armed" row.
+    const failing = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property !== "insert") return Reflect.get(target, property, receiver);
+        return (table: unknown) => {
+          const builder = target.insert(table as never);
+          if (table !== vaultAudit) return builder;
+          return {
+            values: (row: { outcome?: string }) =>
+              row.outcome === "armed"
+                ? Promise.reject(new Error("audit down"))
+                : builder.values(row as never),
+          };
+        };
+      },
+    });
+    const passkeys = createPasskeys(env.deps({ db: failing }));
+    const b = await browser();
+    await b.page.goto(`${login}/webauthn/login`);
+    const watch = await watchCdp(b);
+    const runId = await env.newRun([login]);
+    const ctx = toolContext({
+      runId,
+      workspaceId: env.workspaceId,
+      session: b.session,
+      approval: humanApproval(env.userId),
+    });
+    await expect(passkeys.use(ctx, { alias: "site" })).rejects.toThrow("audit down");
+    expect(await watch.gone()).toBe(true);
   });
 
   it("refuses on a lookalike origin and reports a missing passkey", async () => {

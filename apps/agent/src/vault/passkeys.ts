@@ -87,7 +87,8 @@ interface Armed {
 const removeAuthenticator = (cdp: CDPSession, authenticatorId: string) =>
   cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }).catch(() => undefined);
 
-export function createPasskeys(deps: VaultDeps): Passkeys {
+export function createPasskeys(deps: VaultDeps, options: { armMs?: number } = {}): Passkeys {
+  const armMs = options.armMs ?? PASSKEY_ARM_MS;
   const armed = new Map<string, Armed>();
 
   async function load(workspaceId: string, item: VaultItemRecord): Promise<StoredPasskey[]> {
@@ -134,8 +135,11 @@ export function createPasskeys(deps: VaultDeps): Passkeys {
         authenticatorId: entry.authenticatorId,
       });
       for (const credential of credentials) {
+        // Only the item's own RP: a credential a page slipped into the armed authenticator for
+        // another RP is never sealed into this item (review).
         const parsed = StoredPasskey.safeParse(credential);
-        if (parsed.success) await merge(ctx.workspaceId, item, parsed.data);
+        if (parsed.success && rpIdMatchesOrigin(parsed.data.rpId, item.origin))
+          await merge(ctx.workspaceId, item, parsed.data);
       }
       await appendVaultAudit(deps.db, {
         workspaceId: ctx.workspaceId,
@@ -271,7 +275,7 @@ export function createPasskeys(deps: VaultDeps): Passkeys {
         const entry: Armed = {
           cdp,
           authenticatorId: id,
-          timer: setTimeout(() => void disarm(ctx.runId), PASSKEY_ARM_MS),
+          timer: setTimeout(() => void disarm(ctx.runId), armMs),
           listener: (event) => {
             if (event.authenticatorId === id) void onAsserted(ctx, item, entry, approver);
           },
@@ -286,7 +290,13 @@ export function createPasskeys(deps: VaultDeps): Passkeys {
         await audit("passkey", "ceremony_failed", approver);
         return { error: "ceremony_failed" };
       }
-      await audit("passkey", "armed", approver);
+      try {
+        await audit("passkey", "armed", approver);
+      } catch (error) {
+        // An arm nobody can audit is not left armed (review).
+        await disarm(ctx.runId);
+        throw error;
+      }
       return { ok: true };
     },
   };
