@@ -279,12 +279,10 @@ describe("takeover through B1's lock with the n.eko live view (spec §10.3, §12
     });
     expect(windows.length).toBeGreaterThan(0);
     const acts = (await steps(agent, runId)).filter((s) => s.phase === "act");
-    // Not vacuous: the agent acted again after the last hand back, so a window could have caught it.
-    const lastTake = mine
-      .filter((m) => m.kind === "take")
-      .at(-1)!
-      .at.getTime();
-    expect(acts.some((act) => act.createdAt.getTime() > lastTake)).toBe(true);
+    // Not vacuous: the agent acted again after the last hand back (the take that ends the last
+    // window; a later take seats the agent as the lease ends), so a window could have caught it.
+    const lastHandBack = windows.at(-1)![1].getTime();
+    expect(acts.some((act) => act.createdAt.getTime() > lastHandBack)).toBe(true);
     for (const step of acts) {
       for (const [given, taken] of windows) {
         const started = step.createdAt.getTime();
