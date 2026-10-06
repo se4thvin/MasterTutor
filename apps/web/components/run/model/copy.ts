@@ -12,7 +12,7 @@ import {
 import type { TakeoverNotice, TakeoverState } from "./takeover.ts";
 import { untrustedText } from "./untrusted-text.ts";
 
-type Tone = "signal" | "tint" | "warn" | "muted" | "ok";
+export type Tone = "signal" | "tint" | "warn" | "muted" | "ok";
 
 export const STATE_PILL: Record<BrowserState, { label: string; tone: Tone; pulse: boolean }> = {
   live: { label: "Live", tone: "signal", pulse: true },
