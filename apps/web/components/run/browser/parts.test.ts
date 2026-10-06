@@ -47,10 +47,20 @@ describe("OriginPill (S6, S7)", () => {
 
 describe("Caption and StepCallout (S6)", () => {
   it("isolates the caption in <bdi> inside a polite live region", () => {
-    const out = html(h(Caption, { text: "Ticking the box", step: "Step 6", tone: "acting" }));
+    const out = html(
+      h(Caption, { text: "Ticking the box", step: "Step 6", tone: "acting", announce: true }),
+    );
     expect(out).toContain('aria-live="polite"');
     expect(out).toContain("<bdi>Ticking the box</bdi>");
     expect(out).toContain("Step 6");
+  });
+
+  it("stays silent while the timeline speaks for the run (I1)", () => {
+    const out = html(
+      h(Caption, { text: "Ticking the box", step: null, tone: "acting", announce: false }),
+    );
+    expect(out).toContain('aria-live="off"');
+    expect(out).toContain("<bdi>Ticking the box</bdi>");
   });
 
   it("keeps the callout decorative, with its text isolated", () => {

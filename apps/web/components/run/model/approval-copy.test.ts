@@ -219,3 +219,19 @@ describe("approvalCopy: duplicate destinations (M8)", () => {
     ]);
   });
 });
+
+describe("requestSummary: an off-site sign-in names its destination in the timeline (M6)", () => {
+  it("says where the sign-in went", () => {
+    expect(requestSummary(offSiteSignInRequest())).toBe(
+      "send your ada-learn sign-in to evil.example",
+    );
+    expect(
+      requestSummary({
+        ...offSiteSignInRequest(),
+        postsTo: "https://a.example, https://b.example",
+      }),
+    ).toBe("send your ada-learn sign-in to 2 other sites");
+    const { postsTo: _drop, ...sameSite } = offSiteSignInRequest();
+    expect(requestSummary(sameSite as ApprovalRequest)).toBe("sign in as ada-learn");
+  });
+});

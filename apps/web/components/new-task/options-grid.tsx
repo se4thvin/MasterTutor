@@ -202,6 +202,10 @@ export function OptionsGrid(p: OptionsGridProps) {
                   to their own site. No access to private networks. The kill switch and Take over
                   always work.
                 </p>
+                <p>
+                  It still pauses for a person on a sign-in form that posts to another site, and on
+                  safety warnings it doesn&apos;t recognise.
+                </p>
               </div>
             </div>
             <label className="nt-check">

@@ -161,6 +161,9 @@ test.describe("New task", () => {
     await expect(warning).toContainText("Budget limits still pause");
     await expect(warning).toContainText("never reach the agent, logs or screenshots");
     await expect(warning).toContainText("private networks");
+    // The cases bypass still hands to a person (D44).
+    await expect(warning).toContainText("a sign-in form that posts to another site");
+    await expect(warning).toContainText("safety warnings it doesn't recognise");
     await expect(page.getByText("Every step goes ahead without asking")).toHaveCount(0);
     // The consent checkbox is described by the warning it agrees to (M2).
     await expect(page.getByRole("checkbox", { name: /I understand/ })).toHaveAccessibleDescription(

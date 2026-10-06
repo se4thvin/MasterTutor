@@ -56,6 +56,8 @@ test.describe("Approval sheet", () => {
     expect(decisions(calls)).toHaveLength(0);
     await page.keyboard.press("a");
     await expect(sheet).toHaveCount(0);
+    // Focus does not fall to the page body when the last approval leaves (M4).
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("BODY");
     await expect
       .poll(() => decisions(calls))
       .toEqual([
@@ -243,34 +245,6 @@ test.describe("Approval sheet", () => {
     ).toBeVisible();
   });
 
-  test("a sign-in that posts to several sites names every one, whole (I1 carry-over)", async ({
-    page,
-  }) => {
-    await gotoRun(page);
-    const hosts = ["login.microsoftonline.com", "shibboleth.learn.example.edu", "zz-evil.example"];
-    await emit(page, [
-      request(ids.approval(7), {
-        ...offSiteSignInRequest(),
-        postsTo: hosts.map((h) => `https://${h}`).join(", "),
-      }),
-    ]);
-    const sheet = page.getByRole("alertdialog", {
-      name: "Send your ada-learn sign-in to 3 other sites?",
-    });
-    await expect(sheet).toBeVisible();
-    for (const host of hosts) {
-      const row = sheet
-        .locator(".run-approval-details dl > div")
-        .filter({ hasText: "Sends to" })
-        .filter({ hasText: host });
-      await expect(row).toHaveCount(1);
-      // Never truncated: the whole host fits its box.
-      expect(await row.locator("dd").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(
-        true,
-      );
-    }
-  });
-
   test("a request the policy decided in the same batch never mounts the sheet (A9)", async ({
     page,
   }) => {
@@ -325,4 +299,36 @@ test("a 500-character label stays inside the sheet at 390px (Review Focus 4)", a
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
   await expect(frame(page)).toHaveAttribute("data-state", "approval");
+});
+
+test("a sign-in that posts to several sites names every one, whole, at 1440 and 390 (I1, M5)", async ({
+  page,
+}) => {
+  test.skip(
+    ![1440, 390].includes(page.viewportSize()?.width ?? 0),
+    "the widest and the narrowest Details column",
+  );
+  await gotoRun(page);
+  const hosts = ["login.microsoftonline.com", "shibboleth.learn.example.edu", "zz-evil.example"];
+  await emit(page, [
+    request(ids.approval(7), {
+      ...offSiteSignInRequest(),
+      postsTo: hosts.map((h) => `https://${h}`).join(", "),
+    }),
+  ]);
+  const sheet = page.getByRole("alertdialog", {
+    name: "Send your ada-learn sign-in to 3 other sites?",
+  });
+  await expect(sheet).toBeVisible();
+  for (const host of hosts) {
+    const row = sheet
+      .locator(".run-approval-details dl > div")
+      .filter({ hasText: "Sends to" })
+      .filter({ hasText: host });
+    await expect(row).toHaveCount(1);
+    // Never truncated: the whole host fits its box.
+    expect(await row.locator("dd").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(
+      true,
+    );
+  }
 });

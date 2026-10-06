@@ -38,6 +38,8 @@ interface BrowserFrameProps {
   replayStep: StepRow | null;
   replayLabel: string;
   showCallouts: boolean;
+  /** False while the timeline aside is mounted: one live region speaks at a time (I1). */
+  announceCaption: boolean;
   liveEpoch: number;
   liveStatus: LiveStatus;
   onLiveStatus(status: LiveStatus): void;
@@ -192,6 +194,7 @@ export function BrowserFrame(p: BrowserFrameProps) {
         text={captionFor(state, model, p.takeover, p.replayStep)}
         step={replaying ? p.replayLabel : stepLabel(model)}
         tone={state}
+        announce={p.announceCaption}
       />
     </div>
   );

@@ -30,9 +30,11 @@ test.describe("Timeline", () => {
     await expect(
       page.getByRole("status").filter({ hasText: "Deciding whether to start the quiz" }),
     ).toBeAttached();
-    // One ThoughtLine speaks it: the page holds exactly one such live region (carry-over).
+    // One voice: of every live region (status roles and aria-live), one says it (I1).
     await expect(
-      page.getByRole("status").filter({ hasText: "Deciding whether to start the quiz" }),
+      page
+        .locator('[aria-live]:not([aria-live="off"]), [role="status"]')
+        .filter({ hasText: "Deciding whether to start the quiz" }),
     ).toHaveCount(1);
     await emit(page, [
       rec({

@@ -4,6 +4,7 @@ import { stepScreenshotPath } from "@mastertutor/contracts";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { ThoughtLine } from "@/components/bits/thought-line.tsx";
+import { Button } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import { MEDIA } from "@/lib/breakpoints.ts";
@@ -191,15 +192,14 @@ export function TimelinePanel(p: TimelinePanelProps) {
   }
   return (
     <>
-      <button
-        type="button"
-        className="btn btn-gray run-tl-toggle"
+      <Button
+        className="run-tl-toggle"
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
       >
         Steps · {p.summary}
-      </button>
+      </Button>
       <Sheet open={open} onOpenChange={setOpen} title="Steps">
         <TimelineList {...p} otp={null} />
         {composer}
