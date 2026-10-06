@@ -345,4 +345,38 @@
       margin: 1rem 1.5rem 0;
     }
   }
+  .auth-page {
+    display: grid;
+    place-content: center;
+    gap: 1.5rem;
+    min-height: 100dvh;
+    padding: 2rem 1rem;
+  }
+  .auth-brand {
+    display: grid;
+    justify-items: center;
+    gap: 0.2rem;
+    & b {
+      font: 700 1.25rem/1 var(--font-display);
+      letter-spacing: -0.02em;
+    }
+  }
+  .auth-card {
+    display: grid;
+    gap: 1rem;
+    width: min(24rem, calc(100vw - 2rem));
+    padding: 1.5rem;
+    border-radius: var(--r-xl);
+    background: var(--elevated);
+    box-shadow: var(--e2);
+  }
+  .auth-fields {
+    display: grid;
+    gap: 0.9rem;
+  }
+  /* Links inside running text are underlined, not colour-only (WCAG 1.4.1). */
+  .auth-card .t-foot a {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
 }

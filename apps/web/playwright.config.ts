@@ -43,9 +43,9 @@ export default defineConfig({
     command: process.env.PW_DEV
       ? `pnpm exec next dev -p ${PORT}`
       : `pnpm exec next build && pnpm exec next start -p ${PORT}`,
-    // Wait on the port, not a page: /healthz checks the database (503 in fixture mode) and
-    // /sign-in does not exist until Task 12. `next start` only listens once it can serve.
-    port: PORT,
+    // /healthz checks the database (503 in fixture mode), so wait on /sign-in: in fixture mode
+    // it redirects to /library for the default signed-in user, which still proves the app serves.
+    url: `${baseURL}/sign-in`,
     // Never reuse: a stale server on this port would silently test an old build.
     reuseExistingServer: false,
     timeout: 300_000,
