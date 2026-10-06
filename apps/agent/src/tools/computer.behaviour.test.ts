@@ -619,6 +619,55 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     },
   );
 
+  it.each([
+    ["unapproved", 30],
+    ["person-approved", 60],
+  ] as const)(
+    "a frame showing Cancel that navigates to another site just before the press never takes it (%s): 0/%i reach Delete",
+    async (approval, tries) => {
+      const { s, executor } = await setup();
+      const gate = async () => {
+        const { target } = await hitTest(s, at);
+        if (target?.label !== "Cancel") return false;
+        return approval === "person-approved"
+          ? { target: markUnguarded(s, target), personApproved: true }
+          : target.opaqueFrame
+            ? false
+            : { target, personApproved: false };
+      };
+      const attempt = async (after: number) => {
+        await s.goto(`${SITE}/frame-swap.html?after=${after}`, signal);
+        await waitFor(() => s.page.frames()[1]?.url().includes("gap"), { label: "panel" });
+        await s.page.mouse.move(600, 500); // off the frame, so the executor's move enters it
+        const run = await executor.run([click(at)], signal, gate);
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        const gap = await s.page
+          .frames()[1]
+          ?.evaluate(() => (window as { __gap?: number }).__gap)
+          .catch(() => undefined);
+        return { run, reached: await clicked(s), gap };
+      };
+      const gaps: number[] = [];
+      while (gaps.length < 3) {
+        const { gap } = await attempt(60_000);
+        if (gap !== undefined) gaps.push(gap);
+      }
+      const gap = gaps.sort((a, b) => a - b)[1]!;
+      // The new site's document commits well after its navigation starts (about a third of the
+      // way into the gap in the slot): aim the commit at the moment just before the press.
+      const fractions = [0.22, 0.26, 0.28, 0.3, 0.32, 0.34, 0.36, 0.38, 0.4, 0.44];
+      const hits = { cancel: 0, delete: 0, refused: 0 };
+      for (let i = 0; i < tries; i++) {
+        const after = Math.round(gap * fractions[i % fractions.length]!);
+        const { run, reached } = await attempt(after);
+        if (run.notes.length > 0) hits.refused += 1;
+        if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+      }
+      console.info(JSON.stringify({ metric: "swapped_frame_clicks", approval, gap, ...hits }));
+      expect(hits.delete).toBe(0);
+    },
+  );
+
   it.each([15, 4])(
     "a page with more documents than the guard arms refuses the click: 0/60 reach Delete (swap every %i ms)",
     async (period) => {
@@ -658,6 +707,50 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     console.info(JSON.stringify({ metric: "many_documents_approved_clicks", ...hits }));
     expect(hits).toEqual({ cancel: 0, delete: 0, handedOver: expect.any(Number) });
     expect(hits.handedOver).toBeGreaterThan(0);
+  });
+
+  it("a page with lazily loaded cross-site frames still works, and no frame stays paused", async () => {
+    const { s, executor } = await setup("/lazy-frames.html");
+    const gated = async (action: ComputerAction) => ({
+      target:
+        action.type === "click" ? (await hitTest(s, { x: action.x, y: action.y })).target : null,
+      personApproved: false,
+    });
+    // A click that adds a cross-site embed while it is guarded: the embed still loads.
+    expect(await executor.run([click({ x: 80, y: 20 })], signal, gated)).toEqual({
+      executed: 1,
+      notes: [],
+      handOver: null,
+    });
+    expect(await text(s, "#count")).toBe("1");
+    // Scroll the lazy embeds in, then click Cancel inside one (out of process).
+    await executor.execute({ type: "scroll", x: 300, y: 300, scroll_x: 0, scroll_y: 600 }, signal);
+    await waitFor(
+      async () => {
+        const urls = s.page.frames().map((frame) => frame.url());
+        return urls.filter((url) => url.includes("widget.html")).length >= 3;
+      },
+      { label: "lazy embeds attached", timeoutMs: 10_000 },
+    );
+    const embed = s.page.frameLocator('iframe[title="Embed 1"]');
+    const box = (await embed.locator("#cancel").boundingBox())!;
+    const cancel = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    const run = await executor.run([click(cancel)], signal, gated);
+    expect(run).toEqual({ executed: 1, notes: [], handOver: null });
+    expect(
+      await embed.locator("#cancel").evaluate(() => (window as { __clicked?: string }).__clicked),
+    ).toBe("cancel");
+    // Every frame runs script (none is left paused), well within a second.
+    for (const frame of s.page.frames()) {
+      const state = await Promise.race([
+        frame.evaluate(() => document.readyState).catch(() => "detached"),
+        new Promise((resolve) => setTimeout(() => resolve("paused"), 1_000)),
+      ]);
+      expect([frame.url(), state]).toEqual([
+        frame.url(),
+        expect.stringMatching(/complete|interactive|detached/),
+      ]);
+    }
   });
 
   it("ordinary pages still click normally: a form, a link, an SPA and a page with a few frames", async () => {

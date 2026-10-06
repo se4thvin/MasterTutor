@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Account panel</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      iframe {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 220px;
+        height: 160px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- A same-site frame showing Cancel. ?after=N: N ms after the pointer enters it, the frame
+         navigates to ?to= (default another site, so a new process) showing Delete in that spot. -->
+    <iframe id="panel" title="Account" src="/widget.html?gap"></iframe>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const panel = document.getElementById("panel");
+      const to = params.get("to") ?? "other.fixtures-isolated.test";
+      panel.addEventListener("mouseenter", () =>
+        setTimeout(
+          () => (panel.src = `http://${to}/widget.html?only=delete`),
+          Number(params.get("after") ?? 60_000),
+        ),
+      );
+    </script>
+  </body>
+</html>

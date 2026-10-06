@@ -1,3 +1,4 @@
+import { holdNewProcessFrames, type FrameHold } from "./frame-hold.ts";
 import type { IsolatedWorlds } from "./isolated-world.ts";
 import { FRAME_OWNERS, type PageHelpers, type TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
@@ -171,6 +172,17 @@ export function newDocumentDisarmScript(): boolean {
   return state.cancelled;
 }
 
+const NEW_DOCUMENT_SOURCE = `(${newDocumentScript.toString()})(${JSON.stringify({
+  pointerEvents: POINTER_EVENTS,
+  lifetimeMs: NEW_DOCUMENT_GUARD_MS,
+})})`;
+const HELD_FRAME_GUARD = {
+  source: NEW_DOCUMENT_SOURCE,
+  worldName: NEW_DOCUMENT_WORLD,
+  disarmExpression: `(${newDocumentDisarmScript.toString()})()`,
+  budgetMs: ARM_BUDGET_MS,
+};
+
 /** Removes the guard; returns whether it cancelled any input. */
 export function disarmScript(): boolean {
   const slot = globalThis as unknown as { __mtGuard?: { remove(): void }; __mtCancelled?: boolean };
@@ -180,8 +192,8 @@ export function disarmScript(): boolean {
 }
 
 type Doc = { worlds: IsolatedWorlds; frameId: string };
-const FRAME_EVENTS = ["Page.frameAttached", "Page.frameNavigated"] as const;
-type FrameEvent = { frameId: string } | { frame: { id: string } };
+const FRAME_EVENTS = ["Page.frameAttached", "Page.frameNavigated", "Page.frameDetached"] as const;
+type FrameEvent = { frameId: string; reason?: string } | { frame: { id: string } };
 
 /**
  * Arms the guard in every document of the page (the top session's frames and each out-of-process
@@ -218,6 +230,9 @@ async function armGuard(
   const watched: Array<{ worlds: IsolatedWorlds; onFrame: (event: FrameEvent) => void }> = [];
   const created: Array<{ cdp: IsolatedWorlds["cdp"]; frameId: string }> = [];
   const scripts: Array<{ cdp: IsolatedWorlds["cdp"]; identifier: string }> = [];
+  const holds: FrameHold[] = [];
+  // The out-of-process frames the guard arms (any other frame target is new to it).
+  let known: Promise<ReadonlySet<string>> = Promise.resolve(new Set());
   const sent: Doc[] = [];
   const answered = new Set<Doc>();
   let home: Doc | undefined;
@@ -238,6 +253,12 @@ async function armGuard(
   const armSession = async (worlds: IsolatedWorlds): Promise<void> => {
     if (settled) return;
     const onFrame = (event: FrameEvent) => {
+      // A frame detached to move to another process (a cross-site navigation) is a page change
+      // here too; its new document is reached through the frame hold, not this session.
+      if ("frameId" in event && event.reason !== undefined) {
+        if (event.reason === "swap") changed = true;
+        return;
+      }
       changed = true;
       const frameId = "frameId" in event ? event.frameId : event.frame.id;
       if (click !== null) created.push({ cdp: worlds.cdp, frameId });
@@ -245,12 +266,19 @@ async function armGuard(
     for (const event of FRAME_EVENTS) worlds.cdp.on(event, onFrame);
     watched.push({ worlds, onFrame });
     if (click !== null) {
+      // Documents created in this session's process get the script; a frame that starts in a
+      // new process is held until it has the script too. (One after the other: two commands
+      // sent at once over a TCP link can stall on delayed ACKs, ~40 ms measured on the slot.)
       const { identifier } = await worlds.cdp.send("Page.addScriptToEvaluateOnNewDocument", {
-        source: `(${newDocumentScript.toString()})(${JSON.stringify({ pointerEvents: POINTER_EVENTS, lifetimeMs: NEW_DOCUMENT_GUARD_MS })})`,
+        source: NEW_DOCUMENT_SOURCE,
         worldName: NEW_DOCUMENT_WORLD,
       });
+      const hold = await holdNewProcessFrames(worlds.cdp, HELD_FRAME_GUARD, known, () => {
+        changed = true;
+      });
       scripts.push({ cdp: worlds.cdp, identifier });
-      if (settled) void removeScripts();
+      holds.push(hold);
+      if (settled) void releaseHolds().then(removeScripts);
     }
     const { frameTree } = await worlds.cdp.send("Page.getFrameTree");
     const docs: Doc[] = [];
@@ -268,8 +296,10 @@ async function armGuard(
   };
   const armAll = async (): Promise<boolean> => {
     const top = await session.worlds();
+    const outOfProcess = session.outOfProcessFrames();
+    known = outOfProcess.then((frames) => new Set(frames.keys()));
     const topArm = armSession(top);
-    const others = [...(await session.outOfProcessFrames()).values()];
+    const others = [...(await outOfProcess).values()];
     await Promise.all([topArm, ...others.map(armSession)]);
     // No document claimed focus (a background window): the top document is home, as before.
     if (click === null && !home && !settled)
@@ -277,6 +307,10 @@ async function armGuard(
     return true;
   };
 
+  const releaseHolds = () =>
+    Promise.all(holds.splice(0).map((hold) => hold.release())).then((cancelled) =>
+      cancelled.includes(true),
+    );
   const removeScripts = () =>
     Promise.all(
       scripts
@@ -289,6 +323,7 @@ async function armGuard(
     );
   // Documents created while armed: once no new one can get the script, disarm each of them.
   const disarmCreated = async (): Promise<boolean[]> => {
+    const heldCancelled = await releaseHolds();
     await removeScripts();
     for (const { worlds, onFrame } of watched)
       for (const event of FRAME_EVENTS) worlds.cdp.off(event, onFrame);
@@ -298,7 +333,7 @@ async function armGuard(
           .send("Page.createIsolatedWorld", { frameId, worldName: NEW_DOCUMENT_WORLD })
           .then(({ executionContextId }) =>
             cdp.send("Runtime.evaluate", {
-              expression: `(${newDocumentDisarmScript.toString()})()`,
+              expression: HELD_FRAME_GUARD.disarmExpression,
               contextId: executionContextId,
               returnByValue: true,
             }),
@@ -306,7 +341,7 @@ async function armGuard(
           .then(({ result }) => result.value === true)
           .catch(() => false),
       ),
-    );
+    ).then((cancelled) => [heldCancelled, ...cancelled]);
   };
 
   const disarmAll = async (): Promise<boolean> => {
