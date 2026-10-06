@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { pageExpression } from "./isolated-world.ts";
+import { pageExpression, type IsolatedWorlds } from "./isolated-world.ts";
 import type { PageHelpers, TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
 
@@ -40,9 +40,9 @@ export function hitTestScript(
         root = hit.shadowRoot;
         continue;
       }
-      if (hit.tagName === "IFRAME" || hit.tagName === "FRAME") {
+      if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
         try {
-          const doc: Document | null = (hit as HTMLIFrameElement).contentDocument;
+          const doc: Document | null = (hit as HTMLIFrameElement).contentDocument ?? null;
           if (doc) {
             const r = hit.getBoundingClientRect();
             ox += r.left + (hit as HTMLElement).clientLeft;
@@ -62,10 +62,10 @@ export function hitTestScript(
   const hit = deep(arg.x, arg.y);
   if (!hit) return { target: null, snap: null, origin, opaqueFrame: null };
   // A cross-origin frame the page script cannot read: the agent looks inside it over CDP (R29-1).
-  if (hit.tagName === "IFRAME" || hit.tagName === "FRAME") {
+  if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
     let readable: boolean;
     try {
-      readable = (hit as HTMLIFrameElement).contentDocument !== null;
+      readable = ((hit as HTMLIFrameElement).contentDocument ?? null) !== null;
     } catch {
       readable = false;
     }
@@ -116,10 +116,11 @@ export function frameAtPointScript(arg: { x: number; y: number }): Element | nul
       root = hit.shadowRoot;
       continue;
     }
-    if (hit.tagName !== "IFRAME" && hit.tagName !== "FRAME") break;
+    if (!["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName))
+      break;
     let doc: Document | null;
     try {
-      doc = (hit as HTMLIFrameElement).contentDocument;
+      doc = (hit as HTMLIFrameElement).contentDocument ?? null;
     } catch {
       doc = null;
     }
@@ -140,10 +141,11 @@ export function focusedFrameScript(): Element | null {
       active = active.shadowRoot.activeElement;
       continue;
     }
-    if (active.tagName !== "IFRAME" && active.tagName !== "FRAME") return null;
+    if (!["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(active.tagName))
+      return null;
     let doc: Document | null;
     try {
-      doc = (active as HTMLIFrameElement).contentDocument;
+      doc = (active as HTMLIFrameElement).contentDocument ?? null;
     } catch {
       doc = null;
     }
@@ -160,10 +162,10 @@ export function focusScript(_arg: null, h: PageHelpers): FrameScan {
       active = active.shadowRoot.activeElement;
       continue;
     }
-    if (active.tagName === "IFRAME" || active.tagName === "FRAME") {
+    if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(active.tagName)) {
       let doc: Document | null;
       try {
-        doc = (active as HTMLIFrameElement).contentDocument;
+        doc = (active as HTMLIFrameElement).contentDocument ?? null;
       } catch {
         doc = null;
       }
@@ -202,9 +204,9 @@ export function scrollStateScript(arg: { x: number; y: number }): ScrollState {
       root = hit.shadowRoot;
       continue;
     }
-    if (hit.tagName === "IFRAME" || hit.tagName === "FRAME") {
+    if (["IFRAME", "FRAME", "OBJECT", "EMBED", "FENCEDFRAME", "PORTAL"].includes(hit.tagName)) {
       try {
-        const doc: Document | null = (hit as HTMLIFrameElement).contentDocument;
+        const doc: Document | null = (hit as HTMLIFrameElement).contentDocument ?? null;
         if (doc) {
           const r = hit.getBoundingClientRect();
           ox += r.left + (hit as HTMLElement).clientLeft;
@@ -299,30 +301,43 @@ function opaqueTarget(path: string, topUrl: string): TargetDescription {
 async function resolve(
   session: BrowserSession,
   point: { x: number; y: number } | null,
-): Promise<HitTest> {
+): Promise<HitTest & { world: { worlds: IsolatedWorlds; frameId: string | undefined } }> {
   const topUrl = session.page.url();
   let worlds = await session.worlds();
   let frameId: string | undefined;
   let base = point; // the point in the coordinates of the current CDP session's root frame
   let local = point; // the point in the coordinates of the current frame
   let chain = "";
+  let ownSession: string | null = null; // the cached out-of-process frame we are inside, if any
+  const opaque = () => {
+    if (ownSession) session.forgetFrame(ownSession);
+    return { target: opaqueTarget(chain, topUrl), snap: null, world: { worlds, frameId } };
+  };
   for (let depth = 0; ; depth++) {
-    const scan: FrameScan = local
-      ? await worlds.evaluate(hitTestScript, { ...local, radius: 12 }, frameId)
-      : await worlds.evaluate(focusScript, null, frameId);
+    let scan: FrameScan;
+    try {
+      scan = local
+        ? await worlds.evaluate(hitTestScript, { ...local, radius: 12 }, frameId)
+        : await worlds.evaluate(focusScript, null, frameId);
+    } catch (error) {
+      // The top page itself failing is a real error; a frame failing is uninspectable (N3).
+      if (depth === 0) throw error;
+      return opaque();
+    }
     if (depth > 0) chain += `@${scan.origin}>`;
     if (scan.opaqueFrame === null) {
+      // Inside a frame, nothing at the mapped point means the mapping cannot be trusted (N1).
+      if (depth > 0 && local && scan.target === null) return opaque();
       const target = scan.target && {
         ...scan.target,
         path: `${chain}${scan.target.path}`,
         context: digest(chain, scan.target.context, topUrl),
       };
       // A snap point is only meaningful in the top frame's coordinates.
-      return { target, snap: depth === 0 ? scan.snap : null };
+      return { target, snap: depth === 0 ? scan.snap : null, world: { worlds, frameId } };
     }
     chain += scan.opaqueFrame;
-    if (depth >= MAX_FRAME_DEPTH) return { target: opaqueTarget(chain, topUrl), snap: null };
-    let child: string | undefined;
+    if (depth >= MAX_FRAME_DEPTH) return opaque();
     try {
       const expression = local
         ? pageExpression(frameAtPointScript, local)
@@ -330,12 +345,12 @@ async function resolve(
       const objectId = await worlds.evaluateHandle(expression, frameId);
       if (!objectId) throw new Error("frame element gone");
       const { node } = await worlds.cdp.send("DOM.describeNode", { objectId });
-      child = node.frameId;
+      const child = node.frameId;
       if (!child) throw new Error("no content frame");
       let inner = local;
       if (base) {
-        const { model } = await worlds.cdp.send("DOM.getBoxModel", { objectId });
-        inner = { x: base.x - model.content[0]!, y: base.y - model.content[1]! };
+        inner = await intoFrame(worlds, objectId, base);
+        if (inner === null) throw new Error("the point cannot be mapped into the frame");
       }
       const inProcess = await worlds
         .evaluate(() => true, null, child)
@@ -348,22 +363,73 @@ async function resolve(
         const own = await session.frameWorlds(child);
         if (!own) throw new Error("no session for the frame");
         worlds = own;
+        ownSession = child;
         frameId = undefined;
         base = inner;
         local = inner;
       }
     } catch {
-      if (child) session.forgetFrame(child);
-      return { target: opaqueTarget(chain, topUrl), snap: null };
+      return opaque();
     }
   }
 }
 
-export function hitTest(
+/**
+ * Maps a point (in the session root's coordinates) into the frame's own document, through its real
+ * geometry (N1): the content quad from DOM.getBoxModel is post-transform (border, padding, CSS
+ * scale and ancestor frames included), and the untransformed content size gives the scale. A
+ * rotated or skewed frame, or a point outside its content, returns null (the caller fails closed).
+ */
+async function intoFrame(
+  worlds: IsolatedWorlds,
+  objectId: string,
+  point: { x: number; y: number },
+): Promise<{ x: number; y: number } | null> {
+  const { model } = await worlds.cdp.send("DOM.getBoxModel", { objectId });
+  const [x0, y0, x1, y1, x2, y2, x3, y3] = model.content as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const aligned =
+    Math.abs(y0 - y1) < 0.5 &&
+    Math.abs(x1 - x2) < 0.5 &&
+    Math.abs(y2 - y3) < 0.5 &&
+    Math.abs(x3 - x0) < 0.5;
+  const quadWidth = x1 - x0;
+  const quadHeight = y3 - y0;
+  if (!aligned || quadWidth <= 0 || quadHeight <= 0) return null;
+  const { result } = await worlds.cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    functionDeclaration: `function () {
+      const style = getComputedStyle(this);
+      const px = (value) => parseFloat(value) || 0;
+      return [
+        this.clientWidth - px(style.paddingLeft) - px(style.paddingRight),
+        this.clientHeight - px(style.paddingTop) - px(style.paddingBottom),
+      ];
+    }`,
+  });
+  const [width, height] = result.value as [number, number];
+  if (!(width > 0 && height > 0)) return null;
+  const x = ((point.x - x0) * width) / quadWidth;
+  const y = ((point.y - y0) * height) / quadHeight;
+  if (x < 0 || y < 0 || x >= width || y >= height) return null;
+  return { x, y };
+}
+
+export async function hitTest(
   session: BrowserSession,
   point: { x: number; y: number },
 ): Promise<HitTest> {
-  return resolve(session, point);
+  const { target, snap } = await resolve(session, point);
+  return { target, snap };
 }
 
 export async function focusTarget(session: BrowserSession): Promise<TargetDescription | null> {
@@ -420,10 +486,25 @@ export function disarmSecretBlockScript(): void {
   delete slot.__mtSecretBlock;
 }
 
-export async function armSecretBlock(session: BrowserSession): Promise<void> {
-  await (await session.worlds()).evaluate(armSecretBlockScript, null);
-}
-
-export async function disarmSecretBlock(session: BrowserSession): Promise<void> {
-  await (await session.worlds()).evaluate(disarmSecretBlockScript, null).catch(() => undefined);
+/**
+ * Arms the secret-field block in the top frame and in the frame that holds focus (a field inside
+ * a cross-origin frame included); returns the matching disarm. The top frame is always armed.
+ */
+export async function armSecretBlock(session: BrowserSession): Promise<() => Promise<void>> {
+  const top = await session.worlds();
+  await top.evaluate(armSecretBlockScript, null);
+  const focused = await resolve(session, null)
+    .then((found) => found.world)
+    .catch(() => null);
+  const inner =
+    focused && (focused.worlds !== top || focused.frameId !== undefined) ? focused : null;
+  if (inner)
+    await inner.worlds.evaluate(armSecretBlockScript, null, inner.frameId).catch(() => undefined);
+  return async () => {
+    await top.evaluate(disarmSecretBlockScript, null).catch(() => undefined);
+    if (inner)
+      await inner.worlds
+        .evaluate(disarmSecretBlockScript, null, inner.frameId)
+        .catch(() => undefined);
+  };
 }

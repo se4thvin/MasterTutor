@@ -56,6 +56,7 @@ export class RunWorker {
   #store: StepStore | null = null;
   #loop: RunLoop | null = null;
   #started = false;
+  #deadlineTimer: NodeJS.Timeout | undefined;
   /** Settles when the main loop has ended, whether stop() came before or after start() (M1). */
   readonly #finished = Promise.withResolvers<void>();
 
@@ -65,7 +66,20 @@ export class RunWorker {
     this.runId = claim.run.id;
     this.workspaceId = claim.run.workspaceId;
     // The claim just set the lease: until the first renewal the local deadline counts from now.
-    this.#guard.fence(performance.now() + deps.config.leaseMs - deps.config.heartbeatMs);
+    this.#fence(performance.now() + deps.config.leaseMs - deps.config.heartbeatMs);
+  }
+
+  /** Moves the local lease deadline; when it passes unrenewed, in-flight work is aborted at once. */
+  #fence(notAfter: number): void {
+    this.#guard.fence(notAfter);
+    clearTimeout(this.#deadlineTimer);
+    this.#deadlineTimer = setTimeout(
+      () => {
+        if (this.#guard.expired) this.#loseLease();
+      },
+      Math.max(0, notAfter - performance.now()) + 1,
+    );
+    this.#deadlineTimer.unref();
   }
 
   start(): Promise<void> {
@@ -163,6 +177,7 @@ export class RunWorker {
       await this.#end({ kind: "failed", error: failure }).catch(() => undefined);
     } finally {
       clearInterval(beat);
+      clearTimeout(this.#deadlineTimer);
       await this.#attached?.close().catch(() => undefined);
     }
   }
@@ -202,6 +217,7 @@ export class RunWorker {
         clock: this.#deps.clock,
         config: this.#deps.config,
         log: this.#deps.log,
+        leaseExpired: () => this.#guard.expired,
       },
       snapshotOf(run),
     );
@@ -381,7 +397,7 @@ export class RunWorker {
         leaseMs,
       });
       // Counted from when the renewal was sent, the safe side of the database's own clock.
-      if (!this.#guard.expired) this.#guard.fence(started + leaseMs - heartbeatMs);
+      if (!this.#guard.expired) this.#fence(started + leaseMs - heartbeatMs);
     } catch (error) {
       if (error instanceof LeaseLost) {
         this.#loseLease();

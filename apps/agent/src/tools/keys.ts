@@ -6,6 +6,8 @@ const ALIASES: Record<string, string> = {
   WIN: "META",
   OPTION: "ALT",
   RETURN: "ENTER",
+  NUMPADENTER: "ENTER",
+  KP_ENTER: "ENTER",
   ESCAPE: "ESC",
   DEL: "DELETE",
   PGUP: "PAGEUP",
@@ -45,7 +47,17 @@ export class UnknownKey extends Error {
   }
 }
 
+/** Whitespace keys are named before trimming: a raw "\n" or " " is a real key (N2). */
+const WHITESPACE_KEYS: Record<string, string> = {
+  "\n": "ENTER",
+  "\r": "ENTER",
+  "\r\n": "ENTER",
+  " ": "SPACE",
+};
+
 function canonical(key: string): string {
+  const whitespace = WHITESPACE_KEYS[key];
+  if (whitespace) return whitespace;
   const upper = key.trim().toUpperCase();
   return ALIASES[upper] ?? upper;
 }

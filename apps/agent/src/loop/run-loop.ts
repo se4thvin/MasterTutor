@@ -34,7 +34,7 @@ import {
 import { addUsage, usageDelta } from "../llm/pricing.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
-import { ContextOverflow, ControlHeld, interruptionOf } from "../runtime/errors.ts";
+import { ContextOverflow, ControlHeld, Interrupted, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import {
   actionItem,
@@ -97,6 +97,8 @@ export interface RunLoopDeps {
   clock: Clock;
   config: RuntimeConfig;
   log: Log;
+  /** True once the worker's local lease deadline has passed: no model call after it (I2). */
+  leaseExpired?: () => boolean;
 }
 
 /** One thing in a model turn that needs its own approval (security ruling: one approval per risky item). */
@@ -598,6 +600,8 @@ export class RunLoop {
   /** The model is never called while the user holds control: the DB is the source of truth. */
   async #assertAgentControl(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
+    // A worker that may have lost its lease does not pay for a model call it cannot commit.
+    if (this.#deps.leaseExpired?.()) throw new Interrupted("lease_lost");
     const control = await readRunControl(this.#deps.db, this.#run.id);
     if (control?.controller === "user") throw new ControlHeld();
   }

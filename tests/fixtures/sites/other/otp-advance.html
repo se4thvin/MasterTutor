@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sign in widget</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      input {
+        position: absolute;
+        left: 20px;
+        width: 200px;
+        height: 30px;
+      }
+    </style>
+  </head>
+  <body>
+    <input id="code" aria-label="Code" style="top: 20px" />
+    <input id="pw" type="password" aria-label="Password" style="top: 80px" />
+    <script>
+      // Auto-advance: a full code moves focus to the password field mid-typing.
+      document.getElementById("code").addEventListener("input", (event) => {
+        if (event.target.value.length >= 4) document.getElementById("pw").focus();
+      });
+    </script>
+  </body>
+</html>
