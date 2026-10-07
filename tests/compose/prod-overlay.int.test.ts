@@ -74,6 +74,21 @@ describe("compose.prod.yml: Dokploy wiring (D41)", () => {
     expect(l["traefik.http.services.mastertutor-web.loadbalancer.server.port"]).toBe("3000");
   });
 
+  it("redirects http:// to https:// with its own router and middleware (re-review N1)", () => {
+    const l = labels(config.services.web);
+    const router = "traefik.http.routers.mastertutor-web-http";
+    expect(l[`${router}.rule`]).toBe(`Host(\`${DOMAIN}\`)`);
+    expect(l[`${router}.entrypoints`]).toBe("web");
+    expect(l[`${router}.middlewares`]).toBe("mastertutor-https-redirect");
+    expect(l[`${router}.service`]).toBe("mastertutor-web");
+    expect(l["traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.scheme"]).toBe(
+      "https",
+    );
+    expect(l["traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.permanent"]).toBe(
+      "true",
+    );
+  });
+
   it("joins the host-created external cdp network and keeps agent .10 and web .11 (P9-5)", () => {
     const cdp = config.networks.cdp!;
     expect(cdp).toMatchObject({ name: "mastertutor-cdp", external: true });
@@ -292,6 +307,10 @@ services:
   web:
     labels:
       traefik.http.routers.mastertutor-web.tls.certresolver: !reset null
+      traefik.http.routers.mastertutor-web-http.rule: !reset null
+      traefik.http.routers.mastertutor-web-http.entrypoints: !reset null
+      traefik.http.routers.mastertutor-web-http.middlewares: !reset null
+      traefik.http.routers.mastertutor-web-http.service: !reset null
 ${[1, 2, 3, 4, 5, 6]
   .map(
     (n) =>
@@ -325,6 +344,8 @@ describe("compose.prod.yml without Dokploy (D47)", () => {
     expect(web["traefik.http.routers.mastertutor-web.rule"]).toBe("Host(`localhost`)");
     expect(web["traefik.http.routers.mastertutor-web.tls"]).toBe("false");
     expect(web).not.toHaveProperty("traefik.http.routers.mastertutor-web.tls.certresolver");
+    // Locally the main router already listens on `web`: no redirect router may collide with it.
+    expect(Object.keys(web).filter((key) => key.includes("mastertutor-web-http"))).toEqual([]);
     expect(prodModeProblems(local)).toEqual([]);
   });
 });

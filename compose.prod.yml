@@ -96,6 +96,14 @@ services:
       traefik.http.routers.mastertutor-web.tls.certresolver: letsencrypt
       traefik.http.routers.mastertutor-web.service: mastertutor-web
       traefik.http.services.mastertutor-web.loadbalancer.server.port: "3000"
+      # http:// answers with a permanent redirect to https:// (our own middleware, no Dokploy file
+      # provider). The D47 local override resets these four, since there `web` serves the app.
+      traefik.http.routers.mastertutor-web-http.rule: "Host(`${DOMAIN:?set DOMAIN}`)"
+      traefik.http.routers.mastertutor-web-http.entrypoints: web
+      traefik.http.routers.mastertutor-web-http.middlewares: mastertutor-https-redirect
+      traefik.http.routers.mastertutor-web-http.service: mastertutor-web
+      traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.scheme: https
+      traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.permanent: "true"
 
   agent:
     <<: *node-runtime-prod
