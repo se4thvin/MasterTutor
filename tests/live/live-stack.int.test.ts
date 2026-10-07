@@ -274,8 +274,8 @@ describe.skipIf(process.env.RUN_LIVE_STACK !== "1")(
         `http://${ip2}:8080/health`,
       ];
       for (const target of targets) {
-        // Blocked means refused (curl exit 7) or never answered (28); an empty reply (52) or any
-        // HTTP answer means something listened, so it does not count.
+        // Blocked means the name does not resolve on the slot's network (curl exit 6), refused (7)
+        // or never answered (28); an empty reply (52) or any HTTP answer means something listened.
         const exit = await compose([
           "exec",
           "-T",
@@ -291,7 +291,7 @@ describe.skipIf(process.env.RUN_LIVE_STACK !== "1")(
           () => 0,
           (error: { code?: number }) => error.code ?? -1,
         );
-        expect([7, 28], `${target} (curl exit ${exit})`).toContain(exit);
+        expect([6, 7, 28], `${target} (curl exit ${exit})`).toContain(exit);
       }
     });
 
