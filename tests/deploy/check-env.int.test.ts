@@ -89,7 +89,15 @@ describe("checkProductionEnv", () => {
   });
 
   it("rejects a private, loopback or CGNAT public IP", async () => {
-    for (const ip of ["127.0.0.1", "10.0.0.5", "192.168.86.94", "100.64.0.1", "not-an-ip"]) {
+    for (const ip of [
+      "127.0.0.1",
+      "10.0.0.5",
+      "192.168.86.94",
+      "100.64.0.1",
+      "192.0.0.9",
+      "192.88.99.1",
+      "not-an-ip",
+    ]) {
       const problems = await checkProductionEnv(envFile({ ...goodEnv(), PUBLIC_IP: ip }));
       expect(
         problems.some((p) => p.startsWith("PUBLIC_IP:")),

@@ -18,7 +18,14 @@ done
 SUBNET="$PREFIX.0/24"
 IP_RANGE="$PREFIX.128/25"
 APPLY=0
-[[ "${1:-}" == "--yes" ]] && APPLY=1
+case "$*" in
+  "") ;;
+  --yes) APPLY=1 ;;
+  *)
+    echo "usage: create-cdp-network.sh [--yes]" >&2
+    exit 2
+    ;;
+esac
 
 if docker network inspect "$NETWORK" >/dev/null 2>&1; then
   actual="$(docker network inspect -f '{{.Internal}} {{range .IPAM.Config}}{{.Subnet}} {{.IPRange}}{{end}}' "$NETWORK")"

@@ -2,7 +2,7 @@
 // Never prints or overwrites an existing value. Usage: pnpm env:init [--out <git-ignored or out-of-repo file>]
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -85,6 +85,8 @@ export function fillEnv(
   return { text, filled, missingManual };
 }
 
+const tmpPathFor = (path: string) => `${path}.tmp`;
+
 /** Where env:init writes. A path inside the repo must be git-ignored, so secrets are never committed. */
 export function resolveOutPath(
   argv: readonly string[],
@@ -99,11 +101,14 @@ export function resolveOutPath(
     allowPositionals: false,
   });
   const path = values.out === undefined ? resolve(repoRoot, ".env") : resolve(cwd, values.out);
-  const inside = relative(repoRoot, path);
-  if (!inside.startsWith("..") && !isAbsolute(inside) && !isIgnored(path)) {
-    throw new Error(
-      `refusing to write secrets to ${inside}: git would track it (add it to .gitignore)`,
-    );
+  // The atomic write goes through `<path>.tmp`, which a crash can leave behind: it must be ignored too.
+  for (const candidate of [path, tmpPathFor(path)]) {
+    const inside = relative(repoRoot, candidate);
+    if (!inside.startsWith("..") && !isAbsolute(inside) && !isIgnored(candidate)) {
+      throw new Error(
+        `refusing to write secrets to ${inside}: git would track it (add it to .gitignore)`,
+      );
+    }
   }
   return path;
 }
@@ -116,9 +121,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const path = resolveOutPath(process.argv.slice(2), repoRoot, gitIgnores(repoRoot));
   const existing = await readFile(path, "utf8").catch(() => "");
   const result = fillEnv(existing, generateSecrets());
-  // Atomic: a crash mid-write must not lose existing keys.
-  await writeFile(`${path}.tmp`, result.text, { mode: 0o600 });
-  await rename(`${path}.tmp`, path);
+  // Atomic: a crash mid-write must not lose existing keys. A stale tmp file is removed first, so
+  // the exclusive create always applies mode 600.
+  const tmp = tmpPathFor(path);
+  await rm(tmp, { force: true });
+  await writeFile(tmp, result.text, { mode: 0o600, flag: "wx" });
+  await rename(tmp, path);
   console.log(result.filled.length ? `filled: ${result.filled.join(", ")}` : "nothing to fill");
   if (result.missingManual.length) console.log(`set by hand: ${result.missingManual.join(", ")}`);
 }
