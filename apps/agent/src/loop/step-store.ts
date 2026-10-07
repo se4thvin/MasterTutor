@@ -278,6 +278,13 @@ export class StepStore {
         );
       }
       if (commit.storage) await sessionStore.save(tx, run, commit.storage);
+      // The run's error is also on its stream, where the run view reads why it failed (D35).
+      if (transition?.error)
+        events.push({
+          type: "error",
+          code: transition.error.code,
+          message: transition.error.message.slice(0, 500),
+        });
       if (transition)
         events.push({
           type: "status",
