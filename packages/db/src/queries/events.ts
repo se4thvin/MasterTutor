@@ -4,6 +4,14 @@ import type { DbTx } from "../client.ts";
 import { runEvents } from "../schema/index.ts";
 
 /**
+ * Locks the run row for the rest of the transaction (a no-op if the caller already holds it). Lock
+ * order everywhere: the run row first, then rows that belong to the run (approvals, downloads).
+ */
+export async function lockRunRow(tx: DbTx, runId: string): Promise<void> {
+  await tx.execute(sql`select 1 from runs where id = ${runId} for no key update`);
+}
+
+/**
  * Appends one RunEvent and NOTIFYs run_event {runId, eventId} (spec §6). Inside a transaction the
  * notification is delivered on commit only, so the SSE route never sees an uncommitted event.
  * The single implementation for agent and web (principle 6).
@@ -14,7 +22,7 @@ import { runEvents } from "../schema/index.ts";
  */
 export async function emitRunEvent(tx: DbTx, runId: string, event: RunEvent): Promise<string> {
   const payload = RunEvent.parse(event);
-  await tx.execute(sql`select 1 from runs where id = ${runId} for no key update`);
+  await lockRunRow(tx, runId);
   const [row] = await tx
     .insert(runEvents)
     .values({ runId, type: payload.type, payload })
