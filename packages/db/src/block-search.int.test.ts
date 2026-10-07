@@ -19,7 +19,7 @@ afterAll(async () => {
 describe("note_blocks.search", () => {
   it("is generated from markdown and GIN-indexed", async () => {
     const migration = await readFile(
-      new URL("../migrations/0009_block_search.sql", import.meta.url),
+      new URL("../migrations/0010_block_search.sql", import.meta.url),
       "utf8",
     );
     expect(migration).toMatch(/ADD COLUMN "search" "?tsvector"? GENERATED ALWAYS AS/);
