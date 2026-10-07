@@ -17,6 +17,7 @@ import {
   type VaultItemListRow,
 } from "@mastertutor/db";
 import { ORPCError } from "@orpc/server";
+import { RUN_MESSAGES } from "../runs/messages.ts";
 import type { Sealer } from "../vault/sealer.ts";
 import { workspaceScoped } from "./workspace-scope.ts";
 
@@ -193,7 +194,7 @@ export function createVaultProcedures(deps: VaultProcedureDeps) {
     if (outcome === "not_found")
       throw new ORPCError("NOT_FOUND", { message: "That run doesn't exist." });
     if (outcome === "finished")
-      throw new ORPCError("CONFLICT", { message: "This run has already finished." });
+      throw new ORPCError("CONFLICT", { message: RUN_MESSAGES.runFinished });
     if (outcome === "too_many")
       throw new ORPCError("TOO_MANY_REQUESTS", {
         message: "This run already has unused codes. Wait for the agent to use one.",

@@ -2,6 +2,7 @@ import { CreateRunInput, encodeNotify, type RunSummary } from "@mastertutor/cont
 import { folders, runs, settings, type Database } from "@mastertutor/db";
 import { and, eq, sql } from "drizzle-orm";
 import { ServiceError } from "../service-error.ts";
+import { RUN_MESSAGES } from "./messages.ts";
 import { runSummaryOf } from "./views.ts";
 
 /** Who acts and where: the viewer's workspace (workspaceScoped) and their user id. */
@@ -32,8 +33,7 @@ export async function createRun(
       .where(eq(settings.workspaceId, scope.workspaceId))
       .for("share");
     if (!workspace) throw new ServiceError("not_found", "This workspace has no settings yet.");
-    if (workspace.killSwitch)
-      throw new ServiceError("conflict", "The kill switch is on. Turn it off to start a run.");
+    if (workspace.killSwitch) throw new ServiceError("conflict", RUN_MESSAGES.killSwitchOn);
     if (valid.targetFolderId !== null) {
       const [folder] = await tx
         .select({ id: folders.id })
