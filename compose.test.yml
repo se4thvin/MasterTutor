@@ -35,6 +35,9 @@ services:
       OPENAI_BASE_URL: http://llm-mock:8090/v1
       # Fixture hosts (*.fixtures.test) bypass only the private-range check (network-policy.ts).
       AGENT_TEST_MODE: "1"
+    networks:
+      # IMAP to greenmail for emailed one-time codes (B3).
+      mail: {}
 
   web:
     environment:
@@ -70,14 +73,14 @@ services:
   browser-6:
     profiles: !override ["extra-slots"]
 
-  # Test mailbox for email OTP (B3). IMAP greenmail:3143 and SMTP greenmail:3025 on backend only;
+  # Test mailbox for email OTP (B3). IMAP greenmail:3143 and SMTP greenmail:3025 on `mail` only;
   # GREENMAIL_OPTS is the Testcontainers helper's greenmailOpts() verbatim.
   greenmail:
     image: greenmail/standalone:2.1.14
     environment:
       GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=otp:KESTREL4IMAP9CANARY@mail.test"
     networks:
-      backend: {}
+      mail: {}
 
   # The model for the test stack (tests/llm-mock, B1 scenario format). Runs pick a scenario with
   # scenarioGoal() (tests/llm-mock/src/select.ts). Only this service builds the test-tools image.
@@ -142,7 +145,7 @@ services:
           ]
 
   # The vault-fixture site (B3; tests/fixtures/vault-sites/bin.ts) on its own hosts. Its account is
-  # tests/security/canaries.ts. It mails OTP codes to greenmail, which stays backend-only.
+  # tests/security/canaries.ts. It mails OTP codes to greenmail, over the internal `mail` network.
   vault-fixtures:
     profiles: ["e2e"]
     image: mastertutor/test-tools:local
@@ -171,7 +174,7 @@ services:
     networks:
       fixtures:
         aliases: [login.fixtures.test, log1n.fixtures.test, evil.fixtures-isolated.test]
-      backend: {}
+      mail: {}
 
   # Phase 10 Task 22's dynamic activity site (tests/fixtures/bench-activities/server.ts, created by
   # T22), on the fixtures network at http://bench.fixtures.test:8080. Its own profile keeps the e2e
@@ -222,3 +225,7 @@ networks:
     ipam:
       config:
         - subnet: 172.30.241.0/24
+  # Mail only: greenmail, the vault fixture that sends codes and the agent that reads them. The
+  # vault fixture never joins backend (least privilege: no postgres, no garage).
+  mail:
+    internal: true
