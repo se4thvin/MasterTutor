@@ -358,13 +358,14 @@ describe("agent behaviour on real slots (spec §12)", () => {
   });
 
   it("a hung frame never stalls a run: typing fails closed, then runs once approved, and takeover and kill stay quick", async () => {
-    const clickNotesThenType = (text: string): MockTurn => ({
-      outputs: [{ type: "click_named", name: "Notes", then: [{ type: "type", text }] }],
+    // The cursor starts in Notes: while the advert hangs not even an approved click is pressed.
+    const typeThenWait = (text: string): MockTurn => ({
+      outputs: [{ type: "computer", actions: [{ type: "type", text }, { type: "wait" }] }],
     });
     const name = scenario("hung", [
       readInteractive,
-      clickNotesThenType("hello"),
-      { ...clickNotesThenType("y".repeat(5_000)), check: expectIn("needs the user's approval") },
+      typeThenWait("hello"),
+      { ...typeThenWait("y".repeat(5_000)), check: expectIn("needs the user's approval") },
       // After hand back the model "thinks" while the advert still hangs: the kill lands here.
       {
         ...done,
@@ -374,15 +375,15 @@ describe("agent behaviour on real slots (spec §12)", () => {
     ]);
     // The advert hangs for 8 s from each load (the restore after approval loads it again).
     const HANG_MS = 8_000;
-    const page = `${SITE}/hung-frame.html?ms=${HANG_MS}`;
+    const page = `${SITE}/hung-frame.html?ms=${HANG_MS}&focus=notes`;
     const runId = await createRun(agent, `[scenario:${name}] ${page}`);
-    // Acts are summarised as `click … (+1 more)`.
+    // Acts are summarised as `type … (+1 more)`.
     const acts = async () =>
       (await steps(agent, runId)).filter(
         (s) => s.phase === "act" && JSON.stringify(s.action).includes("+1 more"),
       );
-    // The first batch's click finds the advert unresponsive (its guard cannot arm there within the
-    // budget), so its typing is stopped for approval at once; the retry asks a person.
+    // The first batch's typing finds the advert unresponsive (its guard cannot arm there within the
+    // budget), so it is stopped for approval at once; the retry asks a person.
     await waitForRun(
       agent,
       runId,

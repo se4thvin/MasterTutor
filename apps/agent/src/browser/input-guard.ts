@@ -1,5 +1,4 @@
 import { holdNewProcessFrames, type FrameHold } from "./frame-hold.ts";
-import type { HitTest } from "./hit-test.ts";
 import type { IsolatedWorlds } from "./isolated-world.ts";
 import { FRAME_OWNERS, type PageHelpers, type TargetDescription } from "./page-helpers.ts";
 import type { BrowserSession } from "./session.ts";
@@ -25,13 +24,6 @@ const MAX_DOCUMENTS = 64;
 export interface InputGuard {
   /** False when some document did not arm within the budget, or there were too many: fail closed. */
   readonly complete: boolean;
-  /**
-   * For a click: every document from the top one down to the classified element was armed, and
-   * each of their sessions holds new frames, within the budget. Only then may a person-approved
-   * click run on an incomplete guard (a hung frame elsewhere): the press is still held to its
-   * element. A slow host can miss the budget before even these are in place.
-   */
-  readonly holdsTarget: boolean;
   /**
    * True when the page has more documents than a guard covers (MAX_DOCUMENTS): nothing was
    * armed, and no approval can make a click there safe.
@@ -80,13 +72,12 @@ const POINTER_EVENTS = [
 
 /**
  * Installs the guard in this document (`click`: the key the hit test kept its element under, or
- * null for typing); returns whether this is the home document for typing, and whether this
- * document keeps the clicked element (or the frame owner on the way to it).
+ * null for typing); returns whether this is the home document for typing.
  */
 export function armScript(
   arg: { owners: string[]; forceHome: boolean; click: string | null; pointerEvents: string[] },
   h: PageHelpers,
-): { home: boolean; kept: boolean } {
+): boolean {
   const slot = globalThis as unknown as {
     __mtGuard?: { remove(): void };
     __mtStart?: unknown;
@@ -102,9 +93,8 @@ export function armScript(
   };
   const listeners: Array<[string, (event: Event) => void]> = [];
   let home = false;
-  let kept: Element | null = null;
   if (arg.click !== null) {
-    kept = slot.__mtFound?.key === arg.click ? slot.__mtFound.el : null;
+    const kept = slot.__mtFound?.key === arg.click ? slot.__mtFound.el : null;
     // Only the browser's own input (the agent's press): a page script's synthetic click, such
     // as a download helper's link.click(), is the page's business, not a misdirected press.
     const onPointer = (event: Event) => {
@@ -135,7 +125,7 @@ export function armScript(
       for (const [type, listener] of listeners) removeEventListener(type, listener, true);
     },
   };
-  return { home, kept: kept !== null };
+  return home;
 }
 
 /** In the home document: has focus left it (into a frame, or out to another document)? */
@@ -219,21 +209,20 @@ export function armTypingGuard(session: BrowserSession, signal: AbortSignal): Pr
   return armGuard(session, signal, null);
 }
 
-/** Arms the click guard for the element the hit test kept in its documents (HitTest.key). */
+/** Arms the click guard for the element the last hit test kept under `key` (HitTest.key). */
 export function armClickGuard(
   session: BrowserSession,
   signal: AbortSignal,
-  hit: Pick<HitTest, "key" | "documents">,
+  key: string,
 ): Promise<InputGuard> {
-  return armGuard(session, signal, hit);
+  return armGuard(session, signal, key);
 }
 
 async function armGuard(
   session: BrowserSession,
   signal: AbortSignal,
-  hit: Pick<HitTest, "key" | "documents"> | null,
+  click: string | null,
 ): Promise<InputGuard> {
-  const click = hit?.key ?? null;
   signal.throwIfAborted();
   let settled = false;
   let changed = false;
@@ -248,9 +237,6 @@ async function armGuard(
   let known: Promise<ReadonlySet<string>> = Promise.resolve(new Set());
   const sent: Doc[] = [];
   const answered = new Set<Doc>();
-  // For a click: the documents keeping the element, and the sessions holding new frames in time.
-  const keeping = new Set<Doc>();
-  const holding = new Set<IsolatedWorlds>();
   let home: Doc | undefined;
   const send = (doc: Doc, forceHome: boolean) => {
     sent.push(doc);
@@ -260,10 +246,9 @@ async function armGuard(
         { owners: FRAME_OWNERS, forceHome, click, pointerEvents: POINTER_EVENTS },
         doc.frameId,
       )
-      .then((armed) => {
+      .then((isHome) => {
         answered.add(doc);
-        if (armed.home) home ??= doc;
-        if (armed.kept && !settled) keeping.add(doc);
+        if (isHome) home ??= doc;
       });
   };
   // Every document of one CDP session (its frame tree), watched for frames added or replaced.
@@ -296,7 +281,6 @@ async function armGuard(
       scripts.push({ cdp: worlds.cdp, identifier });
       holds.push(hold);
       if (settled) void releaseHolds().then(removeScripts);
-      else holding.add(worlds);
     }
     const { frameTree } = await worlds.cdp.send("Page.getFrameTree");
     const docs: Doc[] = [];
@@ -398,14 +382,9 @@ async function armGuard(
   settled = true;
   if (complete) incomplete.delete(session);
   else incomplete.add(session);
-  const holdsTarget =
-    hit !== null &&
-    keeping.size === hit.documents &&
-    [...keeping].every((doc) => holding.has(doc.worlds));
   let disarming: Promise<boolean> | null = null;
   return {
     complete,
-    holdsTarget,
     tooMany,
     get changed() {
       return changed;
