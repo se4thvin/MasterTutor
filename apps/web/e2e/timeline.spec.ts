@@ -130,6 +130,19 @@ test.describe("Timeline", () => {
     await frame(page).getByRole("button", { name: "Jump to live" }).click();
     await expect(frame(page)).toHaveAttribute("data-state", "live");
   });
+
+  test("replaying one of several rows that share a screenshot selects only that row (Minor 3)", async ({
+    page,
+  }) => {
+    await gotoRun(page);
+    await page
+      .getByRole("button", { name: "Replay step: Filled the password for ada-learn" })
+      .click();
+    await expect(frame(page)).toHaveAttribute("data-state", "replay");
+    const selected = page.locator(".run-tl-row[data-selected]");
+    await expect(selected).toHaveCount(1);
+    await expect(selected).toContainText("Filled the password for ada-learn");
+  });
 });
 
 test("≤820px: the timeline opens in a sheet from the Steps button", async ({ page }) => {
