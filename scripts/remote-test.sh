@@ -6,11 +6,11 @@
 # exit code. See scripts/README.md.
 #
 # Usage: scripts/remote-test.sh <suite> [vitest args...]
-#   suites: unit integration security web-build agent-image behaviour
+#   suites: unit integration security web-build agent-image behaviour smoke
 set -euo pipefail
 
 host=coursebite-build
-suites="unit integration security web-build agent-image behaviour"
+suites="unit integration security web-build agent-image behaviour smoke"
 
 suite="${1:-}"
 if [[ -z "$suite" || " $suites " != *" $suite "* ]]; then

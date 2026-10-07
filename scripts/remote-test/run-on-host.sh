@@ -57,7 +57,7 @@ vitest_args=()
 case "$suite" in
   unit | integration | security | behaviour)
     vitest_args=(--project "$suite" --maxWorkers="$cpus" "$@") ;;
-  web-build | agent-image)
+  web-build | agent-image | smoke)
     [[ $# -eq 0 ]] || die "$suite takes no extra arguments" ;;
   *) die "unknown suite: $suite" ;;
 esac
@@ -94,6 +94,9 @@ case "$suite" in
     command="$install && pnpm --filter @mastertutor/web build && exec pnpm --filter @mastertutor/web check:bundle" ;;
   agent-image)
     command="AGENT_IMAGE_TAG=mt-ci-agent-image-check:$project exec bash scripts/check-agent-image.sh" ;;
+  smoke)
+    # The Dokploy-format backup/restore drill: its own project, CI labels, no fixed ports or subnet.
+    command="exec bash scripts/deploy/restore-drill.sh" ;;
 esac
 
 # The behaviour stack has fixed loopback ports and a fixed subnet: one run at a time per host.
