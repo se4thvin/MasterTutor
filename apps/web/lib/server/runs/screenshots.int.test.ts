@@ -109,12 +109,13 @@ afterAll(async () => {
 });
 
 describe("step and approval screenshots (Task 0D, D6, D7)", () => {
-  it("serves a member's step screenshot by seq, inert and revalidating", async () => {
+  it("serves a member's step screenshot by seq, inert and never cached", async () => {
     const res = await step(runId, "1");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("cache-control")).toBe("private, no-cache");
+    // Masked screenshots never stay in a disk cache after sign-out (coordinator ruling).
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG);
     expect(fetched).toEqual([`runs/${runId}/steps/1-abc123.png`]);
     const etag = res.headers.get("etag")!;
@@ -123,9 +124,13 @@ describe("step and approval screenshots (Task 0D, D6, D7)", () => {
   });
 
   it("refuses without a session, for strangers, bad seqs, missing keys and keys of another run", async () => {
-    expect((await step(runId, "1", {}, null)).status).toBe(401);
+    const unauthenticated = await step(runId, "1", {}, null);
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("cache-control")).toBe("private, no-store");
     const stranger = await seedMember(owner.db);
-    expect((await step(runId, "1", {}, stranger.userId)).status).toBe(404);
+    const hidden = await step(runId, "1", {}, stranger.userId);
+    expect(hidden.status).toBe(404);
+    expect(hidden.headers.get("cache-control")).toBe("private, no-store");
     for (const seq of ["-1", "01", "1.5", "99999999999", "x"])
       expect((await step(runId, seq)).status).toBe(404);
     expect((await step("not-a-uuid", "1")).status).toBe(404);
