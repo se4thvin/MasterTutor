@@ -160,6 +160,27 @@ describe("applyRunEvent", () => {
     expect(model.model).toBe("gpt-6.1-sol");
   });
 
+  it("seeds the held downloads from the snapshot, so a reload during control still offers them", () => {
+    const detail = recordedDetail({
+      controller: "user",
+      status: "waiting",
+      waitReason: "takeover",
+      heldDownloads: [{ id: ids.asset(11), filename: "notes.txt", bytes: 28 }],
+    });
+    const model = initRunModel(detail, recordedSteps());
+    expect(model.heldDownloads).toEqual([{ id: ids.asset(11), filename: "notes.txt", bytes: 28 }]);
+    // The same download replayed by the stream is not offered twice.
+    const replayed = applyRunEvents(model, [
+      rec({
+        type: "download_pending",
+        downloadId: ids.asset(11),
+        filename: "notes.txt",
+        bytes: 28,
+      }),
+    ]);
+    expect(replayed.heldDownloads).toHaveLength(1);
+  });
+
   it("holds downloads made during control for Keep or Discard until the hand-back (B6 A11)", () => {
     const held = rec({
       type: "download_pending",

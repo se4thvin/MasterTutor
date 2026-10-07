@@ -53,7 +53,7 @@ interface DownloadItem {
   at: string;
 }
 /** A download made during a takeover, held until the person keeps or discards it at hand-back. */
-interface HeldDownload {
+export interface HeldDownload {
   id: string;
   filename: string;
   bytes: number;
@@ -196,7 +196,8 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
     outcomes: [],
     messages: [],
     downloads: [],
-    heldDownloads: [],
+    // From the snapshot: after a reload the stream resumes past their download_pending events (A11).
+    heldDownloads: detail.heldDownloads.map(({ id, filename, bytes }) => ({ id, filename, bytes })),
     errors: [],
     lastControl: null,
     secureFillOrigin: secure,
@@ -334,6 +335,14 @@ export function syncRunModel(model: RunModel, detail: RunDetail): RunModel {
     usage: detail.usage,
     budget: detail.budget,
     approvals: pendingFrom(detail),
+    // The re-read is authoritative for what is still held; any newer streamed one is kept too.
+    heldDownloads:
+      detail.controller === "agent"
+        ? []
+        : [
+            ...detail.heldDownloads.map(({ id, filename, bytes }) => ({ id, filename, bytes })),
+            ...model.heldDownloads.filter((d) => !detail.heldDownloads.some((h) => h.id === d.id)),
+          ],
   };
 }
 
