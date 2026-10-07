@@ -192,4 +192,11 @@ describe("GET /api/runs/:id/events (Task 0D)", () => {
     expect(order.indexOf(firstId!)).toBeLessThan(order.indexOf(secondId));
     abort.abort();
   });
+
+  it("refuses a malformed Last-Event-ID instead of silently replaying", async () => {
+    const run = await seedRun(owner.db, { workspaceId });
+    expect((await open(run, { lastEventId: "abc" }).response).status).toBe(400);
+    expect((await open(run, { lastEventId: "01" }).response).status).toBe(400);
+    expect((await open(run, { lastEventId: "12345678901234567890" }).response).status).toBe(400);
+  });
 });

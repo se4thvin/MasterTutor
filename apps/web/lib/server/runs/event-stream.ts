@@ -31,11 +31,16 @@ interface EventStreamDeps {
 const empty = (status: number) =>
   new Response(null, { status, headers: { "cache-control": "no-store" } });
 
-/** Last-Event-ID wins over ?after (run-stream.ts); null replays everything (P10a-16). */
+/**
+ * Last-Event-ID wins over ?after (run-stream.ts); neither means a full replay (P10a-16). A cursor
+ * that is present but not an id we could have sent is refused, never silently replaced.
+ */
 function cursorOf(request: Request): string | null | "invalid" {
+  const header = request.headers.get(LAST_EVENT_ID_HEADER);
   const query = new URL(request.url).searchParams.get("after");
-  if (query !== null && !EventId.safeParse(query).success) return "invalid";
-  const after = resumeAfter(request.headers.get(LAST_EVENT_ID_HEADER), query);
+  for (const given of [header, query])
+    if (given !== null && !EventId.safeParse(given).success) return "invalid";
+  const after = resumeAfter(header, query);
   return after !== null && compareEventIds(after, MAX_EVENT_ID) > 0 ? "invalid" : after;
 }
 
