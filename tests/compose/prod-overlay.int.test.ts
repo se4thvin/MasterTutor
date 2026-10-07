@@ -37,12 +37,41 @@ describe("compose.prod.yml: Dokploy wiring (D41)", () => {
     ]);
   });
 
-  it("attaches web, and only web, to Dokploy's external network", () => {
-    expect(config.networks["dokploy-network"]).toMatchObject({ external: true });
-    const attached = Object.entries(config.services)
-      .filter(([, service]) => service.networks && "dokploy-network" in service.networks)
-      .map(([name]) => name);
-    expect(attached).toEqual(["web"]);
+  it("joins no shared network: the only external one is mastertutor-cdp (review I2)", () => {
+    // dokploy-network is shared with other tenants, whose service names (postgres, garage, …)
+    // would answer web's bare-name lookups. Traefik reaches web over mastertutor-cdp instead.
+    expect(config.networks).not.toHaveProperty("dokploy-network");
+    const external = Object.entries(config.networks).filter(([, network]) => network.external);
+    expect(external.map(([key, network]) => [key, network.name])).toEqual([
+      ["cdp", "mastertutor-cdp"],
+    ]);
+    for (const [name, service] of Object.entries(config.services)) {
+      expect(Object.keys(service.networks ?? {}), name).not.toContain("dokploy-network");
+    }
+  });
+
+  it("resolves web's database, S3 and n.eko hosts only to our own services (review I2)", () => {
+    const web = env(config.services.web);
+    const hosts = [web.DATABASE_URL!, web.S3_ENDPOINT!].map((url) => new URL(url).hostname);
+    for (const host of [...hosts, ...slots]) expect(config.services, host).toHaveProperty(host);
+    expect(Object.keys(config.services.web!.networks ?? {}).sort()).toEqual([
+      "backend",
+      "cdp",
+      "edge",
+    ]);
+  });
+
+  it("serves web through its own router on mastertutor-cdp, with an ACME certificate", () => {
+    const l = labels(config.services.web);
+    const router = "traefik.http.routers.mastertutor-web";
+    expect(l["traefik.enable"]).toBe("true");
+    expect(l["traefik.docker.network"]).toBe("mastertutor-cdp");
+    expect(l[`${router}.rule`]).toBe(`Host(\`${DOMAIN}\`)`);
+    expect(l[`${router}.entrypoints`]).toBe("websecure");
+    expect(l[`${router}.tls`]).toBe("true");
+    expect(l[`${router}.tls.certresolver`]).toBe("letsencrypt");
+    expect(l[`${router}.service`]).toBe("mastertutor-web");
+    expect(l["traefik.http.services.mastertutor-web.loadbalancer.server.port"]).toBe("3000");
   });
 
   it("joins the host-created external cdp network and keeps agent .10 and web .11 (P9-5)", () => {
@@ -172,6 +201,16 @@ describe("compose.prod.yml: per-slot /live routers (spec §10.2.2, B6 §8, P9-1 
 });
 
 describe("compose.prod.yml: slot hardening (P9-8, D58)", () => {
+  it("puts the AppArmor profile on the slots only", () => {
+    for (const [name, service] of Object.entries(config.services)) {
+      if (slots.includes(name)) continue;
+      expect(
+        (service.security_opt ?? []).filter((o) => o.startsWith("apparmor=")),
+        name,
+      ).toEqual([]);
+    }
+  });
+
   it("runs production slots under the mastertutor-slot AppArmor profile, keeping seccomp", () => {
     for (const slot of slots) {
       expect(config.services[slot]!.security_opt, slot).toEqual(
@@ -194,12 +233,47 @@ describe("compose.prod.yml: slot hardening (P9-8, D58)", () => {
 describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
   it("is production mode, and no env file can switch on test mode or redirect OpenAI", () => {
     expect(prodModeProblems(config)).toEqual([]);
-    const forced = prod({ AGENT_TEST_MODE: "1", OPENAI_BASE_URL: "http://llm-mock:8080/v1" });
+    const forced = prod({
+      AGENT_TEST_MODE: "1",
+      OPENAI_BASE_URL: "http://llm-mock:8080/v1",
+      SLOT_EGRESS_ALLOW_CIDRS: "10.0.0.0/8",
+    });
+    for (const slot of slots) {
+      expect(env(forced.services[slot]).SLOT_EGRESS_ALLOW_CIDRS, slot).toBe(""); // review I3
+    }
     expect(env(forced.services.agent).AGENT_TEST_MODE).toBe("0");
     expect(env(forced.services.agent).OPENAI_BASE_URL).toBe("");
     expect(env(forced.services.web).OPENAI_BASE_URL).toBe("");
     expect(prodModeProblems(forced)).toEqual([]);
   });
+  it("builds and runs production-only images, never the CI :local tags (review I4)", () => {
+    const base = composeConfig(".env.test", ["compose.yml"]);
+    const ciImages = new Set(Object.values(base.services).map((service) => service.image));
+    for (const [name, service] of Object.entries(config.services)) {
+      if (!base.services[name]?.image?.startsWith("mastertutor/")) continue;
+      expect(service.image, name).toMatch(/^mastertutor\/[a-z-]+:prod$/);
+      expect(ciImages.has(service.image), name).toBe(false);
+    }
+    const runtime = ["migrate", "agent", "garage-init"].map((n) => config.services[n]!.image);
+    expect(new Set(runtime).size).toBe(1);
+  });
+
+  it("bounds every service's memory, CPU, processes and logs on the shared host (review I5)", () => {
+    for (const [name, service] of Object.entries(config.services)) {
+      expect(Number(service.mem_limit), name).toBeGreaterThan(0);
+      expect(Number(service.cpus), name).toBeGreaterThan(0);
+      expect(service.pids_limit, name).toBeGreaterThan(0);
+      expect(service.logging, name).toMatchObject({
+        driver: "json-file",
+        options: { "max-size": expect.any(String), "max-file": expect.any(String) },
+      });
+    }
+    for (const slot of slots) {
+      expect(Number(config.services[slot]!.mem_limit), slot).toBe(4 * 1024 ** 3);
+      expect(Number(config.services[slot]!.cpus), slot).toBe(2);
+    }
+  });
+
   // Deferred until B5 (docling, profile pdf) merges: "runs docling under the pdf profile on its own
   // network, wired to the agent (P9-32, D42)" with DOCLING_URL pinned to http://docling:5001.
 });
@@ -207,7 +281,6 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
 // D47: compose.prod.yml must also run on the Mac with no Dokploy, through one local override.
 const LOCAL_OVERRIDE = `
 networks:
-  dokploy-network: !override {}
   cdp: !override
     name: mastertutor-cdp
     internal: true
@@ -216,6 +289,9 @@ networks:
         - subnet: 172.30.231.0/24
           ip_range: 172.30.231.128/25
 services:
+  web:
+    labels:
+      traefik.http.routers.mastertutor-web.tls.certresolver: !reset null
 ${[1, 2, 3, 4, 5, 6]
   .map(
     (n) =>
@@ -245,6 +321,10 @@ describe("compose.prod.yml without Dokploy (D47)", () => {
       expect(l[`traefik.http.routers.mastertutor-live-${slot}.entrypoints`]).toBe("web");
       expect(l[`traefik.http.routers.mastertutor-live-${slot}.tls`]).toBe("false");
     }
+    const web = labels(local.services.web);
+    expect(web["traefik.http.routers.mastertutor-web.rule"]).toBe("Host(`localhost`)");
+    expect(web["traefik.http.routers.mastertutor-web.tls"]).toBe("false");
+    expect(web).not.toHaveProperty("traefik.http.routers.mastertutor-web.tls.certresolver");
     expect(prodModeProblems(local)).toEqual([]);
   });
 });
