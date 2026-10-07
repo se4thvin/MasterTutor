@@ -17,6 +17,7 @@ import {
   describeHit,
   findCanaryHits,
   findOcrHits,
+  findStoredDigitHits,
   type Canaries,
   type CanaryHit,
 } from "./canary-core.ts";
@@ -49,6 +50,13 @@ export function canariesFor(kind: SourceKind, canaries: Canaries): Canaries {
   );
 }
 
+const DATA_URL_IMAGE = /data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+=*)/g;
+
+/** The images inlined as data URLs in a model request log. */
+export function dataUrlImages(text: string): Buffer[] {
+  return [...text.matchAll(DATA_URL_IMAGE)].map((match) => Buffer.from(match[1]!, "base64"));
+}
+
 export async function scanSources(
   sources: readonly Source[],
   canaries: Canaries,
@@ -76,9 +84,26 @@ export async function scanSources(
         ),
       ),
     );
+    if (source.kind !== "model-requests") {
+      const own = Object.fromEntries(
+        Object.entries(canaries).filter(([name]) => !source.own?.includes(name)),
+      );
+      hits.push(...findStoredDigitHits(source.bytes.toString("latin1"), source.where, own));
+    }
     if ((source.kind === "object" || source.kind === "download") && imageKind(source.bytes)) {
       scanned.ocr += 1;
       hits.push(...findOcrHits(await ocrText(source.bytes), `ocr ${source.where}`, canaries));
+    }
+    // Every screenshot the model was sent, read as the model read it (spec §12, review M1).
+    if (source.kind === "model-requests") {
+      let index = 0;
+      for (const image of dataUrlImages(source.bytes.toString("latin1"))) {
+        index += 1;
+        scanned.ocr += 1;
+        hits.push(
+          ...findOcrHits(await ocrText(image), `ocr ${source.where} image ${index}`, canaries),
+        );
+      }
     }
   }
   return { hits, scanned };
@@ -89,6 +114,26 @@ export function vacuousSources(scanned: Scanned): string[] {
   return (["database", "logs", "model-requests", "object", "ocr"] as const)
     .filter((kind) => scanned[kind] === 0)
     .map((kind) => `nothing scanned: ${kind}`);
+}
+
+/**
+ * Each defined service's logs, read separately so a service's own configured secrets can be told
+ * apart. `config --services` lists exited and crashed services too, not only running ones (M8).
+ */
+export function collectLogs(
+  run: (args: string[]) => Buffer,
+  own: Readonly<Record<string, readonly string[]>>,
+): Source[] {
+  return run(["config", "--services"])
+    .toString("utf8")
+    .split("\n")
+    .filter((service) => service !== "")
+    .map((service) => ({
+      kind: "logs" as const,
+      where: `logs ${service}`,
+      bytes: run(["logs", "--no-color", service]),
+      own: own[service] ?? [],
+    }));
 }
 
 /**
@@ -146,16 +191,7 @@ function collect(compose: readonly string[], out: string): Source[] {
         "--data-only",
       ]),
     },
-    ...run(["ps", "--services"])
-      .toString("utf8")
-      .split("\n")
-      .filter((service) => service !== "")
-      .map((service) => ({
-        kind: "logs" as const,
-        where: `logs ${service}`,
-        bytes: run(["logs", "--no-color", service]),
-        own: OWN_SECRETS[service] ?? [],
-      })),
+    ...collectLogs(run, OWN_SECRETS),
     {
       kind: "model-requests",
       where: "llm-mock requests",

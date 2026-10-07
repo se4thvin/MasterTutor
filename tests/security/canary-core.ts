@@ -61,6 +61,22 @@ export function findCanaryHits(haystack: string, where: string, canaries: Canari
   return hits;
 }
 
+/**
+ * Digit canaries (PINs, codes) stored as a value: right after a quote, `=`, a tab (Postgres COPY
+ * columns) or `: `, and not followed by another digit. Timestamps' fractions (`.381952`), ids
+ * (`7381952`) and timings (`381952ms` after a space) never match (review M2).
+ */
+export function findStoredDigitHits(
+  haystack: string,
+  where: string,
+  canaries: Canaries,
+): CanaryHit[] {
+  return entries(canaries)
+    .filter(([, value]) => DIGITS.test(value))
+    .filter(([, value]) => new RegExp(`(?:["'=\t]|:\\s?)${value}(?![0-9])`).test(haystack))
+    .map(([canary]) => ({ canary, where, form: "plain" as const }));
+}
+
 export const describeHit = (hit: CanaryHit): string =>
   `${hit.canary} (${hit.form}) in ${hit.where}`;
 
