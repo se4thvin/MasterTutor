@@ -77,7 +77,9 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
    "already exists and matches"; it exits 1 on a mismatch.
 2. Deploy from Dokploy.
 3. `bash infra/host/attach-traefik.sh` (dry run), then with `--yes`. It must report `.12`.
-   Re-run it whenever Dokploy recreates its Traefik container.
+   Traefik reaches web and the slots only over `mastertutor-cdp`, so without this attachment the
+   whole app is down (404/502 for every request, not just live view). The attachment can be made
+   before the first deploy, since the network exists from §2.
 4. First owner: set `AUTH_SIGNUP_OPEN=1`, redeploy, sign up, then set it back to `0` and redeploy.
 
 ## 6. Backups [approval]
@@ -137,6 +139,11 @@ mt-drill-<random> … down -v`. This confirms the format matches the drill. If D
   garage-init 512 MB / 0.5.
 - Images are tagged `:prod` (`mastertutor/{web,node-runtime,browser-slot}:prod`), never the CI
   `:local` tags that test runs on this host rebuild.
+
+- **After any Dokploy or Traefik update** (a Dokploy upgrade, or any tenant's change to
+  Traefik's ports or env recreates `dokploy-traefik`): run `bash infra/host/attach-traefik.sh`
+  (dry run). It must report "already attached … at .12"; otherwise the app is down until it is
+  re-run with `--yes` **[approval]**. Then check `curl -sI https://<domain>/healthz` answers 200.
 
 ## 9. What users should know
 

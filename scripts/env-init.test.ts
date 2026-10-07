@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { Base64Key32, DbPassword, GarageKeyId, GarageSecret } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import { ENV_DEFAULTS, fillEnv, generateSecrets, resolveOutPath } from "./env-init.ts";
@@ -103,5 +104,13 @@ describe("resolveOutPath (P9-18)", () => {
   it("refuses unknown arguments and positionals", () => {
     expect(() => resolveOutPath(["--force"], root, isIgnored, "/repo")).toThrow();
     expect(() => resolveOutPath([".env.bench"], root, isIgnored, "/repo")).toThrow();
+  });
+});
+
+describe(".gitignore (re-review N3)", () => {
+  it("ignores env:init's temporary file for every env file, .env.bench included", () => {
+    for (const file of [".env.tmp", ".env.bench.tmp", ".env.local.tmp"]) {
+      expect(spawnSync("git", ["check-ignore", "-q", file]).status, file).toBe(0);
+    }
   });
 });
