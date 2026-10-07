@@ -6,7 +6,7 @@ import { createLogger } from "@mastertutor/contracts/server";
 import type { Database } from "@mastertutor/db";
 import type { CDPSession } from "playwright-core";
 import { describe, expect, it } from "vitest";
-import type { UserDownloadLimits } from "../browser/download-gate.ts";
+import type { FinishedDownload, UserDownloadLimits } from "../browser/download-gate.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import type { LeasedSlot } from "../loop/hooks.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
@@ -43,16 +43,22 @@ function fakeCdp() {
   return { cdp, sent, emit: (name: string, event: unknown) => events.emit(name, event) };
 }
 
-async function setup(options: { maxBytes?: number; maxCount?: number } = {}) {
+async function setup(options: { maxBytes?: number; maxCount?: number; denyFails?: boolean } = {}) {
   const { cdp, sent, emit } = fakeCdp();
   const gateCalls: Array<{ on: boolean; limits?: Partial<UserDownloadLimits> }> = [];
+  const finished: { listener: ((download: FinishedDownload) => void) | null } = { listener: null };
+  const dbTouched: string[] = [];
   const session = {
     downloads: {
       async userControl(on: boolean, limits?: Partial<UserDownloadLimits>) {
         gateCalls.push({ on, ...(limits ? { limits } : {}) });
+        if (!on && options.denyFails) throw new Error("could not deny downloads again");
       },
       userDownloads: () => [],
       approvedDownloads: () => [],
+      onFinished(listener: ((download: FinishedDownload) => void) | null) {
+        finished.listener = listener;
+      },
     },
   } as unknown as BrowserSession;
   const slot: LeasedSlot = {
@@ -63,17 +69,45 @@ async function setup(options: { maxBytes?: number; maxCount?: number } = {}) {
     browserCdp: async () => cdp,
   };
   const ingestor = createDownloadIngestor({
-    // Never reached: these cases decide nothing against the database.
-    db: {} as Database,
+    // Records any use: these cases must decide nothing against the database.
+    db: new Proxy(
+      {},
+      {
+        get: (_target, property) => {
+          dbTouched.push(String(property));
+          return () => {
+            throw new Error("no database here");
+          };
+        },
+      },
+    ) as Database,
     storage: createMemoryStorage(),
     log,
     localRoot: await mkdtemp(join(tmpdir(), "downloads-")),
-    ...options,
+    ...(options.maxBytes ? { maxBytes: options.maxBytes } : {}),
+    ...(options.maxCount ? { maxCount: options.maxCount } : {}),
   });
-  return { ingestor, slot, sent, emit, gateCalls };
+  return { ingestor, slot, sent, emit, gateCalls, finished, dbTouched };
 }
 
 describe("DownloadIngestor over B1's download gate (spec §9, §10.2.9)", () => {
+  it("hears finished downloads from the gate, and ignores an id that is not a UUID", async () => {
+    const { ingestor, slot, finished, dbTouched } = await setup();
+    await ingestor.attach(slot);
+    expect(finished.listener).not.toBeNull();
+    // Filing it would read the database first: it must be dropped before that.
+    const download = { url: "https://x.test/a", filename: "a", by: "user" as const };
+    finished.listener!({ ...download, id: "../../etc/passwd" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dbTouched).toEqual([]);
+    // A UUID id is filed (so it reaches the database): the check above is not vacuous.
+    finished.listener!({ ...download, id: RUN });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dbTouched.length).toBeGreaterThan(0);
+    await ingestor.detach(RUN);
+    expect(finished.listener).toBeNull();
+  });
+
   it("never sends the browser a download command: the gate is the only owner (C1)", async () => {
     const { ingestor, slot, sent, emit } = await setup();
     await ingestor.attach(slot);
@@ -98,6 +132,15 @@ describe("DownloadIngestor over B1's download gate (spec §9, §10.2.9)", () => 
       { on: true, limits: { maxBytes: 1_000, maxCount: 3, onCapped: expect.any(Function) } },
       { on: false },
     ]);
+  });
+
+  it("hand-back fails when the gate cannot restore deny, so the run ends closed (B1 64de597)", async () => {
+    const { ingestor, slot } = await setup({ denyFails: true });
+    await ingestor.attach(slot);
+    await ingestor.userControl(RUN, true);
+    await expect(ingestor.userControl(RUN, false)).rejects.toThrow(
+      "could not deny downloads again",
+    );
   });
 
   it("cannot offer downloads for a run it is not attached to, and has nothing to deny there", async () => {

@@ -8,6 +8,7 @@ import {
   assets,
   createDb,
   downloads,
+  requestHandBack,
   runEvents,
   runs,
   type DbHandle,
@@ -145,24 +146,99 @@ const noLocalFiles = (runId: string) =>
   waitFor(async () => (await localFiles(runId)).length === 0, { label: "nothing on disk" });
 /** The gate's record of cancelled downloads (each becomes an approval card for the agent). */
 const blocked = (session: BrowserSession) => session.downloads.drainBlocked().map((b) => b.url);
+/** The download made during control, held for the person's decision (download_pending). */
+const pendingIn = (runId: string, count = 1) =>
+  waitFor(
+    async () => {
+      const ids = (await eventsFor(runId)).flatMap((e) =>
+        e.type === "download_pending" ? [e.downloadId] : [],
+      );
+      return ids.length >= count ? ids : null;
+    },
+    { label: "download pending", timeoutMs: 15_000 },
+  );
+/** The web's hand-back with the person's keep list, then the agent's side of it (A12). */
+async function handBack(runId: string, keep: string[], userId = member.userId) {
+  const result = await requestHandBack(owner.db, { runId, userId, note: null, keep });
+  expect(result.ok).toBe(true);
+  await lease!.ingestor.userControl(runId, false);
+  // The agent settles in the background: wait until nothing of this run is held any more.
+  await waitFor(async () => (await rowsFor(runId)).every((row) => !row.pending), {
+    label: "hand-back settled",
+    timeoutMs: 15_000,
+  });
+}
+const storedAssets = () => storage.objects.size;
 
 describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in control downloads)", () => {
-  it("files a download the user made while holding control, under the run, with a safe name", async () => {
+  it("stores a download made during control only once the person keeps it, under the run, with a safe name", async () => {
+    const before = storedAssets();
     const { runId, session } = await leasedRun("user");
     await clickDownload(session, "notes");
-    const [row] = await rowCount(runId, 1, "download recorded");
-    expect(row).toMatchObject({ filename: "live-notes.txt", approvedBy: member.userId });
+    const [id] = await pendingIn(runId);
+    // Held for the person's decision: nothing stored, nothing filed for the agent.
+    expect(storedAssets()).toBe(before);
+    expect(await rowsFor(runId)).toEqual([
+      expect.objectContaining({ id, pending: true, assetId: null, keptAt: null }),
+    ]);
+    await handBack(runId, [id!]);
+    const [row] = await rowsFor(runId);
+    expect(row).toMatchObject({
+      id,
+      pending: false,
+      filename: "live-notes.txt",
+      approvedBy: member.userId,
+    });
     const [asset] = await owner.db.select().from(assets).where(eq(assets.id, row!.assetId!));
     expect(asset!.key).toMatch(new RegExp(`^downloads/${runId}/[0-9a-f]{12}-live-notes\\.txt$`));
     expect(asset!.mime).toBe("text/plain");
     expect(Buffer.from(storage.objects.get(asset!.key)!)).toEqual(await readFile(FIXTURE));
     expect(await eventsFor(runId)).toContainEqual({
       type: "download_ready",
-      downloadId: row!.id,
+      downloadId: id,
       assetId: row!.assetId,
       filename: "live-notes.txt",
       bytes: (await readFile(FIXTURE)).length,
     });
+    await noLocalFiles(runId);
+  });
+
+  it("discards a download the person did not keep: nothing stored, nothing on disk", async () => {
+    const before = storedAssets();
+    const { runId, session } = await leasedRun("user");
+    await clickDownload(session, "notes");
+    await pendingIn(runId);
+    await handBack(runId, []);
+    expect(await rowsFor(runId)).toEqual([]);
+    expect(storedAssets()).toBe(before);
+    expect((await eventsFor(runId)).some((e) => e.type === "download_ready")).toBe(false);
+    await noLocalFiles(runId);
+  });
+
+  it("a download the page set off before the takeover that lands during control is not stored unless kept", async () => {
+    const before = storedAssets();
+    const { runId, session, ingestor } = await leasedRun("agent");
+    expect(await session.goto(`${SITE}/live-download`, new AbortController().signal)).toBe(true);
+    // Under the agent, the page arms a download for later (a slow answer, or the page's own script).
+    await session.page.evaluate(() =>
+      setTimeout(() => (document.querySelector("#notes") as HTMLAnchorElement).click(), 1_500),
+    );
+    await owner.db
+      .update(runs)
+      .set({
+        controller: "user",
+        controlUserId: member.userId,
+        status: "waiting",
+        waitReason: "takeover",
+      })
+      .where(eq(runs.id, runId));
+    await ingestor.userControl(runId, true);
+    // It lands during control, so the gate lets it through as the person's: held, not stored.
+    await pendingIn(runId);
+    expect(storedAssets()).toBe(before);
+    await handBack(runId, []);
+    expect(await rowsFor(runId)).toEqual([]);
+    expect(storedAssets()).toBe(before);
     await noLocalFiles(runId);
   });
 
@@ -185,12 +261,16 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
     expect((await eventsFor(runId)).filter((e) => e.type === "error")).toEqual([]);
   });
 
-  it("stores identical content once and records both downloads", async () => {
+  it("stores identical content once and records both kept downloads", async () => {
     const { runId, session } = await leasedRun("user");
     await clickDownload(session, "notes");
-    await rowCount(runId, 1, "first");
+    await pendingIn(runId, 1);
     await clickDownload(session, "copy");
-    const rows = await rowCount(runId, 2, "second");
+    const ids = await pendingIn(runId, 2);
+    await handBack(runId, ids);
+    const rows = await rowsFor(runId);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.assetId).not.toBeNull();
     expect(rows[0]!.assetId).toBe(rows[1]!.assetId);
   });
 
@@ -209,8 +289,8 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
       .where(eq(runs.id, runId));
     await ingestor.userControl(runId, true);
     await clickDownload(session, "notes"); // the user's
-    await rowCount(runId, 1, "user download");
-    await ingestor.userControl(runId, false);
+    await pendingIn(runId);
+    await handBack(runId, []);
     expect(blocked(session)).toEqual([COPY]);
   });
 
@@ -228,7 +308,7 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
 
     const many = await leasedRun("user", { maxCount: 1 });
     await clickDownload(many.session, "notes");
-    await rowCount(many.runId, 1, "the one allowed");
+    await pendingIn(many.runId, 1);
     await clickDownload(many.session, "copy");
     expect(await errorEvent(many.runId, "download_too_many")).toBeDefined();
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -241,6 +321,8 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
     const failing = { ...createMemoryStorage(), putFile: () => Promise.reject(new Error("down")) };
     const { runId, session } = await leasedRun("user", { workspace: other, store: failing });
     await clickDownload(session, "notes");
+    const [id] = await pendingIn(runId);
+    await handBack(runId, [id!], other.userId);
     expect(await errorEvent(runId, "download_failed")).toBeDefined();
     expect(await rowsFor(runId)).toHaveLength(0);
     await noLocalFiles(runId);
