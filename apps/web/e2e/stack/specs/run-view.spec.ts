@@ -9,7 +9,7 @@ import { finishedRun, runSteps } from "../support/runs.ts";
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-test("the stream refuses anonymous readers, hides unknown runs, and clamps or refuses an id above 2^63-1", async ({
+test("the stream refuses anonymous readers, hides unknown runs, and refuses an id above 2^63-1 with 400", async ({
   request,
   playwright,
   baseURL,
@@ -20,7 +20,8 @@ test("the stream refuses anonymous readers, hides unknown runs, and clamps or re
   await anonymous.dispose();
   expect((await replayEvents(request, randomUUID())).status).toBe(404);
   const over = await replayEvents(request, run.id, { after: "9999999999999999999" });
-  expect([200, 400]).toContain(over.status);
+  // The route refuses an id above 2^63-1 with 400 (Task 0D), never a negative cast (review M10).
+  expect(over.status).toBe(400);
   expect(over.records).toEqual([]);
 });
 
