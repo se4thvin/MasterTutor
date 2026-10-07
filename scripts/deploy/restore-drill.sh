@@ -12,8 +12,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 PROJECT="${COMPOSE_PROJECT_NAME:-mt-drill-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')}"
 DC=(docker compose -p "$PROJECT" --env-file .env.test -f compose.yml -f scripts/deploy/compose.drill.yml)
+IMAGE="mt-ci-drill-runtime:${MT_CI_RUN_ID:-local-drill}"
 WORK="$(mktemp -d)"
-trap '"${DC[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$WORK"' EXIT
+trap '"${DC[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; docker image rm -f "$IMAGE" >/dev/null 2>&1 || true; rm -rf "$WORK"' EXIT
 q() { "${DC[@]}" exec -T postgres psql -U owner -d mastertutor -tAc "$1"; }
 fail() {
   echo "DRILL FAIL: $*" >&2

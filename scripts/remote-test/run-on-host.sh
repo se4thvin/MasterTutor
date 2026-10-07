@@ -32,6 +32,7 @@ cleanup_run() {
   ids="$(docker volume ls -q --filter "label=mastertutor.ci.run=$project")"
   [[ -z "$ids" ]] || docker volume rm $ids >/dev/null
   docker image rm -f "mt-ci-agent-image-check:$project" >/dev/null 2>&1 || true
+  docker image rm -f "mt-ci-drill-runtime:$project" >/dev/null 2>&1 || true
   rm -rf "${runs_dir:?}/$project" 2>/dev/null || true
 }
 
