@@ -42,6 +42,8 @@ export interface MockRequestBody {
 export interface RecordedRequest {
   scenario: string | null;
   turn: number | null;
+  /** The run's scenario nonce (scenarioGoal), when its goal carried one. */
+  nonce?: string | null;
   body: MockRequestBody;
   at: number;
   /** Request path, for the data-policy guard (only allowlisted OpenAI endpoints). */
