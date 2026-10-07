@@ -1,5 +1,7 @@
 export const SITE = "http://site.fixtures.test";
 export const OTHER = "http://other.fixtures.test";
+/** The vault-fixture site (tests/fixtures/vault-sites; the `vault-fixtures` service in compose.test.yml). */
+export const LOGIN = "http://login.fixtures.test";
 export const BEHAVIOUR_SLOTS = ["browser-1", "browser-2"] as const;
 export const SLOT_CDP: Record<string, string> = {
   "browser-1": "http://127.0.0.1:19223",

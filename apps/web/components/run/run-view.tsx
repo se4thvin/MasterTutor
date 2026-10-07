@@ -334,9 +334,10 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
       <HandBackSheet
         open={handBackOpen && userHasControl}
         onOpenChange={setHandBackOpen}
-        onHandBack={(note) => {
+        held={view.heldDownloads}
+        onHandBack={(note, keep) => {
           setHandBackOpen(false);
-          handBack(note);
+          handBack(note, keep);
         }}
       />
       <ConfirmDialog

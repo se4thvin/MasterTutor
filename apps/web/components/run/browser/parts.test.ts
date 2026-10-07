@@ -135,7 +135,9 @@ describe("LiveFrame and FullscreenButton", () => {
 
 describe("HandBackSheet", () => {
   it("renders nothing while closed", () => {
-    const out = html(h(HandBackSheet, { open: false, onOpenChange: noop, onHandBack: noop }));
+    const out = html(
+      h(HandBackSheet, { open: false, onOpenChange: noop, held: [], onHandBack: noop }),
+    );
     expect(out).not.toContain("Hand back to the agent");
   });
 });

@@ -16,6 +16,7 @@ import {
   KeysetCursorInvalid,
   approvals,
   emitRunEvent,
+  heldDownloads,
   keysetBefore,
   keysetCursor,
   msOf,
@@ -30,6 +31,7 @@ import {
   type KeysetPosition,
 } from "@mastertutor/db";
 import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { safeFilename } from "@mastertutor/storage";
 import { ServiceError } from "../service-error.ts";
 import type { RunScope } from "./create-run.ts";
 import { RUN_MESSAGES } from "./messages.ts";
@@ -105,6 +107,7 @@ export async function getRun(db: Database, scope: RunScope, runId: string): Prom
     .from(approvals)
     .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")))
     .orderBy(asc(approvals.createdAt));
+  const held = await heldDownloads(db, { runId, workspaceId: scope.workspaceId });
   return {
     ...runSummaryOf(row),
     plan: row.plan ?? null,
@@ -113,6 +116,8 @@ export async function getRun(db: Database, scope: RunScope, runId: string): Prom
     slotName: row.slotName,
     targetFolderId: row.targetFolderId,
     pendingApprovals: pending.map(approvalViewOf),
+    // Stored already cleaned by the agent; cleaned again here, since the name is page-derived.
+    heldDownloads: held.map((d) => ({ ...d, filename: safeFilename(d.filename) })),
     lastEventId: last?.id ?? null,
   };
 }

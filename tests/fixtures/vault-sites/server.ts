@@ -18,6 +18,11 @@ export const FIXTURE_HOSTS = {
 export type FixtureHost = keyof typeof FIXTURE_HOSTS;
 export const FIXTURE_MAIL_FROM = "no-reply@fixtures.test";
 
+/** A fixture origin as browsers write it: the default HTTP port (the Compose service) is implicit. */
+export function fixtureOrigin(hostname: string, port: number): string {
+  return port === 80 ? `http://${hostname}` : `http://${hostname}:${port}`;
+}
+
 export interface FixtureAccount {
   email: string;
   password: string;
@@ -76,6 +81,8 @@ const html = (
 export async function startVaultFixtures(options: {
   account: FixtureAccount;
   mail: { smtpHost: string; smtpPort: number; to: string } | null;
+  /** Where to listen. Default: an ephemeral port on loopback (in-process tests). */
+  listen?: { host: string; port: number };
 }): Promise<VaultFixtures> {
   const { account } = options;
   const reactBundle = await readFile(await buildReactLogin());
@@ -85,7 +92,7 @@ export async function startVaultFixtures(options: {
   const challenges = new Set<string>();
   let emailCode: string | null = null;
   let port = 0;
-  const origin = (host: FixtureHost) => `http://${FIXTURE_HOSTS[host]}:${port}`;
+  const origin = (host: FixtureHost) => fixtureOrigin(FIXTURE_HOSTS[host], port);
 
   function signedIn(req: IncomingMessage): string | null {
     const sid = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.cookie ?? "")?.[1] ?? null;
@@ -143,7 +150,7 @@ export async function startVaultFixtures(options: {
     }
     if (host !== FIXTURE_HOSTS.login && host !== FIXTURE_HOSTS.lookalike)
       return send(res, 404, "text/plain", "unknown host");
-    const here = `http://${host}:${port}`;
+    const here = fixtureOrigin(host, port);
     const form = new URLSearchParams(body);
     const json = () => JSON.parse(body || "{}") as Record<string, string>;
 
@@ -314,7 +321,9 @@ export async function startVaultFixtures(options: {
       res.end();
     });
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) =>
+    server.listen(options.listen?.port ?? 0, options.listen?.host ?? "127.0.0.1", resolve),
+  );
   port = (server.address() as AddressInfo).port;
   return {
     port,

@@ -38,12 +38,13 @@ function Row({
 }) {
   switch (item.kind) {
     case "step": {
+      const shotSeq = item.shotSeq;
       const body = (
         <>
-          {item.hasShot ? (
+          {shotSeq !== null ? (
             <img
               className="run-tl-thumb"
-              src={stepScreenshotPath(runId, item.seq)}
+              src={stepScreenshotPath(runId, shotSeq)}
               alt=""
               loading="lazy"
             />
@@ -76,12 +77,12 @@ function Row({
           data-current={item.current || undefined}
           data-selected={selected || undefined}
         >
-          {item.hasShot ? (
+          {shotSeq !== null ? (
             <button
               type="button"
               className="run-tl-body"
               aria-label={`Replay step: ${item.line}`}
-              onClick={() => onReplay(item.seq)}
+              onClick={() => onReplay(shotSeq)}
             >
               {body}
             </button>
@@ -152,7 +153,7 @@ function TimelineList(p: TimelinePanelProps) {
           key={item.key}
           item={item}
           runId={p.runId}
-          selected={item.kind === "step" && item.seq === p.replaySeq}
+          selected={item.kind === "step" && item.shotSeq !== null && item.shotSeq === p.replaySeq}
           onReplay={p.onReplay}
         />
       ))}
