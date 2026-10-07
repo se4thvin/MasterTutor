@@ -20,7 +20,6 @@ function fakeAdmin(script: { connectedAfterPolls: number; giveFails404?: boolean
         throw new NekoApiError(404, path);
       return null;
     },
-    forget() {},
   };
   return { admin, calls };
 }

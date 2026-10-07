@@ -40,6 +40,8 @@ describe("DownloadGate while a person holds control", () => {
   it("caps a download that is over the size limit when it reports completed (no in-progress tick seen)", async () => {
     const { gate: g, cdp } = await gate();
     const capped: string[] = [];
+    const finished: string[] = [];
+    g.onFinished((download) => void finished.push(download.id));
     await g.userControl(true, { maxBytes: 1_000, onCapped: ({ reason }) => capped.push(reason) });
     cdp.emit("Browser.downloadWillBegin", {
       guid: "g1",
@@ -57,7 +59,7 @@ describe("DownloadGate while a person holds control", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(capped).toEqual(["too_large"]);
     expect(await readdir(folder)).toEqual([]);
-    expect(g.userDownloads()).toEqual([]);
+    expect(finished).toEqual([]); // never reported for B6 to file
   });
 
   it("reports failure when the deny cannot be restored at hand-back (the caller fails closed)", async () => {
