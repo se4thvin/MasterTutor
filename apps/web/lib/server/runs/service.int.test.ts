@@ -258,6 +258,25 @@ describe("runs.* on the live router (Task 0A)", () => {
     await expect(client().runs.cancel({ runId: done })).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
+  it("hides other workspaces' runs from cancel, resume and sendMessage, and leaves them untouched", async () => {
+    const stranger = await seedMember(owner.db);
+    const foreign = await seedRun(owner.db, {
+      workspaceId: stranger.workspaceId,
+      status: "sleeping",
+    });
+    await expect(client().runs.cancel({ runId: foreign })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(client().runs.resume({ runId: foreign })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(
+      client().runs.sendMessage({ runId: foreign, text: "not yours" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await runRow(foreign)).toMatchObject({ status: "sleeping", wakeRequestedAt: null });
+    expect(await eventsOf(foreign)).toEqual([]);
+  });
+
   it("sends a message as a user_message event and wakes a sleeping run", async () => {
     const runId = await seedRun(owner.db, { workspaceId, status: "sleeping" });
     const payload = await nextNotification(web.sql, "run_wake", () =>
