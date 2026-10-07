@@ -25,10 +25,20 @@ export function embeddingText(markdown: string): string {
     .slice(0, EMBED_MAX_CHARS);
 }
 
+export interface EmbedOptions {
+  signal?: AbortSignal;
+  /** Applied to each request on its own, so a long note never times out midway as a whole. */
+  batchTimeoutMs?: number;
+  /** Called with each batch's billed tokens as it lands, so spend is charged even if a later batch fails. */
+  onUsage?: (tokens: number) => void;
+  /** Batches in flight at once (default EMBED_CONCURRENCY). */
+  concurrency?: number;
+}
+
 export async function embedTexts(
   client: EmbeddingsClient,
   texts: readonly string[],
-  options: { signal?: AbortSignal } = {},
+  options: EmbedOptions = {},
 ): Promise<{ vectors: number[][]; tokens: number }> {
   if (texts.some((text) => text.trim().length === 0)) throw new Error("cannot embed empty text");
   const batches: { start: number; input: string[] }[] = [];
@@ -41,8 +51,17 @@ export async function embedTexts(
   const worker = async () => {
     for (let batch = batches[next++]; batch; batch = batches[next++]) {
       const { start, input } = batch;
-      const response = await client.embeddings.create({ input }, { signal: options.signal });
+      const timeout =
+        options.batchTimeoutMs === undefined
+          ? undefined
+          : AbortSignal.timeout(options.batchTimeoutMs);
+      const signals = [options.signal, timeout].filter((signal) => signal !== undefined);
+      const response = await client.embeddings.create(
+        { input },
+        { signal: signals.length > 0 ? AbortSignal.any(signals) : undefined },
+      );
       tokens += response.tokens;
+      options.onUsage?.(response.tokens);
       for (const item of response.data) {
         // An index outside this batch would overwrite another batch's vector (M5).
         if (!Number.isInteger(item.index) || item.index < 0 || item.index >= input.length) {
@@ -56,7 +75,9 @@ export async function embedTexts(
     }
   };
   await Promise.all(
-    Array.from({ length: Math.min(EMBED_CONCURRENCY, batches.length) }, () => worker()),
+    Array.from({ length: Math.min(options.concurrency ?? EMBED_CONCURRENCY, batches.length) }, () =>
+      worker(),
+    ),
   );
   const vectors = out.map((vector, index) => {
     if (!vector) throw new Error(`missing embedding for input ${index}`);

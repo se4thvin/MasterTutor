@@ -17,3 +17,4 @@ export * from "./api/contract.ts";
 export * from "./vault.ts";
 export * from "./folder-rules.ts";
 export * from "./fidelity.ts";
+export * from "./markdown.ts";

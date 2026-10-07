@@ -1,7 +1,7 @@
+import { MAX_ASSET_BYTES } from "@mastertutor/contracts";
 import type { BrowserSession } from "../browser/session.ts";
 import { abortable } from "../runtime/abortable.ts";
 
-export const MAX_ASSET_BYTES = 25 * 1024 * 1024;
 export const FETCH_TIMEOUT_MS = 30_000;
 const READ_CHUNK = 1 << 20;
 
@@ -43,7 +43,12 @@ export function sameSite(target: URL, pageUrl: string): boolean {
 /**
  * Fetches through the slot's own network stack (decision 3). `Network.loadNetworkResource` skips
  * Playwright's context.route, so B1's network policy is asked first (preflight S1); the slot's
- * iptables rules stay the boundary for redirects. The agent never fetches page URLs itself.
+ * iptables rules stay the boundary for redirects (CDP gives no redirect hook here). The agent
+ * never fetches page URLs itself.
+ *
+ * Residual (5-8 review M2): the slot accepts loopback egress, so a redirect can reach the slot's
+ * own 127.0.0.1 services (CDP, n.eko, Pulse). Nothing from such a hop reaches the model, and only
+ * bytes that sniff as an allowed image are stored, so a JSON or HTML answer is dropped.
  */
 export async function fetchInBrowser(
   ctx: FetchContext,

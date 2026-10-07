@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import {
   Anchor,
   CAPTURED_ORIGINS,
-  NoteBlock,
+  MAX_BLOCK_CHARS,
   noteFidelity,
   toOrigin,
+  unescapeMarkdown,
   type BlockOrigin,
   type BlockType,
   type SourceKind,
@@ -93,12 +94,26 @@ export class NoteWriteError extends Error {
   }
 }
 
-/** One source of truth for the size limit: the NoteBlock contract (notes never imports capture). */
-const MAX_BLOCK_CHARS = NoteBlock.shape.markdown.maxLength ?? 200_000;
 const clip = (value: string, max: number) => (value.length > max ? value.slice(0, max) : value);
-const unescaped = (markdown: string) => markdown.replace(/\\([\\`*_{}[\]()#+\-.!|$<>])/g, "$1");
 const byteOrder = (a: { position: string }, b: { position: string }) =>
   a.position < b.position ? -1 : a.position > b.position ? 1 : 0;
+
+/** Spec §9: no stored text may hold a registered secret, as shown or as the reader sees it. */
+export function screenText(secrets: MaskSources, text: string): void {
+  if (containsSecret(secrets, text) || containsSecret(secrets, unescapeMarkdown(text)))
+    throw new NoteWriteError("secret_on_page", "The page shows a saved secret; nothing was stored");
+}
+
+/** screenText over every string of a JSON-like value, keys included. */
+export function screenValue(secrets: MaskSources, value: unknown): void {
+  if (typeof value === "string") screenText(secrets, value);
+  else if (Array.isArray(value)) for (const item of value) screenValue(secrets, item);
+  else if (value !== null && typeof value === "object")
+    for (const [key, item] of Object.entries(value)) {
+      screenText(secrets, key);
+      screenValue(secrets, item);
+    }
+}
 
 /** A block's place in its note, committed or staged in this step. */
 export interface PlacedBlock {
@@ -121,20 +136,16 @@ export class NoteWriter {
     this.embedder = deps.embedder;
   }
 
-  #screen(w: WriteContext, text: string): void {
-    if (containsSecret(w.secrets, text) || containsSecret(w.secrets, unescaped(text)))
-      throw new NoteWriteError(
-        "secret_on_page",
-        "The page shows a saved secret; nothing was stored",
-      );
+  /** The note is this run's: committed in its workspace, or staged by this very step. */
+  async #assertWritable(w: WriteContext, noteId: string): Promise<void> {
+    if (this.#pending.get(w.step)?.has(noteId)) return;
+    await this.assertRunNote(w.scope, noteId);
   }
 
   /** The run's note; stages a new one (and runs.note_id) when the run has none yet. */
   async ensureNote(w: WriteContext, draft: NoteDraft): Promise<string> {
     const title = clip(draft.title.trim(), 500) || "Untitled";
     const lede = draft.lede?.trim() ? clip(draft.lede.trim(), 1_000) : null;
-    this.#screen(w, title);
-    if (lede) this.#screen(w, lede);
     const [run] = await this.db
       .select({ noteId: runs.noteId, targetFolderId: runs.targetFolderId })
       .from(runs)
@@ -143,6 +154,9 @@ export class NoteWriter {
     if (run.noteId) return run.noteId;
     const pending = this.#pending.get(w.step)?.keys().next().value;
     if (pending) return pending;
+    // Screened only when it is going to be stored (an existing note keeps its own title).
+    screenText(w.secrets, title);
+    if (lede) screenText(w.secrets, lede);
     const noteId = randomUUID();
     w.step.defer(async (tx) => {
       await tx.insert(notes).values({
@@ -208,7 +222,8 @@ export class NoteWriter {
     const origin = toOrigin(draft.url);
     if (!origin || !/^https?:/.test(draft.url))
       throw new NoteWriteError("unsupported_url", "only http(s) sources");
-    if (draft.title) this.#screen(w, draft.title);
+    // A URL can echo a secret (a GET login form); B3's redactor also reads percent-encoded tokens.
+    screenValue(w.secrets, [draft.url, draft.canonicalUrl, draft.title, draft.meta]);
     w.step.defer(async (tx) => {
       await tx.insert(sources).values({
         id,
@@ -229,16 +244,21 @@ export class NoteWriter {
   }
 
   stageSourceMeta(w: WriteContext, sourceId: string, patch: Record<string, unknown>): void {
+    screenValue(w.secrets, patch);
     w.step.defer(async (tx) => {
       await tx
         .update(sources)
         .set({ meta: sql`${sources.meta} || ${JSON.stringify(patch)}::jsonb` })
-        .where(eq(sources.id, sourceId));
+        .where(and(eq(sources.id, sourceId), eq(sources.workspaceId, w.scope.workspaceId)));
     });
   }
 
-  /** Committed blocks plus the ones this step staged, in position (byte) order. */
+  /**
+   * Committed blocks plus the ones this step staged, in position (byte) order. Ids come from
+   * model arguments, so the note must be this run's (`foreign_note` otherwise).
+   */
   protected async placed(w: WriteContext, noteId: string): Promise<PlacedBlock[]> {
+    await this.#assertWritable(w, noteId);
     const rows = await this.db
       .select({
         id: noteBlocks.id,
@@ -282,7 +302,8 @@ export class NoteWriter {
     for (const { draft } of items) {
       if (draft.markdown.length > MAX_BLOCK_CHARS)
         throw new NoteWriteError("block_too_large", "block too large");
-      this.#screen(w, draft.markdown);
+      screenText(w.secrets, draft.markdown);
+      if (draft.anchor) screenValue(w.secrets, draft.anchor);
     }
     const vectors = await this.embedder.embed(
       items.map((item) => item.draft.markdown),
@@ -349,7 +370,8 @@ export class NoteWriter {
       const [note] = await tx
         .select({ coverage: notes.coverage })
         .from(notes)
-        .where(eq(notes.id, noteId));
+        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)));
+      if (!note) return;
       const merged =
         coverage === null ? (note?.coverage ?? null) : Math.min(note?.coverage ?? 1, coverage);
       const [unverified] = await tx
@@ -362,10 +384,19 @@ export class NoteWriter {
             eq(noteBlocks.verified, false),
           ),
         );
+      // A non-numeric mediaLost counts as none rather than aborting the step transaction.
+      const mediaLost = sql`${sources.meta}->>'mediaLost'`;
       const [lost] = await tx
-        .select({ n: sql<number>`coalesce(sum((${sources.meta}->>'mediaLost')::int), 0)::int` })
+        .select({
+          n: sql<number>`coalesce(sum(case when ${mediaLost} ~ '^[0-9]{1,9}$' then (${mediaLost})::int else 0 end), 0)::int`,
+        })
         .from(sources)
-        .where(sql`${sources.meta}->>'noteId' = ${noteId}`);
+        .where(
+          and(
+            eq(sources.workspaceId, w.scope.workspaceId),
+            sql`${sources.meta}->>'noteId' = ${noteId}`,
+          ),
+        );
       await tx
         .update(notes)
         .set({
@@ -377,31 +408,42 @@ export class NoteWriter {
           }),
           updatedAt: new Date(),
         })
-        .where(eq(notes.id, noteId));
+        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)));
     });
   }
 
-  /** Embeds blocks stored without vectors (API outage at capture time). Idempotent. */
+  /** Embeds this workspace's blocks stored without vectors (API outage at capture time). Idempotent. */
   async backfillEmbeddings(
+    scope: RunScope,
     noteId: string,
-    options: { signal?: AbortSignal; step?: StepWriter } = {},
+    options: { signal?: AbortSignal; step: StepWriter },
   ): Promise<number> {
     const rows = await this.db
       .select({ id: noteBlocks.id, markdown: noteBlocks.markdown })
       .from(noteBlocks)
-      .where(and(eq(noteBlocks.noteId, noteId), isNull(noteBlocks.embedding)));
+      .innerJoin(notes, eq(notes.id, noteBlocks.noteId))
+      .where(
+        and(
+          eq(noteBlocks.noteId, noteId),
+          eq(notes.workspaceId, scope.workspaceId),
+          isNull(noteBlocks.embedding),
+        ),
+      );
     if (rows.length === 0) return 0;
     const vectors = await this.embedder.embed(
       rows.map((row) => row.markdown),
       options,
     );
-    let updated = 0;
-    for (const [i, row] of rows.entries()) {
+    const updates = rows.flatMap((row, i) => {
       const vector = vectors[i];
-      if (!vector) continue;
-      await this.db.update(noteBlocks).set({ embedding: vector }).where(eq(noteBlocks.id, row.id));
-      updated++;
-    }
-    return updated;
+      return vector ? [sql`(${row.id}::uuid, ${JSON.stringify(vector)}::vector)`] : [];
+    });
+    if (updates.length === 0) return 0;
+    // One statement for the whole note, not one UPDATE per block.
+    await this.db.execute(sql`
+      update ${noteBlocks} set embedding = v.embedding
+      from (values ${sql.join(updates, sql`, `)}) as v(id, embedding)
+      where ${noteBlocks.id} = v.id and ${noteBlocks.embedding} is null`);
+    return updates.length;
   }
 }

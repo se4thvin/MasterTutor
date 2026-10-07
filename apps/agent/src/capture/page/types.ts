@@ -32,7 +32,7 @@ export interface MtLib {
 declare global {
   var __mtLib: MtLib | undefined;
   var __mtClosedRoots: WeakMap<Element, ShadowRoot> | undefined;
-  var __mtCapture: { root: Element; range: Range | null } | undefined;
+  var __mtCapture: { root: Element; range: Range | null; frames: Element[] } | undefined;
 }
 
 export interface PageMedia {
@@ -48,6 +48,8 @@ export interface PageMedia {
   selector: string | null;
   /** Charts and diagrams: also kept as an element screenshot (spec §7.4). */
   figure: boolean;
+  /** Fixed or sticky: its document rect moves with scrolling, so no element shot is taken. */
+  fixed: boolean;
 }
 export interface PageFrame {
   index: number;
@@ -75,6 +77,8 @@ export interface PageExtract {
   media: PageMedia[];
   rawTables: string[];
   frames: PageFrame[];
+  /** Visible frames too small to capture (under 200×100): recorded, not captured (M9). */
+  smallFrames: number;
 }
 export interface BlockSnippet {
   head: string;

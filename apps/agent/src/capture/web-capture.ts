@@ -1,21 +1,26 @@
-import { assetUri, VERIFIED_COVERAGE, type BlockType } from "@mastertutor/contracts";
+import {
+  assetUri,
+  escapeMarkdownText,
+  VERIFIED_COVERAGE,
+  type BlockType,
+} from "@mastertutor/contracts";
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import { PageScriptError } from "../browser/isolated-world.ts";
+import { containsSecretText } from "../browser/masking.ts";
 import { captureMaskedRegion } from "../browser/region-capture.ts";
 import type { LibraryServices } from "../library.ts";
 import { sha256Hex } from "../notes/hash.ts";
-import type { BlockDraft } from "../notes/note-writer.ts";
+import { NoteWriteError, screenValue, type BlockDraft } from "../notes/note-writer.ts";
 import { ToolError, type ToolContext } from "../tools/types.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
 import {
   blockPlainText,
-  escapeMarkdownText,
   limitBlockSize,
   splitMarkdown,
   texOf,
   textToMarkdown,
 } from "./markdown-blocks.ts";
-import { storeMedia, type MediaReport, type StoredMedia } from "./media.ts";
+import { storeMedia, type StoredMedia } from "./media.ts";
 import { pageExtract } from "./page/extract.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
@@ -23,9 +28,9 @@ import type { PageExtract } from "./page/types.ts";
 import { preparePage } from "./prepare.ts";
 import { registerClosedShadowRoots } from "./shadow.ts";
 import { takeSnapshot, type Snapshot } from "./snapshot.ts";
-import { blockPrecision, combineCoverage, type Coverage, coverageOf, tokens } from "./text.ts";
+import { blockPrecision, coverageOf, mergeReferences, tokens } from "./text.ts";
 import { textFragment } from "./text-fragment.ts";
-import { captureWorlds, childFrames } from "./worlds.ts";
+import { captureWorlds } from "./worlds.ts";
 
 export interface CaptureScope {
   scope: "page" | "selection" | "element";
@@ -60,7 +65,6 @@ export type AssembledBlock =
 
 const MEDIA_TOKEN = /!\[([^\]]*)\]\(https:\/\/mt-media\.invalid\/(\d+)\)/g;
 const ONLY_MEDIA = /^\s*(?:!\[[^\]]*\]\(https:\/\/mt-media\.invalid\/\d+\)\s*)+$/;
-const OPAQUE_TOKENS = 30;
 const OPAQUE_TILES = 3;
 
 /**
@@ -149,20 +153,27 @@ export function verifyBlock(
 
 interface DocumentCapture {
   extract: PageExtract;
+  /** Blocks in document order, each frame's blocks in its placeholder's place. */
   blocks: BlockDraft[];
-  root: Coverage;
-  page: Coverage;
-  media: MediaReport;
+  /** Text the document shows (the page minus chrome; a frame's body), its frames' included. */
+  pageTexts: string[];
+  /** Text of the content roots, for diagnosis only. */
+  rootTexts: string[];
+  mediaLost: number;
+  figuresWithheld: number;
+  /** Same-process frames that could not be matched or read: their text is missing (I4). */
+  framesMissing: number;
+  framesSkipped: number;
 }
 
-async function captureDocument(
-  services: LibraryServices,
-  ctx: ToolContext,
+/** Nested frames beyond this depth are counted missing rather than captured. */
+const MAX_FRAME_DEPTH = 3;
+
+async function extractIn(
   worlds: IsolatedWorlds,
   frameId: string,
   scope: CaptureScope,
-  isMain: boolean,
-): Promise<{ doc: DocumentCapture; planned: AssembledBlock[] }> {
+): Promise<PageExtract> {
   await registerClosedShadowRoots(worlds, frameId);
   let extract: PageExtract;
   try {
@@ -185,15 +196,55 @@ async function captureDocument(
       markdown: textToMarkdown(extract.sourceText.replace(/\n/g, "\n\n")),
     };
   }
+  return extract;
+}
+
+/** The CDP frame id of the iframe behind placeholder `index` (null when it is gone). */
+async function frameIdOf(
+  worlds: IsolatedWorlds,
+  index: number,
+  parentFrameId: string,
+): Promise<string | null> {
+  const objectId = await worlds
+    .evaluateHandle(`globalThis.__mtCapture?.frames[${index}] ?? null`, parentFrameId)
+    .catch(() => null);
+  if (!objectId) return null;
+  try {
+    const { node } = await worlds.cdp.send("DOM.describeNode", { objectId });
+    return node.frameId ?? null;
+  } catch {
+    return null;
+  } finally {
+    await worlds.cdp.send("Runtime.releaseObject", { objectId }).catch(() => undefined);
+  }
+}
+
+async function captureDocument(
+  services: LibraryServices,
+  ctx: ToolContext,
+  worlds: IsolatedWorlds,
+  frameId: string,
+  scope: CaptureScope,
+  depth: number,
+): Promise<DocumentCapture> {
+  const extract = await extractIn(worlds, frameId, scope);
+  // A vault secret anywhere in what was read ends the capture before any asset is stored.
+  screenValue(ctx.mask, [extract.pageText, extract.sourceText]);
+  // Frame ids first: a child's own extraction does not touch this document's capture state.
+  const frameIds = await Promise.all(
+    extract.frames.map((frame) => frameIdOf(worlds, frame.index, frameId)),
+  );
   const media = await storeMedia(
     {
       workspaceId: ctx.workspaceId,
       assets: services.assets,
+      secrets: ctx.mask,
       fetch: (url) => fetchInBrowser({ session: ctx.session, frameId, signal: ctx.signal }, url),
       sanitizeSvg: (text) => worlds.call(pageSanitizeSvg, [text], frameId),
-      shoot: isMain
-        ? (clip, scale) => captureMaskedRegion(ctx.session, ctx.mask, { clip, scale }, ctx.signal)
-        : null,
+      shoot:
+        depth === 0
+          ? (clip, scale) => captureMaskedRegion(ctx.session, ctx.mask, { clip, scale }, ctx.signal)
+          : null,
       signal: ctx.signal,
     },
     extract.media,
@@ -217,9 +268,9 @@ async function captureDocument(
     ],
     frameId,
   );
-  const reference = `${extract.pageText}\n${extract.sourceText}`;
+  const reference = mergeReferences([extract.pageText, extract.sourceText]);
   const tex = new Set(extract.mathTex.map((value) => value.replace(/\s+/g, "")));
-  const blocks: BlockDraft[] = textual.map((p, i) => {
+  const own: BlockDraft[] = textual.map((p, i) => {
     const plain = plains[i] ?? "";
     const where = located[i];
     return {
@@ -237,23 +288,66 @@ async function captureDocument(
       },
     };
   });
-  const captured = plains.join("\n");
-  return {
-    doc: {
-      extract,
-      blocks,
-      root: coverageOf(extract.sourceText, captured),
-      page: coverageOf(extract.pageText, captured),
-      media,
-    },
-    planned,
+
+  const doc: DocumentCapture = {
+    extract,
+    blocks: [],
+    pageTexts: [extract.pageText],
+    rootTexts: [extract.sourceText],
+    mediaLost: media.lost,
+    figuresWithheld: media.withheld,
+    framesMissing: 0,
+    framesSkipped: extract.smallFrames,
   };
+  const outOfProcess =
+    extract.frames.length > 0 ? (await ctx.session.frameCoverage()).outOfProcess : new Map();
+  let next = 0;
+  for (const item of planned) {
+    if (item.kind === "block") {
+      const draft = own[next++];
+      if (draft) doc.blocks.push(draft);
+      continue;
+    }
+    const childId = frameIds[item.index] ?? null;
+    // Decision 10: an out-of-process frame cannot host this world; it is left out of coverage.
+    if (childId && outOfProcess.has(childId)) continue;
+    if (!childId || depth + 1 > MAX_FRAME_DEPTH) {
+      doc.framesMissing++;
+      continue;
+    }
+    let child: DocumentCapture;
+    try {
+      child = await captureDocument(
+        services,
+        ctx,
+        worlds,
+        childId,
+        { scope: "element", selector: "body" },
+        depth + 1,
+      );
+    } catch (error) {
+      if (error instanceof ToolError || error instanceof NoteWriteError || ctx.signal.aborted)
+        throw error;
+      services.log.info({ errName: (error as Error).name }, "a frame could not be read");
+      doc.framesMissing++;
+      continue;
+    }
+    doc.blocks.push(...child.blocks);
+    doc.pageTexts.push(...child.pageTexts);
+    doc.rootTexts.push(...child.rootTexts);
+    doc.mediaLost += child.mediaLost;
+    doc.figuresWithheld += child.figuresWithheld;
+    doc.framesMissing += child.framesMissing;
+    doc.framesSkipped += child.framesSkipped;
+  }
+  return doc;
 }
 
+/** Spec §7.7 for pages without usable DOM text: masked viewport tiles, each transcribed by OCR. */
 async function opaqueBlocks(
   services: LibraryServices,
   ctx: ToolContext,
-): Promise<{ blocks: BlockDraft[]; withheld: number }> {
+): Promise<{ blocks: BlockDraft[]; withheld: number; lost: number }> {
   const metrics = await (await ctx.session.cdp()).send("Page.getLayoutMetrics");
   const viewport = metrics.cssVisualViewport;
   const tiles = Math.min(
@@ -262,6 +356,7 @@ async function opaqueBlocks(
   );
   const blocks: BlockDraft[] = [];
   let withheld = 0;
+  let lost = 0;
   for (let i = 0; i < tiles; i++) {
     ctx.signal.throwIfAborted();
     const clip = {
@@ -275,13 +370,11 @@ async function opaqueBlocks(
       withheld++;
       continue;
     }
-    const asset = await services.assets.put(ctx.workspaceId, {
-      bytes: png,
-      mime: "image/png",
-      width: clip.width,
-      height: clip.height,
-      sourceUrl: null,
-    });
+    const asset = await services.assets.put(
+      ctx.workspaceId,
+      { bytes: png, mime: "image/png", width: clip.width, height: clip.height, sourceUrl: null },
+      ctx.mask,
+    );
     const anchor = {
       selector: null,
       xpath: null,
@@ -298,21 +391,24 @@ async function opaqueBlocks(
       anchor,
       verified: true,
     });
-    const text = await services.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step });
-    if (text)
-      blocks.push({
-        type: "paragraph",
-        markdown: text,
-        origin: "ocr_model",
-        assetId: null,
-        anchor,
-        verified: false,
-      });
+    let text: string;
+    try {
+      text = await services.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step });
+    } catch (error) {
+      if (ctx.signal.aborted) throw error;
+      // A transient model error loses this tile's text, not the capture (M6).
+      services.log.warn({ errName: (error as Error).name }, "OCR failed for a page region");
+      lost++;
+      continue;
+    }
+    // Headings, lists and paragraphs stay separate blocks, each within the size limit (M4).
+    for (const part of splitMarkdown(text).flatMap((block) => limitBlockSize(block)))
+      blocks.push({ ...part, origin: "ocr_model", assetId: null, anchor, verified: false });
   }
-  return { blocks, withheld };
+  return { blocks, withheld, lost };
 }
 
-/** Spec §7 for a web page: prepare → snapshot → extract (main + same-process frames) → assets → verify. */
+/** Spec §7 for a web page: prepare → secret gate → snapshot → extract (frames too) → assets → verify. */
 export async function captureWeb(
   services: LibraryServices,
   ctx: ToolContext,
@@ -320,68 +416,32 @@ export async function captureWeb(
 ): Promise<WebCapture> {
   if (scope.scope === "page") await preparePage(ctx.session, ctx.signal);
   ctx.signal.throwIfAborted();
+  // D8: a page that shows a vault secret is refused before any snapshot or asset is written.
+  if (ctx.mask.hasSecrets() && (await containsSecretText(ctx.session, ctx.mask, ctx.signal)))
+    throw new ToolError("secret_on_page", "The page shows a saved secret; nothing was stored");
   const snapshot = await takeSnapshot(ctx.session, ctx.mask, ctx.signal);
   const worlds = await captureWorlds(ctx.session);
-  const frameId = await worlds.mainFrameId();
-  const main = await captureDocument(services, ctx, worlds, frameId, scope, true);
-  const frameDocs = new Map<number, DocumentCapture>();
-  if (main.doc.extract.frames.length > 0) {
-    const children = await childFrames(worlds.cdp);
-    for (const frame of main.doc.extract.frames) {
-      const child =
-        children.find((c) => c.url === frame.url) ??
-        children.find((c) => frame.name !== null && c.name === frame.name);
-      if (!child) continue;
-      try {
-        const sub = await captureDocument(
-          services,
-          ctx,
-          worlds,
-          child.frameId,
-          { scope: "element", selector: "body" },
-          false,
-        );
-        frameDocs.set(frame.index, sub.doc);
-      } catch (error) {
-        if (error instanceof ToolError || ctx.signal.aborted) throw error;
-        // Decision 10: out-of-process frames cannot host this world; their text is excluded from coverage.
-        services.log.info(
-          { errName: (error as Error).name },
-          "skipping a frame that cannot host the capture world",
-        );
-      }
-    }
-  }
-  const blocks: BlockDraft[] = [];
-  let next = 0;
-  for (const item of main.planned) {
-    if (item.kind === "frame") blocks.push(...(frameDocs.get(item.index)?.blocks ?? []));
-    else {
-      const draft = main.doc.blocks[next++];
-      if (draft) blocks.push(draft);
-    }
-  }
-  const frames = [...frameDocs.values()];
-  const root = combineCoverage([main.doc.root, ...frames.map((d) => d.root)]);
-  const page = combineCoverage([main.doc.page, ...frames.map((d) => d.root)]);
-  let mediaLost = main.doc.media.lost + frames.reduce((sum, d) => sum + d.media.lost, 0);
-  let figuresWithheld =
-    main.doc.media.withheld + frames.reduce((sum, d) => sum + d.media.withheld, 0);
-  let engine: WebCapture["engine"] = main.doc.extract.engine;
-  let finalBlocks = blocks;
-  const capturedTokens = tokens(blocks.map((b) => blockPlainText(b)).join(" ")).length;
-  if (
-    scope.scope === "page" &&
-    page.sourceTokens < OPAQUE_TOKENS &&
-    capturedTokens < OPAQUE_TOKENS
-  ) {
+  const main = await captureDocument(services, ctx, worlds, await worlds.mainFrameId(), scope, 0);
+  const blocks = [...main.blocks];
+  let { mediaLost, figuresWithheld } = main;
+  let engine: WebCapture["engine"] = main.extract.engine;
+  const pageText = main.pageTexts.join("\n");
+  const domText = blocks.map((b) => blockPlainText(b)).join("\n");
+  // The opaque ruling: DOM text, however short, is always used; OCR runs only when there is none.
+  if (scope.scope === "page" && tokens(pageText).length === 0 && tokens(domText).length === 0) {
     engine = "opaque";
     const opaque = await opaqueBlocks(services, ctx);
-    finalBlocks = opaque.blocks;
+    blocks.push(...opaque.blocks);
     figuresWithheld += opaque.withheld;
-    if (opaque.blocks.length === 0) mediaLost += 1;
+    mediaLost += opaque.lost + (opaque.blocks.length === 0 ? 1 : 0);
   }
-  const { extract } = main.doc;
+  // Unread frames are missing content: the note cannot claim to be verified (I4).
+  mediaLost += main.framesMissing;
+  // Coverage of what the note finally holds (I2).
+  const captured = blocks.map((b) => blockPlainText(b)).join("\n");
+  const page = coverageOf(pageText, captured);
+  const root = coverageOf(main.rootTexts.join("\n"), captured);
+  const { extract } = main;
   return {
     url: ctx.session.page.url(),
     title: extract.title,
@@ -390,9 +450,9 @@ export async function captureWeb(
     faviconUrl: extract.faviconUrl,
     language: extract.language,
     engine,
-    blocks: finalBlocks,
+    blocks,
     coverage: page.coverage,
-    contentSha256: sha256Hex(finalBlocks.map((b) => b.markdown).join("\n\n")),
+    contentSha256: sha256Hex(blocks.map((b) => b.markdown).join("\n\n")),
     snapshot,
     meta: {
       rootCoverage: root.coverage,
@@ -401,6 +461,8 @@ export async function captureWeb(
       pageTokens: page.sourceTokens,
       mediaLost,
       figuresWithheld,
+      framesMissing: main.framesMissing,
+      framesSkipped: main.framesSkipped,
     },
   };
 }

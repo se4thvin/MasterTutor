@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BrowserSession } from "../browser/session.ts";
+import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import type { AssetStore } from "../notes/assets.ts";
 import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
@@ -46,6 +47,7 @@ describe("media storage in the slot (Review Focus 1, W2)", () => {
       {
         workspaceId: crypto.randomUUID(),
         assets,
+        secrets: NO_MASK_SOURCES,
         fetch: (url) => fetchInBrowser({ session, frameId, signal }, url),
         sanitizeSvg: (text) => worlds.call(pageSanitizeSvg, [text]),
         shoot: null,
@@ -61,6 +63,7 @@ describe("media storage in the slot (Review Focus 1, W2)", () => {
         rect: { x: 0, y: 0, width: 60, height: 40 },
         selector: null,
         figure: false,
+        fixed: false,
       })),
     );
     expect([...report.stored.values()].every((m) => m.assetId === null)).toBe(true);
@@ -95,5 +98,52 @@ describe("media storage in the slot (Review Focus 1, W2)", () => {
       send.mock.calls.filter(([method]) => method === "Network.loadNetworkResource"),
     ).toHaveLength(2);
     send.mockRestore();
+  });
+  it("stores nothing a redirect fetches from the slot's loopback (M2: residual, iptables accepts lo)", async () => {
+    await session.goto(`${FIXTURES}/capture/hostile/index.html`, signal);
+    const worlds = await captureWorlds(session);
+    const frameId = await worlds.mainFrameId();
+    const stored: string[] = [];
+    const assets: AssetStore = {
+      put: async (_ws, input) => (
+        stored.push(input.mime),
+        {
+          assetId: crypto.randomUUID(),
+          sha256: "x",
+          mime: input.mime,
+          bytes: 1,
+          width: null,
+          height: null,
+        }
+      ),
+    };
+    const report = await storeMedia(
+      {
+        workspaceId: crypto.randomUUID(),
+        assets,
+        secrets: NO_MASK_SOURCES,
+        fetch: (url) => fetchInBrowser({ session, frameId, signal }, url),
+        sanitizeSvg: (text) => worlds.call(pageSanitizeSvg, [text]),
+        shoot: null,
+        signal,
+      },
+      [
+        {
+          index: 0,
+          kind: "img",
+          url: `${FIXTURES}/redirect-loopback`,
+          svg: null,
+          dataUrl: null,
+          alt: "x",
+          rect: { x: 0, y: 0, width: 60, height: 40 },
+          selector: null,
+          figure: false,
+          fixed: false,
+        },
+      ],
+    );
+    // The hop reaches the slot's own CDP endpoint, but its JSON is not an image: nothing is kept.
+    expect(report.stored.get(0)).toEqual({ assetId: null, screenshotAssetId: null });
+    expect(stored).toEqual([]);
   });
 });

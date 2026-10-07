@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { escapeMarkdownText } from "@mastertutor/contracts";
 import {
   blockPlainText,
   limitBlockSize,
@@ -69,6 +70,18 @@ describe("blockPlainText", () => {
     );
     expect(blockPlainText(list!)).toBe("one two continued");
     expect(blockPlainText(splitMarkdown(md).at(-1)!)).toBe("");
+  });
+  it("strips only real tags: comparisons and escaped brackets stay visible (review I2)", () => {
+    const p = (markdown: string) => blockPlainText({ type: "paragraph", markdown });
+    expect(p("If 3 < 4 and 5 > 2 then done")).toBe("If 3 < 4 and 5 > 2 then done");
+    expect(p("Use \\<div\\> for blocks")).toBe("Use <div> for blocks");
+    expect(p("x &lt; y and a<sub>2</sub>")).toBe("x < y and a 2");
+    // Every escape escapeMarkdownText writes is undone (one shared set).
+    const text = "a*b_c [d] <e> `f` \\g";
+    expect(p(escapeMarkdownText(text))).toBe(text.replace(/[*_`]/g, " ").replace(/\s+/g, " "));
+  });
+  it("reads $…$ in prose as inline math (accepted heuristic: lowers coverage, never raises it)", () => {
+    expect(blockPlainText({ type: "paragraph", markdown: "pay $a and b$ now" })).toBe("pay now");
   });
 });
 

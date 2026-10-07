@@ -72,4 +72,54 @@ describe("hashEmbedding", () => {
       dot(a, hashEmbedding("tax law reform")),
     );
   });
+  it("reports each batch's tokens as it lands, also when a later batch fails (review I5)", async () => {
+    let call = 0;
+    const client = {
+      embeddings: {
+        create: async (body: { input: string[] }) => {
+          call += 1;
+          if (call === 2) throw new Error("rate limited");
+          return {
+            data: body.input.map((text, index) => ({ index, embedding: hashEmbedding(text) })),
+            tokens: 7,
+          };
+        },
+      },
+    };
+    const spent: number[] = [];
+    const texts = Array.from({ length: EMBED_BATCH_SIZE * 2 }, (_, i) => `t${i}`);
+    await expect(
+      embedTexts(client, texts, { concurrency: 1, onUsage: (tokens) => spent.push(tokens) }),
+    ).rejects.toThrow(/rate limited/);
+    expect(spent).toEqual([7]);
+  });
+  it("times out each batch on its own, not the whole note (review I5)", async () => {
+    const seen: boolean[] = [];
+    const client = {
+      embeddings: {
+        create: async (body: { input: string[] }, options: { signal?: AbortSignal }) => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          seen.push(options.signal?.aborted ?? false);
+          return {
+            data: body.input.map((text, index) => ({ index, embedding: hashEmbedding(text) })),
+            tokens: 1,
+          };
+        },
+      },
+    };
+    const texts = Array.from({ length: EMBED_BATCH_SIZE * 3 }, (_, i) => `t${i}`);
+    // Three sequential 30 ms batches under a 50 ms per-batch timeout: none is aborted.
+    const { vectors } = await embedTexts(client, texts, { concurrency: 1, batchTimeoutMs: 50 });
+    expect(vectors).toHaveLength(texts.length);
+    expect(seen).toEqual([false, false, false]);
+    const slow = {
+      embeddings: {
+        create: (_body: { input: string[] }, options: { signal?: AbortSignal }) =>
+          new Promise<never>((_resolve, reject) =>
+            options.signal?.addEventListener("abort", () => reject(options.signal?.reason)),
+          ),
+      },
+    };
+    await expect(embedTexts(slow, ["a"], { batchTimeoutMs: 20 })).rejects.toThrow();
+  });
 });

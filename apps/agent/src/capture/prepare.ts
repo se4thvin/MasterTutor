@@ -17,6 +17,8 @@ export async function preparePage(
   mutate();
   const worlds = await captureWorlds(session);
   const cdp = await session.cdp();
+  // Checked again right before the first change to the page: control may have moved meanwhile.
+  mutate();
   await worlds.call(pageForceEager, []);
   const start = await worlds.call(pageScrollMetrics, []);
   let viewports = 0;

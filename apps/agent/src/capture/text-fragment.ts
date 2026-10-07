@@ -1,12 +1,11 @@
-import { normalizeText } from "./text.ts";
-
 const encode = (value: string) => encodeURIComponent(value).replace(/-/g, "%2D");
 
-/** A scroll-to-text fragment (`#:~:text=start,end`) for a block; null when there is no text. */
+/**
+ * A scroll-to-text fragment (`#:~:text=start,end`) for a block; null when there is no text. The
+ * browser matches it literally, so only whitespace is collapsed (no NFKC: ligatures, superscripts).
+ */
 export function textFragment(text: string): string | null {
-  const words = normalizeText(text)
-    .split(" ")
-    .filter((word) => word.length > 0);
+  const words = text.split(/\s+/).filter((word) => word.length > 0);
   if (words.length === 0) return null;
   const fragment =
     words.length <= 8

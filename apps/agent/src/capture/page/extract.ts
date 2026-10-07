@@ -26,6 +26,11 @@ export function pageExtract(options: ExtractOptions): PageExtract {
   const media: PageMedia[] = [];
   const rawTables: string[] = [];
   const frames: PageFrame[] = [];
+  /** The live iframe behind each MTFRAME placeholder, resolved to its CDP frame id in Node. */
+  const frameElements: Element[] = [];
+  let smallFrames = 0;
+  /** Each element of the flattened copy → the live element it came from. */
+  const liveOf = new Map<Element, Element>();
   const out = document.implementation.createHTMLDocument(document.title);
 
   const abs = (
@@ -106,6 +111,13 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     if (!clone.getAttribute("width")) clone.setAttribute("width", String(Math.round(r.width)));
     if (!clone.getAttribute("height")) clone.setAttribute("height", String(Math.round(r.height)));
     return lib.sanitizeSvg(clone);
+  };
+  const isFixed = (el: Element): boolean => {
+    for (let at: Element | null = el; at; at = at.parentElement) {
+      const position = getComputedStyle(at).position;
+      if (position === "fixed" || position === "sticky") return true;
+    }
+    return false;
   };
   const tableIsComplex = (table: HTMLTableElement) =>
     table.querySelector(
@@ -216,12 +228,15 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       const r = lib.docRect(node);
       if (r && r.width >= 200 && r.height >= 100 && lib.visible(node)) {
         const index = frames.length;
+        frameElements.push(node);
         frames.push({
           index,
           url: abs(node.getAttribute("src"), ["http:", "https:"]),
           name: node.getAttribute("name"),
         });
         placeholder(parent, `MTFRAME${index}`);
+      } else if (r && lib.visible(node)) {
+        smallFrames++; // not captured, but recorded so the note says so (M9)
       }
       return;
     }
@@ -241,6 +256,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
           rect: lib.docRect(node),
           selector: lib.cssPath(node),
           figure: r.width >= 120 && r.height >= 80,
+          fixed: isFixed(node),
         },
         node,
       );
@@ -269,6 +285,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
           rect: lib.docRect(canvas),
           selector: lib.cssPath(canvas),
           figure: r.width >= 120 && r.height >= 80,
+          fixed: isFixed(node),
         },
         canvas,
       );
@@ -290,6 +307,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
           rect: lib.docRect(img),
           selector: lib.cssPath(img),
           figure: false,
+          fixed: isFixed(img),
         },
         img,
       );
@@ -317,6 +335,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       }
     }
     parent.appendChild(copy);
+    liveOf.set(copy, node);
     for (const child of [...(lib.shadowOf(node) ?? node).childNodes]) cloneInto(child, copy);
   };
 
@@ -377,6 +396,18 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     }
   }
 
+  // Defuddle drops the H1 that repeats the page title; it is page text, so the note keeps it.
+  if (!scoped && engine === "defuddle") {
+    const squash = (value: string) => value.replace(/\s+/g, " ").trim();
+    const heading = [...document.querySelectorAll("h1")].find(
+      (h1) => lib.visible(h1) && squash(h1.textContent ?? "") !== "",
+    );
+    const text = heading ? squash(heading.textContent ?? "") : "";
+    if (text && !markdown.includes(text)) {
+      const escaped = text.replace(/[\\`*_[\]<>]/g, (char) => `\\${char}`);
+      markdown = `# ${escaped}\n\n${markdown}`;
+    }
+  }
   const tidy = (parts: string[]) =>
     parts
       .join("")
@@ -386,8 +417,11 @@ export function pageExtract(options: ExtractOptions): PageExtract {
   let textRoot: Element = liveRoot;
   const contentSelector = result?.debug?.contentSelector;
   if (!scoped && engine === "defuddle" && contentSelector) {
+    // Defuddle built the selector on the flattened copy: resolve it there, then map back to the
+    // live element (the live document can match a different element, or none).
     try {
-      textRoot = document.querySelector(contentSelector) ?? liveRoot;
+      const match = out.querySelector(contentSelector);
+      textRoot = (match && liveOf.get(match)) ?? liveRoot;
     } catch {
       textRoot = liveRoot;
     }
@@ -412,7 +446,9 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     );
     pageText = tidy(pageParts);
   }
-  globalThis.__mtCapture = { root: textRoot, range };
+  // Anchors are located in the whole scope (the body for a page), not only in Defuddle's root:
+  // the note keeps blocks from anywhere on the page.
+  globalThis.__mtCapture = { root: liveRoot, range, frames: frameElements };
   const texScope: ParentNode = scoped ? liveRoot : document;
   const mathTex = [...texScope.querySelectorAll('annotation[encoding="application/x-tex"]')]
     .map((annotation) => (annotation.textContent ?? "").trim())
@@ -443,5 +479,6 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     media,
     rawTables,
     frames,
+    smallFrames,
   };
 }

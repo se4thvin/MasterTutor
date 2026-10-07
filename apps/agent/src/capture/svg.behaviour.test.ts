@@ -35,6 +35,11 @@ describe("pageSanitizeSvg (S2: the four verified bypasses)", () => {
       '<svg xmlns="http://www.w3.org/2000/svg"><use href="https://evil.test/sprite.svg#icon"/><rect width="5" height="5"/></svg>',
       /evil\.test/,
     ],
+    // 5-8 review I5: a CSS escape decodes to url( in the browser.
+    [
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:\\75 rl(https://evil.test/a)" fill="\\75 rl(https://evil.test/b)" width="5" height="5"/></svg>',
+      /evil\.test|\\/,
+    ],
   ])("strips %s", async (input, forbidden) => {
     const out = await sanitize(input);
     expect(out).not.toBeNull();

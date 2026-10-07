@@ -1,3 +1,4 @@
+import { MAX_ASSET_BYTES } from "@mastertutor/contracts";
 import { fakeEmbeddingsClient } from "@mastertutor/contracts/testing";
 import {
   createDb,
@@ -12,7 +13,10 @@ import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import type { Storage } from "@mastertutor/storage";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { MaskSources } from "../browser/masking.ts";
+import { EventEmitter } from "node:events";
+import type { CDPSession } from "playwright-core";
+import { NO_MASK_SOURCES, type MaskSources } from "../browser/masking.ts";
+import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { commitStep, seedRun, startTestStorage, testLogger, testWrite } from "../testing/notes.ts";
 import { createAssetStore } from "./assets.ts";
 import { createEmbedder } from "./embedder.ts";
@@ -189,26 +193,179 @@ describe("NoteWriter", () => {
 
   it("refuses to store a block or title that shows a registered secret", async () => {
     const scope = await seedRun(h.db);
-    const notesWriter = writer();
     // B3 seam: the vault's redactor over exact secret values (containsSecret(sources, text) is the predicate).
     const secrets: MaskSources = {
       nodeIds: () => [],
       hasSecrets: () => true,
       redact: (text) => text.replaceAll("hunter2", "[secret]"),
     };
+    const client = fakeEmbeddingsClient();
+    const screened = new NoteWriter({ db: h.db, embedder: createEmbedder(client, testLogger) });
     const w = testWrite(scope, secrets);
     await expect(
-      notesWriter.ensureNote(w, { title: "Your password is hunter2", lede: null }),
+      screened.ensureNote(w, { title: "Your password is hunter2", lede: null }),
     ).rejects.toMatchObject({ code: "secret_on_page" });
-    const noteId = await notesWriter.ensureNote(w, { title: "Account", lede: null });
+    const noteId = await screened.ensureNote(w, { title: "Account", lede: null });
     await expect(
-      notesWriter.appendBlocks(w, {
+      screened.appendBlocks(w, {
         noteId,
         sourceId: null,
         afterBlockId: null,
         blocks: [block("pw: hunter2")],
       }),
     ).rejects.toMatchObject({ code: "secret_on_page" });
+    // Screened before anything else: never sent to OpenAI, no block row staged (only the note).
+    expect(client.calls).toEqual([]);
+    expect(w.step.events.filter((e) => e.type === "block_added")).toEqual([]);
+  });
+
+  it("screens URLs, meta, anchors and asset source URLs, percent-encoded too (review I4)", async () => {
+    const scope = await seedRun(h.db);
+    const prints = createSecretFingerprints();
+    const secret = "MARMOT4CANARY8VELVET";
+    prints.remember(scope.runId, {
+      filled: {
+        cdp: new EventEmitter() as unknown as CDPSession,
+        frameId: "main",
+        loaderId: "doc",
+        backendNodeIds: [1],
+      },
+      secret,
+    });
+    const w = testWrite(scope, prints.forRun(scope.runId));
+    const notesWriter = writer();
+    const noteId = await notesWriter.ensureNote(w, { title: "Login", lede: null });
+    const encoded = "MARMOT4%43ANARY8VELVET";
+    const refused = { code: "secret_on_page" };
+    expect(() =>
+      notesWriter.stageSource(w, source(noteId, `https://example.com/login?pw=${secret}`)),
+    ).toThrow(expect.objectContaining(refused));
+    expect(() =>
+      notesWriter.stageSource(w, source(noteId, `https://example.com/login?pw=${encoded}`)),
+    ).toThrow(expect.objectContaining(refused));
+    expect(() =>
+      notesWriter.stageSource(w, {
+        ...source(noteId),
+        canonicalUrl: `https://example.com/?next=%2Fa%3Fpw%3D${encoded}`,
+      }),
+    ).toThrow(expect.objectContaining(refused));
+    expect(() =>
+      notesWriter.stageSource(w, { ...source(noteId), meta: { echo: `pw ${secret}` } }),
+    ).toThrow(expect.objectContaining(refused));
+    const sourceId = notesWriter.stageSource(w, source(noteId));
+    expect(() => notesWriter.stageSourceMeta(w, sourceId, { echo: secret })).toThrow(
+      expect.objectContaining(refused),
+    );
+    const anchor = {
+      selector: `input[value="${secret}"]`,
+      xpath: null,
+      start: null,
+      end: null,
+      textFragment: null,
+    };
+    await expect(
+      notesWriter.appendBlocks(w, {
+        noteId,
+        sourceId,
+        afterBlockId: null,
+        blocks: [block("Plain text", { anchor })],
+      }),
+    ).rejects.toMatchObject(refused);
+    const store = createAssetStore({ db: h.db, storage });
+    await expect(
+      store.put(
+        scope.workspaceId,
+        {
+          bytes: new Uint8Array([1]),
+          mime: "image/png",
+          width: 1,
+          height: 1,
+          sourceUrl: `https://example.com/x.png?pw=${encoded}`,
+        },
+        w.secrets,
+      ),
+    ).rejects.toMatchObject(refused);
+  });
+
+  it("scopes every query and write to the run's workspace (review I3)", async () => {
+    const mine = await seedRun(h.db);
+    const theirs = await seedRun(h.db);
+    const theirWrite = testWrite(theirs);
+    const theirNote = await writer(true).ensureNote(theirWrite, { title: "Theirs", lede: null });
+    const theirSource = writer().stageSource(theirWrite, source(theirNote));
+    await writer(true).appendBlocks(theirWrite, {
+      noteId: theirNote,
+      sourceId: theirSource,
+      afterBlockId: null,
+      blocks: [block("Their text")],
+    });
+    writer().stageQuality(theirWrite, theirNote, 0.9);
+    await commitStep(h.db, theirs.runId, theirWrite.step);
+
+    const w = testWrite(mine);
+    await expect(
+      writer().appendBlocks(w, {
+        noteId: theirNote,
+        sourceId: null,
+        afterBlockId: null,
+        blocks: [block("Injected")],
+      }),
+    ).rejects.toMatchObject({ code: "foreign_note" });
+    writer().stageSourceMeta(w, theirSource, { hijacked: true });
+    writer().stageQuality(w, theirNote, 0.1);
+    await commitStep(h.db, mine.runId, w.step);
+    const [src] = await h.db
+      .select({ meta: sources.meta })
+      .from(sources)
+      .where(eq(sources.id, theirSource));
+    expect(src?.meta).not.toHaveProperty("hijacked");
+    const [note] = await h.db
+      .select({ coverage: notes.coverage })
+      .from(notes)
+      .where(eq(notes.id, theirNote));
+    expect(note?.coverage).toBe(0.9);
+    const client = fakeEmbeddingsClient();
+    const other = new NoteWriter({ db: h.db, embedder: createEmbedder(client, testLogger) });
+    expect(await other.backfillEmbeddings(mine, theirNote, { step: testWrite(mine).step })).toBe(0);
+    expect(client.calls).toEqual([]);
+  });
+
+  it("ignores a draft title once the run has its note, and survives bad mediaLost meta", async () => {
+    const scope = await seedRun(h.db);
+    const secrets: MaskSources = {
+      ...NO_MASK_SOURCES,
+      hasSecrets: () => true,
+      redact: (text) => text.replaceAll("hunter2", "[secret]"),
+    };
+    const first = testWrite(scope, secrets);
+    const noteId = await writer().ensureNote(first, { title: "Account", lede: null });
+    writer().stageSource(first, { ...source(noteId), meta: { mediaLost: "lots" } });
+    writer().stageQuality(first, noteId, 1);
+    await commitStep(h.db, scope.runId, first.step);
+    const later = testWrite(scope, secrets);
+    await expect(
+      writer().ensureNote(later, { title: "Your password is hunter2", lede: null }),
+    ).resolves.toBe(noteId);
+  });
+
+  it("refuses asset types outside the allow-list and bytes over MAX_ASSET_BYTES (review I6)", async () => {
+    const scope = await seedRun(h.db);
+    const store = createAssetStore({ db: h.db, storage });
+    const input = { width: 1, height: 1, sourceUrl: null };
+    await expect(
+      store.put(
+        scope.workspaceId,
+        { ...input, bytes: new TextEncoder().encode("<script>1</script>"), mime: "text/html" },
+        NO_MASK_SOURCES,
+      ),
+    ).rejects.toThrow(/asset type/);
+    await expect(
+      store.put(
+        scope.workspaceId,
+        { ...input, bytes: new Uint8Array(MAX_ASSET_BYTES + 1), mime: "image/png" },
+        NO_MASK_SOURCES,
+      ),
+    ).rejects.toThrow(/too large/);
   });
 
   it("stores blocks without vectors when embeddings fail, then backfills", async () => {
@@ -222,28 +379,38 @@ describe("NoteWriter", () => {
       blocks: [block("Leaf")],
     });
     await commitStep(h.db, scope.runId, w.step);
-    expect(await writer().backfillEmbeddings(noteId)).toBe(1);
-    expect(await writer().backfillEmbeddings(noteId)).toBe(0);
+    const step = testWrite(scope).step;
+    expect(await writer().backfillEmbeddings(scope, noteId, { step })).toBe(1);
+    expect(await writer().backfillEmbeddings(scope, noteId, { step })).toBe(0);
+    expect(step.usage.inputTokens).toBe(1);
   });
 
   it("stores assets once per workspace (content-addressed)", async () => {
     const scope = await seedRun(h.db);
     const store = createAssetStore({ db: h.db, storage });
     const bytes = new TextEncoder().encode("<svg xmlns='http://www.w3.org/2000/svg'/>");
-    const one = await store.put(scope.workspaceId, {
-      bytes,
-      mime: "image/svg+xml",
-      width: 1,
-      height: 1,
-      sourceUrl: null,
-    });
-    const two = await store.put(scope.workspaceId, {
-      bytes,
-      mime: "image/svg+xml",
-      width: 1,
-      height: 1,
-      sourceUrl: null,
-    });
+    const one = await store.put(
+      scope.workspaceId,
+      {
+        bytes,
+        mime: "image/svg+xml",
+        width: 1,
+        height: 1,
+        sourceUrl: null,
+      },
+      NO_MASK_SOURCES,
+    );
+    const two = await store.put(
+      scope.workspaceId,
+      {
+        bytes,
+        mime: "image/svg+xml",
+        width: 1,
+        height: 1,
+        sourceUrl: null,
+      },
+      NO_MASK_SOURCES,
+    );
     expect(two.assetId).toBe(one.assetId);
     expect(await storage.head(`assets/${scope.workspaceId}/${one.sha256}`)).not.toBeNull();
   });

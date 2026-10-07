@@ -29,6 +29,7 @@ const extract: PageExtract = {
   mathTex: [],
   rawTables: ['<table><tr><td rowspan="2">x</td></tr></table>'],
   frames: [{ index: 0, url: "https://x.test/f", name: null }],
+  smallFrames: 0,
   media: [
     {
       index: 0,
@@ -40,6 +41,7 @@ const extract: PageExtract = {
       rect: null,
       selector: "#c",
       figure: true,
+      fixed: false,
     },
     {
       index: 1,
@@ -51,6 +53,7 @@ const extract: PageExtract = {
       rect: null,
       selector: null,
       figure: false,
+      fixed: false,
     },
     {
       index: 2,
@@ -62,6 +65,7 @@ const extract: PageExtract = {
       rect: null,
       selector: null,
       figure: false,
+      fixed: false,
     },
     {
       index: 3,
@@ -73,6 +77,7 @@ const extract: PageExtract = {
       rect: null,
       selector: "#h",
       figure: false,
+      fixed: false,
     },
   ],
 };

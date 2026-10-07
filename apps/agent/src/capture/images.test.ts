@@ -14,6 +14,9 @@ const UNSAFE = [
   '<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg/>',
   '<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:url(https://evil.test/a)"/></svg>',
   '<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/svg+xml;base64,PHN2Zy8+"/></svg>',
+  // CSS escapes decode to url( in the browser (5-8 review I5): no backslash in attribute values.
+  '<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:\\75 rl(https://evil.test/a)"/></svg>',
+  '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="\\75 rl(https://evil.test/a)"/></svg>',
 ];
 
 describe("isSafeSvg", () => {

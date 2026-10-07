@@ -1,4 +1,4 @@
-import { FolderName, MAX_FOLDER_DEPTH, type FiledBy } from "@mastertutor/contracts";
+import { FolderName, folderChain, type FiledBy } from "@mastertutor/contracts";
 import { and, asc, eq } from "drizzle-orm";
 import type { DbLike } from "../client.ts";
 import { folders, notes } from "../schema/index.ts";
@@ -62,21 +62,9 @@ export async function listFolders(db: DbLike, workspaceId: string): Promise<Fold
     .orderBy(asc(folders.sort), asc(folders.name));
 }
 
-/** Folder id → names from the root. */
+/** Folder id → names from the root (the contracts walk: one rule, cycle-safe). */
 export function folderPaths(rows: readonly FolderNode[]): Map<string, string[]> {
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const memo = new Map<string, string[]>();
-  const pathOf = (id: string, guard: number): string[] => {
-    const cached = memo.get(id);
-    if (cached) return cached;
-    const row = byId.get(id);
-    if (!row || guard > MAX_FOLDER_DEPTH) return [];
-    const path = row.parentId ? [...pathOf(row.parentId, guard + 1), row.name] : [row.name];
-    memo.set(id, path);
-    return path;
-  };
-  for (const row of rows) pathOf(row.id, 0);
-  return memo;
+  return new Map(rows.map((row) => [row.id, folderChain(rows, row.id).map((link) => link.name)]));
 }
 
 const fold = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase("en");

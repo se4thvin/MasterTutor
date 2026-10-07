@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import type { AssetInput, AssetStore } from "../notes/assets.ts";
+import { NO_MASK_SOURCES } from "../browser/masking.ts";
+import { AssetRejected, type AssetInput, type AssetStore } from "../notes/assets.ts";
 import { storeMedia, type MediaContext } from "./media.ts";
 import type { PageMedia } from "./page/types.ts";
 
@@ -29,6 +30,7 @@ function memoryAssets(): AssetStore & { puts: AssetInput[] } {
   };
 }
 const base: Omit<PageMedia, "index" | "kind"> = {
+  fixed: false,
   url: null,
   svg: null,
   dataUrl: null,
@@ -46,6 +48,7 @@ async function context(overrides: Partial<MediaContext> = {}) {
     workspaceId: "w",
     assets,
     fetch: async () => null,
+    secrets: NO_MASK_SOURCES,
     sanitizeSvg: async (text) => (text.includes("onload") ? null : text),
     shoot: async (_clip, scale) => (shots.push({ scale }), shot),
     signal: new AbortController().signal,
@@ -135,5 +138,86 @@ describe("storeMedia", () => {
     const report = await storeMedia(ctx, items);
     expect(overlap).toBe(0);
     expect([...report.stored.values()].every((m) => m.screenshotAssetId !== null)).toBe(true);
+  });
+  it("counts an asset the store rejects as lost, but a secret in its URL stops the capture", async () => {
+    const { ctx } = await context({ shoot: null });
+    const shot = await png();
+    ctx.fetch = async () => ({ bytes: shot, contentType: "image/png" });
+    ctx.assets = {
+      put: async () => {
+        throw new AssetRejected("asset too large");
+      },
+    };
+    const report = await storeMedia(ctx, [
+      { ...base, index: 0, kind: "img", url: "https://x.test/a.png" },
+    ]);
+    expect(report).toMatchObject({ lost: 1 });
+    ctx.assets = {
+      put: async () => {
+        throw Object.assign(new Error("secret"), { code: "secret_on_page" });
+      },
+    };
+    await expect(
+      storeMedia(ctx, [{ ...base, index: 0, kind: "img", url: "https://x.test/a.png" }]),
+    ).rejects.toMatchObject({ code: "secret_on_page" });
+  });
+  it("loses one item on a failed shot or store, and stops starting new items on a fatal error (M1)", async () => {
+    const { ctx } = await context();
+    let shots = 0;
+    ctx.shoot = async () => {
+      shots += 1;
+      if (shots === 1) throw new Error("tile vanished");
+      return png();
+    };
+    const items = [0, 1, 2].map((index) => ({
+      ...base,
+      index,
+      kind: "img" as const,
+      figure: true,
+    }));
+    const report = await storeMedia(ctx, items);
+    expect(report.stored.size).toBe(3);
+    expect(report.lost).toBe(1);
+
+    const started: number[] = [];
+    const { ctx: fatal } = await context({ shoot: null });
+    fatal.fetch = async (url) => {
+      started.push(Number(url.slice(-1)));
+      if (url.endsWith("0")) throw Object.assign(new Error("secret"), { code: "secret_on_page" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return null;
+    };
+    const many = Array.from({ length: 9 }, (_, index) => ({
+      ...base,
+      index,
+      kind: "img" as const,
+      url: `https://x.test/${index}`,
+    }));
+    await expect(storeMedia(fatal, many)).rejects.toMatchObject({ code: "secret_on_page" });
+    expect(started.length).toBeLessThan(9);
+  });
+
+  it("never shoots fixed or sticky media: the shot would scroll away from it (M8)", async () => {
+    const { ctx, shots } = await context();
+    const report = await storeMedia(ctx, [
+      { ...base, index: 0, kind: "canvas", dataUrl: null, figure: true, fixed: true },
+    ]);
+    expect(shots).toEqual([]);
+    expect(report.stored.get(0)).toEqual({ assetId: null, screenshotAssetId: null });
+  });
+  it("screens SVG text against the vault before storing it (5-8 review I1)", async () => {
+    const { ctx, assets } = await context({
+      secrets: {
+        nodeIds: () => [],
+        hasSecrets: () => true,
+        redact: (text) => text.replaceAll("hunter2", "[secret]"),
+      },
+    });
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><text>pw hunter2</text></svg>';
+    await expect(
+      storeMedia(ctx, [{ ...base, index: 0, kind: "svg", svg, figure: true }]),
+    ).rejects.toMatchObject({ code: "secret_on_page" });
+    expect(assets.puts).toEqual([]);
   });
 });
