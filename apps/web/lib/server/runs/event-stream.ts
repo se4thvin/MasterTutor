@@ -173,9 +173,20 @@ export async function runEventStream(
         stop();
         return;
       }
-      // A reader that is behind already has bytes queued; a ping would only add to them.
+      // A reader that is behind already has bytes queued; a ping would only add to them. Each
+      // beat also re-checks membership, so a removed member stops receiving within one beat.
+      let checking = false;
       heartbeat = setInterval(() => {
         if (wanted()) send(": ping\n\n");
+        if (checking) return;
+        checking = true;
+        getRunForMember(deps.db.db, runId, userId)
+          .then((still) => {
+            if (!still) stop();
+          })
+          // A failed check ends the stream; the browser reconnects and is checked again.
+          .catch(stop)
+          .finally(() => (checking = false));
       }, deps.heartbeatMs ?? SSE_HEARTBEAT_MS);
       schedule();
       // An already finished run closes once its tail is sent, even without a status event in it.
