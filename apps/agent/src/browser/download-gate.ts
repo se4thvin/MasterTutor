@@ -115,7 +115,8 @@ export class DownloadGate {
    * A person takes (`true`) or hands back (`false`) control through the live view. This gate is
    * the only code that sets the browser's download behaviour. While on, every download the person
    * starts completes into the run's folder (B6 stores it), within `limits`; the agent cannot act
-   * meanwhile. Off: downloads are denied again and the agent gate resumes (its open allowances end).
+   * meanwhile. Off: downloads are denied again and the agent gate resumes (its open allowances end);
+   * rejects when the deny cannot be restored (the caller must fail closed).
    * The person's files are never swept; `userDownloads()` names them.
    */
   async userControl(on: boolean, limits?: Partial<UserDownloadLimits>): Promise<void> {
@@ -130,7 +131,13 @@ export class DownloadGate {
         downloadPath: this.#folder.slotPath,
         eventsEnabled: true,
       });
-    } else if (!on) await this.#close();
+    } else if (!on) {
+      // The deny must be back before the agent acts again: if it cannot be restored this rejects,
+      // and the caller fails closed (ends the run with the control lock still held).
+      await this.#deny();
+      if (this.#allowances.length === 0) this.#open = false;
+      void this.#close();
+    }
   }
 
   /** The ids of the downloads a person started while holding control (B6 files these). */
@@ -178,7 +185,8 @@ export class DownloadGate {
   #onProgress(guid: string, state: string, receivedBytes: number, totalBytes: number): void {
     if (this.#userDownloads.has(guid)) {
       const { maxBytes } = this.#userLimits;
-      if (state === "inProgress" && (receivedBytes > maxBytes || totalBytes > maxBytes))
+      // Checked at completion too: a small file can finish without an in-progress event.
+      if (state !== "canceled" && (receivedBytes > maxBytes || totalBytes > maxBytes))
         this.#cap(guid, "too_large");
       return;
     }
