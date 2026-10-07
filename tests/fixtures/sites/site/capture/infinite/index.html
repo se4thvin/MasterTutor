@@ -1,0 +1,27 @@
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Infinite</title>
+    <style>
+      .chunk {
+        height: 1000px;
+        border-bottom: 1px solid #ddd;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="list"><div class="chunk">Chunk 0</div></div>
+    <script>
+      let n = 1;
+      addEventListener("scroll", () => {
+        if (innerHeight + scrollY < document.documentElement.scrollHeight - 1200) return;
+        const chunk = document.createElement("div");
+        chunk.className = "chunk";
+        chunk.textContent = `Chunk ${n++}`;
+        document.getElementById("list").append(chunk);
+      });
+    </script>
+  </body>
+</html>
