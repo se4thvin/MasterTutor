@@ -90,6 +90,20 @@ describe("compose.test.yml E2E stack (one overlay, X2)", () => {
     expect(e2e.profiles).toEqual(["e2e-runner"]);
   });
 
+  it("derives the app's origin from TEST_HTTP_PORT everywhere it is spelled (review Minor 6)", () => {
+    const moved = composeConfig(".env.test", STACK, {
+      profiles: PROFILES,
+      env: { TEST_HTTP_PORT: "18181" },
+    });
+    const traefik = moved.services.traefik!;
+    expect(traefik.command).toContain("--entrypoints.web.address=:18181");
+    expect(traefik.ports?.map((p) => `${p.host_ip}:${p.published}:${p.target}`)).toEqual([
+      "127.0.0.1:18181:18181",
+    ]);
+    expect(moved.services.e2e?.environment?.E2E_BASE_URL).toBe("http://localhost:18181");
+    expect(moved.services.web?.environment?.BETTER_AUTH_URL).toBe("http://localhost:18181");
+  });
+
   it("has one test overlay: compose.live-test.yml is folded in (P7-5)", () => {
     expect(existsSync(new URL("../../compose.live-test.yml", import.meta.url))).toBe(false);
     const scripts = (

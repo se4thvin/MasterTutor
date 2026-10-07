@@ -7,16 +7,16 @@ services:
   traefik:
     image: traefik:v3.7.13
     # Listens on the public port inside its container too: the e2e runner shares this network
-    # namespace and opens exactly http://localhost:18080, the app's origin (BETTER_AUTH_URL).
+    # namespace and opens exactly http://localhost:$TEST_HTTP_PORT (default 18080), the app's origin.
     command:
-      - --entrypoints.web.address=:18080
+      - --entrypoints.web.address=:${TEST_HTTP_PORT:-18080}
       - --providers.file.filename=/etc/traefik/dynamic.yml
       - --ping=true
       - --log.level=WARN
     volumes:
       - ./infra/traefik/test-dynamic.yml:/etc/traefik/dynamic.yml:ro
     ports:
-      - "127.0.0.1:${TEST_HTTP_PORT:-18080}:18080"
+      - "127.0.0.1:${TEST_HTTP_PORT:-18080}:${TEST_HTTP_PORT:-18080}"
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 2s
@@ -39,6 +39,8 @@ services:
   web:
     environment:
       OPENAI_BASE_URL: http://llm-mock:8090/v1
+      # The app's origin is Traefik's published port: one variable for every place it is spelled.
+      BETTER_AUTH_URL: http://localhost:${TEST_HTTP_PORT:-18080}
 
   # Two slots: two concurrent runs and the live view's cross-slot cases. Each advertises its static
   # cdp address for WebRTC (outside the cdp ip_range .128/25), which the e2e runner reaches from
@@ -190,7 +192,7 @@ services:
         aliases: [bench.fixtures.test]
 
   # Playwright for apps/web/playwright.stack.config.ts. It shares Traefik's network namespace, so
-  # localhost:18080 is the public entry point and the slots' WebRTC addresses are reachable, as for
+  # localhost:$TEST_HTTP_PORT is the public entry point and the slots' WebRTC addresses are reachable, as for
   # a real browser. Run it with scripts/e2e.sh (profile e2e-runner keeps `up` from starting it).
   e2e:
     profiles: ["e2e-runner"]
@@ -203,7 +205,7 @@ services:
     environment:
       CI: ${CI:-}
       HOME: /tmp
-      E2E_BASE_URL: http://localhost:18080
+      E2E_BASE_URL: http://localhost:${TEST_HTTP_PORT:-18080}
       E2E_LLM_MOCK_URL: http://llm-mock:8090
     volumes:
       - ./apps/web/e2e:/repo/apps/web/e2e
