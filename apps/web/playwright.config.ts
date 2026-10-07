@@ -3,7 +3,8 @@ import { parseEnv } from "node:util";
 import { defineConfig } from "@playwright/test";
 import { QA_VIEWPORTS } from "./e2e/helpers/breakpoints.ts";
 
-const PORT = 3100;
+// WEB_UI_PORT: the shared CI host gives each concurrent run its own (scripts/remote-test/slots.sh).
+const PORT = Number(process.env["WEB_UI_PORT"] || 3100);
 const baseURL = `http://localhost:${PORT}`;
 const testEnv = parseEnv(readFileSync(new URL("../../.env.test", import.meta.url), "utf8"));
 
