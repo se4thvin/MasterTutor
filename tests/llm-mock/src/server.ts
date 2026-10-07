@@ -1,13 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { MockOutput, MockRequestBody, RecordedRequest, Scenario } from "./scenario.ts";
+import { scenarioTag } from "./select.ts";
 
 export interface LlmMock {
   url: string;
   requests: RecordedRequest[];
   failures: string[];
   setScenarios(list: readonly Scenario[]): void;
-  requestsFor(name: string): RecordedRequest[];
+  /** One scenario's requests, or one run's when `nonce` is given (scenarioGoal). */
+  requestsFor(name: string, nonce?: string): RecordedRequest[];
   close(): Promise<void>;
 }
 
@@ -24,7 +26,6 @@ const FORBIDDEN_FIELDS = [
   "conversation",
   "background",
 ];
-const TAG = /\[scenario:([a-z0-9_-]+)\]/i;
 
 async function readJson(request: IncomingMessage): Promise<MockRequestBody> {
   const chunks: Buffer[] = [];
@@ -57,8 +58,38 @@ function latestElements(body: MockRequestBody): ScenarioState["elements"] | null
   return found;
 }
 
+const SUMMARY = "Summary:\n";
+
+/**
+ * The run's scenario (D26): the tag in the first text of the first user message (the goal, or a
+ * compaction request's "Run goal"), else the goal of a compaction seed's summary (its second text).
+ * Page text, tool output and later messages are never read, so a page cannot reroute a run.
+ */
+function routeOf(body: MockRequestBody): { name: string; nonce: string | null } | null {
+  const items = Array.isArray(body.input) ? (body.input as Array<Record<string, unknown>>) : [];
+  const content = items.find((item) => item.role === "user")?.content;
+  const texts =
+    typeof content === "string"
+      ? [content]
+      : Array.isArray(content)
+        ? (content as Array<Record<string, unknown>>)
+            .filter((part) => part.type === "input_text" && typeof part.text === "string")
+            .map((part) => part.text as string)
+        : [];
+  const direct = texts[0] === undefined ? null : scenarioTag(texts[0]);
+  if (direct) return direct;
+  const summary = texts[1];
+  if (!summary?.startsWith(SUMMARY)) return null;
+  try {
+    const goal = (JSON.parse(summary.slice(SUMMARY.length)) as { goal?: unknown }).goal;
+    return typeof goal === "string" ? scenarioTag(goal) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function startLlmMock(
-  options: { port?: number; scenarios?: readonly Scenario[] } = {},
+  options: { port?: number; host?: string; scenarios?: readonly Scenario[] } = {},
 ): Promise<LlmMock> {
   const scenarios = new Map<string, Scenario>();
   const states = new Map<string, ScenarioState>();
@@ -72,8 +103,19 @@ export async function startLlmMock(
   const setScenarios = (list: readonly Scenario[]) => {
     for (const scenario of list) {
       scenarios.set(scenario.name, scenario);
-      states.set(scenario.name, { cursor: 0, elements: [] });
+      for (const key of [...states.keys()])
+        if (key.startsWith(`${scenario.name}#`)) states.delete(key);
     }
+  };
+  /** One cursor per run: `name#nonce`; nonce-less tags (behaviour tests) share `name#`. */
+  const stateFor = (name: string, nonce: string | null): ScenarioState => {
+    const key = `${name}#${nonce ?? ""}`;
+    let state = states.get(key);
+    if (!state) {
+      state = { cursor: 0, elements: [] };
+      states.set(key, state);
+    }
+    return state;
   };
   setScenarios(options.scenarios ?? []);
 
@@ -257,36 +299,52 @@ export async function startLlmMock(
 
   const server = createServer((request, response) => {
     void (async () => {
-      if (request.method === "GET" && request.url === "/__mock/requests")
-        return send(response, 200, requests);
+      const url = new URL(request.url ?? "/", "http://mock");
+      if (request.method === "GET" && url.pathname === "/__mock/requests") {
+        const nonce = url.searchParams.get("nonce");
+        return send(
+          response,
+          200,
+          nonce === null ? requests : requests.filter((entry) => entry.nonce === nonce),
+        );
+      }
       const path = request.url ?? "";
       if (request.method !== "POST" || path !== "/v1/responses") {
         requests.push({ scenario: null, turn: null, body: {}, at: Date.now(), path });
         return send(response, 404, { error: { message: "not found" } });
       }
       const body = await readJson(request);
-      // Routing: the [scenario:x] tag of the goal (first user message) or of a compaction seed.
-      const name = TAG.exec(JSON.stringify(body.input ?? ""))?.[1] ?? null;
+      const route = routeOf(body);
+      const name = route?.name ?? null;
+      const nonce = route?.nonce ?? null;
       const scenario = name ? scenarios.get(name) : undefined;
-      const state = name ? states.get(name) : undefined;
-      if (!scenario || !state || !name) {
+      if (!scenario || !name) {
         requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
         return send(response, 404, {
           error: { message: "no scenario for this request", type: "invalid_request_error" },
         });
       }
+      const state = stateFor(name, nonce);
+      const routed = (turn: number | null): RecordedRequest => ({
+        scenario: name,
+        nonce,
+        turn,
+        body,
+        at: Date.now(),
+        path,
+      });
       const policy = policyProblem(body);
       if (policy) {
-        requests.push({ scenario: name, turn: null, body, at: Date.now(), path });
+        requests.push(routed(null));
         failures.push(`${name} request: ${policy}`);
         return send(response, 400, {
           error: { message: policy, type: "invalid_request_error", param: null, code: null },
         });
       }
       if (body.text?.format?.name === "compaction_summary") {
-        requests.push({ scenario: name, turn: null, body, at: Date.now(), path });
+        requests.push(routed(null));
         const summary = scenario.compaction ?? {
-          goal: `[scenario:${name}] resumed`,
+          goal: `[scenario:${name}${nonce ? `#${nonce}` : ""}] resumed`,
           plan: { items: [] },
           progress: "",
           facts: [],
@@ -304,7 +362,7 @@ export async function startLlmMock(
       }
       const pairing = pairingProblem(body);
       if (pairing) {
-        requests.push({ scenario: name, turn: null, body, at: Date.now(), path });
+        requests.push(routed(null));
         failures.push(`${name} request: ${pairing}`);
         return send(response, 400, {
           error: { message: pairing, type: "invalid_request_error", param: "input", code: null },
@@ -312,7 +370,7 @@ export async function startLlmMock(
       }
       const index = state.cursor;
       state.cursor += 1;
-      const recorded: RecordedRequest = { scenario: name, turn: index, body, at: Date.now(), path };
+      const recorded = routed(index);
       requests.push(recorded);
       const elements = latestElements(body);
       if (elements) state.elements = elements;
@@ -359,14 +417,19 @@ export async function startLlmMock(
       if (!response.headersSent) send(response, 500, { error: { message: "mock error" } });
     });
   });
-  await new Promise<void>((resolve) => server.listen(options.port ?? 0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) =>
+    server.listen(options.port ?? 0, options.host ?? "127.0.0.1", resolve),
+  );
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${port}`,
     requests,
     failures,
     setScenarios,
-    requestsFor: (name) => requests.filter((entry) => entry.scenario === name),
+    requestsFor: (name, nonce) =>
+      requests.filter(
+        (entry) => entry.scenario === name && (nonce === undefined || entry.nonce === nonce),
+      ),
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
