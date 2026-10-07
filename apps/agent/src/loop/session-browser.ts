@@ -284,7 +284,7 @@ export class SessionLoopBrowser implements LoopBrowser {
       .map((blocked) => ({ ...blocked, url: this.#mask.redact(blocked.url) }));
   }
 
-  allowDownload(card: { url: string; filename: string | null }): Promise<void> {
+  allowDownload(card: { url: string; filename: string | null; approvedBy: string }): Promise<void> {
     // The card was made from the redacted URL and the suggested name: a download matches when it
     // makes the same card. A script's blob download gets a new URL each time: for those
     // the same origin (not an opaque one) and the same name are enough (I4).
@@ -292,7 +292,7 @@ export class SessionLoopBrowser implements LoopBrowser {
       const made = downloadRequest(this.#mask.redact(url), filename);
       if (made.kind !== "download" || made.filename !== card.filename) return false;
       return made.url === card.url || sameScriptDownload(made.url, card.url);
-    });
+    }, card.approvedBy);
   }
 
   collectStorage(): Promise<CollectedStorage> {

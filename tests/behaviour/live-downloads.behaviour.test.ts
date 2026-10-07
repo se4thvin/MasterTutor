@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import type { RunEvent } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
-  approvals,
   assets,
   createDb,
   downloads,
@@ -328,21 +327,27 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
     await noLocalFiles(runId);
   });
 
-  it("files a download a person approved for the agent, with that person as its approver (approvedDownloads)", async () => {
+  it("files a download approved for the agent under the person who approved that very allowance (N3)", async () => {
     const { runId, session } = await leasedRun("agent");
-    await owner.db.insert(approvals).values({
-      runId,
-      stepSeq: 1,
-      kind: "download",
-      request: { kind: "download", url: NOTES, filename: "live-notes.txt" },
-      status: "approved",
-      decidedBy: member.userId,
-      decidedAt: new Date(),
-    } as never);
-    await session.downloads.allowOnce((url) => url === NOTES);
+    await session.downloads.allowOnce((url) => url === NOTES, member.userId);
     await clickDownload(session, "notes");
     const [row] = await rowCount(runId, 1, "approved download filed");
-    expect(row).toMatchObject({ filename: "live-notes.txt", approvedBy: member.userId });
+    expect(row).toMatchObject({
+      filename: "live-notes.txt",
+      approvedBy: member.userId,
+      pending: false,
+    });
+    await noLocalFiles(runId);
+  });
+
+  it("stores nothing for a let-through download that no approval names (N3: never 'policy')", async () => {
+    const before = storedAssets();
+    const { runId, session } = await leasedRun("agent");
+    await session.downloads.allowOnce((url) => url === NOTES);
+    await clickDownload(session, "notes");
+    expect(await errorEvent(runId, "download_failed")).toBeDefined();
+    expect(await rowsFor(runId)).toEqual([]);
+    expect(storedAssets()).toBe(before);
     await noLocalFiles(runId);
   });
 
