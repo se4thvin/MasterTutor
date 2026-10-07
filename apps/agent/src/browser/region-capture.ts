@@ -302,6 +302,9 @@ async function captureTile(
     if (options.vault && (await opaqueFrameInTile(cdp, tile, layout))) return null;
     const before = await collectMaskBoxes(session, sources);
     if (before.unverifiable > 0) return null;
+    const chrome = options.first
+      ? []
+      : await (await session.worlds()).evaluate(fixedChromeBoxesScript, null);
     session.guard.assertAgent(signal);
     const { data } = await cdp.send("Page.captureScreenshot", {
       format: "png",
@@ -327,10 +330,7 @@ async function captureTile(
       height: box.height * scale,
     });
     let png: Buffer = Buffer.from(data, "base64");
-    if (!options.first) {
-      const chrome = await (await session.worlds()).evaluate(fixedChromeBoxesScript, null);
-      png = await paintOver(png, chrome.map(toImage));
-    }
+    if (chrome.length > 0) png = await paintOver(png, chrome.map(toImage));
     const masks = after.boxes.map(toImage);
     if (masks.length === 0) return png;
     const meta = await sharp(png).metadata();
@@ -393,9 +393,11 @@ export async function captureMaskedRegion(
       });
     }
   } finally {
-    // Put the page back where the agent left it, also after an abort or a takeover (no assert
-    // here: it would skip the restore and replace the original outcome, N7).
-    await scrollInstantly(session, { x: start.scrollX, y: start.scrollY }).catch(() => undefined);
+    // Put the page back where the agent left it, also after an abort (no assert here: it would
+    // skip the restore and replace the original outcome, N7).
+    // Never under a person who has taken the browser over: the page is theirs now.
+    if (!session.guard.held)
+      await scrollInstantly(session, { x: start.scrollX, y: start.scrollY }).catch(() => undefined);
   }
   if (await containsSecretText(session, sources, signal)) return null; // B3 seam: (…, signal)
   if (pieces.length === 1) return new Uint8Array(pieces[0]!.input);
