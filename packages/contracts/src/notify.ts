@@ -9,6 +9,7 @@ export const NOTIFY_CHANNELS = [
   "run_control",
   "otp_ready",
   "run_event",
+  "live_revoke",
 ] as const;
 export type NotifyChannel = (typeof NOTIFY_CHANNELS)[number];
 
@@ -19,6 +20,14 @@ export const NotifyPayloads = {
   run_control: z.strictObject({ runId: Uuid }),
   otp_ready: z.strictObject({ runId: Uuid }),
   run_event: z.strictObject({ runId: Uuid, eventId: z.string().regex(/^[0-9]+$/) }),
+  /**
+   * From database triggers (B6): a Better Auth session ended (sign-out; workspaceId null) or a
+   * membership was removed. The agent closes that person's open n.eko live views.
+   */
+  live_revoke: z.strictObject({
+    userId: z.string().min(1).max(128),
+    workspaceId: Uuid.nullable(),
+  }),
 } as const satisfies Record<NotifyChannel, z.ZodType>;
 export type NotifyPayload<C extends NotifyChannel> = z.infer<(typeof NotifyPayloads)[C]>;
 

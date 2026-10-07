@@ -78,8 +78,15 @@ export function DefaultsForm({ settings }: { settings: SettingsView }) {
     setErrors({});
     setPending(true);
     // Owns only the defaults: a late response cannot touch the kill switch.
-    const ok = await saveSettingsFields(qc, ["defaultBudget", "defaultAllowedOrigins"], () =>
-      api.settings.update({ defaultBudget: budget.data, defaultAllowedOrigins: origins.origins }),
+    const ok = await saveSettingsFields(
+      qc,
+      ["defaultBudget", "defaultAllowedOrigins", "version"],
+      () =>
+        api.settings.update({
+          version: settings.version,
+          defaultBudget: budget.data,
+          defaultAllowedOrigins: origins.origins,
+        }),
     );
     setPending(false);
     if (ok) setNewOrigin("");

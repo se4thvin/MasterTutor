@@ -1,4 +1,4 @@
-import { encodeNotify } from "@mastertutor/contracts";
+import { encodeNotify, type WakeReason } from "@mastertutor/contracts";
 import { and, eq, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { runs } from "../schema/index.ts";
@@ -19,6 +19,17 @@ export async function returnControlToAgent(tx: DbTx, runId: string): Promise<boo
 /** NOTIFY run_control {runId}; delivered when the transaction commits (spec §3.1 rule 2). */
 export async function notifyRunControl(tx: DbTx, runId: string): Promise<void> {
   await tx.execute(sql`select pg_notify('run_control', ${encodeNotify("run_control", { runId })})`);
+}
+
+/** NOTIFY run_wake {runId, reason} on commit. runId null addresses every agent (kill, or a claim-loop wake). */
+export async function notifyRunWake(
+  tx: DbTx,
+  runId: string | null,
+  reason: WakeReason,
+): Promise<void> {
+  await tx.execute(
+    sql`select pg_notify('run_wake', ${encodeNotify("run_wake", { runId, reason })})`,
+  );
 }
 
 /** The member holding control of the run, or null while the agent holds it. */

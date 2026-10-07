@@ -14,6 +14,36 @@ export async function findAssetBySha(
   return row ?? null;
 }
 
+/**
+ * The workspace's asset for this content: inserted once per (workspace, sha256), otherwise the
+ * existing row (whose object key it keeps). The one upsert every download path uses.
+ */
+export async function upsertAsset(
+  tx: DbTx,
+  input: {
+    workspaceId: string;
+    sha256: string;
+    bucket: string;
+    key: string;
+    mime: string;
+    bytes: number;
+    sourceUrl: string | null;
+  },
+): Promise<string> {
+  const [inserted] = await tx
+    .insert(assets)
+    .values({ ...input, sourceUrl: input.sourceUrl?.slice(0, 4_096) ?? null })
+    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
+    .returning({ id: assets.id });
+  if (inserted) return inserted.id;
+  const [existing] = await tx
+    .select({ id: assets.id })
+    .from(assets)
+    .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)));
+  if (!existing) throw new Error("asset row missing after insert");
+  return existing.id;
+}
+
 export interface DownloadRecordInput {
   runId: string;
   workspaceId: string;
@@ -40,28 +70,15 @@ export async function recordDownload(
     .where(eq(runs.id, input.runId));
   if (run?.workspaceId !== input.workspaceId)
     throw new Error("download run is not in the given workspace");
-  const [inserted] = await tx
-    .insert(assets)
-    .values({
-      workspaceId: input.workspaceId,
-      sha256: input.sha256,
-      bucket: input.bucket,
-      key: input.key,
-      mime: input.mime,
-      bytes: input.bytes,
-      sourceUrl: input.sourceUrl.slice(0, 4_096),
-    })
-    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
-    .returning({ id: assets.id });
-  const assetId =
-    inserted?.id ??
-    (
-      await tx
-        .select({ id: assets.id })
-        .from(assets)
-        .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)))
-    )[0]?.id;
-  if (!assetId) throw new Error("asset row missing after insert");
+  const assetId = await upsertAsset(tx, {
+    workspaceId: input.workspaceId,
+    sha256: input.sha256,
+    bucket: input.bucket,
+    key: input.key,
+    mime: input.mime,
+    bytes: input.bytes,
+    sourceUrl: input.sourceUrl,
+  });
   const [download] = await tx
     .insert(downloads)
     .values({
@@ -162,28 +179,15 @@ export async function fileKeptDownload(
       ),
     );
   if (!row) throw new Error("no pending download to file");
-  const [inserted] = await tx
-    .insert(assets)
-    .values({
-      workspaceId: input.workspaceId,
-      sha256: input.sha256,
-      bucket: input.bucket,
-      key: input.key,
-      mime: input.mime,
-      bytes: row.bytes,
-      sourceUrl: input.sourceUrl?.slice(0, 4_096) ?? null,
-    })
-    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
-    .returning({ id: assets.id });
-  const assetId =
-    inserted?.id ??
-    (
-      await tx
-        .select({ id: assets.id })
-        .from(assets)
-        .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)))
-    )[0]?.id;
-  if (!assetId) throw new Error("asset row missing after insert");
+  const assetId = await upsertAsset(tx, {
+    workspaceId: input.workspaceId,
+    sha256: input.sha256,
+    bucket: input.bucket,
+    key: input.key,
+    mime: input.mime,
+    bytes: row.bytes,
+    sourceUrl: input.sourceUrl,
+  });
   await tx
     .update(downloads)
     .set({ assetId, pending: false })
@@ -205,4 +209,13 @@ export async function discardDownload(tx: DbTx, runId: string, id: string): Prom
   await tx
     .delete(downloads)
     .where(and(eq(downloads.id, id), eq(downloads.runId, runId), eq(downloads.pending, true)));
+}
+
+/** Downloads the run has kept or still holds, across all its leases (the per-run count cap). */
+export async function countRunDownloads(db: Database, runId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(downloads)
+    .where(eq(downloads.runId, runId));
+  return row?.count ?? 0;
 }
