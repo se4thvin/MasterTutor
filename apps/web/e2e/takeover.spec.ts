@@ -151,6 +151,31 @@ test.describe("Takeover and hand back", () => {
       .toEqual([{ runId: RECORDED_RUN_ID, note: null, keep: [REPORT] }]);
   });
 
+  test("a reload during control still offers the held downloads (A11 snapshot)", async ({
+    page,
+  }) => {
+    const calls = await gotoRun(page, {
+      detail: recordedDetail({
+        controller: "user",
+        status: "waiting",
+        waitReason: "takeover",
+        heldDownloads: [{ id: REPORT, filename: "week-2-report.pdf", bytes: 1_572_864 }],
+      }),
+    });
+    // The stream after a reload starts past the download_pending event: only the snapshot has it.
+    await page.reload();
+    await frame(page).getByRole("button", { name: "Hand back" }).click();
+    const dialog = handBackDialog(page);
+    await dialog
+      .getByRole("radiogroup", { name: /week-2-report\.pdf/ })
+      .getByRole("radio", { name: "Keep" })
+      .check();
+    await dialog.getByRole("button", { name: "Hand back" }).click();
+    await expect
+      .poll(() => rpcCalls(calls, "runs/handBack"))
+      .toEqual([{ runId: RECORDED_RUN_ID, note: null, keep: [REPORT] }]);
+  });
+
   test("hand back waits for a Keep or Discard on every download, and says which (A11)", async ({
     page,
   }) => {
