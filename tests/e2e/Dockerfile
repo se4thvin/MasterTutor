@@ -4,9 +4,12 @@
 #          (Node type stripping, like the node-runtime image);
 #   e2e:   tools plus Playwright's Chromium, for apps/web/playwright.stack.config.ts.
 FROM node:24-slim AS tools
-ENV CI=true
-RUN npm install -g pnpm@10.34.6 && npm cache clean --force
+# Corepack installs the pnpm that package.json's packageManager names: one source for the version.
+# Its cache is readable by any user, since the services and the e2e runner do not run as root.
+ENV CI=true COREPACK_HOME=/opt/corepack COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WORKDIR /repo
+COPY package.json ./
+RUN corepack enable && corepack install && chmod -R a+rX /opt/corepack
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir /pnpm/store
