@@ -10,3 +10,4 @@ export * from "./queries/control.ts";
 export * from "./queries/live.ts";
 export * from "./queries/downloads.ts";
 export * from "./queries/folders.ts";
+export * from "./queries/keyset.ts";

@@ -1,7 +1,6 @@
 import {
   TERMINAL_RUN_STATUSES,
   WAITS_KEPT_THROUGH_TAKEOVER,
-  encodeNotify,
   type Controller,
   type MemberRole,
   type RunStatus,
@@ -10,7 +9,7 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { browserSlots, runs, workspaceMembers } from "../schema/index.ts";
-import { notifyRunControl, returnControlToAgent } from "./control.ts";
+import { notifyRunControl, notifyRunWake, returnControlToAgent } from "./control.ts";
 import { keepPendingDownloads } from "./downloads.ts";
 import { emitRunEvent } from "./events.ts";
 
@@ -25,7 +24,8 @@ export interface MemberRun {
   slotLeased: boolean;
 }
 
-const memberOf = (userId: string) =>
+/** Join condition: userId is a member of the run's workspace (join workspace_members on runs). */
+export const memberOfRunWorkspace = (userId: string) =>
   and(eq(workspaceMembers.workspaceId, runs.workspaceId), eq(workspaceMembers.userId, userId));
 
 /** The run if userId is a member of its workspace; slotLeased means browser_slots agrees. */
@@ -44,7 +44,7 @@ export async function getRunForMember(
       slotLeased: sql<boolean>`coalesce(${browserSlots.state} = 'leased' and ${browserSlots.runId} = ${runs.id}, false)`,
     })
     .from(runs)
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .leftJoin(browserSlots, eq(browserSlots.name, runs.slotName))
     .where(eq(runs.id, runId));
   return row ?? null;
@@ -59,7 +59,7 @@ export async function canAccessLiveSlot(
     .select({ one: sql<number>`1` })
     .from(browserSlots)
     .innerJoin(runs, and(eq(runs.id, browserSlots.runId), eq(runs.slotName, browserSlots.name)))
-    .innerJoin(workspaceMembers, memberOf(query.userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(query.userId))
     .where(
       and(
         eq(browserSlots.name, query.slotName),
@@ -94,7 +94,7 @@ async function lockMemberRun(tx: DbTx, runId: string, userId: string): Promise<L
       role: workspaceMembers.role,
     })
     .from(runs)
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .where(eq(runs.id, runId))
     .for("update", { of: runs });
   return row ?? null;
@@ -127,9 +127,7 @@ export async function requestTakeover(
           ...(run.status === "sleeping" ? { wakeRequestedAt: sql`now()` } : {}),
         })
         .where(eq(runs.id, input.runId));
-      await tx.execute(
-        sql`select pg_notify('run_wake', ${encodeNotify("run_wake", { runId: input.runId, reason: "takeover" })})`,
-      );
+      await notifyRunWake(tx, input.runId, "takeover");
       return { ok: true, via: "wake" };
     }
     // A code or CAPTCHA wait stays on the row (B3 M7): only control changes hands, and hand-back
