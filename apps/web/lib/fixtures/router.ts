@@ -407,6 +407,9 @@ export const fixtureRouter = os.router({
     get: os.settings.get.handler(({ context }) => ({ ...stateFor(context.ns).settings })),
     update: os.settings.update.handler(({ input, context }) => {
       const state = stateFor(context.ns);
+      // Same optimistic concurrency as live (D14): a stale tab is refused, never merged.
+      if (input.version !== state.settings.version)
+        throw new ORPCError("CONFLICT", { message: "Settings changed elsewhere. Reload them." });
       if (input.concurrency !== undefined && input.concurrency > 6) {
         throw new ORPCError("BAD_REQUEST", {
           message: "Concurrency can't exceed the browser slots.",
@@ -419,6 +422,7 @@ export const fixtureRouter = os.router({
           ? { defaultAllowedOrigins: input.defaultAllowedOrigins }
           : {}),
         ...(input.concurrency !== undefined ? { concurrency: input.concurrency } : {}),
+        version: String(Number(state.settings.version) + 1),
       };
       return { ...state.settings };
     }),

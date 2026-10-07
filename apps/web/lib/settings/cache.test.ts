@@ -12,6 +12,7 @@ const base: SettingsView = {
   defaultBudget: A,
   defaultAllowedOrigins: [],
   concurrency: 6,
+  version: "1",
 };
 
 function held<T>(value: T) {
