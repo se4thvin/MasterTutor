@@ -18,6 +18,13 @@ mkdir -p apps/web/e2e/.out
 "${DC[@]}" --profile e2e-runner build e2e
 projects=()
 for project in ${E2E_PROJECTS:-setup e2e}; do projects+=("--project=$project"); done
+# The secret canary scan (spec §12, Task 6) runs even when a spec failed, before stop_stack.
+set +e
 "${DC[@]}" --profile e2e-runner run --rm --no-deps --user "$(id -u):$(id -g)" e2e \
   pnpm exec playwright test --config playwright.stack.config.ts "${projects[@]}" "$@"
+tests_status=$?
+node tests/security/stack-canary.ts "${DC[@]}" --profile e2e
+scan_status=$?
+set -e
+[[ $tests_status -eq 0 && $scan_status -eq 0 ]] || exit 1
 echo "E2E OK"
