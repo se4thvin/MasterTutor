@@ -22,12 +22,16 @@
     "smoke": "bash scripts/compose-smoke.sh",
     "check:agent-image": "bash scripts/check-agent-image.sh",
     "test:behaviour": "vitest run --project behaviour",
-    "test:live-stack": "RUN_LIVE_STACK=1 vitest run --project integration tests/live"
+    "test:live-stack": "RUN_LIVE_STACK=1 vitest run --project integration tests/live",
+    "deploy:check-env": "node scripts/deploy/check-env.ts",
+    "deploy:restore-drill": "bash scripts/deploy/restore-drill.sh",
+    "prod:smoke": "node tests/smoke/prod-smoke.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
+    "@mastertutor/sealing": "workspace:*",
     "@types/node": "24.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
