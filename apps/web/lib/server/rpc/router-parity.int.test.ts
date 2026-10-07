@@ -49,7 +49,6 @@ const UNTIL_P3_B2 = [
   "folders/rename",
   "folders/move",
   "folders/delete",
-  "assets/url",
 ] as const;
 /** Live procedures still answering NOT_IMPLEMENTED outside benchmarks.*. Empty after P3. */
 const LIVE_DEFERRED: ReadonlySet<string> = new Set(UNTIL_P3_B2);
