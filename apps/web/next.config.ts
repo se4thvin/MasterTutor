@@ -5,7 +5,12 @@ const config: NextConfig = {
   output: "standalone",
   // pnpm runs scripts from apps/web, so the monorepo root is two levels up.
   outputFileTracingRoot: path.resolve(process.cwd(), "../.."),
-  transpilePackages: ["@mastertutor/contracts", "@mastertutor/db", "@mastertutor/sealing"],
+  transpilePackages: [
+    "@mastertutor/contracts",
+    "@mastertutor/db",
+    "@mastertutor/sealing",
+    "@mastertutor/storage",
+  ],
   // libsodium ships its own WASM loader; keep it a plain Node require in the server bundle.
   serverExternalPackages: ["libsodium-wrappers", "libsodium"],
   poweredByHeader: false,
