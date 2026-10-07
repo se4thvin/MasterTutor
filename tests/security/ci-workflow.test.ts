@@ -5,11 +5,11 @@ const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.m
 const lines = workflow.split("\n");
 
 describe("CI workflow", () => {
-  it("pins every action by full commit SHA, with its tag as a comment (D60)", () => {
+  it("pins every action by full commit SHA, with its exact release as a comment (D60, review M9)", () => {
     const uses = lines.filter((line) => /^\s*(- )?uses:/.test(line));
     expect(uses.length).toBeGreaterThan(0);
     for (const line of uses)
-      expect(line.trim()).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+){0,2}$/);
+      expect(line.trim()).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
   });
 
   it("never leaves the token in a checkout (persist-credentials: false)", () => {
