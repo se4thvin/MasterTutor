@@ -17,6 +17,7 @@ import {
   type AnyPgColumn,
   bigint,
   bigserial,
+  boolean,
   check,
   doublePrecision,
   index,
@@ -185,5 +186,11 @@ export const downloads = pgTable("downloads", {
   assetId: uuid("asset_id").references(() => assets.id, { onDelete: "set null" }),
   bytes: bigint("bytes", { mode: "number" }).notNull(),
   approvedBy: text("approved_by").notNull(),
+  /**
+   * Made while a person held control (B6): held locally, not stored, until they keep it at
+   * hand-back (kept_at) and the agent files it; undecided ones are discarded.
+   */
+  pending: boolean("pending").notNull().default(false),
+  keptAt: tstz("kept_at"),
   createdAt: createdAt(),
 });

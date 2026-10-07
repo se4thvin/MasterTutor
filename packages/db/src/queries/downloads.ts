@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { assets, downloads, runs } from "../schema/index.ts";
 
@@ -74,4 +74,135 @@ export async function recordDownload(
     .returning({ id: downloads.id });
   if (!download) throw new Error("downloads insert returned no row");
   return { downloadId: download.id, assetId };
+}
+
+/**
+ * A download a person made during control: recorded as pending, nothing stored (B6, A11).
+ * Only while that person still holds control, checked under the run-row lock the hand-back also
+ * takes, so a hand-back either sees the row (and settles it) or this refuses it (N2).
+ */
+export async function recordPendingDownload(
+  tx: DbTx,
+  input: { id: string; runId: string; filename: string; bytes: number; approvedBy: string },
+): Promise<boolean> {
+  const [run] = await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.id, input.runId),
+        eq(runs.controller, "user"),
+        eq(runs.controlUserId, input.approvedBy),
+      ),
+    )
+    .for("update");
+  if (!run) return false;
+  await tx.insert(downloads).values({ ...input, pending: true });
+  return true;
+}
+
+/** Pending downloads of the run, with keptAt set for the ones the person kept at hand-back. */
+export async function pendingDownloads(
+  db: Database,
+  runId: string,
+): Promise<
+  Array<{ id: string; filename: string; bytes: number; approvedBy: string; keptAt: Date | null }>
+> {
+  return db
+    .select({
+      id: downloads.id,
+      filename: downloads.filename,
+      bytes: downloads.bytes,
+      approvedBy: downloads.approvedBy,
+      keptAt: downloads.keptAt,
+    })
+    .from(downloads)
+    .where(and(eq(downloads.runId, runId), eq(downloads.pending, true)));
+}
+
+/** Marks the listed pending downloads of this run as kept (the person's hand-back decision). */
+export async function keepPendingDownloads(
+  tx: DbTx,
+  runId: string,
+  ids: readonly string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  await tx
+    .update(downloads)
+    .set({ keptAt: sql`now()` })
+    .where(
+      and(eq(downloads.runId, runId), eq(downloads.pending, true), inArray(downloads.id, [...ids])),
+    );
+}
+
+/** A kept download stored: its asset (deduped per workspace by sha256) and the row no longer pending. */
+export async function fileKeptDownload(
+  tx: DbTx,
+  input: {
+    downloadId: string;
+    runId: string;
+    workspaceId: string;
+    sha256: string;
+    bucket: string;
+    key: string;
+    mime: string;
+    sourceUrl: string | null;
+  },
+): Promise<{ assetId: string }> {
+  const [row] = await tx
+    .select({ bytes: downloads.bytes })
+    .from(downloads)
+    .innerJoin(runs, eq(runs.id, downloads.runId))
+    .where(
+      and(
+        eq(downloads.id, input.downloadId),
+        eq(downloads.runId, input.runId),
+        eq(runs.workspaceId, input.workspaceId),
+        eq(downloads.pending, true),
+      ),
+    );
+  if (!row) throw new Error("no pending download to file");
+  const [inserted] = await tx
+    .insert(assets)
+    .values({
+      workspaceId: input.workspaceId,
+      sha256: input.sha256,
+      bucket: input.bucket,
+      key: input.key,
+      mime: input.mime,
+      bytes: row.bytes,
+      sourceUrl: input.sourceUrl?.slice(0, 4_096) ?? null,
+    })
+    .onConflictDoNothing({ target: [assets.workspaceId, assets.sha256] })
+    .returning({ id: assets.id });
+  const assetId =
+    inserted?.id ??
+    (
+      await tx
+        .select({ id: assets.id })
+        .from(assets)
+        .where(and(eq(assets.workspaceId, input.workspaceId), eq(assets.sha256, input.sha256)))
+    )[0]?.id;
+  if (!assetId) throw new Error("asset row missing after insert");
+  await tx
+    .update(downloads)
+    .set({ assetId, pending: false })
+    .where(eq(downloads.id, input.downloadId));
+  return { assetId };
+}
+
+/** Every held download of the run, gone (lease end, crash recovery): their ids, for the files. */
+export async function discardPendingDownloads(tx: DbTx, runId: string): Promise<string[]> {
+  const rows = await tx
+    .delete(downloads)
+    .where(and(eq(downloads.runId, runId), eq(downloads.pending, true)))
+    .returning({ id: downloads.id });
+  return rows.map((row) => row.id);
+}
+
+/** A pending download nobody kept: gone (its local file is the caller's to delete). */
+export async function discardDownload(tx: DbTx, runId: string, id: string): Promise<void> {
+  await tx
+    .delete(downloads)
+    .where(and(eq(downloads.id, id), eq(downloads.runId, runId), eq(downloads.pending, true)));
 }

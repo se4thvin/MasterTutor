@@ -17,6 +17,7 @@ import {
 } from "@mastertutor/db";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { createOpenAIModelClient } from "../../apps/agent/src/llm/client.ts";
+import type { RunHooks } from "../../apps/agent/src/loop/hooks.ts";
 import { Supervisor } from "../../apps/agent/src/loop/supervisor.ts";
 import { instantClock, type Clock } from "../../apps/agent/src/runtime/clock.ts";
 import type { RuntimeConfig } from "../../apps/agent/src/runtime/config.ts";
@@ -26,7 +27,7 @@ import { createMemoryStorage } from "../../apps/agent/src/testing/memory-storage
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
 import type { Scenario } from "../llm-mock/src/scenario.ts";
 import { startLlmMock, type LlmMock } from "../llm-mock/src/server.ts";
-import { BEHAVIOUR_SLOTS, SITE, cdpBaseUrlForTests } from "./constants.ts";
+import { BEHAVIOUR_DOWNLOADS, BEHAVIOUR_SLOTS, SITE, cdpBaseUrlForTests } from "./constants.ts";
 import { behaviourEnv } from "./env.ts";
 
 const log = createLogger({ service: "behaviour", level: "silent" });
@@ -53,7 +54,12 @@ const slotsIdle = async (owner: DbHandle) =>
   BEHAVIOUR_SLOTS.length;
 
 export async function startBehaviourAgent(
-  options: { scenarios?: Scenario[]; config?: Partial<RuntimeConfig>; clock?: Clock } = {},
+  options: {
+    scenarios?: Scenario[];
+    config?: Partial<RuntimeConfig>;
+    clock?: Clock;
+    hooks?: Partial<RunHooks>;
+  } = {},
 ): Promise<BehaviourAgent> {
   const env = behaviourEnv();
   const owner = createDb(env.ownerUrl);
@@ -74,11 +80,12 @@ export async function startBehaviourAgent(
       log,
       testMode: true,
       clock: options.clock ?? instantClock(),
+      hooks: options.hooks,
       config: {
         leaseMs: 3_000,
         heartbeatMs: 1_000,
         sweepMs: 500,
-        downloadsDir: "/tmp/mastertutor-behaviour-downloads",
+        downloadsDir: BEHAVIOUR_DOWNLOADS,
         // The next file must start on idle slots: wait for every restart (production bounds this).
         shutdownDrainMs: 90_000,
         ...options.config,

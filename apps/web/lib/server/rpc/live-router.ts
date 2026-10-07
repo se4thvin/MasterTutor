@@ -1,10 +1,14 @@
 import { ORPCError } from "@orpc/server";
 import { getDb } from "../db.ts";
+import { getLiveDeps } from "../live/deps.ts";
+import { createLiveHandlers } from "../live/procedures.ts";
 import { getSealer } from "../vault/sealer.ts";
 import { liveOs as os } from "./live-os.ts";
 import { createVaultProcedures } from "./vault.ts";
 
 const vault = createVaultProcedures({ sealer: getSealer, db: getDb });
+/** B6: the live view and the control lock (spec §10.2, §10.3). */
+const live = createLiveHandlers(getLiveDeps);
 
 /** Phase 7 (with B2 and B6) replaces the remaining handlers, one namespace at a time. B3 wired vault.* and runs.submitOtp. */
 const notWired = (): never => {
@@ -24,9 +28,11 @@ export const liveRouter = os.router({
     sendMessage: os.runs.sendMessage.handler(notWired),
     decideApproval: os.runs.decideApproval.handler(notWired),
     submitOtp: vault.submitOtp,
-    takeControl: os.runs.takeControl.handler(notWired),
-    handBack: os.runs.handBack.handler(notWired),
-    openLive: os.runs.openLive.handler(notWired),
+    takeControl: os.runs.takeControl.handler(({ input, context }) =>
+      live.takeControl(input, context),
+    ),
+    handBack: os.runs.handBack.handler(({ input, context }) => live.handBack(input, context)),
+    openLive: os.runs.openLive.handler(({ input, context }) => live.openLive(input, context)),
   },
   notes: {
     list: os.notes.list.handler(notWired),

@@ -321,7 +321,17 @@ export class RunWorker {
       const run = await readRunControl(this.#deps.db, this.runId);
       if (!run || isTerminal(run.status)) return { kind: "cancelled" };
       if (run.controller === "agent") {
-        await this.#deps.hooks.control.onAgentControl(slot, this.runId);
+        // B6 retries n.eko with a bounded backoff; if the host still cannot be taken back, the
+        // run ends with the guard held (never both inputs, never a retry loop here).
+        try {
+          await this.#deps.hooks.control.onAgentControl(slot, this.runId);
+        } catch {
+          this.#deps.log.error(
+            { runId: this.runId, errorCode: "control_restore_failed" },
+            "could not take the live view back",
+          );
+          return { kind: "failed", error: CONTROL_RESTORE_FAILED };
+        }
         this.#guard.release();
         this.#abort = new AbortController();
         await this.#loop!.markHandBack();

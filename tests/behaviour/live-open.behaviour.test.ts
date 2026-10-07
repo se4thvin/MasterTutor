@@ -4,7 +4,11 @@ import { leaseSlotForTest, releaseSlotForTest, seedMember, seedRun } from "@mast
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
 import { parseCookies, verifyLiveSlot } from "../../apps/web/lib/server/live/cookie.ts";
-import { openLive } from "../../apps/web/lib/server/live/open-live.ts";
+import {
+  LiveAccessError,
+  openLive,
+  type LiveDeps,
+} from "../../apps/web/lib/server/live/open-live.ts";
 import { BEHAVIOUR_NEKO_MEMBER_SECRET, nekoBaseUrlForTests } from "./constants.ts";
 import { behaviourEnv } from "./env.ts";
 
@@ -12,7 +16,7 @@ const SLOT = "browser-2";
 const now = 1_700_000_000;
 let owner: DbHandle;
 let web: DbHandle;
-let deps: Parameters<typeof openLive>[0];
+let deps: LiveDeps;
 let member: { userId: string; workspaceId: string };
 let outsider: { userId: string; workspaceId: string };
 const sockets: WebSocket[] = [];
@@ -104,8 +108,8 @@ describe("openLive against a real slot (spec §10.2.1)", () => {
       socket.addEventListener("error", () => reject(new Error("ws failed")));
     });
     const error = await openLive(deps, { runId, userId: member.userId }).catch((e: unknown) => e);
-    // LiveAccessError stays module-private until A9 maps its codes to oRPC errors.
-    expect(error).toMatchObject({ name: "LiveAccessError", code: "in_use" });
+    expect(error).toBeInstanceOf(LiveAccessError);
+    expect((error as LiveAccessError).code).toBe("in_use");
     socket.close();
     await waitFor(
       () =>
