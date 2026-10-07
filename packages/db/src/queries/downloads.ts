@@ -210,3 +210,12 @@ export async function discardDownload(tx: DbTx, runId: string, id: string): Prom
     .delete(downloads)
     .where(and(eq(downloads.id, id), eq(downloads.runId, runId), eq(downloads.pending, true)));
 }
+
+/** Downloads the run has kept or still holds, across all its leases (the per-run count cap). */
+export async function countRunDownloads(db: Database, runId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(downloads)
+    .where(eq(downloads.runId, runId));
+  return row?.count ?? 0;
+}
