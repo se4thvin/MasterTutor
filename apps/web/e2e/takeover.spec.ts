@@ -1,12 +1,31 @@
 import { FIXTURE_AUTH_COOKIE } from "../lib/fixtures/cookies.ts";
 import type { Page } from "@playwright/test";
+import { ids } from "../lib/fixtures/ids.ts";
 import { RECORDED_RUN_ID, rec, recordedDetail } from "../lib/fixtures/run-recording.ts";
 import { RpcFailure, emit, frame, gotoRun, rpcCalls } from "./helpers/run.ts";
-import { expect, test } from "./helpers/test.ts";
+import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 const overlay = (page: Page) => page.getByRole("button", { name: "Take control of the browser" });
 const userHeld = () =>
   recordedDetail({ controller: "user", status: "waiting", waitReason: "takeover" });
+const REPORT = ids.asset(41);
+const SLIDES = ids.asset(42);
+/** Two downloads made while the person held control (B6 A11). Filenames are page text. */
+const held = () => [
+  rec({
+    type: "download_pending",
+    downloadId: REPORT,
+    filename: "week-2\u202Ereport.pdf",
+    bytes: 1_572_864,
+  }),
+  rec({
+    type: "download_pending",
+    downloadId: SLIDES,
+    filename: `lecture-3-${"slides-".repeat(20)}final.pptx`,
+    bytes: 2_048,
+  }),
+];
+const handBackDialog = (page: Page) => page.getByRole("dialog", { name: "Hand back to the agent" });
 
 test.describe("Takeover and hand back", () => {
   test.skip(({ viewport }) => viewport?.width !== 1440, "behaviour checks run once");
@@ -108,6 +127,60 @@ test.describe("Takeover and hand back", () => {
       ]);
   });
 
+  test("downloads made during control are kept or discarded, one by one, at hand back (A11)", async ({
+    page,
+  }) => {
+    const calls = await gotoRun(page, { detail: userHeld() });
+    await emit(page, held());
+    await frame(page).getByRole("button", { name: "Hand back" }).click();
+    const dialog = handBackDialog(page);
+    const report = dialog.getByRole("radiogroup", { name: /week-2report\.pdf/ });
+    // Page text is cleaned (no bidi override) and the size is spelled out.
+    await expect(report).toContainText("1.5 MB");
+    await expect(dialog.getByRole("radiogroup", { name: /lecture-3-/ })).toContainText("2 KB");
+    // Focus starts on the first decision, not past it.
+    await expect(report.getByRole("radio", { name: "Keep" })).toBeFocused();
+    await page.keyboard.press("Space");
+    await dialog
+      .getByRole("radiogroup", { name: /lecture-3-/ })
+      .getByRole("radio", { name: "Discard" })
+      .check();
+    await dialog.getByRole("button", { name: "Hand back" }).click();
+    await expect
+      .poll(() => rpcCalls(calls, "runs/handBack"))
+      .toEqual([{ runId: RECORDED_RUN_ID, note: null, keep: [REPORT] }]);
+  });
+
+  test("hand back waits for a Keep or Discard on every download, and says which (A11)", async ({
+    page,
+  }) => {
+    const calls = await gotoRun(page, { detail: userHeld() });
+    await emit(page, held());
+    await frame(page).getByRole("button", { name: "Hand back" }).click();
+    const dialog = handBackDialog(page);
+    await dialog
+      .getByRole("radiogroup", { name: /week-2report\.pdf/ })
+      .getByRole("radio", { name: "Discard" })
+      .check();
+    await dialog.getByRole("button", { name: "Hand back" }).click();
+    await expect(dialog.getByRole("alert")).toHaveText("Choose Keep or Discard for each download.");
+    await expect(
+      dialog.getByRole("radiogroup", { name: /lecture-3-/ }).getByRole("radio", { name: "Keep" }),
+    ).toBeFocused();
+    expect(rpcCalls(calls, "runs/handBack")).toEqual([]);
+    await expect(frame(page)).toHaveAttribute("data-state", "control");
+    // Discarding everything is a choice too: nothing is kept.
+    await dialog
+      .getByRole("radiogroup", { name: /lecture-3-/ })
+      .getByRole("radio", { name: "Discard" })
+      .check();
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Hand back" }).click();
+    await expect
+      .poll(() => rpcCalls(calls, "runs/handBack"))
+      .toEqual([{ runId: RECORDED_RUN_ID, note: null, keep: [] }]);
+  });
+
   test("a hand back whose control event never comes re-reads the run after 5s (A6)", async ({
     page,
   }) => {
@@ -156,4 +229,12 @@ test.describe("Takeover and hand back", () => {
       .poll(() => page.evaluate(() => (window as unknown as { __fs: string[] }).__fs))
       .toEqual(["fullscreen", "lock"]);
   });
+});
+
+test("the Keep or Discard step fits every width, light and dark (A11)", async ({ page }) => {
+  await gotoRun(page, { detail: userHeld() });
+  await emit(page, held());
+  await frame(page).getByRole("button", { name: "Hand back" }).click();
+  await expect(handBackDialog(page).getByRole("radiogroup")).toHaveCount(2);
+  await expectCleanScreen(page);
 });
