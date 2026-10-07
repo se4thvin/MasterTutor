@@ -14,6 +14,8 @@ export function isRiskyLabel(label: string): boolean {
 }
 
 const PageUrl = z.string().min(1).max(4_096);
+/** A credential_first_use card names every off-origin destination of the form, up to this length. */
+export const MAX_POSTS_TO_CHARS = 4_096;
 const ScreenshotKey = z.string().min(1).max(1_024).nullable();
 const RecordExcerpt = z.string().max(240).nullable().optional();
 
@@ -49,7 +51,7 @@ export const ApprovalRequest = z.discriminatedUnion("kind", [
     alias: Alias,
     origin: Origin,
     /** Set when the target form posts elsewhere: where it would send the credential. */
-    postsTo: z.string().max(4_096).optional(),
+    postsTo: z.string().max(MAX_POSTS_TO_CHARS).optional(),
   }),
   z.object({ kind: z.literal("new_origin"), origin: Origin, url: PageUrl }),
   z.object({
