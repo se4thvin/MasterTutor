@@ -2,9 +2,11 @@ import {
   EMPTY_USAGE,
   MODELS,
   TYPED_SECRET_FIELDS,
+  TERMINAL_RUN_STATUSES,
   apiContract,
   type NoteBlock,
   type RunDetail,
+  type RunStatus,
   type RunSummary,
   type VaultAuditView,
 } from "@mastertutor/contracts";
@@ -14,7 +16,12 @@ import { canCreateFolder, canMoveFolder, descendantIds, folderPath } from "../fo
 import { requireViewer } from "../server/rpc/require-viewer.ts";
 import { FIXTURE_ASSETS } from "./assets.ts";
 import { ids } from "./ids.ts";
-import { RECORDED_RUN_ID, recordedDetail, recordedSteps } from "./run-recording.ts";
+import {
+  RECORDED_APPROVAL_ID,
+  RECORDED_RUN_ID,
+  recordedDetail,
+  recordedSteps,
+} from "./run-recording.ts";
 import { stateFor, usageReport } from "./store.ts";
 import type { FixtureContext, FixtureState, NoteRecord } from "./types.ts";
 
@@ -49,6 +56,25 @@ function findNote(state: FixtureState, noteId: string): NoteRecord {
 
 function assertFolder(state: FixtureState, folderId: string | null): void {
   if (folderId !== null && !state.folders.some((f) => f.id === folderId)) throw notFound("Folder");
+}
+
+const TERMINAL: ReadonlySet<RunStatus> = new Set(TERMINAL_RUN_STATUSES);
+const runFinished = () => new ORPCError("CONFLICT", { message: "The run has already finished." });
+
+/** A fixture run: seeded or created, or the recorded run (always running). Unknown ids are NOT_FOUND. */
+function fixtureRun(
+  state: FixtureState,
+  runId: string,
+): { status: RunStatus; summary: RunSummary | null } {
+  if (runId === RECORDED_RUN_ID) return { status: recordedDetail().status, summary: null };
+  const summary = state.runs.find((r) => r.id === runId);
+  if (!summary) throw notFound("Run");
+  return { status: summary.status, summary };
+}
+
+/** The same run must still be going: a finished run takes no messages, codes or resumes. */
+function unfinishedRun(state: FixtureState, runId: string): void {
+  if (TERMINAL.has(fixtureRun(state, runId).status)) throw runFinished();
 }
 
 function assertUniqueName(
@@ -94,6 +120,11 @@ export const fixtureRouter = os.router({
   runs: {
     create: os.runs.create.handler(({ input, context }): RunSummary => {
       const state = stateFor(context.ns);
+      if (state.settings.killSwitch)
+        throw new ORPCError("CONFLICT", {
+          message: "The kill switch is on. Turn it off to start a run.",
+        });
+      assertFolder(state, input.targetFolderId);
       const run: RunSummary = {
         id: ids.run(100 + state.runs.length),
         goal: input.goal,
@@ -138,17 +169,55 @@ export const fixtureRouter = os.router({
         lastEventId: null,
       };
     }),
-    steps: os.runs.steps.handler(({ input }) => ({
-      items: input.runId === RECORDED_RUN_ID && input.afterSeq === null ? recordedSteps() : [],
-    })),
-    cancel: os.runs.cancel.handler(notImplemented),
-    resume: os.runs.resume.handler(notImplemented),
-    sendMessage: os.runs.sendMessage.handler(notImplemented),
-    decideApproval: os.runs.decideApproval.handler(notImplemented),
-    submitOtp: os.runs.submitOtp.handler(notImplemented),
-    takeControl: os.runs.takeControl.handler(notImplemented),
-    handBack: os.runs.handBack.handler(notImplemented),
-    openLive: os.runs.openLive.handler(notImplemented),
+    steps: os.runs.steps.handler(({ input, context }) => {
+      fixtureRun(stateFor(context.ns), input.runId);
+      return {
+        items: input.runId === RECORDED_RUN_ID && input.afterSeq === null ? recordedSteps() : [],
+      };
+    }),
+    cancel: os.runs.cancel.handler(({ input, context }) => {
+      const { status, summary } = fixtureRun(stateFor(context.ns), input.runId);
+      if (status === "cancelled") return { ok: true as const };
+      if (TERMINAL.has(status)) throw runFinished();
+      if (summary)
+        Object.assign(summary, {
+          status: "cancelled",
+          waitReason: null,
+          controller: "agent",
+          finishedAt: now(),
+        } satisfies Partial<RunSummary>);
+      return { ok: true as const };
+    }),
+    resume: os.runs.resume.handler(({ input, context }) => {
+      unfinishedRun(stateFor(context.ns), input.runId);
+      return { ok: true as const };
+    }),
+    sendMessage: os.runs.sendMessage.handler(({ input, context }) => {
+      unfinishedRun(stateFor(context.ns), input.runId);
+      return { ok: true as const };
+    }),
+    decideApproval: os.runs.decideApproval.handler(({ input }) => {
+      // The recorded run's approval is the only one fixture mode has.
+      if (input.approvalId !== RECORDED_APPROVAL_ID) throw notFound("Approval");
+      return { ok: true as const };
+    }),
+    submitOtp: os.runs.submitOtp.handler(({ input, context }) => {
+      unfinishedRun(stateFor(context.ns), input.runId);
+      return { ok: true as const };
+    }),
+    // The live view needs a real slot: known runs stay unimplemented (fe's e2e intercepts these).
+    takeControl: os.runs.takeControl.handler(({ input, context }) => {
+      fixtureRun(stateFor(context.ns), input.runId);
+      return notImplemented();
+    }),
+    handBack: os.runs.handBack.handler(({ input, context }) => {
+      fixtureRun(stateFor(context.ns), input.runId);
+      return notImplemented();
+    }),
+    openLive: os.runs.openLive.handler(({ input, context }) => {
+      fixtureRun(stateFor(context.ns), input.runId);
+      return notImplemented();
+    }),
   },
   notes: {
     list: os.notes.list.handler(({ input, context }) => {

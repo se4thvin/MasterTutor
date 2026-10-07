@@ -26,7 +26,7 @@ const notWired = (): never => {
 };
 
 /** The one RPC router of a production build (fixture builds use lib/fixtures/router.ts). */
-function createLiveRouter(deps: LiveRouterDeps) {
+export function createLiveRouter(deps: LiveRouterDeps) {
   const vault = createVaultProcedures({ sealer: deps.sealer, db: deps.db });
   const runs = createRunProcedures({ db: deps.db });
   const settings = createSettingsProcedures({ db: deps.db });
