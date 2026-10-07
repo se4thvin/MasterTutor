@@ -8,7 +8,10 @@ import {
   HandBackInput,
   ListNotesInput,
   SetSecretInput,
+  SettingsView,
   SubmitOtpInput,
+  UpdateSettingsInput,
+  USAGE_MAX_DAYS,
   UsageInput,
 } from "./dto.ts";
 
@@ -125,6 +128,27 @@ describe("bypass mode needs an explicit acknowledgement (D44, m8)", () => {
       false,
     );
     expect(CreateRunInput.safeParse({ ...run, approvalMode: "ask" }).success).toBe(true);
+  });
+});
+
+describe("settings concurrency and usage range (D14, D52)", () => {
+  const view = {
+    killSwitch: false,
+    defaultBudget: { maxSteps: 150, maxUsd: 5, maxActiveMinutes: 60 },
+    defaultAllowedOrigins: [],
+    concurrency: 2,
+  };
+  it("requires a version on the view and on every update", () => {
+    expect(SettingsView.safeParse(view).success).toBe(false);
+    expect(SettingsView.safeParse({ ...view, version: "v1" }).success).toBe(true);
+    expect(UpdateSettingsInput.safeParse({ concurrency: 2 }).success).toBe(false);
+    expect(UpdateSettingsInput.safeParse({ version: "v1", concurrency: 2 }).success).toBe(true);
+  });
+  it("caps a usage range at USAGE_MAX_DAYS days, both ends included", () => {
+    expect(USAGE_MAX_DAYS).toBe(400);
+    expect(UsageInput.safeParse({ from: "2026-01-01", to: "2027-02-04" }).success).toBe(true);
+    expect(UsageInput.safeParse({ from: "2026-01-01", to: "2027-02-05" }).success).toBe(false);
+    expect(UsageInput.safeParse({ from: "2026-10-02", to: "2026-10-01" }).success).toBe(false);
   });
 });
 
