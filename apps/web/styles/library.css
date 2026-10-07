@@ -19,7 +19,7 @@
     &:hover {
       background: var(--fill-2);
     }
-    & > .ic {
+    & > :is(.ic, .fmark) {
       color: var(--tint-text);
     }
     @media (pointer: coarse) {
@@ -48,6 +48,45 @@
   .tree-row-drop {
     box-shadow: inset 0 0 0 2px var(--tint);
     background: var(--tint-wash);
+  }
+  /* Folder glyph: floats on row hover, lifts its lid while it can take a drop (FolderMark). */
+  .fmark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    & > .ic {
+      grid-area: 1 / 1;
+      transition-property: opacity;
+      transition-duration: var(--motion-dur-micro);
+      transition-timing-function: var(--motion-ease-out);
+    }
+  }
+  .fmark-open {
+    opacity: 0;
+  }
+  /* A lid-less mark (All notes, Unfiled, Top level) keeps its only glyph and just rises. */
+  .fmark[data-lift]:has(.fmark-open) .fmark-shut {
+    opacity: 0;
+  }
+  .fmark[data-lift] .fmark-open {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .fmark {
+      transition-property: translate, rotate, scale;
+      transition-duration: var(--motion-spring-dur);
+      transition-timing-function: var(--motion-spring);
+    }
+    .fmark[data-lift] {
+      translate: 0 -0.125rem;
+      scale: 1.15;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      :is(.tree-row, .move-row):hover .fmark:not([data-lift]) {
+        translate: 0 -0.0625rem;
+        rotate: -8deg;
+      }
+    }
   }
   .tree-disclosure {
     display: grid;
@@ -84,6 +123,8 @@
     border-bottom: 1px solid var(--sep);
   }
   .notes {
+    /* popLayout positions a leaving card absolutely against this box. */
+    position: relative;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr));
     gap: 2.5rem 1.5rem;
@@ -245,14 +286,16 @@
     padding-inline-end: 0.75rem;
     border-radius: var(--r-sm);
     text-align: left;
-    &:hover {
+    /* Rows are disabled while the chosen folder receives the item. */
+    &:hover:not([aria-disabled="true"]) {
       background: var(--fill-2);
     }
     &[aria-current="true"] {
       background: var(--fill);
       font-weight: 600;
     }
-    & span {
+    /* Only the label ellipsizes; the glyph and the flying pill must not be clipped (I2). */
+    & .move-label {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -286,30 +329,27 @@
       text-decoration: none;
     }
   }
-  /* The selection highlight eases in under the moving cursor instead of jumping (M4). */
-  .palette .hit {
-    position: relative;
-    isolation: isolate;
-  }
-  .hit-active::before {
-    content: "";
+  .hit-highlight {
     position: absolute;
     inset: 0;
     z-index: -1;
     border-radius: var(--r-sm);
     background: var(--fill-2);
-    animation-name: hit-select;
-    animation-duration: var(--motion-dur-micro);
-    animation-timing-function: var(--motion-ease-out);
   }
-  @keyframes hit-select {
+  /* Results ease in on a short stagger; the selection highlight (below the text) glides. */
+  .palette .hit {
+    position: relative;
+    isolation: isolate;
+    animation-name: hit-in;
+    animation-duration: var(--motion-dur-base);
+    animation-timing-function: var(--motion-ease-out);
+    animation-fill-mode: both;
+    animation-delay: calc(var(--i, 0) * var(--motion-dur-stagger));
+  }
+  @keyframes hit-in {
     from {
       opacity: 0;
-      transform: scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: none;
+      translate: 0 0.25rem;
     }
   }
   .hit-title {
@@ -380,5 +420,210 @@
   .palette-empty {
     padding: 1rem;
     color: var(--label-2);
+  }
+  /* Folder tiles: the current folder's subfolders (FolderFloat, D43). */
+  .ftiles-title {
+    margin: 1.75rem 0 0.75rem;
+  }
+  .ftiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(8.5rem, 100%), 1fr));
+    gap: 1.25rem 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ftile {
+    display: block;
+    min-width: 0;
+    border-radius: var(--r-lg);
+    color: var(--folder-ink);
+    outline-offset: 0.25rem;
+    &:hover {
+      text-decoration: none;
+    }
+  }
+  .ff {
+    --ff-tab: 0.875rem;
+    display: block;
+    padding-top: var(--ff-tab);
+  }
+  .ff-body {
+    position: relative;
+    display: block;
+    aspect-ratio: 200 / 148;
+  }
+  .ff-back {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-lg);
+    background: var(--folder-back);
+    transform: perspective(37.5rem) rotateX(8deg);
+    transform-origin: 50% 100%;
+    &::before {
+      content: "";
+      position: absolute;
+      top: calc(-1 * var(--ff-tab));
+      left: 0;
+      width: 42%;
+      height: calc(var(--ff-tab) + var(--r-lg));
+      border-radius: var(--r-lg) var(--r-lg) 0 0;
+      background: inherit;
+    }
+  }
+  .ff-paper {
+    position: absolute;
+    top: 10%;
+    inset-inline: 8%;
+    height: 50%;
+    border-radius: var(--r-sm);
+    background: var(--folder-paper);
+    box-shadow: var(--e1);
+    opacity: 0;
+    transition-property: opacity, translate;
+    transition-duration: var(--motion-dur-base), var(--motion-spring-dur);
+    transition-timing-function: var(--motion-ease-out), var(--motion-spring);
+  }
+  .ff-paper-2 {
+    top: 16%;
+    inset-inline: 14%;
+    transition-delay: var(--motion-dur-stagger);
+  }
+  .ff-front {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.2rem;
+    height: 76%;
+    padding: 0.75rem 0.9rem;
+    border-radius: var(--r-lg);
+    background: linear-gradient(180deg, var(--folder-front-hi), var(--folder-front) 60%);
+    box-shadow: var(--folder-shadow);
+    transform: perspective(37.5rem) rotateX(-16deg);
+    transform-origin: 50% 100%;
+    transition-property: transform;
+    transition-duration: var(--motion-spring-dur);
+    transition-timing-function: var(--motion-spring);
+  }
+  .ff-label {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ff-sub {
+    font-size: 0.6875rem;
+    color: var(--folder-ink-2);
+  }
+  /* Open: on hover or keyboard focus of the tile, or while a drop hovers it (data-open). */
+  .ftile:focus-visible .ff-paper,
+  .ff[data-open] .ff-paper {
+    opacity: 1;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .ftile:hover .ff-paper {
+      opacity: 1;
+    }
+  }
+  /* A drop target says so without motion too, like the tree's .tree-row-drop ring. */
+  .ff[data-open] .ff-front {
+    box-shadow:
+      var(--folder-shadow),
+      inset 0 0 0 2px var(--tint);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    /* The paper rises as it appears; under reduced motion it only fades, in place. */
+    .ff-paper {
+      translate: 0 0.625rem;
+    }
+    .ftile:focus-visible .ff-paper,
+    .ff[data-open] .ff-paper {
+      translate: none;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .ftile:hover .ff-paper {
+        translate: none;
+      }
+    }
+    .ftile:focus-visible .ff-front,
+    .ff[data-open] .ff-front {
+      transform: perspective(37.5rem) rotateX(-34deg);
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .ftile:hover .ff-front {
+        transform: perspective(37.5rem) rotateX(-34deg);
+      }
+    }
+    .ff[data-receive] .ff-body {
+      animation-name: ff-gulp;
+      animation-duration: var(--motion-dur-receive);
+      animation-timing-function: var(--motion-ease-out);
+    }
+  }
+  @keyframes ff-gulp {
+    40% {
+      scale: 1.04;
+    }
+  }
+  /* Move sheet receive: the item flies from the label into the opened folder (Task 5). */
+  .move-target {
+    position: relative;
+    display: grid;
+    flex: none;
+  }
+  .move-target,
+  .move-target .fmark {
+    overflow: visible;
+  }
+  .move-pill {
+    position: absolute;
+    top: 50%;
+    inset-inline-start: 0;
+    max-width: 10rem;
+    overflow: hidden;
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--r-pill);
+    background: var(--elevated);
+    box-shadow: var(--e2);
+    color: var(--label);
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+    transform-origin: 0 50%;
+    /* Two phases: it appears briskly (ease-out), then dives into the folder (ease-in). The dive
+       holds its first frame until the appear ends; the later animation in the list wins. */
+    animation-name: pill-dive, pill-appear;
+    animation-duration:
+      calc(var(--motion-dur-receive) * 0.75), calc(var(--motion-dur-receive) * 0.25);
+    animation-delay: calc(var(--motion-dur-receive) * 0.25), calc(var(--motion-dur-receive) * 0);
+    animation-timing-function: var(--motion-ease-in), var(--motion-ease-out);
+    animation-fill-mode: both, backwards;
+  }
+  @keyframes pill-appear {
+    from {
+      opacity: 0;
+      translate: 2.5rem -50%;
+    }
+    to {
+      opacity: 1;
+      translate: 2rem -50%;
+    }
+  }
+  @keyframes pill-dive {
+    from {
+      opacity: 1;
+      translate: 2rem -50%;
+    }
+    to {
+      opacity: 0;
+      translate: 0 -50%;
+      scale: 0.2;
+    }
   }
 }

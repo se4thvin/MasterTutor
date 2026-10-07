@@ -1,6 +1,7 @@
 "use client";
 
 import type { VaultItemView } from "@mastertutor/contracts";
+import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { Button, IconButton } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { Menu, MenuItem, MenuPanel } from "@/components/ui/menu.tsx";
@@ -44,7 +45,7 @@ export function VaultRow({
         </li>
       </ul>
       <div className="vrow-session">
-        <span className={item.sessionSaved ? "dot dot-ok" : "dot"} aria-hidden="true" />
+        <StatusMark status={item.sessionSaved ? "done" : "pending"} decorative />
         <span>{item.sessionSaved ? "Session saved" : "Signs in on next use"}</span>
       </div>
       <div className="vrow-actions">

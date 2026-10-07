@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import type { VaultAuditAction, VaultAuditView } from "@mastertutor/contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import type { CSSProperties } from "react";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import type { BadgeTone, IconName } from "@/lib/ui/vocabulary.ts";
@@ -52,7 +54,11 @@ export function AuditView() {
       getNextPageParam: (last) => last.nextCursor,
     }),
   );
-  const entries = audit.data?.pages.flatMap((p) => p.items) ?? [];
+  // Rows from pages after the first are marked, so only what "Load more" added eases in.
+  const entries =
+    audit.data?.pages.flatMap((p, page) =>
+      p.items.map((entry, i) => ({ entry, appended: page > 0, i })),
+    ) ?? [];
   return (
     <>
       <Toolbar>
@@ -87,8 +93,13 @@ export function AuditView() {
                 </tr>
               </thead>
               <tbody>
-                {entries.map((e) => (
-                  <tr key={e.id} data-qa="audit-entry">
+                {entries.map(({ entry: e, appended, i }) => (
+                  <tr
+                    key={e.id}
+                    data-qa="audit-entry"
+                    data-appended={appended ? "" : undefined}
+                    style={appended ? ({ "--i": Math.min(i, 12) } as CSSProperties) : undefined}
+                  >
                     <td className="whitespace-nowrap">
                       <When at={e.at} />
                     </td>
@@ -100,7 +111,15 @@ export function AuditView() {
                       {e.origin ? <span className="t-foot"> · {hostOf(e.origin)}</span> : null}
                     </td>
                     <td>{e.field ? fieldLabel(e.field) : "–"}</td>
-                    <td>{e.runId ? <span className="mono">Run {e.runId.slice(-6)}</span> : "–"}</td>
+                    <td>
+                      {e.runId ? (
+                        <Link className="mono" href={`/runs/${e.runId}`}>
+                          Run {e.runId.slice(-6)}
+                        </Link>
+                      ) : (
+                        "–"
+                      )}
+                    </td>
                     <td>{e.outcome}</td>
                   </tr>
                 ))}
@@ -109,8 +128,14 @@ export function AuditView() {
           </div>
         ) : (
           <ul className="group audit-list" aria-label="Vault audit">
-            {entries.map((e) => (
-              <li key={e.id} data-qa="audit-entry" className="audit-item">
+            {entries.map(({ entry: e, appended, i }) => (
+              <li
+                key={e.id}
+                data-qa="audit-entry"
+                className="audit-item"
+                data-appended={appended ? "" : undefined}
+                style={appended ? ({ "--i": Math.min(i, 12) } as CSSProperties) : undefined}
+              >
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Action entry={e} />
                   <span className="mono audit-alias">{e.alias}</span>

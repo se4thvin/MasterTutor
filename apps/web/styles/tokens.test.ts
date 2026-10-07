@@ -73,6 +73,9 @@ const PAIRS: Array<[string, string]> = [
   ["code-title", "bg-2"],
   ["code-string", "bg-2"],
   ["code-comment", "bg-2"],
+  ["folder-ink", "folder-front"],
+  ["folder-ink-2", "folder-front"],
+  ["folder-ink", "folder-front-hi"],
 ];
 
 describe.each([
@@ -120,5 +123,15 @@ describe("SpringCheck ring", () => {
     expect(ring, "ring token").toBeDefined();
     const bg = parseColor(vars["bg"] ?? "");
     expect(contrast(over(parseColor(vars[ring ?? ""] ?? ""), bg), bg)).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("F3/F5 art tokens", () => {
+  it("defines the agent cursor, hero palette and PiP layer once, in the light block", () => {
+    const light = blockAfter("/* light */");
+    for (const name of ["cursor", "cursor-outline", "hero-aqua", "hero-aqua-deep", "hero-bondi"]) {
+      expect(light[name], name).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    expect(Number(light["z-pip"])).toBeLessThan(Number(light["z-scrim"]));
   });
 });

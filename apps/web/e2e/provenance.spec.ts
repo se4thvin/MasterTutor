@@ -1,3 +1,4 @@
+import { movingAnimations } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, isWide, test } from "./helpers/test.ts";
 
 const NOTE = "/notes/00000000-0000-4000-8000-000002000001";
@@ -50,4 +51,20 @@ test("clicking a callout opens that block's provenance", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "Block provenance" })).toContainText(
     "Edited by you",
   );
+});
+
+test("margin callouts ease in beside their blocks", async ({ page }) => {
+  test.skip(!isWide(page), "callouts are wide-only");
+  await page.goto(NOTE);
+  const first = page.locator('[data-qa="callout"]').first();
+  await expect(first).toBeVisible();
+  await expect(first).toHaveCSS("animation-name", "callout-in");
+});
+
+test("under reduced motion callouts appear without sliding", async ({ page }) => {
+  test.skip(!isWide(page), "callouts are wide-only");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(NOTE);
+  await expect(page.locator('[data-qa="callout"]').first()).toBeVisible();
+  expect(await movingAnimations(page, ".callouts")).toEqual([]);
 });

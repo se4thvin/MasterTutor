@@ -49,6 +49,21 @@
   --art-shadow-soft: drop-shadow(0 6px 12px rgb(0 0 0 / 0.08));
   --scrim: rgb(0 0 0 / 0.18);
   --ambient: rgb(0 113 227 / 0.16);
+  /* Agent cursor over remote web content: dark arrow, white outline, in either theme. */
+  --cursor: #111111;
+  --cursor-outline: #ffffff;
+  /* 3D hero art palette (run 16). components/hero only. */
+  --hero-aqua: #e4f5f3;
+  --hero-aqua-deep: #a9dcd8;
+  --hero-bondi: #1f8f96;
+  /* Folder tiles (FolderFloat): a light blue manila, Apple-folder tinted; ink meets AA on the flap. */
+  --folder-back: #74aeeb;
+  --folder-front: #8fc1f3;
+  --folder-front-hi: #a9d0f7;
+  --folder-paper: #ffffff;
+  --folder-ink: #0b3a6b;
+  --folder-ink-2: #1a4470;
+  --folder-shadow: 0 -0.625rem 1.5rem rgb(0 0 0 / 0.12);
   --e1: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.05);
   --e2: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 6px 16px rgb(0 0 0 / 0.07), 0 1px 3px rgb(0 0 0 / 0.05);
   --e3: 0 0 0 0.5px rgb(0 0 0 / 0.1), 0 22px 48px rgb(0 0 0 / 0.14), 0 4px 10px rgb(0 0 0 / 0.06);
@@ -68,6 +83,7 @@
   --r-frame: 0.875rem;
   --hit: 2.75rem;
   --z-scrim: 90;
+  --z-pip: 80;
   --z-sheet: 100;
   --z-toast: 110;
   --z-popover: 120;
@@ -126,6 +142,13 @@
     --art-shadow-soft: drop-shadow(0 6px 12px rgb(0 0 0 / 0.35));
     --scrim: rgb(0 0 0 / 0.45);
     --ambient: rgb(41 151 255 / 0.12);
+    --folder-back: #1b4a76;
+    --folder-front: #245a8c;
+    --folder-front-hi: #2f6aa0;
+    --folder-paper: #e8e8ed;
+    --folder-ink: #f5f5f7;
+    --folder-ink-2: #dce6f2;
+    --folder-shadow: 0 -0.625rem 1.5rem rgb(0 0 0 / 0.4);
     --e1: 0 0 0 0.5px rgb(255 255 255 / 0.1);
     --e2: 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.5);
     --e3: 0 0 0 0.5px rgb(255 255 255 / 0.12), 0 24px 60px rgb(0 0 0 / 0.65);

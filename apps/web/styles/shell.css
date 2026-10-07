@@ -48,6 +48,11 @@
     overflow: auto;
     overscroll-behavior: contain;
     outline: none;
+    /* A tab stop (to scroll by keyboard), so keyboard focus is shown, inside its edges. */
+    &:focus-visible {
+      outline: 2px solid var(--tint);
+      outline-offset: -2px;
+    }
   }
   .sidebar {
     order: 2;
@@ -213,6 +218,17 @@
       position: static;
       margin-left: auto;
     }
+    /* The badge fades out when it clears (a finished run's outcome, or a run that left quietly). */
+    transition-property: opacity;
+    transition-duration: var(--motion-dur-base);
+    transition-timing-function: var(--motion-ease-out);
+    &[data-leaving] {
+      opacity: 0;
+    }
+  }
+  /* 1.2rem keeps the running dot at the 0.45rem of mockup D's live dot (D25). */
+  .nav-meta .smark {
+    --smark-size: 1.2rem;
   }
   /* Visually hidden below lg so the live-run count is still read aloud beside the dot. */
   .nav-meta-text {
@@ -229,16 +245,6 @@
       overflow: visible;
       clip: auto;
     }
-  }
-  .live-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: var(--signal);
-    animation-name: pulse;
-    animation-duration: var(--motion-dur-pulse);
-    animation-timing-function: var(--motion-ease-out);
-    animation-iteration-count: infinite;
   }
   .sidebar-section {
     display: none;
@@ -380,6 +386,10 @@
     border-radius: var(--r-xl);
     background: var(--elevated);
     box-shadow: var(--e2);
+    animation-name: pop-in;
+    animation-duration: var(--motion-spring-soft-dur);
+    animation-timing-function: var(--motion-spring-soft);
+    animation-fill-mode: both;
   }
   .auth-fields {
     display: grid;
@@ -389,5 +399,19 @@
   .auth-card .t-foot a {
     text-decoration: underline;
     text-underline-offset: 0.15em;
+  }
+  .auth-card .word {
+    display: inline-block;
+    animation-name: word-in;
+    animation-duration: var(--motion-spring-dur);
+    animation-timing-function: var(--motion-spring);
+    animation-fill-mode: both;
+    animation-delay: calc(var(--motion-dur-micro) + var(--i, 0) * var(--motion-dur-stagger));
+  }
+  @keyframes word-in {
+    from {
+      opacity: 0;
+      translate: 0 0.3em;
+    }
   }
 }

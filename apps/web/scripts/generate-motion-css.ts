@@ -56,10 +56,20 @@ export function renderMotionCss(): string {
     "  *::before,",
     "  *::after {",
     "    animation-duration: 1ms !important;",
+    // No delay, and a 1ms animation starts already finished: a delayed (staggered) animation
+    // would hold its offset from-frame on screen, and even an undelayed one paints it for a frame.
+    "    animation-delay: -1ms !important;",
     "    animation-iteration-count: 1 !important;",
     "    transition-property: opacity !important;",
     "    transition-duration: var(--motion-dur-micro) !important;",
     "    scroll-behavior: auto !important;",
+    "  }",
+    // Scroll-linked (not timed) animations opt out with data-motion-keep-delay: a time delay
+    // would offset their scroll mapping (the toolbar hairline would show at the top of the page).
+    "  [data-motion-keep-delay],",
+    "  [data-motion-keep-delay]::before,",
+    "  [data-motion-keep-delay]::after {",
+    "    animation-delay: 0s !important;",
     "  }",
     "}",
     "",
