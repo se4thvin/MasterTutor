@@ -1,6 +1,8 @@
+import type { EmbeddingsClient } from "@mastertutor/contracts/server";
 import type { DbHandle } from "@mastertutor/db";
 import { ORPCError } from "@orpc/server";
 import { getDb } from "../db.ts";
+import { getEmbeddingsClient } from "../openai.ts";
 import { getLiveDeps } from "../live/deps.ts";
 import type { LiveDeps } from "../live/open-live.ts";
 import { createLiveHandlers } from "../live/procedures.ts";
@@ -8,6 +10,7 @@ import { getSealer, type Sealer } from "../vault/sealer.ts";
 import { createAssetProcedures } from "./assets.ts";
 import { liveOs as os } from "./live-os.ts";
 import { createRunProcedures } from "./runs.ts";
+import { createSearchProcedure } from "./search.ts";
 import { createSettingsProcedures } from "./settings.ts";
 import { createVaultProcedures } from "./vault.ts";
 
@@ -16,10 +19,12 @@ interface LiveRouterDeps {
   db(): DbHandle;
   sealer(): Sealer;
   live(): LiveDeps;
+  /** Query embeddings for notes.search (the shared stateless factory, D38). */
+  embeddings(): EmbeddingsClient;
 }
 
 /**
- * Procedures whose backend is not on this branch yet: notes.* and folders.* (P3, B2),
+ * Procedures whose backend is not on this branch yet: notes.* (but search) and folders.* (P3),
  * benchmarks.* (T18). Nothing else may use this; router-parity.int.test.ts lists each exclusion by
  * the branch that removes it.
  */
@@ -54,7 +59,7 @@ export function createLiveRouter(deps: LiveRouterDeps) {
       move: os.notes.move.handler(notWired),
       delete: os.notes.delete.handler(notWired),
       export: os.notes.export.handler(notWired),
-      search: os.notes.search.handler(notWired),
+      search: createSearchProcedure({ db: deps.db, embeddings: deps.embeddings }),
     },
     folders: {
       tree: os.folders.tree.handler(notWired),
@@ -76,4 +81,9 @@ export function createLiveRouter(deps: LiveRouterDeps) {
   });
 }
 
-export const liveRouter = createLiveRouter({ db: getDb, sealer: getSealer, live: getLiveDeps });
+export const liveRouter = createLiveRouter({
+  db: getDb,
+  sealer: getSealer,
+  live: getLiveDeps,
+  embeddings: getEmbeddingsClient,
+});

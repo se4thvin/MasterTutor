@@ -15,6 +15,7 @@ import { RECORDED_APPROVAL_ID } from "../../fixtures/run-recording.ts";
 import { createSealer } from "../vault/sealer.ts";
 import { FIXTURE_VIEWER, type Viewer } from "../viewer.ts";
 import { createLiveRouter } from "./live-router.ts";
+import { fakeEmbeddingsClient } from "@mastertutor/contracts/testing";
 
 type Api = ContractRouterClient<ApiContract>;
 interface World {
@@ -43,7 +44,6 @@ const UNTIL_P3_B2 = [
   "notes/move",
   "notes/delete",
   "notes/export",
-  "notes/search",
   "folders/tree",
   "folders/create",
   "folders/rename",
@@ -199,6 +199,7 @@ beforeAll(async () => {
   liveRouter = createLiveRouter({
     db: () => web,
     sealer: () => createSealer(TEST_PUBLIC),
+    embeddings: () => fakeEmbeddingsClient(),
     live: () => ({
       db: web.db,
       nekoMemberSecret: "parity-neko-member-secret-0123456789",

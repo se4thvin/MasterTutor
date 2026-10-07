@@ -20,7 +20,7 @@ export const OBJECT_HEADERS: Record<string, string> = {
 export const OBJECT_CACHE = "private, no-store";
 /** Content-addressed assets: revalidated every time with their ETag, a cheap 304 (B2 ruling). */
 export const ASSET_CACHE = "private, no-cache";
-export const ASSET_URL_TTL_SECONDS = 3_600;
+const ASSET_URL_TTL_SECONDS = 3_600;
 
 export interface ObjectDeps {
   db: Database;
