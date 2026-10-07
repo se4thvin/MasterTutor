@@ -232,10 +232,19 @@ describe("step replay shots: the agent keeps screenshots on observe steps (Phase
   });
 
   it("keeps an act step's own screenshot when it has one", () => {
-    const rows = timelineItems(base(), [], VIEWER).filter((i) => i.kind === "step");
-    for (const row of rows)
-      if (row.kind === "step" && row.shotSeq !== null)
-        expect(base().steps.find((s) => s.seq === row.shotSeq)?.screenshotKey).not.toBeNull();
-    expect(rows.some((row) => row.kind === "step" && row.shotSeq === row.seq)).toBe(true);
+    const before = shot(50);
+    const own = rec({
+      type: "step",
+      seq: 51,
+      phase: "act",
+      state: "done",
+      caption: null,
+      url: null,
+      screenshotKey: "runs/r/steps/51-k.png",
+      action: { tool: "computer", summary: "Clicked", point: null },
+    });
+    const model = applyRunEvents(base(), [before, own]);
+    const row = timelineItems(model, [], VIEWER).find((i) => i.kind === "step" && i.seq === 51);
+    expect(row?.kind === "step" && row.shotSeq).toBe(51);
   });
 });

@@ -76,7 +76,7 @@ test.describe("Run view states", () => {
       detail: recordedDetail({ status: "sleeping", slotName: null }),
     });
     await expect(frame(page)).toHaveAttribute("data-state", "paused");
-    await expect(frame(page).locator("img[src$='/steps/8/screenshot']")).toBeVisible();
+    await expect(frame(page).locator("img[src$='/steps/6/screenshot']")).toBeVisible();
     await expect(page.locator("iframe")).toHaveCount(0);
     await page.getByRole("button", { name: "Resume" }).click();
     await expect.poll(() => rpcCalls(calls, "runs/resume").length).toBe(1);
@@ -135,7 +135,7 @@ test.describe("Run view states", () => {
       },
     });
     await expect(page.getByText("Live view unavailable")).toBeVisible();
-    await expect(frame(page).locator("img[src$='/steps/8/screenshot']")).toBeVisible();
+    await expect(frame(page).locator("img[src$='/steps/6/screenshot']")).toBeVisible();
     await expect(frame(page)).toHaveAttribute("data-state", "live");
   });
 
