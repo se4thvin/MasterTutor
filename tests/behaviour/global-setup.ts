@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import { startTestDatabase } from "@mastertutor/db/testing";
 import type { TestProject } from "vitest/node";
@@ -14,6 +14,8 @@ const compose = (...args: string[]) =>
 /** Starts the slots, fixtures and a migrated Postgres once for the behaviour project. */
 export default async function setup(project: TestProject) {
   await mkdir(BEHAVIOUR_DOWNLOADS, { recursive: true });
+  // The slot entrypoint chowns /downloads to neko (uid 1000); 0777 keeps it writable for this host user.
+  await chmod(BEHAVIOUR_DOWNLOADS, 0o777);
   await compose("up", "-d", "--wait");
   const database = await startTestDatabase({ slots: [...BEHAVIOUR_SLOTS] });
   project.provide("behaviour", {

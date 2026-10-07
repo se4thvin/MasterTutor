@@ -50,6 +50,13 @@
       "when": 1791312843338,
       "tag": "0006_vault_grants_no_bypass",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791330993495,
+      "tag": "0007_download_keep_or_discard",
+      "breakpoints": true
     }
   ]
 }

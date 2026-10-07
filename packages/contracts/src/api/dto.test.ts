@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { MAX_USER_DOWNLOADS_PER_RUN } from "../constants.ts";
 import {
   CreateBenchmarkInput,
   CreateRunInput,
   CreateVaultItemInput,
   GradeBenchmarkRunInput,
+  HandBackInput,
   ListNotesInput,
   SetSecretInput,
   SettingsView,
@@ -147,5 +149,19 @@ describe("settings concurrency and usage range (D14, D52)", () => {
     expect(UsageInput.safeParse({ from: "2026-01-01", to: "2027-02-04" }).success).toBe(true);
     expect(UsageInput.safeParse({ from: "2026-01-01", to: "2027-02-05" }).success).toBe(false);
     expect(UsageInput.safeParse({ from: "2026-10-02", to: "2026-10-01" }).success).toBe(false);
+  });
+});
+
+describe("HandBackInput: the person keeps or discards each download made during control", () => {
+  it("keeps nothing unless told: undecided downloads are discarded", () => {
+    expect(HandBackInput.parse({ runId, note: null }).keep).toEqual([]);
+  });
+  it("accepts at most one decision per allowed download, as download ids", () => {
+    const ids = Array.from({ length: MAX_USER_DOWNLOADS_PER_RUN + 1 }, () => crypto.randomUUID());
+    expect(HandBackInput.parse({ runId, note: null, keep: ids.slice(1) }).keep).toHaveLength(
+      MAX_USER_DOWNLOADS_PER_RUN,
+    );
+    expect(HandBackInput.safeParse({ runId, note: null, keep: ids }).success).toBe(false);
+    expect(HandBackInput.safeParse({ runId, note: null, keep: ["../x"] }).success).toBe(false);
   });
 });

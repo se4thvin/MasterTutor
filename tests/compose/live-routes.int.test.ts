@@ -1,0 +1,131 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import {
+  LIVE_STRIP_REGEX,
+  MAX_UPLOAD_BYTES,
+  liveForwardAuthAddress,
+  liveRouterRule,
+  liveUploadRouterRule,
+} from "@mastertutor/contracts";
+import { beforeAll, describe, expect, it } from "vitest";
+
+interface Service {
+  labels?: Record<string, string>;
+  environment?: Record<string, string | null>;
+  networks?: Record<string, { ipv4_address?: string } | null>;
+  profiles?: string[];
+}
+interface Config {
+  services: Record<string, Service>;
+}
+
+const root = fileURLToPath(new URL("../..", import.meta.url));
+const load = (files: string[]): Config =>
+  JSON.parse(
+    execFileSync(
+      "docker",
+      [
+        "compose",
+        "--env-file",
+        ".env.test",
+        ...files.flatMap((f) => ["-f", f]),
+        "config",
+        "--format",
+        "json",
+      ],
+      { cwd: root, encoding: "utf8" },
+    ),
+  ) as Config;
+const dynamic = readFileSync(
+  new URL("../../infra/traefik/test-dynamic.yml", import.meta.url),
+  "utf8",
+);
+let base: Config;
+let live: Config;
+
+beforeAll(() => {
+  base = load(["compose.yml"]);
+  live = load(["compose.yml", "compose.test.yml", "compose.live-test.yml"]);
+});
+
+describe("test file-provider live routers (spec §10.2.2)", () => {
+  it("route each slot with the single rule source", () => {
+    for (const slot of ["browser-1", "browser-2"]) {
+      expect(dynamic).toContain(`rule: '${liveRouterRule(slot, "localhost")}'`);
+      expect(dynamic).toContain(`url: http://${slot}:8080`);
+    }
+    expect(dynamic.match(/middlewares: \[live-auth, live-strip, live-headers\]/g)).toHaveLength(2);
+    expect(dynamic.match(/priority: 1000/g)).toHaveLength(2);
+    // Either YAML quoting (Prettier writes double quotes).
+    expect(dynamic).toMatch(
+      new RegExp(`- ["']${LIVE_STRIP_REGEX.replace(/[\\^$.*+?()[\]{}|-]/g, "\\$&")}["']`),
+    );
+  });
+
+  it("send ForwardAuth to web's static cdp address and copy back only the Cookie header (D41, S3)", () => {
+    const webIp = base.services.web!.networks!.cdp!.ipv4_address!;
+    const address = `http://${webIp}:3000/api/live/auth`;
+    expect(address).toBe(liveForwardAuthAddress(webIp.split(".").slice(0, 3).join(".")));
+    expect(dynamic).toContain(`address: ${address}`);
+    expect(dynamic).not.toContain("http://web:3000/api/live/auth");
+    expect(dynamic).toMatch(/authResponseHeaders:\s*\n\s*- Cookie\s*\n/);
+    // Only web's own X-Forwarded-* reach the auth check; a client cannot supply them.
+    expect(dynamic).toContain("trustForwardHeader: false");
+    expect(webIp.endsWith(".11")).toBe(true);
+  });
+
+  it("cap an upload's body at MAX_UPLOAD_BYTES, after authentication (I2, carried to A14)", () => {
+    for (const slot of ["browser-1", "browser-2"]) {
+      expect(dynamic).toContain(`rule: '${liveUploadRouterRule(slot, "localhost")}'`);
+    }
+    // Authenticated first: nobody without a live session gets 100 MiB buffered.
+    expect(
+      dynamic.match(/middlewares: \[live-auth, live-upload-limit, live-strip, live-headers\]/g),
+    ).toHaveLength(2);
+    expect(dynamic.match(/priority: 1001/g)).toHaveLength(2);
+    expect(dynamic).toContain(`maxRequestBodyBytes: ${MAX_UPLOAD_BYTES}`);
+  });
+
+  it("pins the n.eko base image by digest (S4: the same-origin client never changes underneath)", () => {
+    const dockerfile = readFileSync(
+      new URL("../../apps/browser-slot/Dockerfile", import.meta.url),
+      "utf8",
+    );
+    expect(dockerfile).toMatch(
+      /^FROM ghcr\.io\/m1k1o\/neko\/chromium:3\.1\.6@sha256:[0-9a-f]{64}$/m,
+    );
+  });
+
+  it("add the frame and sniffing guards to everything n.eko serves (S4)", () => {
+    expect(dynamic).toContain(`contentSecurityPolicy: "frame-ancestors 'self'"`);
+    expect(dynamic).toContain("contentTypeNosniff: true");
+  });
+});
+
+describe("compose stays production-neutral (S6, S7, D42)", () => {
+  it("puts no Traefik labels and no TURN settings on slots; Phase 9 owns production routing", () => {
+    for (const [name, service] of Object.entries(base.services)) {
+      expect(
+        Object.keys(service.labels ?? {}).filter((k) => k.startsWith("traefik.")),
+        name,
+      ).toEqual([]);
+      if (name.startsWith("browser-"))
+        expect(
+          Object.keys(service.environment ?? {}).filter((k) => k.startsWith("TURN_")),
+          name,
+        ).toEqual([]);
+    }
+    expect(base.services.coturn).toBeUndefined();
+  });
+
+  it("the live overlay runs two slots and tells migrate about both", () => {
+    expect(
+      Object.entries(live.services)
+        .filter(([name, s]) => name.startsWith("browser-") && (s.profiles ?? []).length === 0)
+        .map(([name]) => name)
+        .sort(),
+    ).toEqual(["browser-1", "browser-2"]);
+    expect(live.services.migrate!.environment!.BROWSER_SLOTS).toBe("browser-1,browser-2");
+  });
+});

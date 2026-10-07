@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { ObjectHead, PutOptions, Storage } from "@mastertutor/storage";
 
 export function createMemoryStorage(): Storage & { objects: Map<string, Uint8Array> } {
@@ -11,6 +12,10 @@ export function createMemoryStorage(): Storage & { objects: Map<string, Uint8Arr
         key,
         typeof body === "string" ? new TextEncoder().encode(body) : new Uint8Array(body),
       );
+      types.set(key, options.contentType);
+    },
+    async putFile(key: string, path: string, options: PutOptions) {
+      objects.set(key, new Uint8Array(await readFile(path)));
       types.set(key, options.contentType);
     },
     async getBytes(key: string) {

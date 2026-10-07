@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApprovalRequest } from "../approval.ts";
 import { Budget, Plan, Usage } from "../budget.ts";
+import { MAX_USER_DOWNLOADS_PER_RUN } from "../constants.ts";
 import {
   ApprovalKind,
   ApprovalMode,
@@ -156,6 +157,11 @@ export type SubmitOtpInput = z.infer<typeof SubmitOtpInput>;
 export const HandBackInput = z.object({
   runId: Uuid,
   note: z.string().trim().min(1).max(4_000).nullable().default(null),
+  /**
+   * The downloads made during control the person keeps (download ids). Every other one is
+   * discarded: nothing a person did not explicitly keep is stored or shown to the agent (A11).
+   */
+  keep: z.array(Uuid).max(MAX_USER_DOWNLOADS_PER_RUN).default([]),
 });
 export type HandBackInput = z.infer<typeof HandBackInput>;
 

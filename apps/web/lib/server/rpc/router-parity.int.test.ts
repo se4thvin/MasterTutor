@@ -34,8 +34,6 @@ const TEST_PUBLIC = "y5DgMx35MF/R/d3MSLtIufXczYHJAqVtEIEMLY/Qf3M=";
 
 /** T18 wires benchmarks.* and deletes this exclusion. */
 const UNTIL_T18 = "benchmarks";
-/** Branch b6-a9-a12 (P2, B6 createLiveHandlers) wires these and deletes this exclusion. */
-const UNTIL_P2_B6 = ["runs/takeControl", "runs/handBack", "runs/openLive"] as const;
 /** Branch b245-t0 (P3, B2 library handlers; Task 0C binds them) wires these and deletes this exclusion. */
 const UNTIL_P3_B2 = [
   "notes/list",
@@ -53,8 +51,8 @@ const UNTIL_P3_B2 = [
   "folders/delete",
   "assets/url",
 ] as const;
-/** Live procedures still answering NOT_IMPLEMENTED outside benchmarks.*. Empty after P2 and P3. */
-const LIVE_DEFERRED: ReadonlySet<string> = new Set([...UNTIL_P2_B6, ...UNTIL_P3_B2]);
+/** Live procedures still answering NOT_IMPLEMENTED outside benchmarks.*. Empty after P3. */
+const LIVE_DEFERRED: ReadonlySet<string> = new Set(UNTIL_P3_B2);
 
 /** One probe per procedure without a lasting side effect: unknown ids, or a harmless read. */
 const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
@@ -155,7 +153,9 @@ const worlds: ReadonlyArray<readonly [string, World]> = [
   [
     "liveRouter",
     {
-      session: () => createRouterClient(liveRouter, { context: { viewer } }),
+      // resHeaders: what ResponseHeadersPlugin gives the route (B6 openLive sets cookies on it).
+      session: () =>
+        createRouterClient(liveRouter, { context: { viewer, resHeaders: new Headers() } }),
       anonymous: () => createRouterClient(liveRouter, { context: { viewer: null } }),
       deferred: LIVE_DEFERRED,
       // UNTIL_P3_B2: folders.create is not wired yet, so the folder is inserted directly.
@@ -200,6 +200,11 @@ beforeAll(async () => {
   liveRouter = createLiveRouter({
     db: () => web,
     sealer: () => createSealer(TEST_PUBLIC),
+    live: () => ({
+      db: web.db,
+      nekoMemberSecret: "parity-neko-member-secret-0123456789",
+      liveCookieSecret: "parity-live-cookie-secret-0123456789",
+    }),
   });
 });
 afterAll(async () => {
@@ -379,7 +384,7 @@ describe("liveRouter is fully wired outside benchmarks.* and the deferred proced
     expect(await outcome(live().session().benchmarks.list({}))).toBe("NOT_IMPLEMENTED");
   });
 
-  it("still answers NOT_IMPLEMENTED for each deferred procedure (wiring one means deleting it from UNTIL_P2_B6 or UNTIL_P3_B2)", async () => {
+  it("still answers NOT_IMPLEMENTED for each deferred procedure (wiring one means deleting it from UNTIL_P3_B2)", async () => {
     const api = live().session();
     const inputs = new Map(EVERY_CALL);
     for (const path of LIVE_DEFERRED)
