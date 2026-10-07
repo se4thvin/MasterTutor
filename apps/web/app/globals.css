@@ -9,6 +9,9 @@
 @import "../styles/note.css";
 @import "../styles/vault.css";
 @import "../styles/settings.css";
+@import "../styles/run.css";
+@import "../styles/new-task.css";
+@import "../styles/hero.css";
 
 @theme inline {
   --color-*: initial;

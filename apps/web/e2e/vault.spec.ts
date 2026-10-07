@@ -1,3 +1,4 @@
+import { movingAnimations } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 test("vault explains the model, lists sign-ins with sealed fields, and is clean everywhere", async ({
@@ -46,4 +47,24 @@ test("a failed sign-out restores the session and says so", async ({ page }) => {
   await row.getByRole("button", { name: "Sign out of github" }).click();
   await expect(page.getByRole("group").filter({ hasText: "Couldn't sign out." })).toBeVisible();
   await expect(row).toContainText("Session saved");
+});
+
+test("the session mark turns from saved to pending when you sign out", async ({ page }) => {
+  await page.goto("/vault");
+  const row = page.locator(".vrow").filter({ hasText: "github" });
+  await expect(row.locator('.vrow-session .smark[data-status="done"]')).toBeVisible();
+  await row.getByRole("button", { name: "Sign out of github" }).click();
+  await expect(row.locator('.vrow-session .smark[data-status="pending"]')).toBeVisible();
+  await expect(row).toContainText("Signs in on next use");
+  // A toast has just appeared: expectCleanScreen waits for it to settle before axe (m-6).
+  await expectCleanScreen(page);
+});
+
+test("under reduced motion the session mark only fades", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/vault");
+  const row = page.locator(".vrow").filter({ hasText: "github" });
+  await row.getByRole("button", { name: "Sign out of github" }).click();
+  await expect(row.locator('.smark[data-status="pending"]')).toBeVisible();
+  expect(await movingAnimations(page, ".vrow-session")).toEqual([]);
 });

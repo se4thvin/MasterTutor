@@ -1,8 +1,11 @@
 import {
+  EMPTY_USAGE,
+  MODELS,
   TYPED_SECRET_FIELDS,
   apiContract,
   type NoteBlock,
   type RunDetail,
+  type RunSummary,
   type VaultAuditView,
 } from "@mastertutor/contracts";
 import { ORPCError, implement } from "@orpc/server";
@@ -10,6 +13,8 @@ import { buildNoteMarkdown } from "../export/note-markdown.ts";
 import { canCreateFolder, canMoveFolder, descendantIds, folderPath } from "../folders/tree.ts";
 import { requireViewer } from "../server/rpc/require-viewer.ts";
 import { FIXTURE_ASSETS } from "./assets.ts";
+import { ids } from "./ids.ts";
+import { RECORDED_RUN_ID, recordedDetail, recordedSteps } from "./run-recording.ts";
 import { stateFor, usageReport } from "./store.ts";
 import type { FixtureContext, FixtureState, NoteRecord } from "./types.ts";
 
@@ -87,7 +92,29 @@ function appendAudit(
 
 export const fixtureRouter = os.router({
   runs: {
-    create: os.runs.create.handler(notImplemented),
+    create: os.runs.create.handler(({ input, context }): RunSummary => {
+      const state = stateFor(context.ns);
+      const run: RunSummary = {
+        id: ids.run(100 + state.runs.length),
+        goal: input.goal,
+        status: "queued",
+        waitReason: null,
+        controller: "agent",
+        approvalMode: input.approvalMode,
+        model: MODELS.agentPrimary,
+        noteId: null,
+        usage: EMPTY_USAGE,
+        budget: input.budget ?? state.settings.defaultBudget,
+        createdAt: now(),
+        finishedAt: null,
+      };
+      state.runs.unshift(run);
+      state.runScope[run.id] = {
+        allowedOrigins: input.allowedOrigins,
+        targetFolderId: input.targetFolderId,
+      };
+      return run;
+    }),
     list: os.runs.list.handler(({ input, context }) => {
       const runs = stateFor(context.ns).runs.filter(
         (r) => input.status === null || r.status === input.status,
@@ -95,20 +122,25 @@ export const fixtureRouter = os.router({
       return paginate(runs, input);
     }),
     get: os.runs.get.handler(({ input, context }): RunDetail => {
-      const run = stateFor(context.ns).runs.find((r) => r.id === input.runId);
+      if (input.runId === RECORDED_RUN_ID) return recordedDetail();
+      const state = stateFor(context.ns);
+      const run = state.runs.find((r) => r.id === input.runId);
       if (!run) throw notFound("Run");
+      const scope = state.runScope[run.id];
       return {
         ...run,
         plan: null,
-        allowedOrigins: [],
+        allowedOrigins: scope?.allowedOrigins ?? [],
         currentUrl: null,
         slotName: null,
-        targetFolderId: null,
+        targetFolderId: scope?.targetFolderId ?? null,
         pendingApprovals: [],
         lastEventId: null,
       };
     }),
-    steps: os.runs.steps.handler(() => ({ items: [] })),
+    steps: os.runs.steps.handler(({ input }) => ({
+      items: input.runId === RECORDED_RUN_ID && input.afterSeq === null ? recordedSteps() : [],
+    })),
     cancel: os.runs.cancel.handler(notImplemented),
     resume: os.runs.resume.handler(notImplemented),
     sendMessage: os.runs.sendMessage.handler(notImplemented),

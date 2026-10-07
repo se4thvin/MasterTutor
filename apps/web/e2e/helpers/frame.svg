@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800" width="1280" height="800" role="img" aria-label="Course lecture page">
+  <rect width="1280" height="800" fill="#ffffff"/>
+  <rect width="1280" height="56" fill="#f5f6f8"/>
+  <text x="28" y="36" font-family="Arial" font-size="20" font-weight="700" fill="#0b4fa8">learn.example.edu</text>
+  <text x="300" y="120" font-family="Arial" font-size="28" font-weight="700" fill="#1f1f1f">Week 2 · Lecture 3: Choosing the learning rate</text>
+  <rect x="300" y="150" width="600" height="300" rx="8" fill="#0f1115"/>
+  <path d="M320 420 C 420 200, 520 180, 880 170" stroke="#4ade80" stroke-width="4" fill="none"/>
+  <rect x="300" y="480" width="560" height="10" rx="5" fill="#d2d2d7"/>
+  <rect x="300" y="500" width="520" height="10" rx="5" fill="#d2d2d7"/>
+  <rect x="940" y="520" width="300" height="140" rx="10" fill="#f7f8fa" stroke="#e1e4e8"/>
+  <rect x="965" y="548" width="20" height="20" rx="4" fill="#0b4fa8"/>
+  <text x="995" y="564" font-family="Arial" font-size="16" fill="#333">I agree to the Honor Code</text>
+  <rect x="960" y="592" width="260" height="40" rx="6" fill="#0b4fa8"/>
+  <text x="1048" y="618" font-family="Arial" font-size="16" font-weight="700" fill="#ffffff">Start quiz</text>
+</svg>

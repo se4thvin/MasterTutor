@@ -19,6 +19,7 @@ import {
   type VaultSecretField,
 } from "@mastertutor/contracts";
 import { ids } from "./ids.ts";
+import { recordedSummary } from "./run-recording.ts";
 import type { FixtureState, NoteRecord } from "./types.ts";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -613,16 +614,7 @@ function runs(): RunSummary[] {
     finishedAt,
   });
   return [
-    run(
-      1,
-      "Take notes on week 3 of the ML course, every lecture, figure and table",
-      "running",
-      0.84,
-      23,
-      at("2026-10-05", "16:55:00"),
-      null,
-      null,
-    ),
+    recordedSummary(),
     run(
       2,
       "Capture the learning-rate warmup article verbatim",
@@ -649,5 +641,6 @@ export function createSeed(): FixtureState {
       concurrency: 6,
     },
     runs: runs(),
+    runScope: {},
   };
 }

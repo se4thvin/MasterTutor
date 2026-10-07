@@ -3,11 +3,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { RollingNumber } from "@/components/bits/rolling-number.tsx";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { ButtonLink } from "@/components/ui/button.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
+import { durations } from "@/lib/motion-tokens.ts";
 import { orpc } from "@/lib/api/client.ts";
 import { MEDIA } from "@/lib/breakpoints.ts";
 import { cx } from "@/lib/cx.ts";
@@ -36,6 +38,13 @@ export function NoteReader({ noteId }: { noteId: string }) {
   const [openBlockId, setOpenBlockId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
+  // The arrival highlight lasts as long as the flash; under reduced motion it is a static tint,
+  // which must not linger until the next pick.
+  useEffect(() => {
+    if (flashId === null) return undefined;
+    const timer = setTimeout(() => setFlashId(null), durations.shimmer);
+    return () => clearTimeout(timer);
+  }, [flashId]);
   const [pinnedBlockId, setPinnedBlockId] = useState<string | null>(null);
   const wide = useMediaQuery(MEDIA.lg);
   const search = useSearchParams();
@@ -106,6 +115,7 @@ export function NoteReader({ noteId }: { noteId: string }) {
   // (hover events fired by the layout shift must not erase that choice).
   const shownActive = activeBlockId ?? (view === "source" ? pinnedBlockId : null);
   const sourceById = new Map(data.sources.map((s) => [s.id, s]));
+  const verifiedCount = data.blocks.filter((b) => b.verified).length;
 
   return (
     <>
@@ -143,7 +153,8 @@ export function NoteReader({ noteId }: { noteId: string }) {
             </h1>
             {data.note.lede ? <p className="reader-lede">{data.note.lede}</p> : null}
             <p className="t-foot">
-              {formatDate(data.note.createdAt)} · {data.blocks.length} blocks · filed by{" "}
+              {formatDate(data.note.createdAt)} · {data.blocks.length} blocks ·{" "}
+              <RollingNumber value={String(verifiedCount)} /> verified · filed by{" "}
               {data.note.filedBy === "agent" ? "the agent" : "you"}
             </p>
           </header>

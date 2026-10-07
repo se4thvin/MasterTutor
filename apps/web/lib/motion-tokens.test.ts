@@ -37,10 +37,26 @@ describe("motion tokens", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
+  it("under reduced motion no animation waits on a delay (I-3: a delayed from-frame is a snap)", () => {
+    const reduce = renderMotionCss().split("@media (prefers-reduced-motion: reduce)")[1] ?? "";
+    // -1ms with the 1ms duration: no offset from-frame is ever painted, staggered or not.
+    expect(reduce).toContain("animation-delay: -1ms !important;");
+  });
+
+  it("lets scroll-linked animations opt out of the reduced-motion delay", () => {
+    const reduce = renderMotionCss().split("@media (prefers-reduced-motion: reduce)")[1] ?? "";
+    // A generic opt-out, not a component selector in the token generator (M-7).
+    expect(reduce).not.toContain(".toolbar");
+    expect(reduce).toMatch(
+      /\[data-motion-keep-delay\]::after[^{]*\{\s*animation-delay: 0s !important;/,
+    );
+  });
+
   it("still exports every motion API this app uses (motion 12 to 14 guard)", () => {
     for (const name of [
       "LazyMotion",
       "domAnimation",
+      "domMax",
       "m",
       "animate",
       "useMotionValue",
@@ -51,6 +67,20 @@ describe("motion tokens", () => {
       "AnimatePresence",
     ]) {
       expect(motionReact, name).toHaveProperty(name);
+    }
+  });
+
+  it("has the F3 agent cursor and spinner durations (run 13 §6)", () => {
+    expect(durations).toMatchObject({
+      cursorMin: 250,
+      cursorMax: 450,
+      clickPulse: 400,
+      drift: 2600,
+      spin: 1000,
+    });
+    const css = renderMotionCss();
+    for (const name of ["cursor-min", "cursor-max", "click-pulse", "drift", "spin"]) {
+      expect(css).toContain(`--motion-dur-${name}:`);
     }
   });
 });

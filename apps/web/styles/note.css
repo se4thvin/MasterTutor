@@ -228,6 +228,13 @@
     animation-duration: var(--motion-dur-shimmer);
     animation-timing-function: var(--motion-ease-out);
   }
+  /* Reduced motion: the picked block keeps a static highlight instead of the fading flash. */
+  @media (prefers-reduced-motion: reduce) {
+    .blk-flash::before {
+      opacity: 1;
+      animation-name: none;
+    }
+  }
   @keyframes flash {
     from {
       opacity: 1;
@@ -405,6 +412,18 @@
     }
     &.callout-on .cap {
       color: var(--label);
+    }
+    /* A hand-annotated reveal (AnimatedContent pattern, rebuilt in CSS; D43). */
+    animation-name: callout-in;
+    animation-duration: var(--motion-dur-panel);
+    animation-timing-function: var(--motion-ease-out);
+    animation-fill-mode: both;
+    animation-delay: calc(var(--i, 0) * var(--motion-dur-stagger));
+  }
+  @keyframes callout-in {
+    from {
+      opacity: 0;
+      translate: -0.5rem 0;
     }
   }
 }

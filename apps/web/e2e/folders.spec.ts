@@ -1,4 +1,5 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { movingAnimations } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, isWide, test } from "./helpers/test.ts";
 
 async function openTree(page: Page) {
@@ -153,4 +154,89 @@ test("dropping a folder on its current parent sends nothing", async ({ page }) =
     "1",
   );
   expect(moves).toEqual([]);
+});
+
+/**
+ * Moves an HTML5 drag (already started with mouse.down) to the middle of `target`. Playwright fires
+ * dragover only on a mouse move inside the target, not continuously like a browser, so the last
+ * one-pixel move is what lets the row accept the drop.
+ */
+async function dragInto(page: Page, target: Locator) {
+  const box = (await target.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+}
+
+test.describe("folder rows float and lift their lid (D43 FolderFloat)", () => {
+  test("hovering a folder row floats its glyph", async ({ page }) => {
+    test.skip(!isWide(page), "the sidebar tree is hoverable only on wide layouts");
+    await page.goto("/library");
+    const row = page
+      .getByRole("tree", { name: "Folders" })
+      .getByRole("treeitem", { name: "Databases" });
+    await row.hover();
+    await expect(row.locator(".fmark")).toHaveCSS("rotate", "-8deg");
+  });
+
+  test("dragging a note over a folder row lifts the lid until the drag leaves", async ({
+    page,
+  }) => {
+    test.skip(!isWide(page), "drag targets in the sidebar tree are wide-only");
+    await page.goto("/library?folder=00000000-0000-4000-8000-000001000002");
+    const card = page.locator('[data-qa="note-card"]').first();
+    const row = page
+      .getByRole("tree", { name: "Folders" })
+      .getByRole("treeitem", { name: "Databases" });
+    const mark = row.locator(".fmark");
+    await card.hover();
+    await page.mouse.down();
+    await dragInto(page, row);
+    await expect(mark).toHaveAttribute("data-lift", "");
+    await expect(mark.locator(".fmark-open")).toHaveCSS("opacity", "1");
+    const box = (await row.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height * 4, { steps: 4 });
+    await expect(mark).not.toHaveAttribute("data-lift", "");
+    await page.mouse.up();
+  });
+
+  test("under reduced motion the lid still lifts but nothing moves", async ({ page }) => {
+    test.skip(!isWide(page), "drag targets in the sidebar tree are wide-only");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/library?folder=00000000-0000-4000-8000-000001000002");
+    const row = page
+      .getByRole("tree", { name: "Folders" })
+      .getByRole("treeitem", { name: "Databases" });
+    await row.hover();
+    await expect(row.locator(".fmark")).toHaveCSS("rotate", "none");
+    await page.locator('[data-qa="note-card"]').first().hover();
+    await page.mouse.down();
+    await dragInto(page, row);
+    await expect(row.locator(".fmark")).toHaveAttribute("data-lift", "");
+    await expect(row.locator(".fmark")).toHaveCSS("translate", "none");
+    expect(await movingAnimations(page, ".tree")).toEqual([]);
+    await page.mouse.up();
+  });
+
+  test("the tree stays clean with folder marks at every width", async ({ page }) => {
+    await page.goto("/library");
+    await openTree(page);
+    await expectCleanScreen(page);
+  });
+  test("a lid-less row (Unfiled) keeps its glyph while a note drags over it (I1)", async ({
+    page,
+  }) => {
+    test.skip(!isWide(page), "drag targets in the sidebar tree are wide-only");
+    await page.goto("/library?folder=00000000-0000-4000-8000-000001000002");
+    const row = page
+      .getByRole("tree", { name: "Folders" })
+      .getByRole("treeitem", { name: "Unfiled" });
+    const mark = row.locator(".fmark");
+    await page.locator('[data-qa="note-card"]').first().hover();
+    await page.mouse.down();
+    await dragInto(page, row);
+    await expect(mark).toHaveAttribute("data-lift", "");
+    await expect(mark.locator(".fmark-open")).toHaveCount(0);
+    await expect(mark.locator(".fmark-shut")).toHaveCSS("opacity", "1");
+    await page.mouse.up();
+  });
 });
