@@ -278,8 +278,9 @@ export class StepStore {
         );
       }
       if (commit.storage) await sessionStore.save(tx, run, commit.storage);
-      // The run's error is also on its stream, where the run view reads why it failed (D35).
-      if (transition?.error)
+      // A failed run's error is also on its stream, where the run view reads why it failed (D35).
+      // Other transitions (a kill-switch cancel) say why on their status (review M5).
+      if (transition?.to === "failed" && transition.error)
         events.push({
           type: "error",
           code: transition.error.code,
