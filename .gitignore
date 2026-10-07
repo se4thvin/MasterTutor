@@ -2,6 +2,8 @@
 node_modules/
 .env
 .env.local
+# env:init writes through <file>.tmp (scripts/env-init.ts)
+.env*.tmp
 .next/
 next-env.d.ts
 coverage/
@@ -13,3 +15,4 @@ apps/web/playwright-report/
 apps/web/AGENTS.md
 apps/web/CLAUDE.md
 tests/fixtures/vault-sites/.dist/
+apps/web/e2e/.out/

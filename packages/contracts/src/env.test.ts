@@ -86,10 +86,14 @@ describe("least privilege per service (spec §13)", () => {
       "NEKO_MEMBER_SECRET",
       "BETTER_AUTH_SECRET",
       "LIVE_COOKIE_SECRET",
-      "TURN_SECRET",
       "VAULT_PUBLIC_KEY",
     ]) {
       expect(keys(AgentEnv)).not.toContain(key);
+    }
+  });
+  it("has no TURN secret anywhere: v1 has no TURN relay (D42)", () => {
+    for (const schema of [WebEnv, AgentEnv, MigrateEnv, GarageInitEnv]) {
+      expect(keys(schema)).not.toContain("TURN_SECRET");
     }
   });
   it("one-shots get only what they need", () => {

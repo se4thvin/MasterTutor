@@ -1,6 +1,7 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { assets, downloads, runs } from "../schema/index.ts";
+import { lockRunRow } from "./events.ts";
 
 export async function findAssetBySha(
   db: Database,
@@ -137,6 +138,31 @@ export async function pendingDownloads(
     .where(and(eq(downloads.runId, runId), eq(downloads.pending, true)));
 }
 
+/**
+ * The run's downloads still waiting for the person's Keep or Discard (B6 A11), for the run
+ * snapshot: pending and not yet kept, only while a person holds control, and only for a run in
+ * this workspace. Oldest first, the order they were made.
+ */
+export async function heldDownloads(
+  db: Database,
+  input: { runId: string; workspaceId: string },
+): Promise<Array<{ id: string; filename: string; bytes: number }>> {
+  return db
+    .select({ id: downloads.id, filename: downloads.filename, bytes: downloads.bytes })
+    .from(downloads)
+    .innerJoin(runs, eq(runs.id, downloads.runId))
+    .where(
+      and(
+        eq(downloads.runId, input.runId),
+        eq(runs.workspaceId, input.workspaceId),
+        eq(runs.controller, "user"),
+        eq(downloads.pending, true),
+        isNull(downloads.keptAt),
+      ),
+    )
+    .orderBy(asc(downloads.createdAt), asc(downloads.id));
+}
+
 /** Marks the listed pending downloads of this run as kept (the person's hand-back decision). */
 export async function keepPendingDownloads(
   tx: DbTx,
@@ -166,6 +192,9 @@ export async function fileKeptDownload(
     sourceUrl: string | null;
   },
 ): Promise<{ assetId: string }> {
+  // Run row before download row, as the hand-back takes them (requestHandBack, then
+  // keepPendingDownloads): the caller's download_ready event would otherwise lock in reverse.
+  await lockRunRow(tx, input.runId);
   const [row] = await tx
     .select({ bytes: downloads.bytes })
     .from(downloads)

@@ -24,8 +24,6 @@ const COMPOSE = [
   "compose.yml",
   "-f",
   "compose.test.yml",
-  "-f",
-  "compose.live-test.yml",
 ];
 const compose = async (args: string[]) =>
   (

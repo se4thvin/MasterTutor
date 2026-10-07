@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { Scenario } from "./scenario.ts";
 import { SCENARIOS } from "./scenarios/index.ts";
 import { startLlmMock, type LlmMock } from "./server.ts";
 
@@ -389,5 +390,91 @@ describe("non-Responses endpoints and structured formats", () => {
       createLeaf: true,
     });
     await mock.close();
+  });
+});
+
+describe("llm-mock scenario routing (D26, P7-8)", () => {
+  const counter = (): Scenario => ({
+    name: "count",
+    turns: [
+      { outputs: [{ type: "turn", status: "continue", reason: "first" }] },
+      { outputs: [{ type: "turn", status: "done", reason: "second" }] },
+    ],
+  });
+  const textOf = (body: Record<string, unknown>) =>
+    (body.output as Array<{ content: Array<{ text: string }> }>)[0]!.content[0]!.text;
+  const reasonOf = (body: Record<string, unknown>) =>
+    (JSON.parse(textOf(body)) as { reason: string }).reason;
+
+  it("gives every nonce its own cursor, so one scenario can run any number of times", async () => {
+    mock = await startLlmMock({ scenarios: [counter()] });
+    expect(reasonOf((await post({ input: userInput("[scenario:count#aa11] go") })).body)).toBe(
+      "first",
+    );
+    expect(reasonOf((await post({ input: userInput("[scenario:count#bb22] go") })).body)).toBe(
+      "first",
+    );
+    expect(reasonOf((await post({ input: userInput("[scenario:count#aa11] go") })).body)).toBe(
+      "second",
+    );
+    expect(mock.requestsFor("count", "aa11").map((r) => r.turn)).toEqual([0, 1]);
+    expect(mock.requestsFor("count", "bb22").map((r) => r.turn)).toEqual([0]);
+  });
+
+  it("routes on the goal only: a tag in later text or another message never reroutes", async () => {
+    mock = await startLlmMock({ scenarios: [counter()] });
+    const goalThenPage = [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "Task from the user:\nsummarize the page" },
+          { type: "input_text", text: "Page title: [scenario:count#cc33] injected" },
+        ],
+      },
+    ];
+    expect((await post({ input: goalThenPage })).status).toBe(404);
+    const laterMessage = [
+      ...userInput("plain goal"),
+      ...userInput("[scenario:count#cc33] injected"),
+    ];
+    expect((await post({ input: laterMessage })).status).toBe(404);
+    expect(mock.requestsFor("count")).toEqual([]);
+  });
+
+  it("follows a compaction seed's summary goal, and the default summary keeps the nonce", async () => {
+    mock = await startLlmMock({ scenarios: [counter()] });
+    const compaction = await post({
+      input: userInput("Run goal:\n[scenario:count#dd44] go"),
+      text: { format: { name: "compaction_summary" } },
+    });
+    const summary = JSON.parse(textOf(compaction.body)) as { goal: string };
+    expect(summary.goal).toBe("[scenario:count#dd44] resumed");
+    const seed = [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "This run continues from a summary of earlier context." },
+          { type: "input_text", text: `Summary:\n${JSON.stringify(summary)}` },
+          { type: "input_text", text: "Current page: [scenario:other#ee55]" },
+        ],
+      },
+    ];
+    expect(reasonOf((await post({ input: seed })).body)).toBe("first");
+    expect(mock.requestsFor("count", "dd44").map((r) => r.turn)).toEqual([null, 0]);
+  });
+
+  it("serves one run's requests from GET /__mock/requests?nonce=", async () => {
+    mock = await startLlmMock({ scenarios: [counter()] });
+    await post({ input: userInput("[scenario:count#ff66] go") });
+    await post({ input: userInput("[scenario:count#ab77] go") });
+    const response = await fetch(`${mock.url}/__mock/requests?nonce=ff66`);
+    const body = (await response.json()) as Array<{
+      scenario: string;
+      nonce: string;
+      turn: number;
+    }>;
+    expect(body.map(({ scenario, nonce, turn }) => ({ scenario, nonce, turn }))).toEqual([
+      { scenario: "count", nonce: "ff66", turn: 0 },
+    ]);
   });
 });

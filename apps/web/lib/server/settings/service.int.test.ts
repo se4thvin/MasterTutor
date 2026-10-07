@@ -59,7 +59,11 @@ describe("settings.* on the live router (Task 0B)", () => {
     await expect(
       client().settings.update({ version: "not-a-version", concurrency: 1 }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
-    for (const impossible of ["2026-13-01T00:00:00.000000Z", "2026-02-30T00:00:00.000000Z"])
+    for (const impossible of [
+      "2026-13-01T00:00:00.000000Z",
+      "2026-02-30T00:00:00.000000Z",
+      "0000-01-01T00:00:00.000000Z",
+    ])
       await expect(
         client().settings.update({ version: impossible, concurrency: 1 }),
       ).rejects.toMatchObject({ code: "CONFLICT" });
