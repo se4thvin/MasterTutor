@@ -221,6 +221,9 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   const approval = state === "approval" ? (view.approvals[0] ?? null) : null;
   // One copy per render, shared by the sheet and the frame's spotlight (M8).
   const copy = approval ? approvalCopy(approval.request) : null;
+  const thinking = thinkingState(view);
+  // At md+ the timeline's ThoughtLine speaks while the agent thinks; the caption would repeat it.
+  // Every other state (control, pause, CAPTCHA, stuck, acting) is the caption's to announce (final I1).
   const userHasControl = inControl(view.controller, takeover);
   return (
     <>
@@ -300,7 +303,7 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
                 />
               }
               showCallouts={callouts}
-              announceCaption={!regular}
+              announceCaption={!regular || thinking === null || state !== "live"}
               onHandBack={() => setHandBackOpen(true)}
               onTakeControl={startTakeover}
               onResume={resume}
@@ -316,7 +319,7 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
             runId={runId}
             items={items}
             summary={summaryLabel(view)}
-            thinking={thinkingState(view)}
+            thinking={thinking}
             otp={regular ? otp : null}
             replaySeq={replaySeq}
             onReplay={(seq) => {

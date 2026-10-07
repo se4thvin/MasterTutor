@@ -1,3 +1,13 @@
+/**
+ * The one set of context attributes: the probe before the download and the renderer must ask for
+ * the same, since a canvas keeps its first context. "default", not "high-performance": a
+ * decorative hero never wakes a discrete GPU (final I3).
+ */
+export const CONTEXT_ATTRIBUTES: WebGLContextAttributes = {
+  antialias: true,
+  powerPreference: "default",
+};
+
 export interface HeroEnvironment {
   reducedMotion: boolean;
   hasWebGL2: boolean;

@@ -23,6 +23,7 @@ import {
 import { clamp01, cubicBezier } from "@/lib/easing.ts";
 import { easings, springs } from "@/lib/motion-tokens.ts";
 import { HERO_EVENTS } from "./hero-events.ts";
+import { CONTEXT_ATTRIBUTES } from "./hero-gate.ts";
 import {
   CAPTURE_END_S,
   PAGE_FLOW,
@@ -34,6 +35,7 @@ import {
 import { bar, lathe, slab } from "./scene/geometry.ts";
 import { LENS, lensProfile } from "./scene/lens-profile.ts";
 import { createSpring, smoothstep, stepSprings } from "./scene/motion.ts";
+import { IDLE_AFTER_MS, shouldRender } from "./scene/pacing.ts";
 import { pageTexture } from "./scene/page-texture.ts";
 import { buildStudio, readSceneTokens } from "./scene/studio.ts";
 
@@ -48,6 +50,10 @@ interface HeroStats {
   fps: number;
   dpr: number;
   captures: number;
+  /** Drawing at the idle rate (final I3). */
+  idle: boolean;
+  /** Studio (PMREM) builds: only a theme change makes another (final M7). */
+  studios: number;
 }
 declare global {
   interface Window {
@@ -57,6 +63,8 @@ declare global {
 
 const MAX_DPR = 2;
 const SLOW_FRAME_MS = 24;
+/** A long gap (a tab coming back) never jumps the capture more than this. */
+const MAX_CAPTURE_STEP_S = 0.25;
 const FRAGMENTS = 14;
 const ease = { flow: cubicBezier(easings.standard), arc: cubicBezier(easings.cursor) };
 
@@ -67,19 +75,11 @@ export async function createHero(
   const canvas = el.querySelector("canvas");
   if (!canvas) return null;
   // A WebGL2 constructor does not prove a context can be created (P2): ask, and keep the poster if not.
-  const context = canvas.getContext("webgl2", {
-    antialias: true,
-    powerPreference: "high-performance",
-  });
+  const context = canvas.getContext("webgl2", CONTEXT_ATTRIBUTES);
   if (!context) return null;
   let renderer: WebGLRenderer;
   try {
-    renderer = new WebGLRenderer({
-      canvas,
-      context,
-      antialias: true,
-      powerPreference: "high-performance",
-    });
+    renderer = new WebGLRenderer({ canvas, context, ...CONTEXT_ATTRIBUTES });
   } catch {
     return null;
   }
@@ -240,9 +240,18 @@ export async function createHero(
   rig.add(page, puck, note, shadow, ...frags.map((f) => f.mesh));
   scene.add(rig);
 
-  // Theme (light/dark): background and studio follow --bg
+  const stats: HeroStats = { frames: 0, fps: 0, dpr, captures: 0, idle: false, studios: 0 };
+  if (options.debug) window.__heroStats = stats;
+
+  // Theme (light/dark): background and studio follow --bg. Any class change on <html> is
+  // observed; the studio is rebuilt only when the colours it mirrors changed (final M7).
+  let themeKey = "";
   const applyTheme = () => {
     const t = readSceneTokens();
+    const key = `${t.bg}|${t.signal}|${t.tint}`;
+    if (key === themeKey) return;
+    themeKey = key;
+    stats.studios++;
     scene.background = new Color(t.bg);
     scene.environment?.dispose();
     scene.environment = buildStudio(renderer, t.bg);
@@ -275,8 +284,6 @@ export async function createHero(
   let ringT = 1;
   let noteFromLens = false;
   let cap: { t: number; fired: Set<string> } | null = null;
-  const stats: HeroStats = { frames: 0, fps: 0, dpr, captures: 0 };
-  if (options.debug) window.__heroStats = stats;
   const tmp = new Vector3();
 
   const spawnFragment = (delay = 0) => {
@@ -324,9 +331,15 @@ export async function createHero(
     }
   };
 
-  // Events from the composer (window, decoupled)
+  // Events from the composer (window, decoupled). Each one wakes the loop to full rate.
+  let lastActive = performance.now();
+  const touch = () => {
+    lastActive = performance.now();
+    stats.idle = false;
+  };
   let lastType = 0;
   const onType = () => {
+    touch();
     const now = performance.now();
     S.breath.v += 0.7;
     if (now - lastType > 80) {
@@ -336,14 +349,17 @@ export async function createHero(
     sync();
   };
   const onFocus = (e: Event) => {
+    touch();
     S.attn.target = (e as CustomEvent<boolean>).detail ? 1 : 0;
     sync();
   };
   const onStart = () => {
+    touch();
     cap ??= { t: 0, fired: new Set() };
     sync();
   };
   const onPointer = (e: PointerEvent) => {
+    touch();
     const r = el.getBoundingClientRect();
     S.px.target = Math.max(
       -1,
@@ -367,10 +383,12 @@ export async function createHero(
   // Per-frame update
   const fit = { dist: 11, cx: 0.15, cy: 0 };
   let clock = 0;
-  const update = (dt: number) => {
+  /** `dt` steps the springs (capped for stability); `wall` keeps the capture on the clock. */
+  const update = (dt: number, wall = dt) => {
     clock += dt;
     if (cap) {
-      cap.t += dt;
+      // The capture keeps real time on a slow device, so it ends with the Start floor (P3).
+      cap.t += wall;
       for (const cue of dueCues(cues, cap.t, cap.fired)) fire(cue);
       if (cap.t > CAPTURE_END_S) {
         cap = null;
@@ -481,16 +499,33 @@ export async function createHero(
   let onScreen = true;
   let lost = false;
   let acc = 0;
+  let samples = 0;
   let downgrades = 0;
+  const settled = () =>
+    cap === null &&
+    !frags.some((f) => f.active) &&
+    moving.every((m) => Math.abs(m.v) < 1e-3 && Math.abs(m.x - m.target) < 1e-3);
   const frame = (now: number) => {
     raf = requestAnimationFrame(frame);
+    // Idle: nothing but the slow bob, so draw at about 30 fps (final I3).
+    if (!settled()) lastActive = now;
+    if (!shouldRender(now, lastActive, last)) return;
+    stats.idle = now - lastActive >= IDLE_AFTER_MS;
     const interval = now - last;
     last = now;
-    update(Math.min(interval / 1000, 1 / 20));
+    update(Math.min(interval / 1000, 1 / 20), Math.min(interval / 1000, MAX_CAPTURE_STEP_S));
     renderer.render(scene, camera);
     stats.frames++;
+    // DPR adapts to full-rate frames only: idle frames are slow on purpose.
+    if (stats.idle) {
+      acc = 0;
+      samples = 0;
+      return;
+    }
     acc += interval;
-    if (stats.frames % 60 === 0) {
+    samples++;
+    if (samples === 60) {
+      samples = 0;
       stats.fps = 60_000 / acc;
       if (stats.frames > 120 && acc / 60 > SLOW_FRAME_MS && dpr > 1 && downgrades < 2) {
         dpr = Math.max(1, dpr - 0.5);

@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { orpc } from "@/lib/api/client.ts";
 import { formatDateTime } from "@/lib/notes/format.ts";
 import { markStatus } from "@/lib/status.ts";
+import { untrustedText } from "./model/untrusted-text.ts";
 
 const TEXT: Record<RunStatus, string> = {
   queued: "Queued",
@@ -74,7 +75,7 @@ export function RunsList() {
             <span className="run-list-main">
               <StatusMark status={markStatus(run.status)} decorative />
               <span className="min-w-0 run-list-text">
-                <bdi className="run-list-goal">{run.goal.split("\n")[0]}</bdi>
+                <bdi className="run-list-goal">{untrustedText(run.goal.split("\n")[0], 4000)}</bdi>
                 <small>
                   {TEXT[run.status]} · {formatDateTime(run.createdAt)}
                 </small>

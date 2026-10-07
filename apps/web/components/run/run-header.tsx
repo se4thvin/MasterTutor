@@ -5,6 +5,7 @@ import { Icon } from "@/components/ui/icon.tsx";
 import type { BrowserState } from "./model/browser-state.ts";
 import { STATE_PILL, hostAndPath, markFor, shortRunId, statusLabel } from "./model/copy.ts";
 import type { RunModel } from "./model/run-model.ts";
+import { untrustedText } from "./model/untrusted-text.ts";
 
 const MODE: Record<ApprovalMode, string> = {
   ask: "asks first",
@@ -18,7 +19,8 @@ export function RunHeader({ model, state }: { model: RunModel; state: BrowserSta
     hour: "2-digit",
     minute: "2-digit",
   });
-  const title = model.goal.split("\n")[0] ?? model.goal;
+  // The goal is user text, possibly another member's: cleaned like page text (final M11).
+  const title = untrustedText(model.goal.split("\n")[0], 4000);
   return (
     <header className="run-head">
       <div className="run-head-text">

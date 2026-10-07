@@ -235,8 +235,14 @@ test("under reduced motion the toolbar hairline stays hidden at the top of the p
   await expect(toolbar).toBeVisible();
   // The scroll-linked fade must keep its scroll mapping: hidden until the page scrolls...
   expect(await toolbar.evaluate((el) => getComputedStyle(el, "::after").opacity)).toBe("0");
-  // ...then shown once it has (the range is 0–1rem of scroll).
-  await page.locator("#main").evaluate((main) => main.scrollTo(0, 64));
+  // ...then shown once it has (the range is 0–1rem of scroll). At 820 the library is still
+  // loading at first and #main is not yet taller than the screen, so a scroll then is clamped to 0
+  // (final M14): scroll once there is room.
+  const main = page.locator("#main");
+  await expect
+    .poll(() => main.evaluate((m) => m.scrollHeight - m.clientHeight))
+    .toBeGreaterThan(64);
+  await main.evaluate((m) => m.scrollTo(0, 64));
   await expect
     .poll(() => toolbar.evaluate((el) => getComputedStyle(el, "::after").opacity))
     .toBe("1");

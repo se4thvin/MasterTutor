@@ -13,6 +13,13 @@ function threeLoads(page: Page): string[] {
   return hits;
 }
 
+const heroStats = (page: Page) =>
+  page.evaluate(
+    () =>
+      (window as unknown as { __heroStats?: { idle: boolean; studios: number } }).__heroStats ??
+      null,
+  );
+
 test.describe("at 1440 (hero checks run once)", () => {
   test.skip(({ viewport }) => viewport?.width !== 1440, "hero checks run once");
 
@@ -75,6 +82,61 @@ test.describe("at 1440 (hero checks run once)", () => {
     await page.waitForURL(/\/runs\//);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1_100);
   });
+  test("without a WebGL2 context the poster stays and three is never downloaded (final M2, M3)", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const proto = HTMLCanvasElement.prototype as unknown as {
+        getContext(type: string, ...rest: unknown[]): unknown;
+      };
+      const original = proto.getContext;
+      proto.getContext = function (this: unknown, type: string, ...rest: unknown[]) {
+        return type === "webgl2" ? null : original.call(this, type, ...rest);
+      };
+    });
+    const hits = threeLoads(page);
+    await page.goto("/new");
+    await page.waitForTimeout(2_500);
+    await expect(page.locator("[data-hero]")).not.toHaveAttribute("data-live", "");
+    expect(hits).toEqual([]);
+  });
+
+  test("an idle hero drops its frame rate, and wakes on input (final I3)", async ({ page }) => {
+    await page.goto("/new?debug");
+    await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
+    await expect.poll(async () => (await heroStats(page))?.idle, { timeout: 10_000 }).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("hero:type")));
+    expect((await heroStats(page))?.idle).toBe(false);
+  });
+
+  test("only a theme change rebuilds the studio lighting (final M7)", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/new?debug");
+    await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
+    expect((await heroStats(page))?.studios).toBe(1);
+    await page.evaluate(() => document.documentElement.classList.add("unrelated-class"));
+    await page.waitForTimeout(300);
+    expect((await heroStats(page))?.studios).toBe(1);
+    // The app's dark mode is the system scheme.
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect.poll(async () => (await heroStats(page))?.studios).toBe(2);
+  });
+});
+
+test("turning reduced motion off never loads a hero that is offscreen (final M6)", async ({
+  page,
+}) => {
+  test.skip(page.viewportSize()?.width !== 390, "phone width only");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const hits = threeLoads(page);
+  await page.goto("/new");
+  await expect(page.locator("[data-hero]")).toBeAttached();
+  await page.waitForTimeout(1_000);
+  await page.locator("#main").evaluate((main) => main.scrollTo({ top: main.scrollHeight }));
+  await page.waitForTimeout(500);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.waitForTimeout(2_500);
+  expect(hits).toEqual([]);
 });
 
 test("pauses rendering offscreen", async ({ page }) => {

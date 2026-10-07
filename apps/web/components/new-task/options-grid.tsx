@@ -198,9 +198,9 @@ export function OptionsGrid(p: OptionsGridProps) {
                 </p>
                 <p>
                   It never lifts these: prompt-injection warnings still stop for you. Budget limits
-                  still pause. Secrets never reach the agent, logs or screenshots. Sign-ins only go
-                  to their own site. No access to private networks. The kill switch and Take over
-                  always work.
+                  still pause. Secrets never reach the agent, logs or screenshots. Sign-ins never go
+                  to another site without you. No access to private networks. The kill switch and
+                  Take over always work.
                 </p>
                 <p>
                   It still pauses for a person on a sign-in form that posts to another site, and on

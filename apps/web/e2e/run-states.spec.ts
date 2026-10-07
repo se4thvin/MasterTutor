@@ -170,6 +170,30 @@ test.describe("Run view states", () => {
     await expect(badge).toBeVisible();
   });
 
+  test("at md and up, CAPTCHA, stuck and control are each announced by one live region (final I1)", async ({
+    page,
+  }) => {
+    test.skip(page.viewportSize()?.width !== 1440, "announcement check runs once");
+    const live = '[aria-live]:not([aria-live="off"]), [role="status"]';
+    await gotoRun(page, {
+      detail: recordedDetail({ status: "waiting", waitReason: "captcha" }),
+    });
+    await expect(page.locator(live).filter({ hasText: "solve the CAPTCHA" })).toHaveCount(1);
+    await emit(page, [
+      rec({ type: "status", status: "waiting", waitReason: "takeover", reason: null }),
+    ]);
+    await expect(page.locator(live).filter({ hasText: "the agent is stuck" })).toHaveCount(1);
+    await emit(page, [rec({ type: "control", holder: "user" })]);
+    await expect(frame(page)).toHaveAttribute("data-state", "control");
+    await expect(page.locator(live).filter({ hasText: "You're in control" })).toHaveCount(1);
+  });
+
+  test("the header cleans the goal (final M11)", async ({ page }) => {
+    test.skip(page.viewportSize()?.width !== 1440, "behaviour check runs once");
+    await gotoRun(page, { detail: recordedDetail({ goal: "Evil\u202Egoal\u200B here" }) });
+    await expect(page.locator("h1")).toHaveText("Evilgoal here");
+  });
+
   test("an ask run shows no bypass badge", async ({ page }) => {
     await gotoRun(page);
     await expect(page.getByRole("note", { name: "Bypass mode" })).toHaveCount(0);

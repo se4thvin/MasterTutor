@@ -41,7 +41,7 @@ export function RunPip({ runId, onGone }: { runId: string; onGone(): void }) {
   };
   // Escape shrinks it only from inside: an Escape meant for a dialog or the page is not its own.
   const onKeyDown = (e: KeyboardEvent) => {
-    if (big && e.key === "Escape") {
+    if (big && e.key === "Escape" && !e.defaultPrevented) {
       e.stopPropagation();
       resize(false);
     }

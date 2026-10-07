@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createHero } from "./hero-3d-scene.ts";
 
 describe("createHero", () => {
@@ -11,5 +11,15 @@ describe("createHero", () => {
   it("returns null without a canvas", async () => {
     const el = { querySelector: () => null } as unknown as HTMLElement;
     await expect(createHero(el)).resolves.toBeNull();
+  });
+
+  it("asks for the default GPU, never forcing the discrete one (final I3)", async () => {
+    const getContext = vi.fn(() => null);
+    const el = { querySelector: () => ({ getContext }) } as unknown as HTMLElement;
+    await createHero(el);
+    expect(getContext).toHaveBeenCalledWith(
+      "webgl2",
+      expect.objectContaining({ powerPreference: "default" }),
+    );
   });
 });

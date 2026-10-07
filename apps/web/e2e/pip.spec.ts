@@ -77,3 +77,21 @@ test("is never on any run's page, even another run's (M3)", async ({ page }) => 
   await expect(page.locator("h1")).toBeVisible();
   await expect(mini(page)).toHaveCount(0);
 });
+
+test("an Escape someone else already handled leaves it big (final M12)", async ({ page }) => {
+  test.skip(page.viewportSize()?.width !== 1440, "behaviour check runs once");
+  await gotoRun(page);
+  await page.goto("/library");
+  await page
+    .getByRole("button", { name: "Live run, learn.example.edu. Expand mini browser" })
+    .click();
+  const open = page.getByRole("link", { name: "Open run" });
+  await expect(open).toBeFocused();
+  await open.evaluate((link) =>
+    link.addEventListener("keydown", (event) => {
+      if ((event as KeyboardEvent).key === "Escape") event.preventDefault();
+    }),
+  );
+  await page.keyboard.press("Escape");
+  await expect(open).toBeVisible();
+});

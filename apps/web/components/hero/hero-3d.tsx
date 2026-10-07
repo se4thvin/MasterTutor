@@ -2,8 +2,9 @@
 
 import { useEffect, useRef } from "react";
 import { durations } from "@/lib/motion-tokens.ts";
+import { whenIdle } from "@/lib/when-idle.ts";
 import { HERO_EVENTS } from "./hero-events.ts";
-import { shouldLoad3D, type HeroEnvironment } from "./hero-gate.ts";
+import { CONTEXT_ATTRIBUTES, shouldLoad3D, type HeroEnvironment } from "./hero-gate.ts";
 import { PosterArt } from "./hero-poster.tsx";
 
 interface HeroInstance {
@@ -12,21 +13,28 @@ interface HeroInstance {
 
 type HintedNavigator = Navigator & { connection?: { saveData?: boolean }; deviceMemory?: number };
 
-// Safari has no requestIdleCallback; a short timeout still waits for hydration to finish.
-const idle = (fn: () => void) => {
-  if ("requestIdleCallback" in window) window.requestIdleCallback(fn, { timeout: 800 });
-  else setTimeout(fn, 1);
-};
+/**
+ * A WebGL2 constructor does not prove a context can be made (a blocklisted GPU): ask the hero's
+ * own canvas before downloading three (final M2). The scene later gets this same context.
+ */
+const canMakeContext = (el: HTMLElement) =>
+  el.querySelector("canvas")?.getContext("webgl2", CONTEXT_ATTRIBUTES) != null;
 
-function environment(params: URLSearchParams, reduce: MediaQueryList): HeroEnvironment {
+function environment(
+  el: HTMLElement,
+  params: URLSearchParams,
+  reduce: MediaQueryList,
+): HeroEnvironment {
   const nav = navigator as HintedNavigator;
-  return {
+  const cheap: HeroEnvironment = {
     reducedMotion: reduce.matches,
-    hasWebGL2: "WebGL2RenderingContext" in window,
+    hasWebGL2: true,
     forcePoster: params.get("hero") === "poster",
     saveData: nav.connection?.saveData === true,
     lowMemory: nav.deviceMemory !== undefined && nav.deviceMemory < 4,
   };
+  // The context is the costly check: only made when nothing else already keeps the poster.
+  return shouldLoad3D(cheap) ? { ...cheap, hasWebGL2: canMakeContext(el) } : cheap;
 }
 
 /** CSS poster first; the 3D scene is imported only near the viewport, when idle (spec §11.2). */
@@ -40,9 +48,12 @@ export function Hero3D() {
     let instance: HeroInstance | null = null;
     let loading = false;
     let disposed = false;
+    // Near the viewport (IntersectionObserver, 200px margin): the only place a scene loads (M6).
+    let near = false;
+    let cancelIdle = () => undefined as void;
 
     const load = () => {
-      if (loading || instance || !shouldLoad3D(environment(params, reduce))) return;
+      if (!near || loading || instance || !shouldLoad3D(environment(el, params, reduce))) return;
       loading = true;
       import("./hero-3d-scene.ts")
         .then((scene) => scene.createHero(el, { debug: params.has("debug") }))
@@ -58,9 +69,9 @@ export function Hero3D() {
 
     const io = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        io.disconnect();
-        idle(load);
+        near = entries.some((e) => e.isIntersecting);
+        cancelIdle();
+        if (near) cancelIdle = whenIdle(load, 800);
       },
       { rootMargin: "200px" },
     );
@@ -86,6 +97,7 @@ export function Hero3D() {
     return () => {
       disposed = true;
       io.disconnect();
+      cancelIdle();
       reduce.removeEventListener("change", onReduce);
       window.removeEventListener(HERO_EVENTS.start, onStart);
       clearTimeout(blink);

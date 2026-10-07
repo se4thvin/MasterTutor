@@ -36,24 +36,35 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
       s.filter !== "none" ||
       s.backdropFilter !== "none" ||
       /paint|layout|strict|content/.test(s.contain) ||
+      // A size container applies layout containment, so it holds fixed boxes too.
+      (s.containerType !== "" && s.containerType !== "normal") ||
       /transform|filter|perspective/.test(s.willChange);
     const isFixed = (el: Element) => getComputedStyle(el).position === "fixed";
+    /** A fixed box escapes `root` when nothing from its parent up to `root` (inclusive) holds it. */
+    const escapes = (fixedEl: Element, root: Element): boolean => {
+      for (let p = fixedEl.parentElement; p; p = p.parentElement) {
+        if (holdsFixed(getComputedStyle(p))) return false;
+        if (p === root) return true;
+      }
+      return true;
+    };
 
     // scrollWidth also counts ::before/::after overflow (the 44px hit areas), which is not text spilling.
     // Measuring the real content with a Range ignores pseudo-elements. Fixed descendants are not
-    // this box's content (see holdsFixed), so they are measured out.
-    const hasFixedInside = (el: Element) => Array.from(el.querySelectorAll("*")).some(isFixed);
-    const contentRight = (el: Element): number => {
+    // this box's content when they escape it (see holdsFixed), so they are measured out.
+    const hasEscaping = (el: Element, root: Element) =>
+      Array.from(el.querySelectorAll("*")).some((d) => isFixed(d) && escapes(d, root));
+    const contentRight = (el: Element, root: Element = el): number => {
       const range = document.createRange();
-      if (!hasFixedInside(el)) {
+      if (!hasEscaping(el, root)) {
         range.selectNodeContents(el);
         return range.getBoundingClientRect().right;
       }
       let right = Number.NEGATIVE_INFINITY;
       for (const child of Array.from(el.childNodes)) {
-        if (child instanceof Element && isFixed(child)) continue;
-        if (child instanceof Element && hasFixedInside(child)) {
-          right = Math.max(right, child.getBoundingClientRect().right, contentRight(child));
+        if (child instanceof Element && isFixed(child) && escapes(child, root)) continue;
+        if (child instanceof Element && hasEscaping(child, root)) {
+          right = Math.max(right, child.getBoundingClientRect().right, contentRight(child, root));
           continue;
         }
         range.selectNode(child);
@@ -111,7 +122,9 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
     );
     for (const el of elements) {
       const style = getComputedStyle(el);
-      const fixed = style.position === "fixed";
+      // Until the walk reaches a fixed box's containing block, overflow above it does not clip
+      // it; from there on, every clipping ancestor does (final M1).
+      let held = style.position !== "fixed";
       if (
         style.display !== "inline" &&
         style.whiteSpace === "nowrap" &&
@@ -146,7 +159,10 @@ export async function findLayoutIssues(page: Page): Promise<string[]> {
         parent = parent.parentElement
       ) {
         const ps = getComputedStyle(parent);
-        if (fixed && !holdsFixed(ps)) continue;
+        if (!held) {
+          if (!holdsFixed(ps)) continue;
+          held = true;
+        }
         const clipX = ps.overflowX !== "visible";
         const clipY = ps.overflowY !== "visible";
         if (!clipX && !clipY) continue;

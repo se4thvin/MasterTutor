@@ -1,6 +1,9 @@
+import { durations } from "@/lib/motion-tokens.ts";
+
 /** The ~2.4s Start sequence (run 16): choreography offsets in seconds. */
 export const CAPTURE_END_S = 2.4;
-export const LINE_STAGGER_S = 0.035;
+/** The note's lines arrive on the shared list stagger (motion-tokens, final M5). */
+export const LINE_STAGGER_S = durations.stagger / 1000;
 export const PAGE_FLOW = { start: 0.14, length: 0.64 } as const;
 export const RIPPLE_S = 0.75;
 
