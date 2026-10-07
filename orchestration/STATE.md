@@ -8,7 +8,7 @@ Agentic note-taking web app. An AI agent drives its own browser (computer use: s
 
 ## Current phase
 
-**Build (goal D32).** Phase 0, B1 (agent runtime), F1/F2/F4 (frontend core), the delight pass and B3 (vault, merged 5f113ad) are COMPLETE. B6 (live view) A1–A8 merged; A9–A12 awaiting B1 download-gate fix 3. The frontend was merged into `agentic-notes-browser-agent` at 546aedd, and B1 has one last targeted hit-test fix (N5) in flight. All B3/B6/B2-B4-B5 pre-flights are done, and reconciliation amendments are being drafted into `.superpowers/plan-drafts/`. The frontend track continues in `.worktrees/fe` (fe-track, fast-forwarded to 546aedd): it is running the React Bits delight-pass plan (D43) and the F3/F5 pre-flight. Order from here: B3, then B6, then B2/B4/B5 in parallel with the delight pass and F3/F5, then Phase 7, Phase 8 and the Phase 10 benchmark. Ledgers live in each worktree's `.superpowers/sdd/<plan>/progress.md`.
+**Build (goal D32).** COMPLETE and merged on `agentic-notes-browser-agent`: Phase 0, B1 (agent runtime, click guard closed), F1/F2/F4, delight pass, B3 (vault), F3/F5 (run view + hero, 549063d). In progress: B6 live view (A1–A8 merged; A9–A12 gate switch + Keep/Discard on `b6-a9-a12`; A13–A15 next), B2/B4/B5 capture (Task 0 done on `b245-t0`, Tasks 1–4 running), Phase 7–10 reconciliation amendment (D46/D47: one prod-like zyBooks run, bypass, $500 cap, Mac).
 
 ## Decisions (user-confirmed)
 
