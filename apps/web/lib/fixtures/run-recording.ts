@@ -58,6 +58,7 @@ const DETAIL = {
   slotName: "browser-1",
   targetFolderId: null,
   pendingApprovals: [],
+  heldDownloads: [],
   lastEventId: "12",
 };
 

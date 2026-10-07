@@ -6,7 +6,9 @@ import {
   CreateVaultItemInput,
   GradeBenchmarkRunInput,
   HandBackInput,
+  HeldDownloadView,
   ListNotesInput,
+  RunDetail,
   SetSecretInput,
   SettingsView,
   SubmitOtpInput,
@@ -163,5 +165,25 @@ describe("HandBackInput: the person keeps or discards each download made during 
     );
     expect(HandBackInput.safeParse({ runId, note: null, keep: ids }).success).toBe(false);
     expect(HandBackInput.safeParse({ runId, note: null, keep: ["../x"] }).success).toBe(false);
+  });
+});
+
+describe("RunDetail.heldDownloads (B6 A11 reload gap)", () => {
+  it("carries each held download as id, filename and size, and nothing else", () => {
+    expect(Object.keys(RunDetail.shape)).toContain("heldDownloads");
+    const held = { id: runId, filename: "week-2 report.pdf", bytes: 1_572_864 };
+    expect(HeldDownloadView.parse({ ...held, approvedBy: "u-1", keptAt: null })).toEqual(held);
+  });
+
+  it("refuses an over-long name, a negative size and a non-uuid id", () => {
+    expect(
+      HeldDownloadView.safeParse({ id: runId, filename: "x".repeat(256), bytes: 1 }).success,
+    ).toBe(false);
+    expect(HeldDownloadView.safeParse({ id: runId, filename: "a.pdf", bytes: -1 }).success).toBe(
+      false,
+    );
+    expect(HeldDownloadView.safeParse({ id: "../x", filename: "a.pdf", bytes: 1 }).success).toBe(
+      false,
+    );
   });
 });

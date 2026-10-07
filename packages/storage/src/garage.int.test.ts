@@ -44,4 +44,18 @@ describe("bootstrapGarage against Garage v2.3.0", () => {
     const second = await bootstrapGarage(options);
     expect(second).toEqual({ ...first, createdBucket: false, importedKeys: [] });
   });
+
+  it("refuses a new secret under an existing key id (D61, real Garage v2.3.0 API shape)", async () => {
+    const rotated = keys.map((key) =>
+      key.name === "web" ? { ...key, secretAccessKey: "9".repeat(64) } : key,
+    );
+    await expect(
+      bootstrapGarage({
+        adminUrl: garage.adminUrl,
+        adminToken: garage.adminToken,
+        bucket: "mastertutor",
+        keys: rotated,
+      }),
+    ).rejects.toThrow(/web/);
+  });
 });

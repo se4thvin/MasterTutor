@@ -40,6 +40,7 @@ cleanup_run() {
   ids="$(docker volume ls -q --filter "label=mastertutor.ci.run=$project")"
   [[ -z "$ids" ]] || docker volume rm $ids >/dev/null
   docker image rm -f "mt-ci-agent-image-check:$project" >/dev/null 2>&1 || true
+  docker image rm -f "mt-ci-drill-runtime:$project" >/dev/null 2>&1 || true
   rm -rf "${runs_dir:?}/$project" 2>/dev/null || true
   rm -rf "${runs_dir:?}/.claim-$project" 2>/dev/null || true
   release_stack_lock "$project"
@@ -134,7 +135,9 @@ case "$suite" in
   e2e)
     command='exec bash scripts/e2e.sh "$@"' ;;
   smoke)
-    command='exec bash scripts/compose-smoke.sh' ;;
+    # The compose smoke, then the Dokploy-format backup/restore drill (its own project, CI labels,
+    # no fixed ports or subnet). Nothing may follow an exec (tests/deploy/drill.int.test.ts).
+    command='bash scripts/compose-smoke.sh && exec bash scripts/deploy/restore-drill.sh' ;;
   qa)
     command='KEEP_STACK=1 exec bash scripts/qa-stack.sh "$@"' ;;
   bench-mock)

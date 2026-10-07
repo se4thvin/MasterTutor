@@ -2,6 +2,8 @@
 node_modules/
 .env
 .env.local
+# env:init writes through <file>.tmp (scripts/env-init.ts)
+.env*.tmp
 .next/
 next-env.d.ts
 coverage/

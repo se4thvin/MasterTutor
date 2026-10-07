@@ -24,7 +24,8 @@ scripts/remote-test.sh agent-image    # scripts/check-agent-image.sh
 scripts/remote-test.sh behaviour      # refused until the AppArmor profile is loaded (infra/host/apparmor/)
 scripts/remote-test.sh e2e            # full-stack Playwright suite (scripts/e2e.sh); results in apps/web/e2e/.out/
 scripts/remote-test.sh e2e stack/specs/api-conformance   # Playwright args pass through
-scripts/remote-test.sh smoke          # scripts/compose-smoke.sh against the two-slot test stack
+scripts/remote-test.sh smoke          # scripts/compose-smoke.sh against the two-slot test stack, then the
+                                      # Dokploy-format backup/restore drill (scripts/deploy/restore-drill.sh)
 scripts/remote-test.sh qa             # Phase 8 QA stack (scripts/qa-stack.sh): stays up; results come back
 scripts/remote-test.sh qa --down      # removes the QA stack and frees the stack lock
 scripts/remote-test.sh bench-mock     # Phase 10 harness self-test (scripts/bench-mock.sh; `pnpm bench:mock`)

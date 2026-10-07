@@ -46,6 +46,19 @@ describe("live view contracts", () => {
     }
   });
 
+  it("carries no ICE servers: v1 has no TURN relay (D42)", () => {
+    const live = {
+      sleeping: false,
+      slotName: "browser-1",
+      embedPath: "/live/0b0f8a64-4a8f-4c58-9df4-4f7ab2d7a8e1/?embed=1&usr=user&pwd=cookie",
+    };
+    expect(OpenLiveResult.safeParse({ ...live, iceServers: [] }).success).toBe(true);
+    expect(
+      OpenLiveResult.safeParse({ ...live, iceServers: [{ urls: ["turn:relay.example.org:3478"] }] })
+        .success,
+    ).toBe(false);
+  });
+
   it("extracts the run id from a forwarded URI", () => {
     expect(runIdFromLivePath(`/live/${runId}/`)).toBe(runId);
     expect(runIdFromLivePath(`/live/${runId}/api/ws?x=1`)).toBe(runId);
