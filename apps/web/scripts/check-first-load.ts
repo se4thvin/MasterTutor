@@ -6,7 +6,14 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { compareFirstLoad, measureFirstLoad, type FirstLoadBaseline } from "./first-load.ts";
+import {
+  HERO_BUDGET_KB,
+  compareFirstLoad,
+  compareHeroBundle,
+  measureFirstLoad,
+  measureHeroBundle,
+  type FirstLoadBaseline,
+} from "./first-load.ts";
 
 const nextDir = fileURLToPath(new URL("../.next/", import.meta.url));
 const baselineUrl = new URL("./first-load-baseline.json", import.meta.url);
@@ -31,10 +38,19 @@ if (process.argv.includes("--write-baseline")) {
   writeFileSync(baselineUrl, `${JSON.stringify(next, null, 2)}\n`);
   console.log(`Baseline written (${Object.keys(current).length} routes).`);
 } else {
-  const findings = compareFirstLoad(current, previous);
+  const hero = measureHeroBundle(nextDir);
+  console.log(
+    `hero (lazy three)        ${hero.kb.toFixed(1).padStart(7)} kB gz  (${hero.files.length} chunk(s), budget ${HERO_BUDGET_KB} kB)`,
+  );
+  const findings = [
+    ...compareFirstLoad(current, previous),
+    ...compareHeroBundle(hero, HERO_BUDGET_KB),
+  ];
   if (findings.length) {
     console.error(`First-load JS budget exceeded (${findings.length}):\n${findings.join("\n")}`);
     process.exit(1);
   }
-  console.log(`First-load JS within budget (+${previous.budgetKb} kB gz per route).`);
+  console.log(
+    `First-load JS within budget (+${previous.budgetKb} kB gz per route); hero within ${HERO_BUDGET_KB} kB.`,
+  );
 }
