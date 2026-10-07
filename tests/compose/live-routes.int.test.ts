@@ -1,6 +1,4 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   LIVE_STRIP_REGEX,
   MAX_UPLOAD_BYTES,
@@ -9,44 +7,19 @@ import {
   liveUploadRouterRule,
 } from "@mastertutor/contracts";
 import { beforeAll, describe, expect, it } from "vitest";
+import { composeConfig, type ComposeConfig } from "./compose-json.ts";
 
-interface Service {
-  labels?: Record<string, string>;
-  environment?: Record<string, string | null>;
-  networks?: Record<string, { ipv4_address?: string } | null>;
-  profiles?: string[];
-}
-interface Config {
-  services: Record<string, Service>;
-}
-
-const root = fileURLToPath(new URL("../..", import.meta.url));
-const load = (files: string[]): Config =>
-  JSON.parse(
-    execFileSync(
-      "docker",
-      [
-        "compose",
-        "--env-file",
-        ".env.test",
-        ...files.flatMap((f) => ["-f", f]),
-        "config",
-        "--format",
-        "json",
-      ],
-      { cwd: root, encoding: "utf8" },
-    ),
-  ) as Config;
 const dynamic = readFileSync(
   new URL("../../infra/traefik/test-dynamic.yml", import.meta.url),
   "utf8",
 );
-let base: Config;
-let live: Config;
+let base: ComposeConfig;
+let live: ComposeConfig;
 
 beforeAll(() => {
-  base = load(["compose.yml"]);
-  live = load(["compose.yml", "compose.test.yml", "compose.live-test.yml"]);
+  base = composeConfig(".env.test", ["compose.yml"]);
+  // B6's live overlay is folded into compose.test.yml (Phase 7 Task 1, P7-5).
+  live = composeConfig(".env.test", ["compose.yml", "compose.test.yml"]);
 });
 
 describe("test file-provider live routers (spec §10.2.2)", () => {

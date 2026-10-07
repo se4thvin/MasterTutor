@@ -36,7 +36,11 @@ export type TimelineItem =
       ts: string;
       at: string;
       credential: boolean;
-      hasShot: boolean;
+      /**
+       * The step whose screenshot replays this row: its own, else the screen it was taken on (the
+       * agent stores screenshots on observe steps only). Null before the first screenshot.
+       */
+      shotSeq: number | null;
       current: boolean;
     }
   | { kind: "message"; key: string; text: string; ts: string; at: string; pending: boolean }
@@ -124,6 +128,12 @@ export function timelineItems(
   const shown = model.steps.filter((s) => s.phase === "act" || s.phase === "approve");
   const lastSeq = shown.at(-1)?.seq ?? null;
   const live = !isTerminal(model.status);
+  const shotBefore = new Map<number, number | null>();
+  let lastShot: number | null = null;
+  for (const step of model.steps) {
+    if (step.screenshotKey !== null) lastShot = step.seq;
+    shotBefore.set(step.seq, lastShot);
+  }
   const items: TimelineItem[] = shown.map((step) => {
     const credential =
       step.action?.tool === "fill_credential" || step.action?.tool === "use_passkey";
@@ -138,7 +148,7 @@ export function timelineItems(
       ts: clock(step.at),
       at: step.at,
       credential,
-      hasShot: step.screenshotKey !== null,
+      shotSeq: shotBefore.get(step.seq) ?? null,
       current: live && step.seq === lastSeq,
     };
   });

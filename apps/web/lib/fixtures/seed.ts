@@ -639,8 +639,10 @@ export function createSeed(): FixtureState {
       defaultBudget: DEFAULT_BUDGET,
       defaultAllowedOrigins: [],
       concurrency: 6,
+      version: "1",
     },
     runs: runs(),
     runScope: {},
+    decidedApprovals: [],
   };
 }

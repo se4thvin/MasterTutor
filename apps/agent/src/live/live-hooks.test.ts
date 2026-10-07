@@ -19,8 +19,11 @@ function harness(
     /** "flaky": the first two takes fail, then n.eko answers. */
     take?: "ok" | "fails" | "hangs" | "flaky";
     /** Downloads: attach hangs or fails; denying again on hand-back fails. */
-    downloads?: "attach-hangs" | "attach-fails" | "off-fails";
-    controlUser?: string | null;
+    downloads?: "attach-hangs" | "attach-fails" | "off-fails" | "detach-hangs";
+    /** Who holds control; a list is read in turn (the last answer repeats). */
+    controlUser?: string | null | Array<string | null>;
+    /** How many giveControl calls hang first (n.eko not answering). */
+    giveHangsFor?: number;
     restoreWaitMs?: number;
     /** Wire a fake B3 passkey enrolment; "begin-fails" makes begin reject. */
     enrolment?: "ok" | "begin-fails";
@@ -30,9 +33,21 @@ function harness(
   let failures = options.notConnectedFor ?? 0;
   let idleMs = 0;
   let takes = 0;
+  let hangs = options.giveHangsFor ?? 0;
+  const holders =
+    options.controlUser === undefined
+      ? ["user_1"]
+      : Array.isArray(options.controlUser)
+        ? [...options.controlUser]
+        : [options.controlUser];
+  const endedViews: string[] = [];
   const liveView: LiveView = {
     async giveControl(slot, userId) {
       calls.push(`give ${slot.name} ${userId}`);
+      if (hangs > 0) {
+        hangs -= 1;
+        await new Promise(() => undefined);
+      }
       if (failures > 0) {
         failures -= 1;
         throw new LiveViewError("user_not_connected");
@@ -50,8 +65,9 @@ function harness(
     },
   };
   const store: LiveControlStore = {
-    controlUser: async () => (options.controlUser === undefined ? "user_1" : options.controlUser),
+    controlUser: async () => (holders.length > 1 ? holders.shift()! : holders[0]!),
     handBackIdle: async (runId) => void calls.push(`idle hand-back ${runId}`),
+    endLiveView: async (runId) => void endedViews.push(runId),
   };
   const downloads: DownloadIngestor = {
     async attach(slot) {
@@ -63,7 +79,10 @@ function harness(
       calls.push(`downloads ${on ? "on" : "off"}`);
       if (!on && options.downloads === "off-fails") throw new Error("CDP gone");
     },
-    detach: async (runId) => void calls.push(`detach ${runId}`),
+    async detach(runId) {
+      calls.push(`detach ${runId}`);
+      if (options.downloads === "detach-hangs") await new Promise(() => undefined);
+    },
   };
   const enrolment: PasskeyEnrolmentPort = {
     async begin(session) {
@@ -88,7 +107,13 @@ function harness(
     restoreWaitMs: options.restoreWaitMs ?? 2_000,
     nekoTimeoutMs: 100,
   });
-  return { hooks, calls, takes: () => takes, userGoesIdle: () => (idleMs = 99_000_000) };
+  return {
+    hooks,
+    calls,
+    endedViews,
+    takes: () => takes,
+    userGoesIdle: () => (idleMs = 99_000_000),
+  };
 }
 
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
@@ -178,7 +203,8 @@ describe("createLiveHooks: the n.eko side of B1's control lock", () => {
     const started = performance.now();
     await hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: true });
     expect(performance.now() - started).toBeLessThan(1_000);
-    expect(calls).toEqual(["downloads off", `detach ${RUN}`, `take ${SLOT}`]);
+    // S12: the user's host is revoked first; downloads are settled after.
+    expect(calls).toEqual([`take ${SLOT}`, "downloads off", `detach ${RUN}`]);
   });
 
   it("hand back is idempotent: a second hand back takes the host again and denies downloads again", async () => {
@@ -229,6 +255,50 @@ describe("createLiveHooks: the n.eko side of B1's control lock", () => {
       expect(performance.now() - started, downloads).toBeLessThan(1_000);
       expect(calls).toEqual(expect.arrayContaining([`take ${SLOT}`, `attach ${RUN}`]));
     }
+  });
+
+  it("revokes the user's host at lease end even while downloads take long to settle (S12)", async () => {
+    const { hooks, calls } = harness({ downloads: "detach-hangs" });
+    void hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: true });
+    await waitFor(() => calls.includes(`take ${SLOT}`), {
+      label: "host taken back",
+      timeoutMs: 500,
+    });
+  });
+
+  it("paces the give retries while the live view reconnects after a fresh lease", async () => {
+    const { hooks, calls } = harness({ notConnectedFor: Infinity, restoreWaitMs: 300 });
+    await hooks.control.onUserControl(SLOT, RUN, { afterRestore: true });
+    // One attempt per RETRY_MS (100 ms) over the 300 ms wait, never a tight loop.
+    expect(calls.filter((c) => c.startsWith("give")).length).toBeLessThanOrEqual(5);
+  });
+
+  it("stops giving once control was handed back while the live view reconnects", async () => {
+    const { hooks, calls } = harness({
+      notConnectedFor: Infinity,
+      controlUser: ["user_1", "user_1", null],
+    });
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: true })).toEqual({
+      ok: true,
+    });
+    // Asked again while they still held it; then no more, and nothing else is offered to them.
+    expect(calls).toEqual([`give ${SLOT} user_1`, `give ${SLOT} user_1`]);
+  });
+
+  it("time-boxes a give that hangs and asks again", async () => {
+    const { hooks, calls } = harness({ giveHangsFor: 1 });
+    const started = performance.now();
+    expect(await hooks.control.onUserControl(SLOT, RUN, { afterRestore: true })).toEqual({
+      ok: true,
+    });
+    expect(calls.filter((c) => c.startsWith("give"))).toHaveLength(2);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("forgets who viewed the run when its lease ends", async () => {
+    const { hooks, endedViews } = harness();
+    await hooks.onLeaseEnding({ runId: RUN, slotName: SLOT, slotReleased: true });
+    expect(endedViews).toEqual([RUN]);
   });
 
   it("an unreleased stop only cleans up and never touches n.eko", async () => {

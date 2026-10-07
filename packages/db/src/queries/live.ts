@@ -1,7 +1,6 @@
 import {
   TERMINAL_RUN_STATUSES,
   WAITS_KEPT_THROUGH_TAKEOVER,
-  encodeNotify,
   type Controller,
   type MemberRole,
   type RunStatus,
@@ -10,7 +9,7 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { browserSlots, runs, workspaceMembers } from "../schema/index.ts";
-import { notifyRunControl, returnControlToAgent } from "./control.ts";
+import { notifyRunControl, notifyRunWake, returnControlToAgent } from "./control.ts";
 import { keepPendingDownloads } from "./downloads.ts";
 import { emitRunEvent } from "./events.ts";
 
@@ -25,7 +24,8 @@ export interface MemberRun {
   slotLeased: boolean;
 }
 
-const memberOf = (userId: string) =>
+/** Join condition: userId is a member of the run's workspace (join workspace_members on runs). */
+export const memberOfRunWorkspace = (userId: string) =>
   and(eq(workspaceMembers.workspaceId, runs.workspaceId), eq(workspaceMembers.userId, userId));
 
 /** The run if userId is a member of its workspace; slotLeased means browser_slots agrees. */
@@ -44,7 +44,7 @@ export async function getRunForMember(
       slotLeased: sql<boolean>`coalesce(${browserSlots.state} = 'leased' and ${browserSlots.runId} = ${runs.id}, false)`,
     })
     .from(runs)
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .leftJoin(browserSlots, eq(browserSlots.name, runs.slotName))
     .where(eq(runs.id, runId));
   return row ?? null;
@@ -59,7 +59,7 @@ export async function canAccessLiveSlot(
     .select({ one: sql<number>`1` })
     .from(browserSlots)
     .innerJoin(runs, and(eq(runs.id, browserSlots.runId), eq(runs.slotName, browserSlots.name)))
-    .innerJoin(workspaceMembers, memberOf(query.userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(query.userId))
     .where(
       and(
         eq(browserSlots.name, query.slotName),
@@ -94,7 +94,7 @@ async function lockMemberRun(tx: DbTx, runId: string, userId: string): Promise<L
       role: workspaceMembers.role,
     })
     .from(runs)
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .where(eq(runs.id, runId))
     .for("update", { of: runs });
   return row ?? null;
@@ -127,9 +127,7 @@ export async function requestTakeover(
           ...(run.status === "sleeping" ? { wakeRequestedAt: sql`now()` } : {}),
         })
         .where(eq(runs.id, input.runId));
-      await tx.execute(
-        sql`select pg_notify('run_wake', ${encodeNotify("run_wake", { runId: input.runId, reason: "takeover" })})`,
-      );
+      await notifyRunWake(tx, input.runId, "takeover");
       return { ok: true, via: "wake" };
     }
     // A code or CAPTCHA wait stays on the row (B3 M7): only control changes hands, and hand-back
@@ -178,4 +176,100 @@ export async function requestHandBack(
     if (changed || input.note) await notifyRunControl(tx, input.runId);
     return { ok: true, via: changed ? "control" : "none" };
   });
+}
+
+/** openLive: this member's live view is open on the run (closed on sign-out or removal). */
+export async function recordLiveViewer(db: Database, runId: string, userId: string): Promise<void> {
+  await db.update(runs).set({ liveViewerId: userId }).where(eq(runs.id, runId));
+}
+
+const REVOKED =
+  "Control went back to the agent: the person holding it signed out or left the workspace.";
+const workspaceScope = (workspaceId: string | null) =>
+  workspaceId ? eq(runs.workspaceId, workspaceId) : undefined;
+
+/**
+ * Revocation, first half: wherever that person holds control (any open run, leased or asleep,
+ * in one workspace or, on sign-out, all), it goes back to the agent with a notice, and B1 hands
+ * back on run_control. Someone else's takeover is never touched. The runs it released.
+ */
+export async function revokeLiveHolds(
+  tx: DbTx,
+  input: { userId: string; workspaceId: string | null },
+): Promise<string[]> {
+  const held = await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.controller, "user"),
+        eq(runs.controlUserId, input.userId),
+        workspaceScope(input.workspaceId),
+      ),
+    );
+  const released: string[] = [];
+  for (const { id } of held) {
+    if (!(await returnControlToAgent(tx, id, input.userId))) continue;
+    await emitRunEvent(tx, id, { type: "error", code: "live_revoked", message: REVOKED });
+    await notifyRunControl(tx, id);
+    released.push(id);
+  }
+  return released;
+}
+
+/**
+ * Revocation, second half: the live views that person has open (they are the recorded viewer of
+ * a leased run). Only these n.eko sessions are closed: one someone else opened stays (minor 5).
+ */
+export async function liveViewsToClose(
+  db: Database,
+  input: { userId: string; workspaceId: string | null },
+): Promise<Array<{ runId: string; slotName: string }>> {
+  return db
+    .select({ runId: runs.id, slotName: browserSlots.name })
+    .from(runs)
+    .innerJoin(
+      browserSlots,
+      and(eq(browserSlots.runId, runs.id), eq(browserSlots.name, runs.slotName)),
+    )
+    .where(
+      and(
+        eq(browserSlots.state, "leased"),
+        eq(runs.liveViewerId, input.userId),
+        workspaceScope(input.workspaceId),
+      ),
+    );
+}
+
+/** The viewer mark goes, once their view is closed (or, without userId, when the lease ends). */
+export async function clearLiveViewer(db: Database, runId: string, userId?: string): Promise<void> {
+  await db
+    .update(runs)
+    .set({ liveViewerId: null })
+    .where(
+      and(eq(runs.id, runId), userId === undefined ? undefined : eq(runs.liveViewerId, userId)),
+    );
+}
+
+/**
+ * The reconcile after a missed live_revoke (the agent was down or its LISTEN reconnecting): every
+ * person who views or controls a run but is no longer a member of its workspace or has no
+ * unexpired session. Also covers sessions that expired without being deleted.
+ */
+export async function staleLiveHolds(
+  db: Database,
+): Promise<Array<{ userId: string; workspaceId: string }>> {
+  const rows = await db.execute<{ user_id: string; workspace_id: string }>(sql`
+    select distinct holder.user_id, holder.workspace_id
+    from (
+      select live_viewer_id as user_id, workspace_id from runs where live_viewer_id is not null
+      union
+      select control_user_id, workspace_id from runs where control_user_id is not null
+    ) holder
+    where not exists (
+        select 1 from workspace_members m
+        where m.user_id = holder.user_id and m.workspace_id = holder.workspace_id)
+      or not exists (
+        select 1 from "session" s where s.user_id = holder.user_id and s.expires_at > now())`);
+  return [...rows].map((row) => ({ userId: row.user_id, workspaceId: row.workspace_id }));
 }

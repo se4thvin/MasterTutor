@@ -7,6 +7,8 @@
 | `compose-smoke.sh`     | Boots the full stack with the test overlay and smoke-tests it.           |
 | `env-init.ts`          | Writes a fresh `.env` with generated secrets.                            |
 | `scan-test-code.ts`    | The scanner `check-agent-image.sh` runs inside the image.                |
+| `e2e.sh`               | Boots the E2E stack and runs the Playwright stack suite in it.           |
+| `lib/test-stack.sh`    | The test stack's Compose command and the laptop stack lock (sourced).    |
 
 ## Remote test runner
 
@@ -20,6 +22,13 @@ scripts/remote-test.sh security
 scripts/remote-test.sh web-build      # next build + check:bundle
 scripts/remote-test.sh agent-image    # scripts/check-agent-image.sh
 scripts/remote-test.sh behaviour      # refused until the AppArmor profile is loaded (infra/host/apparmor/)
+scripts/remote-test.sh e2e            # full-stack Playwright suite (scripts/e2e.sh); results in apps/web/e2e/.out/
+scripts/remote-test.sh e2e stack/specs/api-conformance   # Playwright args pass through
+scripts/remote-test.sh smoke          # scripts/compose-smoke.sh against the two-slot test stack, then the
+                                      # Dokploy-format backup/restore drill (scripts/deploy/restore-drill.sh)
+scripts/remote-test.sh qa             # Phase 8 QA stack (scripts/qa-stack.sh): stays up; results come back
+scripts/remote-test.sh qa --down      # removes the QA stack and frees the stack lock
+scripts/remote-test.sh bench-mock     # Phase 10 harness self-test (scripts/bench-mock.sh; `pnpm bench:mock`)
 ```
 
 Output streams back and the script exits with the suite's exit code. Ctrl-C tears the run down.
@@ -45,9 +54,25 @@ The host is shared with other people's production apps. Rules for anything added
 - Compose projects are `mt-<branch>-<rand>` (`COMPOSE_PROJECT_NAME` is set in the runner).
 - Publish ports on 127.0.0.1 only. Never prune globally; never touch other containers, Dokploy,
   Traefik or host settings. Work only under `~/mt-ci/`.
-- The behaviour stack has fixed loopback ports and a fixed subnet, so behaviour runs take a host
-  lock and run one at a time.
+- The behaviour stack and the full test stack have fixed loopback ports and subnets, so each
+  takes a host lock: `behaviour.lock` (flock) for behaviour, and `stack.lock` for e2e, smoke, qa
+  and bench-mock (a directory naming its owner; qa holds it until `qa --down`). If a host crash
+  leaves a stale `stack.lock`, check that `docker compose ls` shows no `mt-` project, then run
+  `rm -rf ~/mt-ci/.runs/stack.lock`.
+- Full-stack suites run `compose.test.yml` plus `tests/e2e/compose.remote.yml` (CI labels, the
+  slot AppArmor profile, no published media ports). The AppArmor profile must be loaded.
 
 Kept between runs: each worktree's synced copy with its `node_modules` and `.next`, the
 `mt-pnpm-store` volume and the `mt-ci-runner:<hash>` image. To remove a worktree's copy:
 `ssh coursebite-build rm -rf mt-ci/<worktree-name>`.
+
+## Heavy stacks on a laptop
+
+One heavy stack at a time (D46). Anything that boots slots or the full stack on a laptop takes
+`/tmp/mt-behaviour.lock` first. `scripts/e2e.sh` and `scripts/compose-smoke.sh` do it themselves
+(and keep it with `KEEP_STACK=1`). For anything else, such as `pnpm test:behaviour` or a manual
+`pnpm compose:test up`:
+
+```sh
+until mkdir /tmp/mt-behaviour.lock 2>/dev/null; do sleep 15; done; trap 'rmdir /tmp/mt-behaviour.lock' EXIT
+```

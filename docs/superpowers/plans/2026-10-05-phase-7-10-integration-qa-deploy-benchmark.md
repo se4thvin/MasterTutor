@@ -19199,6 +19199,15 @@ The **orchestrator** executes this task. Fixers and reviewers are subagents. Eve
   - folder-float sha256 re-fetch;
   - the `#main` ring check (m-1);
   - m-6, the gulp before confirm (category `motion`).
+- **Keep/Discard hand-back (B6 A11), `keep-discard-review.md` minors:**
+  - the chosen Keep/Discard state is invisible in forced-colors mode (`apps/web/styles/run.css`, category `a11y`);
+  - undecided rows are marked by colour only (`hand-back-sheet.tsx`, category `a11y`);
+  - 32px Keep/Discard touch targets (category `a11y`);
+  - a stale error alert survives a retried hand-back;
+  - choices are cleared before the hand-back can fail;
+  - the re-read merge of held downloads is untested;
+  - `runs.get` runs one extra query on every load (`apps/web/lib/server/runs/service.ts`);
+  - a redundant `page.reload()` in `apps/web/e2e/takeover.spec.ts`.
 
 The WebKit items go to Step 6. The flake items go to Step 7. Then run:
 ```bash

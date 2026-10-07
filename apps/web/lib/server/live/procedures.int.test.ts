@@ -1,7 +1,13 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { decodeNotify } from "@mastertutor/contracts";
-import { createDb, type DbHandle } from "@mastertutor/db";
+import {
+  createDb,
+  pendingDownloads,
+  recordPendingDownload,
+  runs,
+  type DbHandle,
+} from "@mastertutor/db";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -11,7 +17,9 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from "@mastertutor/db/testing";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { RUN_MESSAGES } from "../runs/messages.ts";
 import type { LiveDeps } from "./open-live.ts";
 import { createLiveHandlers } from "./procedures.ts";
 
@@ -65,6 +73,9 @@ describe("live handlers on liveRouter", () => {
       iceServers: [],
     });
     expect(context.resHeaders.getSetCookie()).toHaveLength(2);
+    // Recorded, so the agent can close this person's live view when they sign out.
+    const [row] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+    expect(row?.liveViewerId).toBe(member.userId);
   });
 
   it("openLive refuses to run without ResponseHeadersPlugin", async () => {
@@ -111,7 +122,7 @@ describe("live handlers on liveRouter", () => {
     const done = await seedRun(owner.db, { workspaceId: member.workspaceId, status: "cancelled" });
     await expect(
       handlers.handBack({ runId: done, note: null, keep: [] }, as(member.userId)),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+    ).rejects.toMatchObject({ code: "CONFLICT", message: RUN_MESSAGES.runFinished });
   });
 
   it("maps another member's takeover or hand-back of a held run to FORBIDDEN", async () => {
@@ -128,5 +139,27 @@ describe("live handlers on liveRouter", () => {
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
+  });
+
+  it("handBack passes keep through: listed downloads are kept, the rest are not (N4)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await handlers.takeControl({ runId }, as(member.userId));
+    const [kept, dropped] = [crypto.randomUUID(), crypto.randomUUID()];
+    for (const id of [kept, dropped])
+      await owner.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId,
+          filename: `${id.slice(0, 4)}.txt`,
+          bytes: 5,
+          approvedBy: member.userId,
+        }),
+      );
+    await expect(
+      handlers.handBack({ runId, note: null, keep: [kept] }, as(member.userId)),
+    ).resolves.toEqual({ ok: true });
+    const pending = await pendingDownloads(owner.db, runId);
+    expect(pending.find((d) => d.id === kept)?.keptAt).not.toBeNull();
+    expect(pending.find((d) => d.id === dropped)?.keptAt).toBeNull();
   });
 });

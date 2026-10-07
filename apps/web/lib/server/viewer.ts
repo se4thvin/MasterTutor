@@ -27,3 +27,8 @@ export async function getViewer(): Promise<Viewer | null> {
     ? { id: session.user.id, name: session.user.name, email: session.user.email }
     : null;
 }
+
+/** The signed-in user's id, or null: what non-RPC routes pass to their services. */
+export async function getViewerId(): Promise<string | null> {
+  return (await getViewer())?.id ?? null;
+}

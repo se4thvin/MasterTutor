@@ -43,5 +43,8 @@ GRANT SELECT (id, run_id, item_id, expires_at, consumed_at, created_at) ON otp_c
 GRANT DELETE ON browser_sessions TO web_role;
 GRANT SELECT (id, workspace_id, alias, origin, created_at, updated_at) ON browser_sessions TO web_role;
 
+-- Live revocation's reconcile asks only whether a person still has an unexpired session.
+GRANT SELECT (user_id, expires_at) ON "session" TO agent_role;
+
 -- The audit log is append-only for both services (a trigger also blocks the owner).
 GRANT SELECT, INSERT ON vault_audit TO web_role, agent_role;

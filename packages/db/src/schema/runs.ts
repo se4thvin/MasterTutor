@@ -74,6 +74,8 @@ export const runs = pgTable(
     controller: controllerEnum("controller").notNull().default("agent"),
     /** Better Auth user id of the member holding control; set iff controller = 'user' (B6, F8). */
     controlUserId: text("control_user_id"),
+    /** Who last opened the live view (openLive): their open n.eko session is closed on sign-out. */
+    liveViewerId: text("live_viewer_id"),
     approvalMode: approvalModeEnum("approval_mode").notNull().default("ask"),
     model: text("model").notNull().default(MODELS.agentPrimary),
     previousResponseId: text("previous_response_id"),
@@ -192,5 +194,9 @@ export const downloads = pgTable("downloads", {
    */
   pending: boolean("pending").notNull().default(false),
   keptAt: tstz("kept_at"),
+  /** Made by the person in control (not an approved agent download): counts toward their cap. */
+  byUser: boolean("by_user").notNull().default(false),
+  /** Not kept: the row stays (never an asset) so a discard does not free quota within the run. */
+  discardedAt: tstz("discarded_at"),
   createdAt: createdAt(),
 });

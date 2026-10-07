@@ -13,7 +13,7 @@ import {
   type DbHandle,
 } from "@mastertutor/db";
 import { leaseSlotForTest, releaseSlotForTest, seedMember, seedRun } from "@mastertutor/db/testing";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { slotDownloadPath } from "../../apps/agent/src/browser/download-gate.ts";
 import { BrowserSession } from "../../apps/agent/src/browser/session.ts";
@@ -70,19 +70,28 @@ async function leasedRun(
     store?: Parameters<typeof createDownloadIngestor>[0]["storage"];
     maxBytes?: number;
     maxCount?: number;
+    /** Lease this existing run again (a run woken after its previous lease ended). */
+    runId?: string;
   } = {},
 ) {
   const workspace = options.workspace ?? member;
-  const runId = await seedRun(
-    owner.db,
-    controller === "user"
-      ? { workspaceId: workspace.workspaceId, status: "waiting", waitReason: "takeover" }
-      : { workspaceId: workspace.workspaceId },
-  );
+  const runId =
+    options.runId ??
+    (await seedRun(
+      owner.db,
+      controller === "user"
+        ? { workspaceId: workspace.workspaceId, status: "waiting", waitReason: "takeover" }
+        : { workspaceId: workspace.workspaceId },
+    ));
   if (controller === "user")
     await owner.db
       .update(runs)
-      .set({ controller: "user", controlUserId: workspace.userId })
+      .set({
+        controller: "user",
+        controlUserId: workspace.userId,
+        status: "waiting",
+        waitReason: "takeover",
+      })
       .where(eq(runs.id, runId));
   await leaseSlotForTest(owner.db, SLOT, runId);
   const session = await BrowserSession.connect({
@@ -116,8 +125,12 @@ async function clickDownload(session: BrowserSession, id: "notes" | "copy") {
   expect(await session.goto(`${SITE}/live-download`, new AbortController().signal)).toBe(true);
   await session.page.click(`#${id}`);
 }
+/** The run's download rows, discarded ones (kept only as quota markers) left out. */
 const rowsFor = (runId: string) =>
-  owner.db.select().from(downloads).where(eq(downloads.runId, runId));
+  owner.db
+    .select()
+    .from(downloads)
+    .where(and(eq(downloads.runId, runId), isNull(downloads.discardedAt)));
 const rowCount = (runId: string, count: number, label: string) =>
   waitFor(
     async () => {
@@ -314,6 +327,53 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
     expect(await rowsFor(many.runId)).toHaveLength(1);
   });
 
+  it("counts downloads per run, not per lease: a later lease starts from what the run kept", async () => {
+    const first = await leasedRun("user", { maxCount: 1 });
+    await clickDownload(first.session, "notes");
+    const [id] = await pendingIn(first.runId);
+    await handBack(first.runId, [id!]);
+    await first.ingestor.detach(first.runId);
+    await first.session.close();
+    lease = null;
+    await releaseSlotForTest(owner.db, SLOT);
+    // The run sleeps and is woken into another takeover: a new lease, a new gate.
+    const second = await leasedRun("user", { maxCount: 1, runId: first.runId });
+    await clickDownload(second.session, "copy");
+    expect(await errorEvent(first.runId, "download_too_many")).toBeDefined();
+    expect(await rowsFor(first.runId)).toHaveLength(1);
+  });
+
+  it("stores a kept download once when a second hand-back lands while it is still uploading", async () => {
+    const memory = createMemoryStorage();
+    const slow = {
+      ...memory,
+      putFile: async (...args: Parameters<typeof memory.putFile>) => {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        return memory.putFile(...args);
+      },
+    };
+    // A fresh workspace, so dedupe cannot skip the upload this case is about.
+    const other = await seedMember(owner.db);
+    const { runId, session, ingestor } = await leasedRun("user", { store: slow, workspace: other });
+    await clickDownload(session, "notes");
+    const [id] = await pendingIn(runId);
+    expect(
+      (await requestHandBack(owner.db, { runId, userId: other.userId, note: null, keep: [id!] }))
+        .ok,
+    ).toBe(true);
+    await ingestor.userControl(runId, false);
+    // A second hand-back (the idle watch, a retried request) before the first settle finished.
+    await ingestor.userControl(runId, false);
+    await waitFor(async () => (await rowsFor(runId)).every((row) => !row.pending), {
+      label: "settled",
+      timeoutMs: 15_000,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2_000)); // past any second upload
+    expect((await eventsFor(runId)).filter((e) => e.type === "error")).toEqual([]);
+    expect(await rowsFor(runId)).toEqual([expect.objectContaining({ id, pending: false })]);
+    expect(memory.objects.size).toBe(1);
+  });
+
   it("tells the user when a download cannot be stored, and keeps nothing (review minor)", async () => {
     // A fresh workspace: dedupe must not find this file already stored by an earlier case.
     const other = await seedMember(owner.db);
@@ -343,7 +403,8 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
   it("stores nothing for a let-through download that no approval names (N3: never 'policy')", async () => {
     const before = storedAssets();
     const { runId, session } = await leasedRun("agent");
-    await session.downloads.allowOnce((url) => url === NOTES);
+    // A caller that bypasses the type (approvedBy is required): the ingestor still fails closed.
+    await session.downloads.allowOnce((url) => url === NOTES, null as unknown as string);
     await clickDownload(session, "notes");
     expect(await errorEvent(runId, "download_failed")).toBeDefined();
     expect(await rowsFor(runId)).toEqual([]);

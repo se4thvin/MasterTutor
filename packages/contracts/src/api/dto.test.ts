@@ -6,9 +6,14 @@ import {
   CreateVaultItemInput,
   GradeBenchmarkRunInput,
   HandBackInput,
+  HeldDownloadView,
   ListNotesInput,
+  RunDetail,
   SetSecretInput,
+  SettingsView,
   SubmitOtpInput,
+  UpdateSettingsInput,
+  USAGE_MAX_DAYS,
   UsageInput,
 } from "./dto.ts";
 
@@ -128,6 +133,27 @@ describe("bypass mode needs an explicit acknowledgement (D44, m8)", () => {
   });
 });
 
+describe("settings concurrency and usage range (D14, D52)", () => {
+  const view = {
+    killSwitch: false,
+    defaultBudget: { maxSteps: 150, maxUsd: 5, maxActiveMinutes: 60 },
+    defaultAllowedOrigins: [],
+    concurrency: 2,
+  };
+  it("requires a version on the view and on every update", () => {
+    expect(SettingsView.safeParse(view).success).toBe(false);
+    expect(SettingsView.safeParse({ ...view, version: "v1" }).success).toBe(true);
+    expect(UpdateSettingsInput.safeParse({ concurrency: 2 }).success).toBe(false);
+    expect(UpdateSettingsInput.safeParse({ version: "v1", concurrency: 2 }).success).toBe(true);
+  });
+  it("caps a usage range at USAGE_MAX_DAYS days, both ends included", () => {
+    expect(USAGE_MAX_DAYS).toBe(400);
+    expect(UsageInput.safeParse({ from: "2026-01-01", to: "2027-02-04" }).success).toBe(true);
+    expect(UsageInput.safeParse({ from: "2026-01-01", to: "2027-02-05" }).success).toBe(false);
+    expect(UsageInput.safeParse({ from: "2026-10-02", to: "2026-10-01" }).success).toBe(false);
+  });
+});
+
 describe("HandBackInput: the person keeps or discards each download made during control", () => {
   it("keeps nothing unless told: undecided downloads are discarded", () => {
     expect(HandBackInput.parse({ runId, note: null }).keep).toEqual([]);
@@ -139,5 +165,25 @@ describe("HandBackInput: the person keeps or discards each download made during 
     );
     expect(HandBackInput.safeParse({ runId, note: null, keep: ids }).success).toBe(false);
     expect(HandBackInput.safeParse({ runId, note: null, keep: ["../x"] }).success).toBe(false);
+  });
+});
+
+describe("RunDetail.heldDownloads (B6 A11 reload gap)", () => {
+  it("carries each held download as id, filename and size, and nothing else", () => {
+    expect(Object.keys(RunDetail.shape)).toContain("heldDownloads");
+    const held = { id: runId, filename: "week-2 report.pdf", bytes: 1_572_864 };
+    expect(HeldDownloadView.parse({ ...held, approvedBy: "u-1", keptAt: null })).toEqual(held);
+  });
+
+  it("refuses an over-long name, a negative size and a non-uuid id", () => {
+    expect(
+      HeldDownloadView.safeParse({ id: runId, filename: "x".repeat(256), bytes: 1 }).success,
+    ).toBe(false);
+    expect(HeldDownloadView.safeParse({ id: runId, filename: "a.pdf", bytes: -1 }).success).toBe(
+      false,
+    );
+    expect(HeldDownloadView.safeParse({ id: "../x", filename: "a.pdf", bytes: 1 }).success).toBe(
+      false,
+    );
   });
 });

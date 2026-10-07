@@ -8,7 +8,6 @@ const web = {
   VAULT_PUBLIC_KEY: "y5DgMx35MF/R/d3MSLtIufXczYHJAqVtEIEMLY/Qf3M=",
   NEKO_MEMBER_SECRET: "neko-member-secret-for-tests-0123456789",
   LIVE_COOKIE_SECRET: "live-cookie-secret-for-tests-0123456789",
-  TURN_SECRET: "turn-secret-for-tests-0123456789abcdef",
   OPENAI_API_KEY: "sk-test",
   S3_ENDPOINT: "http://garage:3900",
   S3_ACCESS_KEY_ID: "GK66316f1f1bd64a571eb1b439",

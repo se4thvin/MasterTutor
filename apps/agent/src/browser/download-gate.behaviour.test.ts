@@ -146,7 +146,7 @@ describe("download gate (spec §9): denied unless a person approved it", () => {
 
   it("saves an approved download once, into the run's folder under its download id, then denies again", async () => {
     const { s, executor, runId, before } = await setup();
-    await s.downloads.allowOnce((url) => url === `${SITE}/files/report.csv`);
+    await s.downloads.allowOnce((url) => url === `${SITE}/files/report.csv`, "user-1");
     expect(await executor.execute(AT.link, signal)).toBeNull();
     const folder = slotDownloadPath(runId);
     const saved = await waitFor(
@@ -179,13 +179,15 @@ describe("download gate (spec §9): denied unless a person approved it", () => {
 
   it("while one download is approved, a page spamming its own downloads saves none of them: exactly one file", async () => {
     const { s, executor, runId } = await setup("/download.html?spam");
+    const finished: string[] = [];
+    s.downloads.onFinished((download) => void finished.push(download.id));
     await new Promise((resolve) => setTimeout(resolve, 200)); // the spam is under way
-    await s.downloads.allowOnce((url) => url === `${SITE}/files/report.csv`);
+    await s.downloads.allowOnce((url) => url === `${SITE}/files/report.csv`, "user-1");
     expect(await executor.execute(AT.link, signal)).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 2_500)); // spam ends; the allowance closes
-    const approved = s.downloads.approvedDownloads();
-    expect(approved).toHaveLength(1);
-    expect(await localFiles(runId)).toEqual(approved);
+    // The gate reports exactly the one it let through, and that is the only file.
+    expect(finished).toHaveLength(1);
+    expect(await localFiles(runId)).toEqual(finished);
     expect(s.downloads.drainBlocked().length).toBeGreaterThan(10); // each spam attempt reported
   });
 
@@ -221,6 +223,8 @@ describe("download gate (spec §9): denied unless a person approved it", () => {
   describe("while a person holds control (live view, B6)", () => {
     it("lets the person's download complete and keeps it; after hand-back the agent gate is back", async () => {
       const { s, runId } = await setup();
+      const finished: string[] = [];
+      s.downloads.onFinished((download) => void finished.push(download.id));
       await s.downloads.userControl(true);
       await s.page.mouse.click(AT.link.x, AT.link.y); // the person's click (n.eko input)
       const saved = await waitFor(
@@ -233,7 +237,10 @@ describe("download gate (spec §9): denied unless a person approved it", () => {
         { label: "user download", timeoutMs: 10_000 },
       );
       expect(saved).toHaveLength(1);
-      expect(s.downloads.userDownloads()).toEqual(saved);
+      // Chromium reports `completed` a moment after the file is in place.
+      expect(
+        await waitFor(() => (finished.length > 0 ? finished : null), { label: "reported" }),
+      ).toEqual(saved);
       expect(s.downloads.drainBlocked()).toEqual([]);
       await s.downloads.userControl(false);
       await new Promise((resolve) => setTimeout(resolve, 1_500)); // past the late sweep
