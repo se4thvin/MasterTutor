@@ -5,13 +5,24 @@ import { runs } from "../schema/index.ts";
 
 /**
  * The one "control goes back to the agent" write (F4): web hand back, the agent's failed-takeover
- * revert and the 15-minute idle hand-back all use it. True if the user held control.
+ * revert, the 15-minute idle hand-back and revocation all use it. With `holder`, only that
+ * person's control is returned (someone else's takeover is never touched). True if it was.
  */
-export async function returnControlToAgent(tx: DbTx, runId: string): Promise<boolean> {
+export async function returnControlToAgent(
+  tx: DbTx,
+  runId: string,
+  holder?: string,
+): Promise<boolean> {
   const rows = await tx
     .update(runs)
     .set({ controller: "agent", controlUserId: null })
-    .where(and(eq(runs.id, runId), eq(runs.controller, "user")))
+    .where(
+      and(
+        eq(runs.id, runId),
+        eq(runs.controller, "user"),
+        holder === undefined ? undefined : eq(runs.controlUserId, holder),
+      ),
+    )
     .returning({ id: runs.id });
   return rows.length === 1;
 }

@@ -13,7 +13,7 @@ import {
   type DbHandle,
 } from "@mastertutor/db";
 import { leaseSlotForTest, releaseSlotForTest, seedMember, seedRun } from "@mastertutor/db/testing";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { slotDownloadPath } from "../../apps/agent/src/browser/download-gate.ts";
 import { BrowserSession } from "../../apps/agent/src/browser/session.ts";
@@ -125,8 +125,12 @@ async function clickDownload(session: BrowserSession, id: "notes" | "copy") {
   expect(await session.goto(`${SITE}/live-download`, new AbortController().signal)).toBe(true);
   await session.page.click(`#${id}`);
 }
+/** The run's download rows, discarded ones (kept only as quota markers) left out. */
 const rowsFor = (runId: string) =>
-  owner.db.select().from(downloads).where(eq(downloads.runId, runId));
+  owner.db
+    .select()
+    .from(downloads)
+    .where(and(eq(downloads.runId, runId), isNull(downloads.discardedAt)));
 const rowCount = (runId: string, count: number, label: string) =>
   waitFor(
     async () => {
