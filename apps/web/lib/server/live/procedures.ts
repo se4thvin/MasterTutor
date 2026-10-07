@@ -64,6 +64,7 @@ export function createLiveHandlers(deps: () => LiveDeps) {
         runId: input.runId,
         userId: context.viewer.id,
         note: input.note,
+        keep: input.keep,
       });
       if (!result.ok) throw controlError(result);
       return { ok: true };

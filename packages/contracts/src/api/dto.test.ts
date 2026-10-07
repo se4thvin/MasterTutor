@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { MAX_USER_DOWNLOADS_PER_RUN } from "../constants.ts";
 import {
   CreateBenchmarkInput,
   CreateRunInput,
   CreateVaultItemInput,
   GradeBenchmarkRunInput,
+  HandBackInput,
   ListNotesInput,
   SetSecretInput,
   SubmitOtpInput,
@@ -123,5 +125,19 @@ describe("bypass mode needs an explicit acknowledgement (D44, m8)", () => {
       false,
     );
     expect(CreateRunInput.safeParse({ ...run, approvalMode: "ask" }).success).toBe(true);
+  });
+});
+
+describe("HandBackInput: the person keeps or discards each download made during control", () => {
+  it("keeps nothing unless told: undecided downloads are discarded", () => {
+    expect(HandBackInput.parse({ runId, note: null }).keep).toEqual([]);
+  });
+  it("accepts at most one decision per allowed download, as download ids", () => {
+    const ids = Array.from({ length: MAX_USER_DOWNLOADS_PER_RUN + 1 }, () => crypto.randomUUID());
+    expect(HandBackInput.parse({ runId, note: null, keep: ids.slice(1) }).keep).toHaveLength(
+      MAX_USER_DOWNLOADS_PER_RUN,
+    );
+    expect(HandBackInput.safeParse({ runId, note: null, keep: ids }).success).toBe(false);
+    expect(HandBackInput.safeParse({ runId, note: null, keep: ["../x"] }).success).toBe(false);
   });
 });

@@ -101,7 +101,7 @@ describe("live handlers on liveRouter", () => {
     );
     expect(decodeNotify("run_control", takeover)).toEqual({ runId });
     const back = await nextNotification(owner.sql, "run_control", () =>
-      handlers.handBack({ runId, note: "All yours" }, as(member.userId)),
+      handlers.handBack({ runId, note: "All yours", keep: [] }, as(member.userId)),
     );
     expect(decodeNotify("run_control", back)).toEqual({ runId });
     const outsider = await seedMember(owner.db);
@@ -110,7 +110,7 @@ describe("live handlers on liveRouter", () => {
     });
     const done = await seedRun(owner.db, { workspaceId: member.workspaceId, status: "cancelled" });
     await expect(
-      handlers.handBack({ runId: done, note: null }, as(member.userId)),
+      handlers.handBack({ runId: done, note: null, keep: [] }, as(member.userId)),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
@@ -123,7 +123,9 @@ describe("live handlers on liveRouter", () => {
     await expect(handlers.takeControl({ runId }, as(other.userId))).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
-    await expect(handlers.handBack({ runId, note: null }, as(other.userId))).rejects.toMatchObject({
+    await expect(
+      handlers.handBack({ runId, note: null, keep: [] }, as(other.userId)),
+    ).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
   });
