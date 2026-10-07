@@ -118,6 +118,7 @@ export async function getRun(db: Database, scope: RunScope, runId: string): Prom
     pendingApprovals: pending.map(approvalViewOf),
     // Stored already cleaned by the agent; cleaned again here, since the name is page-derived.
     heldDownloads: held.map((d) => ({ ...d, filename: safeFilename(d.filename) })),
+    error: row.error ?? null,
     lastEventId: last?.id ?? null,
   };
 }
