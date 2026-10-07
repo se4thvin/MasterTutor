@@ -545,9 +545,9 @@ describe("download records (agent role)", () => {
         downloadId: id,
         runId,
         workspaceId: member.workspaceId,
-        sha256: "e".repeat(64),
+        sha256: "9".repeat(64),
         bucket: "mastertutor",
-        key: `downloads/${runId}/eeeeeeeeeeee-race.txt`,
+        key: `downloads/${runId}/999999999999-race.txt`,
         mime: "text/plain",
         sourceUrl: null,
       });
