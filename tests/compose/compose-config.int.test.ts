@@ -61,6 +61,14 @@ beforeAll(() => {
 });
 
 describe("compose.yml", () => {
+  it("gives no service a TURN setting (D42)", () => {
+    for (const [name, service] of Object.entries(base.services)) {
+      expect(
+        Object.keys(env(service)).filter((key) => key.startsWith("TURN_")),
+        name,
+      ).toEqual([]);
+    }
+  });
   it("defines the Phase 0 services and six always-on slots", () => {
     expect(Object.keys(base.services).sort()).toEqual(
       ["agent", "garage", "garage-init", "migrate", "postgres", "web", ...slots].sort(),
@@ -93,7 +101,6 @@ describe("compose.yml", () => {
       "NEKO_MEMBER_SECRET",
       "BETTER_AUTH_SECRET",
       "LIVE_COOKIE_SECRET",
-      "TURN_SECRET",
       "VAULT_PUBLIC_KEY",
     ]) {
       expect(agent).not.toContain(key);
@@ -103,7 +110,7 @@ describe("compose.yml", () => {
     for (const slot of slots) {
       for (const key of Object.keys(env(base.services[slot]!))) {
         expect(key, slot).not.toMatch(
-          /^(VAULT_|OPENAI_|S3_|DATABASE_URL|BETTER_AUTH|LIVE_COOKIE|TURN_SECRET)/,
+          /^(VAULT_|OPENAI_|S3_|DATABASE_URL|BETTER_AUTH|LIVE_COOKIE|TURN_)/,
         );
       }
     }

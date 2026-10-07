@@ -94,7 +94,8 @@ export const OpenLiveResult = z.discriminatedUnion("sleeping", [
     sleeping: z.literal(false),
     slotName: SlotName,
     embedPath: z.string().regex(/^\/live\/[0-9a-f-]{36}\/\?embed=1&usr=user&pwd=cookie$/),
-    iceServers: z.array(IceServer).max(4),
+    /** Always []: v1 has no TURN relay (D42); the WebRTC TCP mux covers UDP-hostile networks. */
+    iceServers: z.array(IceServer).max(0),
   }),
 ]);
 export type OpenLiveResult = z.infer<typeof OpenLiveResult>;

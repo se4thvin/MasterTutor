@@ -29,7 +29,6 @@ export function generateSecrets(): Record<string, string> {
     NEKO_ADMIN_SECRET: b64url(32),
     NEKO_MEMBER_SECRET: b64url(32),
     LIVE_COOKIE_SECRET: b64url(32),
-    TURN_SECRET: b64url(32),
     GARAGE_ADMIN_TOKEN: b64url(32),
     GARAGE_RPC_SECRET: hex(32),
     S3_WEB_ACCESS_KEY_ID: `GK${hex(12)}`,

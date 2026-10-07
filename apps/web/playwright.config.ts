@@ -15,7 +15,6 @@ const serverEnv: Record<string, string> = {
   VAULT_PUBLIC_KEY: testEnv["VAULT_PUBLIC_KEY"] ?? "",
   NEKO_MEMBER_SECRET: testEnv["NEKO_MEMBER_SECRET"] ?? "",
   LIVE_COOKIE_SECRET: testEnv["LIVE_COOKIE_SECRET"] ?? "",
-  TURN_SECRET: testEnv["TURN_SECRET"] ?? "",
   // D36: one OPENAI_API_KEY. The fixture API never calls OpenAI, so a placeholder satisfies WebEnv.
   OPENAI_API_KEY: "unused-in-fixture-mode",
   S3_ENDPOINT: "http://127.0.0.1:1",
