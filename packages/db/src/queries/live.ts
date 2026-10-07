@@ -1,7 +1,6 @@
 import {
   TERMINAL_RUN_STATUSES,
   WAITS_KEPT_THROUGH_TAKEOVER,
-  encodeNotify,
   type Controller,
   type MemberRole,
   type RunStatus,
@@ -10,7 +9,7 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import type { Database, DbTx } from "../client.ts";
 import { browserSlots, runs, workspaceMembers } from "../schema/index.ts";
-import { notifyRunControl, returnControlToAgent } from "./control.ts";
+import { notifyRunControl, notifyRunWake, returnControlToAgent } from "./control.ts";
 import { emitRunEvent } from "./events.ts";
 
 const TERMINAL: ReadonlySet<string> = new Set(TERMINAL_RUN_STATUSES);
@@ -126,9 +125,7 @@ export async function requestTakeover(
           ...(run.status === "sleeping" ? { wakeRequestedAt: sql`now()` } : {}),
         })
         .where(eq(runs.id, input.runId));
-      await tx.execute(
-        sql`select pg_notify('run_wake', ${encodeNotify("run_wake", { runId: input.runId, reason: "takeover" })})`,
-      );
+      await notifyRunWake(tx, input.runId, "takeover");
       return { ok: true, via: "wake" };
     }
     // A code or CAPTCHA wait stays on the row (B3 M7): only control changes hands, and hand-back

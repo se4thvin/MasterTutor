@@ -13,13 +13,12 @@ import {
   removeVaultSecret,
   setVaultSecret,
   submitOtpCode,
-  workspaceIdOf,
   type DbHandle,
   type VaultItemListRow,
 } from "@mastertutor/db";
 import { ORPCError } from "@orpc/server";
 import type { Sealer } from "../vault/sealer.ts";
-import { liveOs } from "./live-os.ts";
+import { workspaceScoped } from "./workspace-scope.ts";
 
 interface VaultProcedureDeps {
   sealer(): Sealer;
@@ -54,13 +53,8 @@ function mapVaultError(error: unknown): never {
  * arrival with the public key only, and never read back; the Phase 0 grants enforce the last part.
  */
 export function createVaultProcedures(deps: VaultProcedureDeps) {
-  /** Every vault procedure runs in the viewer's workspace (D4: one workspace in v1). */
-  const scoped = liveOs.use(async ({ context, next }) => {
-    const db = deps.db();
-    const workspaceId = await workspaceIdOf(db.db, context.viewer.id);
-    if (workspaceId === null) throw new ORPCError("FORBIDDEN");
-    return next({ context: { db, workspaceId, actor: context.viewer.id } });
-  });
+  /** Every vault procedure runs in the viewer's workspace (D4); one shared middleware. */
+  const scoped = workspaceScoped(deps.db);
 
   const vault = {
     list: scoped.vault.list.handler(async ({ context }) => ({
@@ -200,6 +194,10 @@ export function createVaultProcedures(deps: VaultProcedureDeps) {
       throw new ORPCError("NOT_FOUND", { message: "That run doesn't exist." });
     if (outcome === "finished")
       throw new ORPCError("CONFLICT", { message: "This run has already finished." });
+    if (outcome === "too_many")
+      throw new ORPCError("TOO_MANY_REQUESTS", {
+        message: "This run already has unused codes. Wait for the agent to use one.",
+      });
     return { ok: true as const };
   });
 
