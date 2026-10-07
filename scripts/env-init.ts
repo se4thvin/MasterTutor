@@ -1,8 +1,11 @@
-// Fills missing or empty keys in the root .env with fresh secrets and safe local defaults.
-// Never prints or overwrites an existing value. Usage: pnpm env:init
+// Fills missing or empty keys in an env file (default: the root .env) with fresh secrets and safe local defaults.
+// Never prints or overwrites an existing value. Usage: pnpm env:init [--out <git-ignored or out-of-repo file>]
+import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { DEFAULT_BROWSER_SLOTS } from "@mastertutor/contracts";
 
 const b64url = (bytes: number) => randomBytes(bytes).toString("base64url");
@@ -82,8 +85,35 @@ export function fillEnv(
   return { text, filled, missingManual };
 }
 
+/** Where env:init writes. A path inside the repo must be git-ignored, so secrets are never committed. */
+export function resolveOutPath(
+  argv: readonly string[],
+  repoRoot: string,
+  isIgnored: (absPath: string) => boolean,
+  cwd: string = process.cwd(),
+): string {
+  const { values } = parseArgs({
+    args: [...argv],
+    options: { out: { type: "string" } },
+    strict: true,
+    allowPositionals: false,
+  });
+  const path = values.out === undefined ? resolve(repoRoot, ".env") : resolve(cwd, values.out);
+  const inside = relative(repoRoot, path);
+  if (!inside.startsWith("..") && !isAbsolute(inside) && !isIgnored(path)) {
+    throw new Error(
+      `refusing to write secrets to ${inside}: git would track it (add it to .gitignore)`,
+    );
+  }
+  return path;
+}
+
+const gitIgnores = (repoRoot: string) => (absPath: string) =>
+  spawnSync("git", ["check-ignore", "-q", absPath], { cwd: repoRoot }).status === 0;
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const path = fileURLToPath(new URL("../.env", import.meta.url));
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+  const path = resolveOutPath(process.argv.slice(2), repoRoot, gitIgnores(repoRoot));
   const existing = await readFile(path, "utf8").catch(() => "");
   const result = fillEnv(existing, generateSecrets());
   // Atomic: a crash mid-write must not lose existing keys.

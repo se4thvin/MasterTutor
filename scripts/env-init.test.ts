@@ -1,6 +1,6 @@
 import { Base64Key32, DbPassword, GarageKeyId, GarageSecret } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
-import { ENV_DEFAULTS, fillEnv, generateSecrets } from "./env-init.ts";
+import { ENV_DEFAULTS, fillEnv, generateSecrets, resolveOutPath } from "./env-init.ts";
 
 describe("generateSecrets", () => {
   it("produces values that satisfy the env contracts", () => {
@@ -60,5 +60,37 @@ describe("fillEnv", () => {
     expect(() =>
       fillEnv("VAULT_PUBLIC_KEY=y5DgMx35MF/R/d3MSLtIufXczYHJAqVtEIEMLY/Qf3M=\n", generated),
     ).toThrow(/VAULT_PUBLIC_KEY and VAULT_PRIVATE_KEY/);
+  });
+});
+
+describe("resolveOutPath (P9-18)", () => {
+  const root = "/repo";
+  const ignored = new Set(["/repo/.env", "/repo/.env.bench"]);
+  const isIgnored = (path: string) => ignored.has(path);
+
+  it("defaults to the root .env", () => {
+    expect(resolveOutPath([], root, isIgnored, "/repo")).toBe("/repo/.env");
+  });
+  it("writes a git-ignored file inside the repo", () => {
+    expect(resolveOutPath(["--out", ".env.bench"], root, isIgnored, "/repo")).toBe(
+      "/repo/.env.bench",
+    );
+  });
+  it("writes a file outside the repo", () => {
+    expect(resolveOutPath(["--out", "/secure/prod.env"], root, isIgnored, "/repo")).toBe(
+      "/secure/prod.env",
+    );
+  });
+  it("refuses a path git would track", () => {
+    expect(() => resolveOutPath(["--out", ".env.example"], root, isIgnored, "/repo")).toThrow(
+      /git would track/,
+    );
+    expect(() => resolveOutPath(["--out", "apps/x.env"], root, isIgnored, "/repo/apps/..")).toThrow(
+      /git would track/,
+    );
+  });
+  it("refuses unknown arguments and positionals", () => {
+    expect(() => resolveOutPath(["--force"], root, isIgnored, "/repo")).toThrow();
+    expect(() => resolveOutPath([".env.bench"], root, isIgnored, "/repo")).toThrow();
   });
 });
