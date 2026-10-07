@@ -3,6 +3,7 @@ import { assertSelfContained } from "../testing/self-contained.ts";
 import { pageExtract } from "./page/extract.ts";
 import { pageInstallLib } from "./page/lib.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
+import { pageSanitizeSvg } from "./page/svg.ts";
 import {
   pageContentType,
   pageForceEager,
@@ -20,6 +21,7 @@ const PAGE_FUNCTIONS = [
   pageContentType,
   pageExtract,
   pageLocateBlocks,
+  pageSanitizeSvg,
 ];
 
 describe("page functions", () => {
