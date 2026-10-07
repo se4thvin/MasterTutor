@@ -11,8 +11,7 @@ cd "$(dirname "$0")/.."
 
 # shellcheck source=lib/test-stack.sh
 source scripts/lib/test-stack.sh
-PORT="$(grep -E '^TEST_HTTP_PORT=' .env.test | cut -d= -f2)"
-BASE="http://localhost:${PORT:-18080}"
+BASE="$(stack_base_url)"
 
 take_stack_lock
 trap stop_stack EXIT

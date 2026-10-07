@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,5 +32,29 @@ describe("scripts/lib/test-stack.sh compose project (review: per-worktree names)
     expect(
       dcFrom("houndshark-p7g2", { COMPOSE_PROJECT_NAME: "mt-run-abc123" }).slice(2, 4),
     ).toEqual(["-p", "mt-run-abc123"]);
+  });
+});
+
+describe("stack_base_url (review M7)", () => {
+  const baseUrl = (env: Record<string, string>, envTest: string): string => {
+    const root = join(base, `port-${Object.keys(env).length}-${envTest.length}`);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, ".env.test"), envTest);
+    return execFileSync("bash", ["-c", `source "${script}" && stack_base_url`], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", ...env },
+    }).trim();
+  };
+
+  it("follows an exported TEST_HTTP_PORT, as Compose's interpolation does", () => {
+    expect(baseUrl({ TEST_HTTP_PORT: "18181" }, "TEST_HTTP_PORT=18090\n")).toBe(
+      "http://localhost:18181",
+    );
+  });
+
+  it("falls back to .env.test, then to 18080", () => {
+    expect(baseUrl({}, "TEST_HTTP_PORT=18090\n")).toBe("http://localhost:18090");
+    expect(baseUrl({}, "OTHER=1\n")).toBe("http://localhost:18080");
   });
 });

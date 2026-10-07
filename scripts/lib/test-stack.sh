@@ -12,6 +12,12 @@ export COMPOSE_PROJECT_NAME
 DC=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env.test -f compose.yml -f compose.test.yml)
 if [[ -n "${MT_CI_RUN_ID:-}" ]]; then DC+=(-f tests/e2e/compose.remote.yml); fi
 
+# The app's origin: an exported TEST_HTTP_PORT wins, as in Compose's interpolation; then .env.test.
+stack_base_url() {
+  local port="${TEST_HTTP_PORT:-$(grep -E '^TEST_HTTP_PORT=' .env.test 2>/dev/null | cut -d= -f2)}"
+  echo "http://localhost:${port:-18080}"
+}
+
 # One heavy stack at a time on a laptop (D46): the same lock as the behaviour suite. The CI host
 # serialises full-stack suites with its own lock (~/mt-ci/.runs/stack.lock, run-on-host.sh).
 LOCAL_STACK_LOCK=/tmp/mt-behaviour.lock
