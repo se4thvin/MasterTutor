@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { decodeNotify } from "@mastertutor/contracts";
-import { createDb, type DbHandle } from "@mastertutor/db";
+import { createDb, pendingDownloads, recordPendingDownload, type DbHandle } from "@mastertutor/db";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -129,5 +129,27 @@ describe("live handlers on liveRouter", () => {
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
+  });
+
+  it("handBack passes keep through: listed downloads are kept, the rest are not (N4)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await handlers.takeControl({ runId }, as(member.userId));
+    const [kept, dropped] = [crypto.randomUUID(), crypto.randomUUID()];
+    for (const id of [kept, dropped])
+      await owner.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId,
+          filename: `${id.slice(0, 4)}.txt`,
+          bytes: 5,
+          approvedBy: member.userId,
+        }),
+      );
+    await expect(
+      handlers.handBack({ runId, note: null, keep: [kept] }, as(member.userId)),
+    ).resolves.toEqual({ ok: true });
+    const pending = await pendingDownloads(owner.db, runId);
+    expect(pending.find((d) => d.id === kept)?.keptAt).not.toBeNull();
+    expect(pending.find((d) => d.id === dropped)?.keptAt).toBeNull();
   });
 });
