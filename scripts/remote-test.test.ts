@@ -34,4 +34,11 @@ describe("remote test runner (D45, X4)", () => {
     expect(host).toContain('stack_lock="$runs_dir/stack.lock"');
     expect(host).toMatch(/^ {2}e2e \| smoke \| qa \| bench-mock\) take_stack_lock ;;$/m);
   });
+
+  it("never leaves the stack lock without an owner (review Minor 7)", () => {
+    // The lock appears only by renaming a directory that already names its owner.
+    expect(host).not.toContain('mkdir "$stack_lock"');
+    expect(host).toMatch(/echo "\$project" >"\$claim\/owner"/);
+    expect(host).toMatch(/mv -T "\$claim" "\$stack_lock"/);
+  });
 });
