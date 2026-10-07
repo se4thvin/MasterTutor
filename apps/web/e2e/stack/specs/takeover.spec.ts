@@ -53,12 +53,12 @@ async function takeOver(page: Page, request: APIRequestContext, runId: string): 
   expect(held.waitReason).toBe("takeover");
 }
 
-async function handBackInUi(page: Page): Promise<void> {
+/** Hands back in the dialog; a held download needs an explicit choice first (B6 A11 Keep/Discard). */
+async function handBackInUi(page: Page, held?: "Keep" | "Discard"): Promise<void> {
   await frame(page).getByRole("button", { name: "Hand back" }).click();
-  await page
-    .getByRole("dialog", { name: "Hand back to the agent" })
-    .getByRole("button", { name: "Hand back" })
-    .click();
+  const dialog = page.getByRole("dialog", { name: "Hand back to the agent" });
+  if (held) await dialog.getByRole("radio", { name: held }).check();
+  await dialog.getByRole("button", { name: "Hand back" }).click();
   await expect(frame(page)).not.toHaveAttribute("data-state", "control", { timeout: 2_000 });
 }
 
@@ -152,7 +152,7 @@ test.describe("takeover (spec §10.3)", () => {
       const pending = nextBrowserEvent(page, runId, "download_pending", 30_000);
       await clickLiveCentre(page);
       await pending;
-      await handBackInUi(page); // the dialog sends keep: []
+      await handBackInUi(page, "Discard"); // the dialog sends keep: []
       await waitForRun(
         request,
         runId,
