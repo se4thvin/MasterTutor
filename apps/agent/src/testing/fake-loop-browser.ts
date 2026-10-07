@@ -64,7 +64,7 @@ export class FakeLoopBrowser implements LoopBrowser {
   /** Download attempts the page made (drained by the loop), and the downloads a person allowed. */
   blockedDownloads: Array<{ url: string; filename: string | null }> = [];
   /** Downloads let through: an approved card, or (`link`) a download link at its press. */
-  allowedDownloads: Array<{ url: string; filename?: string | null }> = [];
+  allowedDownloads: Array<{ url: string; filename?: string | null; approvedBy: string }> = [];
   /** The executor refuses this action at the press with this note, or null. */
   refuseWith: ((action: ComputerAction) => string | null) | null = null;
   /** The executor hands the page to the user at this action (returns the reason), or null. */
@@ -135,7 +135,7 @@ export class FakeLoopBrowser implements LoopBrowser {
         return { executed: executed + 1, notes: ["Nothing was clicked: handed over."], handOver };
       this.guard?.assertAgent(signal);
       if (verdict !== true && verdict.allowDownload)
-        this.allowedDownloads.push({ url: verdict.allowDownload });
+        this.allowedDownloads.push(verdict.allowDownload);
       this.executed.push(action);
       executed += 1;
       await this.actionHook?.(action);
@@ -196,7 +196,11 @@ export class FakeLoopBrowser implements LoopBrowser {
     return this.blockedDownloads.splice(0);
   }
 
-  async allowDownload(card: { url: string; filename: string | null }): Promise<void> {
+  async allowDownload(card: {
+    url: string;
+    filename: string | null;
+    approvedBy: string;
+  }): Promise<void> {
     this.allowedDownloads.push(card);
   }
 

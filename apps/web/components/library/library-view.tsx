@@ -2,12 +2,14 @@
 
 import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { AnimatePresence, m } from "motion/react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
+import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
+import { LayoutMotion } from "@/components/motion/layout-motion.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
@@ -16,8 +18,9 @@ import { SearchField } from "@/components/ui/search-field.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
+import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
 import { transitions } from "@/lib/motion-tokens.ts";
-import { folderPath } from "@/lib/folders/tree.ts";
+import { childFolders, folderPath } from "@/lib/folders/tree.ts";
 import {
   libraryHref,
   parseLibraryParams,
@@ -26,9 +29,9 @@ import {
 } from "@/lib/library/params.ts";
 import { KIND_LABEL } from "@/lib/notes/format.ts";
 import { FolderActions } from "./folder-actions.tsx";
+import { FolderTiles } from "./folder-tiles.tsx";
 import { FolderTree } from "./folder-tree.tsx";
 import { SearchResults } from "./search-results.tsx";
-import { MoveSheet } from "./move-sheet.tsx";
 import { NoteCard } from "./note-card.tsx";
 import { useDeleteNote } from "./use-delete-note.ts";
 import { useMoveNote } from "./use-move-note.ts";
@@ -83,6 +86,29 @@ function LibraryHeader({
   );
 }
 
+/**
+ * Empty-state copy for the current view (I5). All notes is library-wide, not a folder; a folder
+ * with subfolder tiles above must not claim "nothing here"; a kind filter names the kind, since
+ * the scope may still hold notes of other kinds.
+ */
+function emptyCopy(params: LibraryParams, showTiles: boolean): { title: string; body?: string } {
+  const body =
+    params.folder === "all" && showTiles
+      ? "Notes appear here when the agent files them."
+      : showTiles
+        ? undefined
+        : "Notes appear here when the agent files them, or when you move them in.";
+  if (params.kind) return { title: `No ${KIND_LABEL[params.kind]} notes here yet`, body };
+  if (params.folder === "all" && showTiles) return { title: "No notes yet", body };
+  if (showTiles) return { title: "No notes in this folder yet", body };
+  return { title: "Nothing here yet", body };
+}
+
+// The move sheet (pick list, receive animation) stays out of the library's first load.
+const { Component: MoveSheet, usePrefetch: usePrefetchMoveSheet } = lazyComponent(() =>
+  import("./move-sheet.tsx").then((mod) => mod.MoveSheet),
+);
+
 const URL_WRITE_DEBOUNCE_MS = 250;
 const KIND_ITEMS: SegmentItem<"all" | SourceKind>[] = [
   { value: "all", label: "All" },
@@ -97,7 +123,7 @@ const VIEW_ITEMS: SegmentItem<LibraryViewMode>[] = [
 
 export function LibraryView() {
   const router = useRouter();
-  const { params } = useLibraryScope();
+  const { params, folders } = useLibraryScope();
   const notes = useInfiniteQuery(
     orpc.notes.list.infiniteOptions({
       input: (cursor: string | null) => ({
@@ -157,11 +183,25 @@ export function LibraryView() {
   const moveNote = useMoveNote();
   const deleteNote = useDeleteNote();
   const [moving, setMoving] = useState<NoteSummary | null>(null);
+  // Mounted from the first "Move to…" on, so its close animation always plays.
+  const [moveSheetUsed, setMoveSheetUsed] = useState(false);
+  if (moving && !moveSheetUsed) setMoveSheetUsed(true);
+  usePrefetchMoveSheet();
+  const moveSheetFailed = () => {
+    setMoving(null);
+    setMoveSheetUsed(false);
+  };
   const [deleting, setDeleting] = useState<NoteSummary | null>(null);
+  const reduceMotion = useReducedMotion();
   const dropNote = (noteId: string, folderId: string | null) => {
     const note = items.find((n) => n.id === noteId);
     if (note) void moveNote(noteId, folderId, note.folderId);
   };
+  // The current folder's subfolders show as tiles (FolderFloat), except while searching or in Unfiled.
+  const tilesParent = params.folder === "all" ? null : params.folder;
+  const showTiles =
+    !searching && params.folder !== "unfiled" && childFolders(folders, tilesParent).length > 0;
+  const empty = emptyCopy(params, showTiles);
 
   return (
     <>
@@ -193,6 +233,14 @@ export function LibraryView() {
             onChange={(v) => set({ view: v })}
           />
         </div>
+        {showTiles ? (
+          <FolderTiles
+            folders={folders}
+            parentId={tilesParent}
+            params={params}
+            onDropNote={dropNote}
+          />
+        ) : null}
         {searching ? (
           search.hits.length ? (
             <SearchResults hits={search.hits} query={search.settledQuery} />
@@ -244,8 +292,8 @@ export function LibraryView() {
           <EmptyState
             icon="allNotes"
             eyebrow={params.kind ? KIND_LABEL[params.kind] : undefined}
-            title="Nothing here yet"
-            body="Notes appear here when the agent files them, or when you move them in."
+            title={empty.title}
+            body={empty.body}
             actions={
               <ButtonLink href="/new" variant="primary" size="lg">
                 New task
@@ -253,29 +301,41 @@ export function LibraryView() {
             }
           />
         ) : (
-          <div className="notes" data-view={params.view}>
-            {/* A card that leaves (moved or deleted) fades and settles out instead of vanishing. */}
-            <AnimatePresence initial={false}>
-              {items.map((note, i) => (
-                <m.div
-                  key={note.id}
-                  className="card-slot"
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={transitions.exit}
-                >
-                  <NoteCard
-                    note={note}
-                    view={params.view}
-                    index={i}
-                    onMove={setMoving}
-                    onDelete={setDeleting}
-                  />
-                </m.div>
-              ))}
-            </AnimatePresence>
-          </div>
+          <LayoutMotion>
+            <div className="notes" data-view={params.view}>
+              {/* A card that leaves fades and settles out; the cards after it glide into place
+                  (layout, parked item). popLayout takes the leaver out of flow at once. Under
+                  reduced motion layout is off: motion's instant layout transition would still
+                  paint one frame at the old place. */}
+              <AnimatePresence initial={false} mode="popLayout">
+                {items.map((note, i) => (
+                  <m.div
+                    key={note.id}
+                    layout={reduceMotion ? false : "position"}
+                    className="card-slot"
+                    exit={{ opacity: 0, scale: 0.96 }}
+                    transition={{ ...transitions.exit, layout: transitions.spring }}
+                  >
+                    <NoteCard
+                      note={note}
+                      view={params.view}
+                      index={i}
+                      onMove={setMoving}
+                      onDelete={setDeleting}
+                    />
+                  </m.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </LayoutMotion>
         )}
-        <MoveSheet note={moving} onClose={() => setMoving(null)} />
+        {moveSheetUsed ? (
+          <ChunkBoundary what="Move to…" onFailed={moveSheetFailed}>
+            <Suspense fallback={null}>
+              <MoveSheet note={moving} onClose={() => setMoving(null)} />
+            </Suspense>
+          </ChunkBoundary>
+        ) : null}
         <ConfirmDialog
           open={deleting !== null}
           onOpenChange={(open) => !open && setDeleting(null)}

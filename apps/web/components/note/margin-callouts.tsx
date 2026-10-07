@@ -1,7 +1,7 @@
 "use client";
 
 import type { NoteBlock } from "@mastertutor/contracts";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { cx } from "@/lib/cx.ts";
 import { layoutCallouts, type PlacedCallout } from "@/lib/notes/callout-layout.ts";
 import { calloutFor } from "@/lib/notes/provenance.ts";
@@ -113,7 +113,7 @@ export function MarginCallouts({
         })}
       </svg>
       <div className="callouts" data-qa-allow-clip>
-        {entries.map(({ block, callout }) => {
+        {entries.map(({ block, callout }, i) => {
           const p = byId.get(block.id);
           return (
             <button
@@ -127,7 +127,13 @@ export function MarginCallouts({
               data-qa-avoid
               data-qa-obstacle
               className={cx("callout", activeBlockId === block.id && "callout-on")}
-              style={{ top: p?.top ?? 0, visibility: !p || p.hidden ? "hidden" : "visible" }}
+              style={
+                {
+                  top: p?.top ?? 0,
+                  visibility: !p || p.hidden ? "hidden" : "visible",
+                  "--i": Math.min(i, 8),
+                } as CSSProperties
+              }
               onPointerEnter={() => onActivate(block.id)}
               onPointerLeave={() => onActivate(null)}
               onClick={() => onOpen(block.id)}

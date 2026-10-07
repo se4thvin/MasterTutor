@@ -27,15 +27,30 @@ async function settle(page: Page): Promise<void> {
     await document.fonts.ready;
     // Only running document-timeline animations can finish: scroll()/view() timelines never do,
     // and a paused one (a hovered or focused toast countdown) waits for the user, not for us.
+    // A toast's countdown fuse is a timer, not settling motion: waiting for it would only start
+    // the toast's exit fade, which axe would then measure mid-way.
     const finite = document
       .getAnimations()
       .filter(
         (a) =>
           a.timeline === document.timeline &&
           a.playState !== "paused" &&
-          a.effect?.getTiming().iterations !== Infinity,
+          a.effect?.getTiming().iterations !== Infinity &&
+          !((a.effect as KeyframeEffect | null)?.target as Element | null)?.matches(".toast-fuse"),
       );
     await Promise.all(finite.map((a) => a.finished.catch(() => undefined)));
+    // Toasts (and their list item) fade in on motion values (rAF, not WAAPI), so wait until each is
+    // fully shown, counting every ancestor's opacity as axe's contrast check does.
+    const shown = (el: Element) => {
+      for (let node: Element | null = el; node; node = node.parentElement) {
+        if (getComputedStyle(node).opacity !== "1") return false;
+      }
+      return true;
+    };
+    const deadline = performance.now() + 2000;
+    while (![...document.querySelectorAll(".toast")].every(shown) && performance.now() < deadline) {
+      await new Promise(requestAnimationFrame);
+    }
   });
 }
 

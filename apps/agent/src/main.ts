@@ -5,10 +5,16 @@ import { createStorage } from "@mastertutor/storage";
 import { assertConcurrencyFitsSlots } from "./boot-checks.ts";
 import { startHealthServer } from "./health.ts";
 import { createLibraryServices, libraryHooks } from "./library.ts";
+import { createDownloadIngestor } from "./live/downloads.ts";
+import { createSlotIdleProbe } from "./live/idle-probe.ts";
+import { createLiveHooks, liveControlStore } from "./live/live-hooks.ts";
+import { createNekoAdmin } from "./live/neko-admin.ts";
+import { createNekoLiveView } from "./live/neko-live-view.ts";
 import { createOpenAIModelClient } from "./llm/client.ts";
 import { createOpenAI } from "./llm/openai.ts";
 import { composeRunHooks } from "./loop/hooks.ts";
 import { Supervisor } from "./loop/supervisor.ts";
+import { DEFAULT_RUNTIME_CONFIG } from "./runtime/config.ts";
 import { slotCdpBaseUrl } from "./slots/probe.ts";
 import { createVault, vaultHooks } from "./vault/index.ts";
 import { takeVaultKeys } from "./vault/key-env.ts";
@@ -39,6 +45,24 @@ const vault = createVault({
   testMode: env.AGENT_TEST_MODE,
 });
 
+// B6: the n.eko live view and the person's downloads, plugged into B1's control lock (spec §10).
+// B3's passkey enrolment runs while the person holds control (B3 E.8 note 1).
+const liveHooks = createLiveHooks({
+  enrolment: vault.enrolment,
+  store: liveControlStore(database.db),
+  liveView: createNekoLiveView({
+    admin: createNekoAdmin({ adminSecret: env.NEKO_ADMIN_SECRET }),
+  }),
+  idleProbe: createSlotIdleProbe(),
+  downloads: createDownloadIngestor({
+    db: database.db,
+    storage,
+    log: log.child({ module: "downloads" }),
+    localRoot: DEFAULT_RUNTIME_CONFIG.downloadsDir,
+  }),
+  log: log.child({ module: "live" }),
+});
+
 try {
   await assertConcurrencyFitsSlots(database.db, env.BROWSER_SLOTS.length);
 } catch (error) {
@@ -55,8 +79,9 @@ const supervisor = new Supervisor({
   cdpBaseUrl: (name) => slotCdpBaseUrl(name),
   log,
   testMode: env.AGENT_TEST_MODE,
-  // Each phase's hook set; a second owner of any single-owner hook is a boot error.
-  hooks: composeRunHooks(vaultHooks(vault), libraryHooks(library)),
+  // B3 owns the vault hooks; B6 owns control, onLeased and onLeaseEnding; B2 adds the library tools
+  // (no overlap: a clash throws).
+  hooks: composeRunHooks(vaultHooks(vault), liveHooks, libraryHooks(library)),
   config: { shutdownDrainMs: env.AGENT_SHUTDOWN_DRAIN_MS },
 });
 

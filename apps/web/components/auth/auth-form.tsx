@@ -2,11 +2,23 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { Fragment, useState, type CSSProperties, type FormEvent } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { TextField } from "@/components/ui/text-field.tsx";
 import { authClient, authErrorCopy } from "@/lib/auth-client.ts";
 import { safeNextPath } from "@/lib/auth/next-path.ts";
+
+/** The heading's words rise in on a short stagger (word-stagger pattern; not SplitText/BlurText). */
+function Words({ text }: { text: string }) {
+  return text.split(" ").map((word, i) => (
+    <Fragment key={i}>
+      {i > 0 ? " " : null}
+      <span className="word" style={{ "--i": i } as CSSProperties}>
+        {word}
+      </span>
+    </Fragment>
+  ));
+}
 
 export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
   const router = useRouter();
@@ -44,7 +56,9 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
 
   return (
     <form className="auth-card" onSubmit={onSubmit}>
-      <h1 className="t-title1">{signUp ? "Create account" : "Sign in"}</h1>
+      <h1 className="t-title1">
+        <Words text={signUp ? "Create account" : "Sign in"} />
+      </h1>
       <p className="t-callout muted">
         {signUp ? "The first account owns this workspace." : "Welcome back."}
       </p>

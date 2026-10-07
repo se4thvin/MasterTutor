@@ -1,3 +1,6 @@
+import { failChunksContaining, rewriteChunksContaining } from "./helpers/chunks.ts";
+import type { Page } from "@playwright/test";
+import { moved, movingAnimations, readSamples, startSampling } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 
 test("library search shows block hits with highlights and a recovery path", async ({ page }) => {
@@ -72,4 +75,104 @@ test("the search field follows the URL after a folder click and back/forward", a
   await expect(page.getByRole("list", { name: "Search results" })).toBeVisible();
   await page.goForward();
   await expect(field).toHaveValue("");
+});
+
+async function openPaletteWith(page: Page, query: string) {
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  const dialog = page.getByRole("dialog", { name: "Search notes" });
+  await dialog.getByRole("combobox").fill(query);
+  await expect(dialog.getByRole("option").nth(1)).toBeVisible();
+  await page.locator("html[data-layout-motion=ready]").waitFor({ state: "attached" });
+  return dialog;
+}
+
+test("the selection highlight glides between results", async ({ page }) => {
+  test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+  const dialog = await openPaletteWith(page, "warmup");
+  await page.keyboard.press("ArrowDown");
+  await expect(dialog.locator(".hit-highlight")).toHaveCount(1);
+  await startSampling(page, "glide", ".hit-highlight", "transform", 30);
+  await page.keyboard.press("ArrowDown");
+  const samples = await readSamples(page, "glide", 30);
+  expect(samples.some(moved), samples.join(" | ")).toBe(true);
+  await expect(dialog.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true");
+});
+
+test("under reduced motion the highlight jumps and results do not slide", async ({ page }) => {
+  test.skip(page.viewportSize()?.width !== 1440, "motion sample runs once");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  // The last result has the longest stagger delay: it must never paint offset (I-3).
+  await startSampling(page, "stagger", ".palette-list .hit:last-of-type", "translate", 90);
+  await page.getByRole("dialog", { name: "Search notes" }).getByRole("combobox").fill("warmup");
+  const offsets = (await readSamples(page, "stagger", 90)).filter(Boolean);
+  expect(offsets.length, "the results rendered while sampling").toBeGreaterThan(0);
+  expect(
+    offsets.filter((v) => v !== "none" && !/^0px( 0px)?$/.test(v)),
+    offsets.join(" | "),
+  ).toEqual([]);
+  const dialog = await openPaletteWith(page, "warmup");
+  expect(await movingAnimations(page, ".palette-list")).toEqual([]);
+  await page.keyboard.press("ArrowDown");
+  await startSampling(page, "jump", ".hit-highlight", "transform", 20);
+  await page.keyboard.press("ArrowDown");
+  const samples = await readSamples(page, "jump", 20);
+  expect(samples.filter(moved), samples.join(" | ")).toEqual([]);
+  await expect(dialog.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true");
+});
+
+test("the palette with results stays clean at every width", async ({ page }) => {
+  await openPaletteWith(page, "warmup");
+  await page.keyboard.press("ArrowDown");
+  await expectCleanScreen(page);
+});
+
+test("if the palette can't load, ⌘K says so and works on the next try", async ({ page }) => {
+  const uncaught: string[] = [];
+  page.on("pageerror", (error) => uncaught.push(error.message));
+  let offline = true;
+  await failChunksContaining(page, "palette-hit", () => offline);
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't open search" })).toBeVisible();
+  // The page itself is unharmed (no root error screen), and nothing went unhandled (M-1).
+  await expect(page.getByRole("searchbox", { name: "Search the library" })).toBeVisible();
+  expect(uncaught).toEqual([]);
+  offline = false;
+  // The retry is a reload: the bundler keeps a failed chunk for the page's lifetime.
+  await page
+    .getByRole("group")
+    .filter({ hasText: "Couldn't open search" })
+    .getByRole("button", { name: "Reload" })
+    .click();
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(
+    page.getByRole("dialog", { name: "Search notes" }).getByRole("combobox"),
+  ).toBeVisible();
+});
+
+test("a bug in the palette is not mistaken for a network failure (I-1)", async ({ page }) => {
+  const uncaught: string[] = [];
+  page.on("pageerror", (error) => uncaught.push(error.message));
+  // The palette's code arrives, but rendering it throws: an ordinary bug, not a missing chunk.
+  await rewriteChunksContaining(
+    page,
+    "palette-hit",
+    '"Search every block"',
+    '(()=>{throw new Error("palette render bug")})()',
+  );
+  await page.goto("/library");
+  await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
+  await page.keyboard.press("ControlOrMeta+k");
+  // It reaches the normal error path, never the "check your connection" toast.
+  // Next 16's default error screen.
+  await expect(page.getByText(/This page couldn.t load/)).toBeVisible();
+  await expect(page.getByRole("group").filter({ hasText: "Couldn't open search" })).toHaveCount(0);
+  expect(uncaught.join("\n")).toContain("palette render bug");
 });

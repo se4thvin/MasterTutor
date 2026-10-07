@@ -1,3 +1,4 @@
+import { movingAnimations } from "./helpers/motion.ts";
 import { expect, expectCleanScreen, isCompact, test } from "./helpers/test.ts";
 
 test("audit log lists vault events with paging, clean at every width", async ({ page }) => {
@@ -29,4 +30,24 @@ test("audit entries are newest first and a refusal carries a word, not only a co
     .evaluateAll((els) => els.map((el) => el.getAttribute("datetime") ?? ""));
   expect(times.length).toBe(50);
   expect([...times].sort().reverse()).toEqual(times);
+});
+
+test("rows added by Load more stagger in; the first page does not", async ({ page }) => {
+  await page.goto("/settings/audit");
+  const entries = page.locator("[data-qa='audit-entry']");
+  await expect(entries).toHaveCount(50);
+  await expect(page.locator("[data-qa='audit-entry'][data-appended]")).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more" }).click();
+  const appended = page.locator("[data-qa='audit-entry'][data-appended]");
+  await expect(appended.first()).toBeVisible();
+  await expect(appended.first()).toHaveCSS("animation-name", "row-in");
+  await expectCleanScreen(page);
+});
+
+test("under reduced motion appended audit rows do not slide", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/settings/audit");
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.locator("[data-qa='audit-entry'][data-appended]").first()).toBeVisible();
+  expect(await movingAnimations(page, ".slist")).toEqual([]);
 });

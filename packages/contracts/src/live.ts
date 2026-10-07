@@ -21,6 +21,8 @@ export const TAKEOVER_RESTORE_WAIT_MS = 15_000;
 export const NEKO_EMBED_QUERY = "embed=1&usr=user&pwd=cookie";
 /** Traefik PathRegexp for live requests (Go RE2 and JS agree on this pattern). */
 export const LIVE_PATH_REGEX = "^/live/[0-9a-f-]{36}/";
+/** n.eko's upload endpoints (drop, file chooser) under the prefix: their body is capped (A14). */
+export const LIVE_UPLOAD_PATH_REGEX = "^/live/[0-9a-f-]{36}/api/room/upload/";
 /** Traefik StripPrefixRegex: n.eko is served at / behind it. */
 export const LIVE_STRIP_REGEX = "^/live/[0-9a-f-]{36}";
 /** web's ForwardAuth endpoint for the live routers. */
@@ -49,10 +51,19 @@ export function liveSlotCookiePattern(slotName: string): string {
   return `(?:^|;\\s*)${LIVE_SLOT_COOKIE}=${SlotName.parse(slotName)}\\.`;
 }
 
+function slotRule(slotName: string, host: string, pathRegex: string): string {
+  if (!/^[A-Za-z0-9.-]+$/.test(host)) throw new TypeError("Invalid router host");
+  return `Host(\`${host}\`) && PathRegexp(\`${pathRegex}\`) && HeaderRegexp(\`Cookie\`, \`${liveSlotCookiePattern(slotName)}\`)`;
+}
+
 /** The single source of the per-slot Traefik rule (test file provider here, labels in Phase 9). */
 export function liveRouterRule(slotName: string, host: string): string {
-  if (!/^[A-Za-z0-9.-]+$/.test(host)) throw new TypeError("Invalid router host");
-  return `Host(\`${host}\`) && PathRegexp(\`${LIVE_PATH_REGEX}\`) && HeaderRegexp(\`Cookie\`, \`${liveSlotCookiePattern(slotName)}\`)`;
+  return slotRule(slotName, host, LIVE_PATH_REGEX);
+}
+
+/** The per-slot upload rule (higher priority): the same routing, plus a body-size cap (A14). */
+export function liveUploadRouterRule(slotName: string, host: string): string {
+  return slotRule(slotName, host, LIVE_UPLOAD_PATH_REGEX);
 }
 
 /**

@@ -1,11 +1,67 @@
+# Test overlay routes. The live routers use liveRouterRule() / liveUploadRouterRule() and
+# liveForwardAuthAddress() (D41: web's static .11 on the cdp network, never the name `web`);
+# tests/compose/live-routes.int.test.ts asserts all three. ForwardAuth runs BEFORE the strip so it
+# sees /live/<runId>/, and before the upload body limit so nobody unauthenticated is buffered.
+# Phase 9's compose.prod.yml carries the same routers as labels.
 http:
   routers:
     web:
       rule: PathPrefix(`/`)
       entryPoints: [web]
       service: web
+    live-browser-1:
+      rule: 'Host(`localhost`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-1\.`)'
+      priority: 1000
+      entryPoints: [web]
+      middlewares: [live-auth, live-strip, live-headers]
+      service: live-browser-1
+    live-browser-2:
+      rule: 'Host(`localhost`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-2\.`)'
+      priority: 1000
+      entryPoints: [web]
+      middlewares: [live-auth, live-strip, live-headers]
+      service: live-browser-2
+    live-upload-browser-1:
+      rule: 'Host(`localhost`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-1\.`)'
+      priority: 1001
+      entryPoints: [web]
+      middlewares: [live-auth, live-upload-limit, live-strip, live-headers]
+      service: live-browser-1
+    live-upload-browser-2:
+      rule: 'Host(`localhost`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-2\.`)'
+      priority: 1001
+      entryPoints: [web]
+      middlewares: [live-auth, live-upload-limit, live-strip, live-headers]
+      service: live-browser-2
+  middlewares:
+    live-auth:
+      forwardAuth:
+        address: http://172.30.231.11:3000/api/live/auth
+        trustForwardHeader: false
+        authResponseHeaders:
+          - Cookie
+    live-upload-limit:
+      buffering:
+        # MAX_UPLOAD_BYTES (@mastertutor/contracts): a larger upload gets 413 before n.eko.
+        maxRequestBodyBytes: 104857600
+    live-strip:
+      stripPrefixRegex:
+        regex:
+          - "^/live/[0-9a-f-]{36}"
+    live-headers:
+      headers:
+        contentSecurityPolicy: "frame-ancestors 'self'"
+        contentTypeNosniff: true
   services:
     web:
       loadBalancer:
         servers:
           - url: http://web:3000
+    live-browser-1:
+      loadBalancer:
+        servers:
+          - url: http://browser-1:8080
+    live-browser-2:
+      loadBalancer:
+        servers:
+          - url: http://browser-2:8080

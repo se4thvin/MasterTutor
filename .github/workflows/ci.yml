@@ -76,10 +76,23 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Allow unprivileged user namespaces (Chromium sandbox inside the slot)
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bash apps/browser-slot/test/verify.sh
       - run: bash scripts/compose-smoke.sh
+      - name: Live view stack tests (B6)
+        run: |
+          pnpm compose:live build
+          pnpm test:live-stack
+      - name: Live view stack teardown
+        if: always()
+        run: pnpm compose:live down -v
 
   behaviour:
     name: Agent behaviour (real slots)
@@ -114,6 +127,8 @@ jobs:
       # A production build (no WEB_FIXTURE_API) must ship no fixture code and no server env names.
       - run: pnpm --filter @mastertutor/web build
       - run: pnpm --filter @mastertutor/web check:bundle
+      # D43: delight is welcome, unbounded weight is not. Each route may grow at most budgetKb.
+      - run: pnpm --filter @mastertutor/web check:first-load
       - run: pnpm test:ui
       - if: failure()
         uses: actions/upload-artifact@v4

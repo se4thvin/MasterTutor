@@ -534,7 +534,7 @@ describe("SessionLoopBrowser", () => {
     expect(attempt!.url.startsWith("blob:")).toBe(true);
     const card = downloadRequest(attempt!.url, attempt!.filename);
     if (card.kind !== "download") throw new Error("not a download card");
-    await browser.allowDownload(card);
+    await browser.allowDownload({ ...card, approvedBy: "user-1" });
     // The model repeats it: the page makes a new blob URL, the same card.
     await browser.runComputer([exportTable], signal, gate);
     const folder = join(BEHAVIOUR_DOWNLOADS, runId);

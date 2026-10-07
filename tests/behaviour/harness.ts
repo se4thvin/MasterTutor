@@ -31,7 +31,7 @@ import { createMemoryStorage } from "../../apps/agent/src/testing/memory-storage
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
 import type { Scenario } from "../llm-mock/src/scenario.ts";
 import { startLlmMock, type LlmMock } from "../llm-mock/src/server.ts";
-import { BEHAVIOUR_SLOTS, SITE, cdpBaseUrlForTests } from "./constants.ts";
+import { BEHAVIOUR_DOWNLOADS, BEHAVIOUR_SLOTS, SITE, cdpBaseUrlForTests } from "./constants.ts";
 import { behaviourEnv } from "./env.ts";
 
 const log = createLogger({ service: "behaviour", level: "silent" });
@@ -70,8 +70,11 @@ export async function startBehaviourAgent(
     scenarios?: Scenario[];
     config?: Partial<RuntimeConfig>;
     clock?: Clock;
-    /** The phase hook sets under test, built on the stack's db, storage and one OpenAI client. */
-    hooks?: (deps: HookDeps) => Partial<RunHooks>;
+    /**
+     * The phase hook sets under test: as they are, or built on the stack's db, storage and its one
+     * OpenAI client.
+     */
+    hooks?: Partial<RunHooks> | ((deps: HookDeps) => Partial<RunHooks>);
   } = {},
 ): Promise<BehaviourAgent> {
   const env = behaviourEnv();
@@ -90,7 +93,10 @@ export async function startBehaviourAgent(
       db: agentDb,
       storage,
       model: createOpenAIModelClient(openai),
-      ...(options.hooks ? { hooks: options.hooks({ db: agentDb.db, storage, openai, log }) } : {}),
+      hooks:
+        typeof options.hooks === "function"
+          ? options.hooks({ db: agentDb.db, storage, openai, log })
+          : options.hooks,
       slots: [...BEHAVIOUR_SLOTS],
       cdpBaseUrl: cdpBaseUrlForTests,
       log,
@@ -100,7 +106,7 @@ export async function startBehaviourAgent(
         leaseMs: 3_000,
         heartbeatMs: 1_000,
         sweepMs: 500,
-        downloadsDir: "/tmp/mastertutor-behaviour-downloads",
+        downloadsDir: BEHAVIOUR_DOWNLOADS,
         // The next file must start on idle slots: wait for every restart (production bounds this).
         shutdownDrainMs: 90_000,
         ...options.config,

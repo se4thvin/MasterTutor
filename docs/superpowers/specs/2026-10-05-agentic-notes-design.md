@@ -548,7 +548,7 @@ The sidebar keeps mockup D's items and order. A folder tree sits under Library.
 
 1. **New task.**
    - Composer with source chips. ⌘↵ starts the task.
-   - A 01/02/03 grid for allowed domains, budget (CountUp numerals) and approvals, plus an optional target folder.
+   - A 01/02/03 grid for allowed domains, budget (RollingNumber numerals) and approvals, plus an optional target folder.
    - **3D hero "Capture Lens" (D24, run 16; prototype `design/hero-3d-prototype.html`).**
      - A frosted aqua glass puck (lathed geometry, `MeshPhysicalMaterial` transmission with clearcoat and iridescence, teal ring and vermilion dot inside) floats between a canvas-textured web page behind it and an extruded note card in front, so the page is seen refracted through it. The environment is a code-built `RoomEnvironment` with no HDR file, and all geometry is procedural.
      - Motion: idle float, wobble and breathing; pointer parallax on `springSoft`; on composer focus it leans in; on `hero:type` each keystroke arcs a fragment into the lens with a pulse; on `hero:start` a roughly 2.4s capture sequence runs (inhale to 95.5%, page and fragments flow in, a ripple, then a note card springs out with lines written at a 35ms stagger). Springs come from `motion-tokens.ts`.
@@ -598,7 +598,9 @@ Based on `orchestration/runs/2026-10-05-18-research-reactbits/report.md` §5.
 - **`motion` is the only animation library.** Pin the version after checking 12.x against 14.x compatibility, in F1.
 - Components use `LazyMotion` (`domAnimation`) and `m.*`.
 - The View Transitions API is used **only** for route transitions.
-- ESLint `no-restricted-imports` bans `gsap`, `ogl`, `framer-motion` and `matter-js`. It also bans `@react-three/*`. `three` may be imported only from `components/hero/`.
+- ESLint `no-restricted-imports` bans `gsap`, `ogl`, `framer-motion`, `matter-js` and `@react-three/*`, statically and through `import()`; `three` may be imported only from `components/hero/`. D43 allows gsap or ogl/WebGL only when the delight is worth it and only behind a reviewed `import()` boundary; none is needed today.
+- Layout animation (`domMax`, ~14 kB gz) is never in first-load JS: it loads through `<LayoutMotion>` (`components/motion/layout-motion.tsx`), and ESLint bans `domMax` and any static import of `layout-features` elsewhere.
+- `pnpm --filter @mastertutor/web check:first-load` holds every route's first-load JS to its committed baseline plus `budgetKb` (6 kB gz).
 
 **Tokens**
 - The single source is `apps/web/lib/motion-tokens.ts`, shared by CSS and `motion`:
@@ -643,13 +645,16 @@ Based on `orchestration/runs/2026-10-05-18-research-reactbits/report.md` §5.
 
    | Component | Used for | Phase |
    |---|---|---|
-   | StatusMark | Timeline and sidebar status | F3 |
+   | StatusMark (CSS-only) | Sidebar runs badge, vault session; F3 timeline and runs list | Delight pass (F3 consumes) |
    | ThoughtLine | Thinking row; blur replaced by opacity | F3 |
    | RubberSegment | Library filters and view toggle | F2 |
    | SwipeToast | Undo toasts | F1 |
-   | CountUp | Budget numerals, with `tabular-nums` and reduced motion added | F3 |
+   | Counter → RollingNumber | Usage tiles, verified count; F3 budget numerals | Delight pass (F3 consumes) |
    | CodeSlots | OTP card | F3 |
    | SpringCheck | Mark verified and approval lists | F2 |
+   | FolderFloat (no physics, no pills) | Library folder tiles: lid lifts on hover, focus and drag-over; gulps on drop | Delight pass |
+
+   Patterns rebuilt without copying code: FolderMark (tree and move-sheet glyphs float and lift their lid), AnimatedList (card exit plus layout reflow, palette stagger, audit rows), AnimatedContent (callout reveal in CSS) and a heading word stagger.
 
 5. **CodeSlots security review.** It must pass all of these:
    - `autocomplete="one-time-code"`;
@@ -658,6 +663,7 @@ Based on `orchestration/runs/2026-10-05-18-research-reactbits/report.md` §5.
    - boxes seal to dots;
    - the grid is `repeat(N, minmax(0, 48px))` and fits at 390px, which fixes the D22 OTP clipping.
 6. **Avoid:** gsap- and ogl-based components, Dock, GlassSurface, Masonry, BlurText, and SpotlightCard as-is.
+ Left out on purpose: ElasticSlider (typed budgets are faster and exact), HoldButton (nothing to replace) and CountUp (RollingNumber moves on transform instead of rewriting text).
 
 ### 11.5 Responsiveness
 
@@ -852,7 +858,7 @@ The approach is contracts first. After phase 0, the backend (B) and frontend (F)
 | B6 | **Live view:** `NekoLiveView`, `openLive`, server-side n.eko login, `live_slot` cookie, ForwardAuth endpoint, per-slot Traefik routers, control lock (takeControl/handBack), clipboard toggle, uploads, downloads to Garage, mux ports, coturn and TURN credentials | backend | B1 | §12 live-view auth, takeover lock and SSRF tests pass |
 | F1 | **Design system:** tokens, `motion` + LazyMotion + motion-tokens + generated `motion.css` + lint rules, glass, icons, CSS skeletons, SwipeToast, app shell, auth | frontend | 0 | Token page is clean at all breakpoints |
 | F2 | **Library, folders, note reader/editor:** RubberSegment, SpringCheck, provenance, export | frontend | F1 | Works on seeded DB |
-| F3 | **New task + Run view:** mock browser with overlays and an iframe stub, 7 states, takeover transition, Full screen with keyboard lock, StatusMark, ThoughtLine, CountUp, CodeSlots (with security review), PiP | frontend | F1 | Works on a recorded event stream |
+| F3 | **New task + Run view:** mock browser with overlays and an iframe stub, 7 states, takeover transition, Full screen with keyboard lock, StatusMark, ThoughtLine, RollingNumber, CodeSlots (with security review), PiP | frontend | F1 | Works on a recorded event stream |
 | F4 | **Vault UI, Settings/Usage/Audit** | frontend | F1 | Works on seeded DB |
 | F5 | **3D hero "Capture Lens"** (raw three, ported from `design/hero-3d-prototype.html`) | frontend | F3 | Meets the §11.2 constraints |
 | 7 | **Integration:** wire F to B over oRPC, SSE and the live iframe; full E2E | both | B1–B6, F2–F4 | `compose.test.yml` is green |

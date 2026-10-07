@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { decodeNotify } from "@mastertutor/contracts";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
-import { downloads, runEvents, runs } from "../schema/index.ts";
+import { assets, downloads, runEvents, runs } from "../schema/index.ts";
 import {
   leaseSlotForTest,
   nextNotification,
@@ -12,7 +13,16 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from "../testing.ts";
-import { findAssetBySha, recordDownload } from "./downloads.ts";
+import {
+  discardDownload,
+  fileKeptDownload,
+  findAssetBySha,
+  discardPendingDownloads,
+  pendingDownloads,
+  recordDownload,
+  recordPendingDownload,
+} from "./downloads.ts";
+import { returnControlToAgent } from "./control.ts";
 import { canAccessLiveSlot, getRunForMember, requestHandBack, requestTakeover } from "./live.ts";
 
 let testDb: TestDatabase;
@@ -294,5 +304,192 @@ describe("download records (agent role)", () => {
     );
     expect(await findAssetBySha(agent.db, outsider.workspaceId, input.sha256)).toBeNull();
     expect(await owner.db.select().from(downloads).where(eq(downloads.runId, runId))).toEqual([]);
+  });
+
+  it("keeps a shared asset, and the object key it names, when the run that stored it is deleted (ruling)", async () => {
+    const first = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const second = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const shared = {
+      workspaceId: member.workspaceId,
+      filename: "c.pdf",
+      sha256: "c".repeat(64),
+      bucket: "mastertutor",
+      key: `downloads/${first}/cccccccccccc-c.pdf`,
+      mime: "application/pdf",
+      bytes: 3,
+      sourceUrl: "https://example.com/c.pdf",
+      approvedBy: member.userId,
+    };
+    const stored = await agent.db.transaction((tx) =>
+      recordDownload(tx, { ...shared, runId: first }),
+    );
+    const reused = await agent.db.transaction((tx) =>
+      recordDownload(tx, { ...shared, runId: second }),
+    );
+    expect(reused.assetId).toBe(stored.assetId);
+    await owner.db.delete(runs).where(eq(runs.id, first));
+    // The first run's download row goes with it; the asset (and so its object) stays referenced.
+    expect(await owner.db.select().from(downloads).where(eq(downloads.runId, first))).toEqual([]);
+    const [asset] = await owner.db.select().from(assets).where(eq(assets.id, stored.assetId));
+    expect(asset).toMatchObject({ key: shared.key });
+    expect(
+      await owner.db.select().from(downloads).where(eq(downloads.assetId, stored.assetId)),
+    ).toHaveLength(1);
+  });
+
+  it("holds a download made during control as pending; hand-back keeps only the listed ones (keep or discard)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const [kept, dropped, otherRun] = [randomUUID(), randomUUID(), randomUUID()];
+    const elsewhere = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId: elsewhere, userId: member.userId });
+    for (const [id, run] of [
+      [kept, runId],
+      [dropped, runId],
+      [otherRun, elsewhere],
+    ] as const)
+      await agent.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId: run,
+          filename: `${id.slice(0, 4)}.txt`,
+          bytes: 5,
+          approvedBy: member.userId,
+        }),
+      );
+    // Nothing pending is a stored asset yet.
+    expect((await pendingDownloads(agent.db, runId)).map((d) => d.id).sort()).toEqual(
+      [kept, dropped].sort(),
+    );
+    expect(
+      await requestHandBack(web.db, {
+        runId,
+        userId: member.userId,
+        note: null,
+        keep: [kept, otherRun],
+      }),
+    ).toEqual({ ok: true, via: "control" });
+    const pending = await pendingDownloads(agent.db, runId);
+    expect(pending.find((d) => d.id === kept)?.keptAt).not.toBeNull();
+    expect(pending.find((d) => d.id === dropped)?.keptAt).toBeNull();
+    // Another run's download is never decided through this run's hand-back.
+    expect((await pendingDownloads(agent.db, elsewhere))[0]?.keptAt).toBeNull();
+
+    const filed = await agent.db.transaction((tx) =>
+      fileKeptDownload(tx, {
+        downloadId: kept,
+        runId,
+        workspaceId: member.workspaceId,
+        sha256: "d".repeat(64),
+        bucket: "mastertutor",
+        key: `downloads/${runId}/dddddddddddd-kept.txt`,
+        mime: "text/plain",
+        sourceUrl: null,
+      }),
+    );
+    await agent.db.transaction((tx) => discardDownload(tx, runId, dropped));
+    expect(await pendingDownloads(agent.db, runId)).toEqual([]);
+    const rows = await owner.db.select().from(downloads).where(eq(downloads.runId, runId));
+    expect(rows).toEqual([expect.objectContaining({ id: kept, assetId: filed.assetId })]);
+  });
+
+  it("applies keep only when this user's own hand-back passes control to the agent (N1)", async () => {
+    const holder = await seedMember(owner.db, { workspaceId: member.workspaceId, role: "member" });
+    const held = async (runId: string) => {
+      const id = randomUUID();
+      await agent.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId,
+          filename: "h.txt",
+          bytes: 1,
+          approvedBy: holder.userId,
+        }),
+      );
+      return id;
+    };
+    const keptAt = async (runId: string) => (await pendingDownloads(agent.db, runId))[0]?.keptAt;
+
+    // Idle hand-back first (the agent took control back): a later keep marks nothing.
+    const idle = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId: idle, userId: holder.userId });
+    const idleDownload = await held(idle);
+    await agent.db.transaction((tx) => returnControlToAgent(tx, idle));
+    expect(
+      await requestHandBack(web.db, {
+        runId: idle,
+        userId: holder.userId,
+        note: null,
+        keep: [idleDownload],
+      }),
+    ).toEqual({ ok: true, via: "none" });
+    expect(await keptAt(idle)).toBeNull();
+
+    // An owner ending someone else's takeover cannot keep that person's downloads.
+    const forced = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId: forced, userId: holder.userId });
+    const forcedDownload = await held(forced);
+    expect(
+      await requestHandBack(web.db, {
+        runId: forced,
+        userId: member.userId,
+        note: null,
+        keep: [forcedDownload],
+      }),
+    ).toEqual({ ok: true, via: "control" });
+    expect(await keptAt(forced)).toBeNull();
+
+    // The holder's own hand-back keeps.
+    const own = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId: own, userId: holder.userId });
+    const ownDownload = await held(own);
+    await requestHandBack(web.db, {
+      runId: own,
+      userId: holder.userId,
+      note: null,
+      keep: [ownDownload],
+    });
+    expect(await keptAt(own)).not.toBeNull();
+  });
+
+  it("records a held download only while that person still holds control (N2)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    const record = (approvedBy: string) =>
+      agent.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id: randomUUID(),
+          runId,
+          filename: "h.txt",
+          bytes: 1,
+          approvedBy,
+        }),
+      );
+    expect(await record(member.userId)).toBe(false); // the agent holds control
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    expect(await record(outsider.userId)).toBe(false); // someone else's
+    expect(await record(member.userId)).toBe(true);
+    await requestHandBack(web.db, { runId, userId: member.userId, note: null, keep: [] });
+    expect(await record(member.userId)).toBe(false); // handed back meanwhile
+    expect(await pendingDownloads(agent.db, runId)).toHaveLength(1);
+  });
+
+  it("discards every held download of a run in one call, and names them (N4)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await requestTakeover(web.db, { runId, userId: member.userId });
+    const ids = [randomUUID(), randomUUID()];
+    for (const id of ids)
+      await agent.db.transaction((tx) =>
+        recordPendingDownload(tx, {
+          id,
+          runId,
+          filename: "h.txt",
+          bytes: 1,
+          approvedBy: member.userId,
+        }),
+      );
+    expect((await agent.db.transaction((tx) => discardPendingDownloads(tx, runId))).sort()).toEqual(
+      ids.sort(),
+    );
+    expect(await pendingDownloads(agent.db, runId)).toEqual([]);
   });
 });

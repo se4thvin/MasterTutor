@@ -1,4 +1,5 @@
 import { RPCHandler } from "@orpc/server/fetch";
+import { ResponseHeadersPlugin } from "@orpc/server/plugins";
 import type { FixtureContext } from "@/lib/fixtures/types.ts";
 import { getWebEnv } from "@/lib/server/env.ts";
 import type { LiveContext } from "@/lib/server/rpc/live-os.ts";
@@ -30,7 +31,8 @@ async function handle(request: Request): Promise<Response> {
     return response ?? new Response("Not found", { status: 404 });
   }
   const { liveRouter } = await import("@/lib/server/rpc/live-router.ts");
-  liveHandler ??= new RPCHandler(liveRouter);
+  // openLive sets the live cookies through context.resHeaders (B6).
+  liveHandler ??= new RPCHandler(liveRouter, { plugins: [new ResponseHeadersPlugin()] });
   const { response } = await liveHandler.handle(request, { prefix: PREFIX, context: { viewer } });
   return response ?? new Response("Not found", { status: 404 });
 }

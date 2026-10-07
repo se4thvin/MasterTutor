@@ -403,8 +403,14 @@ describe("RunLoop (spec §5.3)", () => {
       await resumed.resume(new AbortController().signal);
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       // Let through at the next act (when the model repeats it), as the card showed it.
+      // Bound to the approver of this very card (N3), never inferred later.
       expect(browser.allowedDownloads).toEqual([
-        { kind: "download", url: "https://site.fixtures.test/files/r.csv", filename: "_r.csv" },
+        {
+          kind: "download",
+          url: "https://site.fixtures.test/files/r.csv",
+          filename: "_r.csv",
+          approvedBy: "user-1",
+        },
       ]);
     });
 
@@ -444,7 +450,7 @@ describe("RunLoop (spec §5.3)", () => {
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       expect(browser.executed).toHaveLength(1);
       // Let through by the executor at the press itself.
-      expect(browser.allowedDownloads).toEqual([{ url: link.download.url }]);
+      expect(browser.allowedDownloads).toEqual([{ url: link.download.url, approvedBy: "user-1" }]);
     });
   });
 
@@ -1610,7 +1616,7 @@ describe("RunLoop (spec §5.3)", () => {
       expect(browser.executed).toHaveLength(2);
       expect(browser.navigations).toEqual(["http://other.fixtures.test/a"]);
       expect(browser.allowedDownloads).toMatchObject([
-        { url: "http://site.fixtures.test/files/r.csv", filename: "r.csv" },
+        { url: "http://site.fixtures.test/files/r.csv", filename: "r.csv", approvedBy: "bypass" },
       ]);
       expect(
         (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
