@@ -18,7 +18,7 @@ import {
 } from "@mastertutor/contracts";
 import { vaultKeyPairFromPrivate } from "@mastertutor/sealing/open";
 import { composeConfig, type ComposeConfig } from "../../tests/compose/compose-json.ts";
-import { prodModeProblems } from "../../tests/compose/prod-mode.ts";
+import { prodModeProblems, resolveForProdCheck } from "../../tests/compose/prod-mode.ts";
 
 export const PRODUCTION_FILES = ["compose.yml", "compose.prod.yml"] as const;
 const SERVICE_SCHEMAS = {
@@ -149,7 +149,8 @@ export async function checkProductionEnv(envFile: string): Promise<string[]> {
       problems.push(...error.problems.map((problem) => `${service}.${problem}`));
     }
   }
-  problems.push(...prodModeProblems(config));
+  // D47 is judged with every profile enabled, so no test service can hide behind one (review I2).
+  problems.push(...prodModeProblems(resolveForProdCheck(envFile, PRODUCTION_FILES)));
   // B5's docling (profile pdf) is not merged yet: once compose.prod.yml pins DOCLING_URL, add
   // `agent.DOCLING_URL: must be set` here (Task 14 Step 11, deferred with Task 12's docling pin).
   return problems;
