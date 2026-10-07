@@ -1,10 +1,17 @@
 import { apiContract, type ApiContract } from "@mastertutor/contracts";
-import { createDb, ensureWorkspaceMember, folders, type DbHandle } from "@mastertutor/db";
-import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import {
+  approvals,
+  createDb,
+  ensureWorkspaceMember,
+  folders,
+  type DbHandle,
+} from "@mastertutor/db";
+import { seedRun, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import type { ContractRouterClient } from "@orpc/contract";
 import { createRouterClient } from "@orpc/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fixtureRouter } from "../../fixtures/router.ts";
+import { RECORDED_APPROVAL_ID } from "../../fixtures/run-recording.ts";
 import { createSealer } from "../vault/sealer.ts";
 import { FIXTURE_VIEWER, type Viewer } from "../viewer.ts";
 import { createLiveRouter } from "./live-router.ts";
@@ -17,6 +24,8 @@ interface World {
   deferred: ReadonlySet<string>;
   /** A folder to target: the API where it is wired, a direct insert until then. */
   folder(name: string): Promise<string>;
+  /** A pending approval no one has decided yet. */
+  pendingApproval(): Promise<string>;
 }
 
 const MISSING = "00000000-0000-4000-8000-00000000dead";
@@ -139,6 +148,8 @@ const worlds: ReadonlyArray<readonly [string, World]> = [
         createRouterClient(fixtureRouter, { context: { ns: "parity-anon", viewer: null } }),
       deferred: new Set(),
       folder: async (name) => (await fixtureSession!.folders.create({ name })).id,
+      // Each session is a fresh namespace, so the recorded approval is still pending there.
+      pendingApproval: async () => RECORDED_APPROVAL_ID,
     },
   ],
   [
@@ -152,6 +163,29 @@ const worlds: ReadonlyArray<readonly [string, World]> = [
         (
           await owner.db.insert(folders).values({ workspaceId, name }).returning({ id: folders.id })
         )[0]!.id,
+      pendingApproval: async () => {
+        const runId = await seedRun(owner.db, {
+          workspaceId,
+          status: "waiting",
+          waitReason: "approval",
+        });
+        const [row] = await owner.db
+          .insert(approvals)
+          .values({
+            runId,
+            stepSeq: 1,
+            kind: "risky_click",
+            request: {
+              kind: "risky_click",
+              action: { type: "click", x: 1, y: 1, button: "left" },
+              label: "Delete",
+              url: "https://example.com/",
+              screenshotKey: null,
+            },
+          })
+          .returning({ id: approvals.id });
+        return row!.id;
+      },
     },
   ],
 ];
@@ -267,6 +301,17 @@ describe.each(worlds)("the API contract on %s (P7-14)", (_name, world) => {
     expect((await api.runs.get({ runId: run.id })).status).toBe("cancelled");
     expect(await outcome(api.runs.sendMessage({ runId: run.id, text: "late" }))).toBe("CONFLICT");
     expect(await outcome(api.runs.resume({ runId: run.id }))).toBe("CONFLICT");
+  });
+
+  it("decides an approval once; a second decision is CONFLICT", async () => {
+    const api = world.session();
+    const approvalId = await world.pendingApproval();
+    await expect(api.runs.decideApproval({ approvalId, decision: "approved" })).resolves.toEqual({
+      ok: true,
+    });
+    expect(await outcome(api.runs.decideApproval({ approvalId, decision: "denied" }))).toBe(
+      "CONFLICT",
+    );
   });
 
   it.skipIf(!served("folders/create"))(
