@@ -198,12 +198,18 @@ const intersects = (a: Box, b: Box) =>
 function bounded(clip: Box, scale: number, content: { width: number; height: number }): Box | null {
   if (![clip.x, clip.y, clip.width, clip.height, scale].every(Number.isFinite) || scale <= 0)
     return null;
-  const x = Math.max(0, clip.x);
-  const y = Math.max(0, clip.y);
+  // Element rects are fractional; the page scrolls in whole pixels, so a sub-pixel tile origin would
+  // never lie inside the scrolled viewport. Snap outward to whole CSS pixels.
+  const x = Math.max(0, Math.floor(clip.x));
+  const y = Math.max(0, Math.floor(clip.y));
   // Only the document exists to be captured (a viewport-sized capture cannot reach past it).
-  const width = Math.min(Math.floor(clip.width), MAX_REGION_WIDTH, Math.floor(content.width - x));
+  const width = Math.min(
+    Math.ceil(clip.x + clip.width) - x,
+    MAX_REGION_WIDTH,
+    Math.floor(content.width - x),
+  );
   const height = Math.min(
-    Math.floor(clip.height),
+    Math.ceil(clip.y + clip.height) - y,
     Math.floor(content.height - y),
     Math.floor(MAX_REGION_PIXELS / Math.max(1, width * scale * scale)),
   );

@@ -114,4 +114,11 @@ describe("pageExtract", () => {
       worlds.call(pageExtract, [{ scope: "element", selector: "#nope" }]),
     ).rejects.toThrow(/selector_not_found/);
   });
+  it("keeps text Defuddle's content patterns would drop: it is page text and counts in coverage", async () => {
+    await session.goto(`${FIXTURES}/capture/article/index.html`, signal);
+    const worlds = await captureWorlds(session);
+    const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    expect(extract.pageText).toContain("By A. Botanist");
+    expect(extract.markdown).toContain("By A. Botanist");
+  });
 });
