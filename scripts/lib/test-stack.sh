@@ -8,7 +8,8 @@
 # Stacks still cannot run side by side (fixed subnets and the Traefik port): the lock stays.
 worktree="$(basename "$PWD" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_\n-' '-')"
 : "${COMPOSE_PROJECT_NAME:=mt-${worktree}}"
-export COMPOSE_PROJECT_NAME
+# Not exported: DC carries it (-p), and a shell that sourced this must not move other compose
+# tools (the behaviour stack) onto this project.
 DC=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env.test -f compose.yml -f compose.test.yml)
 if [[ -n "${MT_CI_RUN_ID:-}" ]]; then DC+=(-f tests/e2e/compose.remote.yml); fi
 
