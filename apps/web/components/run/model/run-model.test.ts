@@ -270,3 +270,20 @@ describe("syncRunModel (A6 hand-back resync)", () => {
     expect(synced.steps).toBe(model.steps);
   });
 });
+
+describe("a finished run holds no slot (Phase 7 Task 3)", () => {
+  // The agent releases the slot just after the terminal status, but the stream closes at that
+  // status, so the release never reaches an open view: the live frame must not outlive the run.
+  it("drops the slot with a terminal status, from events, a detail or a re-read", () => {
+    const running = applyRunEvent(base(), rec({ type: "slot", slotName: "browser-2" }));
+    expect(running.slotName).toBe("browser-2");
+    const done = applyRunEvent(
+      running,
+      rec({ type: "status", status: "cancelled", waitReason: null, reason: null }),
+    );
+    expect(done.slotName).toBeNull();
+    const finished = { ...recordedDetail(), status: "completed" as const, slotName: "browser-1" };
+    expect(initRunModel(finished, []).slotName).toBeNull();
+    expect(syncRunModel(running, finished).slotName).toBeNull();
+  });
+});

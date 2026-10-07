@@ -1,8 +1,0 @@
-# Live-view test overlay (B6) on top of compose.test.yml: a second slot for the cross-slot auth
-# cases. Run: pnpm compose:live up -d --wait traefik browser-1 browser-2
-services:
-  browser-2:
-    profiles: !reset []
-  migrate:
-    environment:
-      BROWSER_SLOTS: browser-1,browser-2

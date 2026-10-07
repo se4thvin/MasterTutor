@@ -1,0 +1,67 @@
+# Override for the shared CI host only. scripts/lib/test-stack.sh adds it when MT_CI_RUN_ID is set
+# (scripts/remote-test.sh e2e | smoke | qa | bench-mock). Every resource carries the CI labels, so
+# the runner's cleanup finds it. The host keeps kernel.apparmor_restrict_unprivileged_userns=1, so
+# the slots take the mastertutor-slot AppArmor profile (infra/host/apparmor/) on top of seccomp. Slots
+# publish nothing: the e2e runner reaches their media over cdp from Traefik's namespace. Traefik
+# stays on 127.0.0.1.
+x-ci-labels: &ci-labels
+  mastertutor.ci: "1"
+  mastertutor.ci.run: ${MT_CI_RUN_ID:?set by scripts/remote-test.sh}
+
+services:
+  postgres:
+    labels: *ci-labels
+  garage:
+    labels: *ci-labels
+  garage-init:
+    labels: *ci-labels
+  migrate:
+    labels: *ci-labels
+  web:
+    labels: *ci-labels
+  agent:
+    labels: *ci-labels
+  traefik:
+    labels: *ci-labels
+  greenmail:
+    labels: *ci-labels
+  llm-mock:
+    labels: *ci-labels
+  fixtures:
+    labels: *ci-labels
+  vault-fixtures:
+    labels: *ci-labels
+  e2e:
+    labels: *ci-labels
+  bench-fixtures:
+    labels: *ci-labels
+  browser-1:
+    security_opt: [apparmor=mastertutor-slot]
+    ports: !override []
+    labels: *ci-labels
+  browser-2:
+    security_opt: [apparmor=mastertutor-slot]
+    ports: !override []
+    labels: *ci-labels
+
+networks:
+  edge:
+    labels: *ci-labels
+  backend:
+    labels: *ci-labels
+  egress:
+    labels: *ci-labels
+  cdp:
+    labels: *ci-labels
+  fixtures:
+    labels: *ci-labels
+
+volumes:
+  pgdata:
+    labels: *ci-labels
+  garage-meta:
+    labels: *ci-labels
+  garage-data:
+    labels: *ci-labels
+  downloads:
+    labels: *ci-labels
