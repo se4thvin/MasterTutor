@@ -23,7 +23,8 @@ export interface MemberRun {
   slotLeased: boolean;
 }
 
-const memberOf = (userId: string) =>
+/** Join condition: userId is a member of the run's workspace (join workspace_members on runs). */
+export const memberOfRunWorkspace = (userId: string) =>
   and(eq(workspaceMembers.workspaceId, runs.workspaceId), eq(workspaceMembers.userId, userId));
 
 /** The run if userId is a member of its workspace; slotLeased means browser_slots agrees. */
@@ -42,7 +43,7 @@ export async function getRunForMember(
       slotLeased: sql<boolean>`coalesce(${browserSlots.state} = 'leased' and ${browserSlots.runId} = ${runs.id}, false)`,
     })
     .from(runs)
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .leftJoin(browserSlots, eq(browserSlots.name, runs.slotName))
     .where(eq(runs.id, runId));
   return row ?? null;
@@ -57,7 +58,7 @@ export async function canAccessLiveSlot(
     .select({ one: sql<number>`1` })
     .from(browserSlots)
     .innerJoin(runs, and(eq(runs.id, browserSlots.runId), eq(runs.slotName, browserSlots.name)))
-    .innerJoin(workspaceMembers, memberOf(query.userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(query.userId))
     .where(
       and(
         eq(browserSlots.name, query.slotName),
@@ -92,7 +93,7 @@ async function lockMemberRun(tx: DbTx, runId: string, userId: string): Promise<L
       role: workspaceMembers.role,
     })
     .from(runs)
-    .innerJoin(workspaceMembers, memberOf(userId))
+    .innerJoin(workspaceMembers, memberOfRunWorkspace(userId))
     .where(eq(runs.id, runId))
     .for("update", { of: runs });
   return row ?? null;
