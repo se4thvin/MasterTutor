@@ -1,0 +1,159 @@
+# Production overlay (spec §13, D41, D42). Dokploy runs it as a docker-compose app (not a stack),
+# isolated deployment OFF, randomize OFF, auto-deploy OFF, with COMPOSE_PROFILES=pdf:
+#   docker compose -p <app> -f compose.yml -f compose.prod.yml up -d --build --remove-orphans
+# Never rename the app: volumes are <app>_pgdata etc. (infra/deploy-runbook.md).
+#
+# - web's domain router (HTTPS, letsencrypt) is Dokploy's Domains tab: service web, port 3000.
+# - /live routers below use liveRouterRule(), liveUploadRouterRule() and liveForwardAuthAddress()
+#   exactly (tests/compose/prod-overlay.int.test.ts), mirroring infra/traefik/test-dynamic.yml:
+#   ForwardAuth targets web's STATIC cdp address .11, never the name `web`, which on Dokploy's
+#   shared network can resolve to another app (D41). Auth runs before the upload limit and strip.
+# - mastertutor-cdp is created once on the host (infra/host/create-cdp-network.sh) and Traefik is
+#   attached at .12 (infra/host/attach-traefik.sh), so redeploys keep the attachment.
+# - Backups are Dokploy's (database + volume backups); this file adds no backup volume.
+# - Local use without Dokploy (D47): TRAEFIK_ENTRYPOINT / TRAEFIK_TLS, plus one override that
+#   re-declares the two networks and drops AppArmor where the host has no profile.
+
+x-live-middlewares: &live-middlewares
+  traefik.enable: "true"
+  traefik.docker.network: mastertutor-cdp
+  traefik.http.middlewares.mastertutor-live-auth.forwardauth.address: "http://${CDP_SUBNET_PREFIX:-172.30.231}.11:3000/api/live/auth"
+  traefik.http.middlewares.mastertutor-live-auth.forwardauth.authResponseHeaders: Cookie
+  traefik.http.middlewares.mastertutor-live-auth.forwardauth.trustForwardHeader: "false"
+  traefik.http.middlewares.mastertutor-live-upload-limit.buffering.maxRequestBodyBytes: "104857600"
+  traefik.http.middlewares.mastertutor-live-strip.stripprefixregex.regex: "^/live/[0-9a-f-]{36}"
+  traefik.http.middlewares.mastertutor-live-headers.headers.contentSecurityPolicy: "frame-ancestors 'self'"
+  traefik.http.middlewares.mastertutor-live-headers.headers.contentTypeNosniff: "true"
+
+x-slot-prod: &slot-prod
+  security_opt:
+    - apparmor=mastertutor-slot
+
+services:
+  web:
+    environment:
+      OPENAI_BASE_URL: ""
+    networks:
+      dokploy-network: {}
+
+  agent:
+    environment:
+      AGENT_TEST_MODE: "0"
+      OPENAI_BASE_URL: ""
+
+  browser-1:
+    <<: *slot-prod
+    labels:
+      <<: *live-middlewares
+      traefik.http.routers.mastertutor-live-browser-1.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-1\.`)'
+      traefik.http.routers.mastertutor-live-browser-1.priority: "1000"
+      traefik.http.routers.mastertutor-live-browser-1.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-browser-1.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-browser-1.middlewares: mastertutor-live-auth,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-browser-1.service: mastertutor-live-browser-1
+      traefik.http.routers.mastertutor-live-upload-browser-1.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-1\.`)'
+      traefik.http.routers.mastertutor-live-upload-browser-1.priority: "1001"
+      traefik.http.routers.mastertutor-live-upload-browser-1.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-upload-browser-1.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-upload-browser-1.middlewares: mastertutor-live-auth,mastertutor-live-upload-limit,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-upload-browser-1.service: mastertutor-live-browser-1
+      traefik.http.services.mastertutor-live-browser-1.loadbalancer.server.port: "8080"
+
+  browser-2:
+    <<: *slot-prod
+    labels:
+      <<: *live-middlewares
+      traefik.http.routers.mastertutor-live-browser-2.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-2\.`)'
+      traefik.http.routers.mastertutor-live-browser-2.priority: "1000"
+      traefik.http.routers.mastertutor-live-browser-2.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-browser-2.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-browser-2.middlewares: mastertutor-live-auth,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-browser-2.service: mastertutor-live-browser-2
+      traefik.http.routers.mastertutor-live-upload-browser-2.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-2\.`)'
+      traefik.http.routers.mastertutor-live-upload-browser-2.priority: "1001"
+      traefik.http.routers.mastertutor-live-upload-browser-2.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-upload-browser-2.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-upload-browser-2.middlewares: mastertutor-live-auth,mastertutor-live-upload-limit,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-upload-browser-2.service: mastertutor-live-browser-2
+      traefik.http.services.mastertutor-live-browser-2.loadbalancer.server.port: "8080"
+
+  browser-3:
+    <<: *slot-prod
+    labels:
+      <<: *live-middlewares
+      traefik.http.routers.mastertutor-live-browser-3.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-3\.`)'
+      traefik.http.routers.mastertutor-live-browser-3.priority: "1000"
+      traefik.http.routers.mastertutor-live-browser-3.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-browser-3.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-browser-3.middlewares: mastertutor-live-auth,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-browser-3.service: mastertutor-live-browser-3
+      traefik.http.routers.mastertutor-live-upload-browser-3.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-3\.`)'
+      traefik.http.routers.mastertutor-live-upload-browser-3.priority: "1001"
+      traefik.http.routers.mastertutor-live-upload-browser-3.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-upload-browser-3.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-upload-browser-3.middlewares: mastertutor-live-auth,mastertutor-live-upload-limit,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-upload-browser-3.service: mastertutor-live-browser-3
+      traefik.http.services.mastertutor-live-browser-3.loadbalancer.server.port: "8080"
+
+  browser-4:
+    <<: *slot-prod
+    labels:
+      <<: *live-middlewares
+      traefik.http.routers.mastertutor-live-browser-4.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-4\.`)'
+      traefik.http.routers.mastertutor-live-browser-4.priority: "1000"
+      traefik.http.routers.mastertutor-live-browser-4.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-browser-4.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-browser-4.middlewares: mastertutor-live-auth,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-browser-4.service: mastertutor-live-browser-4
+      traefik.http.routers.mastertutor-live-upload-browser-4.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-4\.`)'
+      traefik.http.routers.mastertutor-live-upload-browser-4.priority: "1001"
+      traefik.http.routers.mastertutor-live-upload-browser-4.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-upload-browser-4.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-upload-browser-4.middlewares: mastertutor-live-auth,mastertutor-live-upload-limit,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-upload-browser-4.service: mastertutor-live-browser-4
+      traefik.http.services.mastertutor-live-browser-4.loadbalancer.server.port: "8080"
+
+  browser-5:
+    <<: *slot-prod
+    labels:
+      <<: *live-middlewares
+      traefik.http.routers.mastertutor-live-browser-5.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-5\.`)'
+      traefik.http.routers.mastertutor-live-browser-5.priority: "1000"
+      traefik.http.routers.mastertutor-live-browser-5.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-browser-5.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-browser-5.middlewares: mastertutor-live-auth,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-browser-5.service: mastertutor-live-browser-5
+      traefik.http.routers.mastertutor-live-upload-browser-5.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-5\.`)'
+      traefik.http.routers.mastertutor-live-upload-browser-5.priority: "1001"
+      traefik.http.routers.mastertutor-live-upload-browser-5.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-upload-browser-5.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-upload-browser-5.middlewares: mastertutor-live-auth,mastertutor-live-upload-limit,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-upload-browser-5.service: mastertutor-live-browser-5
+      traefik.http.services.mastertutor-live-browser-5.loadbalancer.server.port: "8080"
+
+  browser-6:
+    <<: *slot-prod
+    labels:
+      <<: *live-middlewares
+      traefik.http.routers.mastertutor-live-browser-6.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-6\.`)'
+      traefik.http.routers.mastertutor-live-browser-6.priority: "1000"
+      traefik.http.routers.mastertutor-live-browser-6.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-browser-6.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-browser-6.middlewares: mastertutor-live-auth,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-browser-6.service: mastertutor-live-browser-6
+      traefik.http.routers.mastertutor-live-upload-browser-6.rule: 'Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/live/[0-9a-f-]{36}/api/room/upload/`) && HeaderRegexp(`Cookie`, `(?:^|;\s*)live_slot=browser-6\.`)'
+      traefik.http.routers.mastertutor-live-upload-browser-6.priority: "1001"
+      traefik.http.routers.mastertutor-live-upload-browser-6.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-live-upload-browser-6.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-live-upload-browser-6.middlewares: mastertutor-live-auth,mastertutor-live-upload-limit,mastertutor-live-strip,mastertutor-live-headers
+      traefik.http.routers.mastertutor-live-upload-browser-6.service: mastertutor-live-browser-6
+      traefik.http.services.mastertutor-live-browser-6.loadbalancer.server.port: "8080"
+
+networks:
+  cdp:
+    name: mastertutor-cdp
+    external: true
+    internal: !reset null
+    ipam: !reset null
+  dokploy-network:
+    external: true
