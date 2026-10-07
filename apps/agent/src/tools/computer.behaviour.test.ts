@@ -745,6 +745,45 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     expect(hits).toEqual({ cancel: 0, delete: 0, refused: 10 });
   });
 
+  it("a frame whose move to another site commits late is still pending when an approved click runs: 0/5 reach Delete", async () => {
+    const { s, executor } = await setup();
+    // The other site's renderer is kept busy 1.5 s, so the panel's Delete document commits late;
+    // on a loaded host the press can land after it (here: 1.8 s after the last check).
+    const down = s.page.mouse.down.bind(s.page.mouse);
+    s.page.mouse.down = async (options) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_800));
+      return down(options);
+    };
+    const panel = () => s.page.frames().find((frame) => frame.url().includes("widget.html"));
+    const hits = { cancel: 0, delete: 0, refused: 0 };
+    for (let i = 0; i < 5; i++) {
+      await s.goto(`${SITE}/frame-swap.html?after=0&busy=1500`, signal);
+      await waitFor(
+        () =>
+          panel()
+            ?.evaluate(
+              () => document.readyState === "complete" && !!document.getElementById("cancel"),
+            )
+            .catch(() => false),
+        { label: "panel" },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+      await s.page.mouse.move(600, 500); // off the panel, so the executor's move enters it
+      // A person approved Cancel (the loop's gate binds the approval to that element).
+      const gate = async () => {
+        const target = markUnguarded(s, (await hitTest(s, at)).target);
+        return target?.label === "Cancel" ? { target, personApproved: true } : false;
+      };
+      const run = await executor.run([click(at)], signal, gate);
+      if (run.executed === 1 && run.notes.length > 0) hits.refused += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1_800)); // past the late commit
+      const reached = await clicked(s);
+      if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+    }
+    console.info(JSON.stringify({ metric: "late_commit_approved_clicks", ...hits }));
+    expect(hits).toEqual({ cancel: 0, delete: 0, refused: 5 });
+  });
+
   it.each([
     ["src", "unapproved"],
     ["src", "person-approved"],
