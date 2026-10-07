@@ -4,6 +4,7 @@ import { createDb, listBrowserSlots } from "@mastertutor/db";
 import { createStorage } from "@mastertutor/storage";
 import { assertConcurrencyFitsSlots } from "./boot-checks.ts";
 import { startHealthServer } from "./health.ts";
+import { createLibraryServices, libraryHooks } from "./library.ts";
 import { createOpenAIModelClient } from "./llm/client.ts";
 import { createOpenAI } from "./llm/openai.ts";
 import { composeRunHooks } from "./loop/hooks.ts";
@@ -25,6 +26,12 @@ const storage = createStorage({
 });
 // One stateless OpenAI client per process (D38): the loop's model client and every later phase use it.
 const openai = createOpenAI({ apiKey: env.OPENAI_API_KEY, baseURL: env.OPENAI_BASE_URL });
+const library = createLibraryServices({
+  db: database.db,
+  storage,
+  openai,
+  log: log.child({ module: "library" }),
+});
 const vault = createVault({
   db: database.db,
   keys: vaultKeys,
@@ -49,7 +56,7 @@ const supervisor = new Supervisor({
   log,
   testMode: env.AGENT_TEST_MODE,
   // Each phase's hook set; a second owner of any single-owner hook is a boot error.
-  hooks: composeRunHooks(vaultHooks(vault)),
+  hooks: composeRunHooks(vaultHooks(vault), libraryHooks(library)),
   config: { shutdownDrainMs: env.AGENT_SHUTDOWN_DRAIN_MS },
 });
 
