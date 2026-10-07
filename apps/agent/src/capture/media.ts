@@ -1,6 +1,7 @@
 import type { Box, MaskSources } from "../browser/masking.ts";
 import { AssetRejected, type AssetInput, type AssetStore } from "../notes/assets.ts";
 import { screenText } from "../notes/note-writer.ts";
+import { pixelsAreClean, type LocalOcr } from "./local-ocr.ts";
 import { decodeDataUrl, type FetchedResource } from "./fetch-resource.ts";
 import { imageInfo, isSafeSvg, sniffSvg } from "./images.ts";
 import type { PageMedia } from "./page/types.ts";
@@ -10,12 +11,8 @@ export interface MediaContext {
   assets: AssetStore;
   /** The run's vault: an asset's source URL is screened before it is stored. */
   secrets: MaskSources;
-  /**
-   * OCR of canvas pixels (the opaque model), so a canvas that renders a vault secret is caught
-   * before it is stored. Null when unavailable: canvas images are then withheld while the run
-   * holds secrets.
-   */
-  ocrCheck: ((png: Uint8Array) => Promise<string>) | null;
+  /** Local OCR: canvas pixels are screened for vault secrets on this host before storage. */
+  localOcr: LocalOcr;
   /** fetchInBrowser bound to the item's frame (network policy applies). */
   fetch(url: string): Promise<FetchedResource | null>;
   /** pageSanitizeSvg in the capture world; null when nothing safe is left. */
@@ -90,23 +87,9 @@ async function orLost<T>(ctx: MediaContext, work: () => Promise<T | null>): Prom
   }
 }
 
-/**
- * Canvas pixels are invisible to every text screen. While the run holds secrets they are stored
- * only after OCR shows no secret; a secret refuses the capture, and an OCR failure withholds them.
- */
-async function canvasIsClean(ctx: MediaContext, png: Uint8Array): Promise<boolean> {
-  if (!ctx.secrets.hasSecrets()) return true;
-  if (!ctx.ocrCheck) return false;
-  let text: string;
-  try {
-    text = await ctx.ocrCheck(png);
-  } catch (error) {
-    if (ctx.signal.aborted) throw error;
-    return false;
-  }
-  screenText(ctx.secrets, text);
-  return true;
-}
+/** Canvas pixels are invisible to every text screen: screened locally while the run holds secrets. */
+const canvasIsClean = (ctx: MediaContext, png: Uint8Array) =>
+  pixelsAreClean(ctx.localOcr, ctx.secrets, png, ctx.signal);
 
 async function storeOne(
   ctx: MediaContext,

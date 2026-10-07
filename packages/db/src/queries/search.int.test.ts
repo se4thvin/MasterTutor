@@ -1,3 +1,4 @@
+import { EMBEDDING_DIMENSIONS } from "@mastertutor/contracts";
 import { hashEmbedding } from "@mastertutor/contracts/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
@@ -103,5 +104,37 @@ describe("hybridSearch", () => {
         hybridSearch(h.db, { workspaceId: ws, q, embedding: null, kind: null, limit: 5 }),
       ).resolves.toBeInstanceOf(Array);
     }
+  });
+  it("keeps only vector neighbours above the similarity floor (hand-built vectors)", async () => {
+    const owner = createDb(tdb.ownerUrl);
+    const axis = (i: number) =>
+      Array.from({ length: EMBEDDING_DIMENSIONS }, (_, k) => (k === i ? 1 : 0));
+    const seed = async (title: string, embedding: number[]) => {
+      const [note] = await owner.db
+        .insert(notes)
+        .values({ workspaceId: ws, title })
+        .returning({ id: notes.id });
+      await owner.db.insert(noteBlocks).values({
+        noteId: note!.id,
+        position: "a0",
+        type: "paragraph",
+        markdown: "zzqx",
+        origin: "dom",
+        embedding,
+      });
+      return note!.id;
+    };
+    const near = await seed("Near", axis(1));
+    const orthogonal = await seed("Orthogonal", axis(2));
+    await owner.close();
+    const hits = await hybridSearch(h.db, {
+      workspaceId: ws,
+      q: "qqqnomatch",
+      embedding: axis(1),
+      kind: null,
+      limit: 10,
+    });
+    expect(hits.map((hit) => hit.noteId)).toEqual([near]);
+    expect(hits.map((hit) => hit.noteId)).not.toContain(orthogonal);
   });
 });

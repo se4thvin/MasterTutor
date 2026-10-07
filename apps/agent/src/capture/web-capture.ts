@@ -25,6 +25,7 @@ import { pageExtract } from "./page/extract.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import type { PageExtract } from "./page/types.ts";
+import { pixelsAreClean } from "./local-ocr.ts";
 import { preparePage } from "./prepare.ts";
 import { registerClosedShadowRoots } from "./shadow.ts";
 import { takeSnapshot, type Snapshot } from "./snapshot.ts";
@@ -239,7 +240,7 @@ async function captureDocument(
       workspaceId: ctx.workspaceId,
       assets: services.assets,
       secrets: ctx.mask,
-      ocrCheck: (png) => services.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step }),
+      localOcr: services.localOcr,
       fetch: (url) => fetchInBrowser({ session: ctx.session, frameId, signal: ctx.signal }, url),
       sanitizeSvg: (text) => worlds.call(pageSanitizeSvg, [text], frameId),
       shoot:
@@ -345,14 +346,33 @@ async function captureDocument(
   }
   // Every other same-process child frame, from CDP: placeholders Defuddle dropped, small frames.
   // Each is read; one that shows text the note does not hold counts missing (re-review N2).
-  for (const childId of await childFrameIds(worlds, frameId)) {
+  for (const childId of await framesInScope(worlds, frameId)) {
     if (seen.has(childId) || outOfProcess.has(childId)) continue;
     if (await showsUnreadText(ctx, worlds, childId, outOfProcess, depth + 1)) doc.framesMissing++;
   }
   return doc;
 }
 
-async function childFrameIds(worlds: IsolatedWorlds, frameId: string): Promise<string[]> {
+/** Runs in the parent's capture world with `this` = the frame's owner element (A-I1). */
+const OWNER_IN_SCOPE = `function () {
+  const state = globalThis.__mtCapture;
+  const lib = globalThis.__mtLib;
+  if (!state || !lib) return true;
+  // Composed containment: an owner inside a shadow root still belongs to its host's subtree.
+  let inRoot = false;
+  for (let at = this; at; at = at.parentNode ?? (at instanceof ShadowRoot ? at.host : null))
+    if (at === state.root) { inRoot = true; break; }
+  if (!inRoot) return false;
+  if (state.range && !state.range.intersectsNode(this)) return false;
+  return lib.visible(this);
+}`;
+
+/**
+ * The same-process child frames of `frameId` the reader can see inside the capture scope: each
+ * frame's owner element must lie in the scope's root (and selection) and be visible. Hidden or
+ * out-of-scope frames never block `verified`; an owner that cannot be checked counts (fail closed).
+ */
+async function framesInScope(worlds: IsolatedWorlds, frameId: string): Promise<string[]> {
   interface Tree {
     frame: { id: string };
     childFrames?: Tree[];
@@ -362,7 +382,19 @@ async function childFrameIds(worlds: IsolatedWorlds, frameId: string): Promise<s
   };
   const find = (tree: Tree): Tree | null =>
     tree.frame.id === frameId ? tree : ((tree.childFrames ?? []).map(find).find(Boolean) ?? null);
-  return (find(frameTree)?.childFrames ?? []).map((child) => child.frame.id);
+  const children = (find(frameTree)?.childFrames ?? []).map((child) => child.frame.id);
+  const kept: string[] = [];
+  for (const childId of children) {
+    let inScope: boolean;
+    try {
+      const { backendNodeId } = await worlds.cdp.send("DOM.getFrameOwner", { frameId: childId });
+      inScope = await worlds.callOnNode<boolean>(backendNodeId, OWNER_IN_SCOPE, null, frameId);
+    } catch {
+      inScope = true;
+    }
+    if (inScope) kept.push(childId);
+  }
+  return kept;
 }
 
 /**
@@ -386,11 +418,30 @@ async function showsUnreadText(
   }
   screenValue(ctx.mask, [extract.pageText, extract.sourceText]);
   if (tokens(extract.sourceText).length > 0) return true;
-  for (const childId of await childFrameIds(worlds, frameId)) {
+  for (const childId of await framesInScope(worlds, frameId)) {
     if (outOfProcess.has(childId)) continue;
     if (await showsUnreadText(ctx, worlds, childId, outOfProcess, depth + 1)) return true;
   }
   return false;
+}
+
+/** The full-page PNG holds canvas pixels no text screen sees: screened locally like them (A-M2). */
+async function screenedSnapshot(
+  services: LibraryServices,
+  ctx: ToolContext,
+  snapshot: Snapshot,
+): Promise<Snapshot> {
+  if (
+    !snapshot.png ||
+    (await pixelsAreClean(services.localOcr, ctx.mask, snapshot.png, ctx.signal))
+  )
+    return snapshot;
+  return {
+    ...snapshot,
+    png: null,
+    pngSha256: null,
+    skipped: [...snapshot.skipped, "png:withheld"],
+  };
 }
 
 /** Spec §7.7 for pages without usable DOM text: masked viewport tiles, each transcribed by OCR. */
@@ -417,6 +468,11 @@ async function opaqueBlocks(
     };
     const png = await captureMaskedRegion(ctx.session, ctx.mask, { clip, scale: 1 }, ctx.signal);
     if (!png) {
+      withheld++;
+      continue;
+    }
+    // Pixels reach OpenAI only after a local secret screen passes (A-M1).
+    if (!(await pixelsAreClean(services.localOcr, ctx.mask, png, ctx.signal))) {
       withheld++;
       continue;
     }
@@ -479,7 +535,11 @@ export async function captureWeb(
   // D8: a page that shows a vault secret is refused before any snapshot or asset is written.
   if (ctx.mask.hasSecrets() && (await containsSecretText(ctx.session, ctx.mask, ctx.signal)))
     throw new ToolError("secret_on_page", "The page shows a saved secret; nothing was stored");
-  const snapshot = await takeSnapshot(ctx.session, ctx.mask, ctx.signal);
+  const snapshot = await screenedSnapshot(
+    services,
+    ctx,
+    await takeSnapshot(ctx.session, ctx.mask, ctx.signal),
+  );
   const worlds = await captureWorlds(ctx.session);
   const main = await captureDocument(services, ctx, worlds, await worlds.mainFrameId(), scope, 0);
   const blocks = [...main.blocks];

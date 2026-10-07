@@ -27,6 +27,7 @@ export function testWrite(
   return { scope, step: new StepCollector(), secrets };
 }
 
+/** A run row to write notes against: no supervisor ever claims it. */
 export async function seedRun(
   db: Database,
   options: { targetFolderId?: string; workspaceId?: string } = {},
@@ -40,6 +41,9 @@ export async function seedRun(
       workspaceId,
       goal: "test",
       allowedOrigins: ["https://example.com"],
+      // Never claimable: the behaviour database is shared with real supervisors, which would
+      // otherwise lease these fixture runs ahead of the runs a test creates.
+      status: "completed",
       targetFolderId: options.targetFolderId ?? null,
     })
     .returning({ id: runs.id });

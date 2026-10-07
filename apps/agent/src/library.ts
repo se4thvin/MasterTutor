@@ -2,6 +2,7 @@ import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import { createAnnotateTool } from "./capture/annotate-tool.ts";
 import { createCaptureTool } from "./capture/capture-tool.ts";
+import { createLocalOcr, type LocalOcr } from "./capture/local-ocr.ts";
 import { createOcrModel, type OcrModel } from "./capture/opaque.ts";
 import type { StatelessOpenAI } from "./llm/openai.ts";
 import type { RunHooks } from "./loop/hooks.ts";
@@ -26,6 +27,8 @@ export interface LibraryServices {
   assets: AssetStore;
   storage: Storage;
   ocr: OcrModel;
+  /** Self-hosted OCR that screens pixels for vault secrets before storage or OpenAI (A-M1). */
+  localOcr: LocalOcr;
   filing: FilingModel;
   log: Log;
 }
@@ -37,6 +40,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     assets: createAssetStore({ db: deps.db, storage: deps.storage }),
     storage: deps.storage,
     ocr: createOcrModel(deps.openai),
+    localOcr: createLocalOcr(),
     filing: createFilingModel(deps.openai),
     log: deps.log,
   };

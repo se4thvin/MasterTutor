@@ -237,18 +237,111 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     };
     const scope = await seedRun(env.db.db);
     await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
-    const before = new Set(env.storage.objects.keys());
+    const { cssVisualViewport: viewport } = await (
+      await env.session.cdp()
+    ).send("Page.getLayoutMetrics");
+    // Only the viewport-sized page-region tiles: local OCR (a fake that reads nothing) passes the
+    // canvas, and OpenAI's transcription of a tile is what shows the secret here.
+    const tiles: string[] = [];
     const leaking = createCaptureTool({
       ...env.services,
+      assets: {
+        put: (workspaceId, input, secrets) => {
+          if (input.width === viewport.clientWidth && input.height === viewport.clientHeight)
+            tiles.push(input.mime);
+          return env.services.assets.put(workspaceId, input, secrets);
+        },
+      },
       ocr: { transcribe: async () => "Password: hunter2-canary" },
     });
     const ctx = env.context(scope, vault);
     await expect(leaking.run(ctx, page)).rejects.toMatchObject({ code: "secret_on_page" });
     await env.discard(ctx);
-    expect([...env.storage.objects.keys()].filter((key) => !before.has(key))).toEqual([]);
-    const stored = await env.db.db.execute(
-      sql`select count(*)::int as n from assets where workspace_id = ${scope.workspaceId}`,
-    );
-    expect(stored[0]?.n).toBe(0);
+    expect(tiles).toEqual([]);
+  });
+  it("counts only frames inside the capture scope and visible (A-I1)", async () => {
+    // An element capture is not held back by an unrelated text frame elsewhere on the page.
+    const target = await capture("frames/scoped.html", {
+      scope: "element",
+      selector: "#target",
+      kind: null,
+    });
+    expect((target.source.meta as { framesMissing: number }).framesMissing).toBe(0);
+    expect(target.result.fidelity).toBe("verified");
+    // An in-scope frame whose text the note does not hold still blocks verified.
+    const withFrame = await capture("frames/scoped.html", {
+      scope: "element",
+      selector: "#withframe",
+      kind: null,
+    });
+    expect((withFrame.source.meta as { framesMissing: number }).framesMissing).toBe(1);
+    expect(withFrame.result.fidelity).not.toBe("verified");
+    // A frame the reader cannot see is ignored.
+    const hidden = await capture("frames/hidden.html");
+    expect((hidden.source.meta as { framesMissing: number }).framesMissing).toBe(0);
+    expect(hidden.result.fidelity).toBe("verified");
+  });
+  it("never sends unscreened pixels to OpenAI on a secret-holding run (A-M1)", async () => {
+    const vault: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text.replaceAll("hunter2-canary", "[secret]"),
+    };
+    for (const localOcr of [
+      { text: async () => "Password: hunter2-canary" },
+      {
+        text: async (): Promise<string> => {
+          throw new Error("tesseract crashed");
+        },
+      },
+    ]) {
+      const scope = await seedRun(env.db.db);
+      await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+      const before = new Set(env.storage.objects.keys());
+      let openAiPixels = 0;
+      const tool = createCaptureTool({
+        ...env.services,
+        localOcr,
+        ocr: { transcribe: async () => ((openAiPixels += 1), "Quarterly results") },
+      });
+      const ctx = env.context(scope, vault);
+      const result = await tool.run(ctx, page);
+      await env.commit(ctx);
+      expect(openAiPixels).toBe(0);
+      expect(result.fidelity).not.toBe("verified");
+      const stored = [...env.storage.objects.keys()].filter((key) => !before.has(key));
+      expect(stored.filter((key) => key.startsWith("assets/"))).toEqual([]);
+      expect(stored.filter((key) => key.endsWith("page.png"))).toEqual([]);
+    }
+  });
+
+  it("withholds page.png when local OCR finds a secret or fails (A-M2)", async () => {
+    const vault: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text.replaceAll("hunter2-canary", "[secret]"),
+    };
+    for (const localOcr of [
+      { text: async () => "hunter2-canary" },
+      {
+        text: async (): Promise<string> => {
+          throw new Error("tesseract crashed");
+        },
+      },
+    ]) {
+      const scope = await seedRun(env.db.db);
+      await env.session.goto(`${FIXTURES}/capture/article/index.html`, signal);
+      const ctx = env.context(scope, vault);
+      const result = await createCaptureTool({ ...env.services, localOcr }).run(ctx, page);
+      await env.commit(ctx);
+      const [source] = await env.db.db
+        .select()
+        .from(sources)
+        .where(sql`${sources.meta}->>'noteId' = ${result.noteId}`);
+      expect(source?.screenshotKey).toBeNull();
+      expect((source?.meta as { snapshot: { skipped: string[] } }).snapshot.skipped).toContain(
+        "png:withheld",
+      );
+    }
   });
 });
