@@ -7,6 +7,7 @@ import type { StatelessOpenAI } from "./llm/openai.ts";
 import type { RunHooks } from "./loop/hooks.ts";
 import { createAssetStore, type AssetStore } from "./notes/assets.ts";
 import { createEmbedder } from "./notes/embedder.ts";
+import { createFilingModel, fileRunNote, type FilingModel } from "./notes/filing.ts";
 import { NoteWriter } from "./notes/note-writer.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
@@ -25,6 +26,7 @@ export interface LibraryServices {
   assets: AssetStore;
   storage: Storage;
   ocr: OcrModel;
+  filing: FilingModel;
   log: Log;
 }
 
@@ -35,13 +37,25 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     assets: createAssetStore({ db: deps.db, storage: deps.storage }),
     storage: deps.storage,
     ocr: createOcrModel(deps.openai),
+    filing: createFilingModel(deps.openai),
     log: deps.log,
   };
 }
 
-/** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through mergeHooks. */
+/** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through composeRunHooks. */
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
   return {
     functionTools: [register(createCaptureTool(services)), register(createAnnotateTool(services))],
+    async onComplete({ run, log, step }) {
+      try {
+        await fileRunNote(services, { runId: run.id, workspaceId: run.workspaceId }, step);
+      } catch (error) {
+        log.warn(
+          { runId: run.id, errName: (error as Error).name },
+          "filing failed; note left unfiled",
+        );
+      }
+      return { ok: true };
+    },
   };
 }
