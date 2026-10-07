@@ -241,7 +241,7 @@ export class ComputerExecutor {
     // that click was approved as it is.)
     const guard =
       hit.target && !hit.target.opaqueFrame
-        ? await armClickGuard(this.#session, signal, hit.key)
+        ? await armClickGuard(this.#session, signal, hit)
         : null;
     let cancelled = false;
     try {
@@ -252,8 +252,9 @@ export class ComputerExecutor {
         return this.#refuse(PAGE_TOO_COMPLEX_REFUSAL);
       }
       // A document the guard could not arm (a hung frame) would take an unchecked press: fail
-      // closed, as typing does (approval needed), unless a person approved this very element.
-      if (guard && !guard.complete && verdict?.personApproved !== true)
+      // closed, as typing does (approval needed), unless a person approved this very element and
+      // the press is still held to it (a slow host can miss the budget before anything is armed).
+      if (guard && !guard.complete && !(verdict?.personApproved === true && guard.holdsTarget))
         return this.#refuse(UNGUARDED_CLICK_REFUSAL);
       this.#session.guard.assertAgent(signal);
       const options = {

@@ -679,6 +679,72 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     },
   );
 
+  it("on a host too slow to arm the guard in time, a person-approved click is refused, not pressed unguarded: 0/10 reach Delete", async () => {
+    const { s, executor } = await setup();
+    // A loaded host: the arm's CDP round trips on the page's session take longer than the budget,
+    // so its frame hold and new-document script land only after the guard settled (incomplete).
+    const cdp = (await s.worlds()).cdp;
+    const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
+    (cdp as { send: typeof send }).send = async (method, params) => {
+      if (method === "Page.addScriptToEvaluateOnNewDocument" || method === "Target.setAutoAttach")
+        await new Promise((resolve) => setTimeout(resolve, ARM_BUDGET_MS * 0.6));
+      return send(method, params);
+    };
+    // ...and the panel swaps to another site's Delete in the gap before the press lands (on a
+    // loaded host that gap is tens of milliseconds wide).
+    let swapOnPress = false;
+    const down = s.page.mouse.down.bind(s.page.mouse);
+    s.page.mouse.down = async (options) => {
+      if (swapOnPress) {
+        swapOnPress = false;
+        await s.page.evaluate((url) => {
+          (document.getElementById("panel") as HTMLIFrameElement).src = url;
+        }, "http://other.fixtures-isolated.test/widget.html?only=delete");
+        await waitFor(
+          () =>
+            s.page
+              .frames()[1]
+              ?.evaluate(
+                () => document.readyState === "complete" && !!document.getElementById("delete"),
+              )
+              .catch(() => false),
+          { label: "swapped" },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+      }
+      return down(options);
+    };
+    const hits = { cancel: 0, delete: 0, refused: 0 };
+    for (let i = 0; i < 10; i++) {
+      await s.goto(`${SITE}/frame-swap.html`, signal);
+      await waitFor(
+        () =>
+          s.page
+            .frames()[1]
+            ?.evaluate(
+              () => document.readyState === "complete" && !!document.getElementById("cancel"),
+            )
+            .catch(() => false),
+        { label: "panel" },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300)); // painted
+      // A person approved Cancel (the loop's gate binds the approval to that element).
+      const gate = async () => {
+        const target = markUnguarded(s, (await hitTest(s, at)).target);
+        if (target?.label !== "Cancel") return false;
+        swapOnPress = true;
+        return { target, personApproved: true };
+      };
+      const run = await executor.run([click(at)], signal, gate);
+      if (run.notes.includes(UNGUARDED_CLICK_REFUSAL)) hits.refused += 1;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const reached = await clicked(s);
+      if (reached === "cancel" || reached === "delete") hits[reached] += 1;
+    }
+    console.info(JSON.stringify({ metric: "slow_arm_approved_clicks", ...hits }));
+    expect(hits).toEqual({ cancel: 0, delete: 0, refused: 10 });
+  });
+
   it.each([
     ["src", "unapproved"],
     ["src", "person-approved"],
