@@ -140,4 +140,19 @@ describe("pageExtract", () => {
     expect(extract.media.find((m) => m.alt === "pinned")?.fixed).toBe(true);
     expect(extract.smallFrames).toBe(1);
   });
+  it("restores only the title h1 Defuddle dropped, as rendered text, once (re-review N1)", async () => {
+    await session.page
+      .setContent(`<!doctype html><html><head><title>Snake_case basics</title></head>
+      <body><header><h1>Site Logo</h1></header>
+      <main><article><h1>Snake_case <span style="display:none">secretly hidden</span>basics</h1>
+      <p>Snake case joins words with underscores, as in total_count, and is common in Python code
+      and in database column names across many projects.</p>
+      <p>Most style guides pair it with lower case letters and keep constants in upper case.</p>
+      </article></main></body></html>`);
+    const worlds = await captureWorlds(session);
+    const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    expect(extract.markdown).not.toContain("hidden");
+    expect(extract.markdown).not.toContain("Site Logo");
+    expect(extract.markdown.match(/Snake\\?_case basics/g)).toHaveLength(1);
+  });
 });

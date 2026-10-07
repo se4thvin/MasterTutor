@@ -10,6 +10,12 @@ export interface MediaContext {
   assets: AssetStore;
   /** The run's vault: an asset's source URL is screened before it is stored. */
   secrets: MaskSources;
+  /**
+   * OCR of canvas pixels (the opaque model), so a canvas that renders a vault secret is caught
+   * before it is stored. Null when unavailable: canvas images are then withheld while the run
+   * holds secrets.
+   */
+  ocrCheck: ((png: Uint8Array) => Promise<string>) | null;
   /** fetchInBrowser bound to the item's frame (network policy applies). */
   fetch(url: string): Promise<FetchedResource | null>;
   /** pageSanitizeSvg in the capture world; null when nothing safe is left. */
@@ -84,6 +90,24 @@ async function orLost<T>(ctx: MediaContext, work: () => Promise<T | null>): Prom
   }
 }
 
+/**
+ * Canvas pixels are invisible to every text screen. While the run holds secrets they are stored
+ * only after OCR shows no secret; a secret refuses the capture, and an OCR failure withholds them.
+ */
+async function canvasIsClean(ctx: MediaContext, png: Uint8Array): Promise<boolean> {
+  if (!ctx.secrets.hasSecrets()) return true;
+  if (!ctx.ocrCheck) return false;
+  let text: string;
+  try {
+    text = await ctx.ocrCheck(png);
+  } catch (error) {
+    if (ctx.signal.aborted) throw error;
+    return false;
+  }
+  screenText(ctx.secrets, text);
+  return true;
+}
+
 async function storeOne(
   ctx: MediaContext,
   item: PageMedia,
@@ -93,6 +117,7 @@ async function storeOne(
   const assetId = await orLost(ctx, async () => {
     const found = await original(ctx, item);
     if (!found) return null;
+    if (item.kind === "canvas" && !(await canvasIsClean(ctx, found.bytes))) return null;
     return put(ctx, {
       bytes: found.bytes,
       mime: found.mime,
@@ -108,7 +133,8 @@ async function storeOne(
     const rect = item.rect;
     const png = await orLost(ctx, () => shoot(rect, ELEMENT_SCALE));
     const shot = png ? await imageInfo(png) : null;
-    if (png && shot) {
+    const clean = png && item.kind === "canvas" ? await canvasIsClean(ctx, png) : true;
+    if (png && shot && clean) {
       screenshotAssetId = await orLost(ctx, () =>
         put(ctx, {
           bytes: png,

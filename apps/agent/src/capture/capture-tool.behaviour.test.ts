@@ -222,4 +222,33 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     const result = await failing.run(env.context(scope), page);
     expect(result.fidelity).not.toBe("verified");
   });
+  it("reads frames without a placeholder and counts unread text as missing (re-review N2)", async () => {
+    const { result, blocks, source } = await capture("frames/aside.html");
+    expect(blocks.some((b) => b.markdown.includes("Small frame sentinel"))).toBe(false);
+    expect((source.meta as { framesMissing: number }).framesMissing).toBeGreaterThanOrEqual(1);
+    expect(result.fidelity).not.toBe("verified");
+  });
+
+  it("OCRs and screens opaque tiles before storing them (re-review I1)", async () => {
+    const vault: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text.replaceAll("hunter2-canary", "[secret]"),
+    };
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+    const before = new Set(env.storage.objects.keys());
+    const leaking = createCaptureTool({
+      ...env.services,
+      ocr: { transcribe: async () => "Password: hunter2-canary" },
+    });
+    const ctx = env.context(scope, vault);
+    await expect(leaking.run(ctx, page)).rejects.toMatchObject({ code: "secret_on_page" });
+    await env.discard(ctx);
+    expect([...env.storage.objects.keys()].filter((key) => !before.has(key))).toEqual([]);
+    const stored = await env.db.db.execute(
+      sql`select count(*)::int as n from assets where workspace_id = ${scope.workspaceId}`,
+    );
+    expect(stored[0]?.n).toBe(0);
+  });
 });

@@ -49,6 +49,7 @@ async function context(overrides: Partial<MediaContext> = {}) {
     assets,
     fetch: async () => null,
     secrets: NO_MASK_SOURCES,
+    ocrCheck: null,
     sanitizeSvg: async (text) => (text.includes("onload") ? null : text),
     shoot: async (_clip, scale) => (shots.push({ scale }), shot),
     signal: new AbortController().signal,
@@ -219,5 +220,43 @@ describe("storeMedia", () => {
       storeMedia(ctx, [{ ...base, index: 0, kind: "svg", svg, figure: true }]),
     ).rejects.toMatchObject({ code: "secret_on_page" });
     expect(assets.puts).toEqual([]);
+  });
+  it("checks canvas pixels with OCR before storing them while the run holds secrets (re-review I1)", async () => {
+    const shot = await png();
+    const canvas = {
+      ...base,
+      index: 0,
+      kind: "canvas" as const,
+      dataUrl: `data:image/png;base64,${Buffer.from(shot).toString("base64")}`,
+      figure: true,
+    };
+    const secrets = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text.replaceAll("hunter2", "[secret]"),
+    };
+    // OCR reads the secret: the capture is refused and nothing is stored.
+    const leaking = await context({ secrets, ocrCheck: async () => "pw hunter2" });
+    await expect(storeMedia(leaking.ctx, [canvas])).rejects.toMatchObject({
+      code: "secret_on_page",
+    });
+    expect(leaking.assets.puts).toEqual([]);
+    // OCR unavailable or failing: the image is withheld, never stored unchecked.
+    const failing = await context({
+      secrets,
+      ocrCheck: async () => {
+        throw new Error("upstream 503");
+      },
+    });
+    const report = await storeMedia(failing.ctx, [canvas]);
+    expect(failing.assets.puts).toEqual([]);
+    expect(report.stored.get(0)).toEqual({ assetId: null, screenshotAssetId: null });
+    const none = await context({ secrets, ocrCheck: null });
+    await storeMedia(none.ctx, [canvas]);
+    expect(none.assets.puts).toEqual([]);
+    // Clean OCR text: stored as before.
+    const clean = await context({ secrets, ocrCheck: async () => "Quarterly results" });
+    const ok = await storeMedia(clean.ctx, [canvas]);
+    expect(ok.stored.get(0)?.assetId).toEqual(expect.any(String));
   });
 });
