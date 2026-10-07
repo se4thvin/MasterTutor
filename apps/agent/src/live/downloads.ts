@@ -5,6 +5,7 @@ import path from "node:path";
 import { MAX_USER_DOWNLOADS_PER_RUN, Uuid, type RunEvent } from "@mastertutor/contracts";
 import {
   discardDownload,
+  discardPendingDownloads,
   emitRunEvent,
   fileKeptDownload,
   findAssetBySha,
@@ -21,6 +22,8 @@ import type { LeasedSlot } from "../loop/hooks.ts";
 import type { Log } from "../runtime/types.ts";
 
 export const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
+/** How long a lease end waits for kept downloads still being stored before it discards the rest. */
+const SETTLE_WAIT_MS = 30_000;
 
 /** Inert types only; anything that could render as active content is served as a plain download. */
 const SAFE_MIME: Readonly<Record<string, string>> = {
@@ -80,6 +83,8 @@ interface Attached {
   userMode: boolean;
   /** Where each held download came from (asset.sourceUrl once kept). */
   sources: Map<string, string>;
+  /** The hand-back's settle while it runs (kept downloads being stored). */
+  settling: Promise<void> | null;
   stop(): void;
 }
 
@@ -228,22 +233,33 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
     }
     const filename = safeFilename(begun.filename || "download");
     const { size } = await stat(file);
-    entry.sources.set(guid, begun.url.slice(0, 4_096));
-    await deps.db.transaction(async (tx) => {
-      await recordPendingDownload(tx, {
+    // Recorded only while this person still holds control (checked under the run-row lock the
+    // hand-back takes): one that finishes as control goes back is discarded, never left held (N2).
+    const recorded = await deps.db.transaction(async (tx) => {
+      const held = await recordPendingDownload(tx, {
         id: guid,
         runId: slot.runId,
         filename,
         bytes: size,
         approvedBy,
       });
-      await emitRunEvent(tx, slot.runId, {
-        type: "download_pending",
-        downloadId: guid,
-        filename,
-        bytes: size,
-      });
+      if (held)
+        await emitRunEvent(tx, slot.runId, {
+          type: "download_pending",
+          downloadId: guid,
+          filename,
+          bytes: size,
+        });
+      return held;
     });
+    if (recorded) entry.sources.set(guid, begun.url.slice(0, 4_096));
+    else await rm(file, { force: true });
+  }
+
+  /** Every held download of the run discarded, rows and files (a lease that ends or ended). */
+  async function discardHeld(runId: string): Promise<void> {
+    const ids = await deps.db.transaction((tx) => discardPendingDownloads(tx, runId));
+    await Promise.all(ids.map((id) => rm(localFile(runId, id), { force: true })));
   }
 
   /** The hand-back: kept downloads are stored, every other held one is discarded. */
@@ -293,7 +309,15 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
       const dir = path.join(localRoot, slot.runId);
       await mkdir(dir, { recursive: true, mode: deps.dirMode ?? 0o700 });
       if (deps.dirMode !== undefined) await chmod(dir, deps.dirMode);
-      const entry: Attached = { slot, userMode: false, sources: new Map(), stop: () => undefined };
+      // A lease of this run that ended without settling (a crash) left nothing to decide on (N4).
+      await discardHeld(slot.runId).catch(failed(slot.runId, "download_discard_failed"));
+      const entry: Attached = {
+        slot,
+        userMode: false,
+        sources: new Map(),
+        settling: null,
+        stop: () => undefined,
+      };
       // Only the gate's CDP session receives download events: it tells the ingestor what to file.
       gate.onFinished((download) => {
         // The id names a file under the run's folder: only a UUID may (defence in depth).
@@ -319,7 +343,11 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
         entry.userMode = false;
         // Only the deny is awaited (the agent may act next); storing kept files can take long.
         await gate.userControl(false);
-        void settle(entry).catch(failed(runId, "download_settle_failed"));
+        entry.settling = settle(entry)
+          .catch(failed(runId, "download_settle_failed"))
+          .finally(() => {
+            entry.settling = null;
+          });
         return;
       }
       // Each cap is enforced as it happens (B1's gate cancels and deletes); the person hears why.
@@ -338,9 +366,17 @@ export function createDownloadIngestor(deps: DownloadIngestorDeps): DownloadInge
       await gate.userControl(true, { maxBytes, maxCount, onCapped });
     },
     async detach(runId) {
-      // The CDP session belongs to the lease (BrowserSession); B1's release deletes the folder.
-      attached.get(runId)?.stop();
+      const entry = attached.get(runId);
       attached.delete(runId);
+      entry?.stop();
+      // Every way a run ends passes here (onLeaseEnding): kept downloads still being stored may
+      // finish, within a bound; whatever is still held is discarded, never left pending (N4).
+      if (entry?.settling)
+        await Promise.race([
+          entry.settling,
+          new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS).unref()),
+        ]);
+      await discardHeld(runId).catch(failed(runId, "download_discard_failed"));
     },
   };
 }

@@ -351,6 +351,51 @@ describe("downloads through B1's gate (spec §9, §10.2.9; v1: the member in con
     await noLocalFiles(runId);
   });
 
+  it("discards held downloads when the lease ends without a hand-back (N4)", async () => {
+    const { runId, session, ingestor } = await leasedRun("user");
+    await clickDownload(session, "notes");
+    await pendingIn(runId);
+    // The run ends (cancel, kill, a failed deny) with nothing decided.
+    await ingestor.detach(runId);
+    expect(await rowsFor(runId)).toEqual([]);
+    await noLocalFiles(runId);
+  });
+
+  it("discards held downloads a crashed lease left behind when the run is leased again (N4)", async () => {
+    const first = await leasedRun("user");
+    await clickDownload(first.session, "notes");
+    await pendingIn(first.runId);
+    // The agent process dies: nothing settles. The next lease of the run starts clean.
+    await first.session.close();
+    const again = createDownloadIngestor({
+      db: agentDb.db,
+      storage,
+      log,
+      localRoot: BEHAVIOUR_DOWNLOADS,
+      dirMode: 0o777,
+    });
+    const session = await BrowserSession.connect({
+      cdpBaseUrl: SLOT_CDP[SLOT]!,
+      allowedOrigins: () => [SITE],
+      testMode: true,
+      log,
+      downloads: {
+        slotPath: slotDownloadPath(first.runId),
+        localPath: join(BEHAVIOUR_DOWNLOADS, first.runId),
+      },
+    });
+    lease = { runId: first.runId, session, ingestor: again };
+    await again.attach({
+      runId: first.runId,
+      workspaceId: member.workspaceId,
+      slotName: SLOT,
+      session,
+      browserCdp: () => session.browserCdp(),
+    });
+    expect(await rowsFor(first.runId)).toEqual([]);
+    await noLocalFiles(first.runId);
+  });
+
   it("an inline PDF the agent opens is not a download (B5 capture path)", async () => {
     const before = storage.objects.size;
     const { runId, session } = await leasedRun("agent");
