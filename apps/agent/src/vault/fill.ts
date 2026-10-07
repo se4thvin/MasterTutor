@@ -1,4 +1,5 @@
 import {
+  MAX_POSTS_TO_CHARS,
   isPersonDecider,
   toOrigin,
   type ApprovalRequest,
@@ -39,9 +40,6 @@ const DENIALS: ReadonlySet<CredentialErrorCode> = new Set([
 
 /** Stored secrets a page might echo; usernames and one-time codes are masked by box only (deviation 7, S5). */
 const SECRET_FIELDS: ReadonlySet<CredentialField> = new Set(["password", "pin"]);
-
-/** ApprovalRequest credential_first_use.postsTo's limit. */
-const MAX_POSTS_TO = 4_096;
 
 /** Per-run, per-alias fill state lives in VaultDeps maps under this key. */
 const runAliasKey = (runId: string, alias: string) => `${runId}\u0000${alias}`;
@@ -114,14 +112,11 @@ export async function fillApproval(
       return undefined;
     },
   );
-  // A list too long for a card is cut: the act-time check then never matches (fails closed).
+  // A list too long for a card is never cut (a cut card would hide a destination): no card is
+  // raised, and the fill hands the page to a person instead.
+  if (postsTo !== undefined && postsTo.length > MAX_POSTS_TO_CHARS) return null;
   if (postsTo !== undefined)
-    return {
-      kind: "credential_first_use",
-      alias: item.alias,
-      origin: item.origin,
-      postsTo: postsTo.slice(0, MAX_POSTS_TO),
-    };
+    return { kind: "credential_first_use", alias: item.alias, origin: item.origin, postsTo };
   return credentialApproval(deps, url, item);
 }
 
@@ -276,6 +271,12 @@ export async function fillCredential(
     // named that very destination (M4, T10-12 I1). The policy never clears it: auto mode hands
     // over to a person instead.
     const postsTo = offsiteDestination(group, item.origin);
+    if (postsTo !== undefined && postsTo.length > MAX_POSTS_TO_CHARS) {
+      ctx.requestHandOver(
+        `This sign-in form can send the credential to too many places to list on an approval card: a person must sign in.`,
+      );
+      return refuse("needs_human", "form_destinations_too_long");
+    }
     if (postsTo !== undefined) {
       const approval = ctx.approval?.kind === "credential_first_use" ? ctx.approval : null;
       if (approval?.label !== postsTo) return refuse("approval_required", "form_action_offsite");

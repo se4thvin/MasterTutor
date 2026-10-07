@@ -294,8 +294,8 @@ export class SessionLoopBrowser implements LoopBrowser {
 
   allowDownload(card: { url: string; filename: string | null }): Promise<void> {
     // The card was made from the redacted URL and the suggested name: a download matches when it
-    // makes the same card. A script's blob or data download gets a new URL each time: for those
-    // the same kind (blob origin, data type) and the same name are enough (I4).
+    // makes the same card. A script's blob download gets a new URL each time: for those
+    // the same origin (not an opaque one) and the same name are enough (I4).
     return this.#session.downloads.allowOnce((url, filename) => {
       const made = downloadRequest(this.#mask.redact(url), filename);
       if (made.kind !== "download" || made.filename !== card.filename) return false;
@@ -373,13 +373,14 @@ export function slotBrowserConnector(options: {
   };
 }
 
-/** Two script-made downloads (blob or data URLs) of the same kind: same blob origin, or same data type. */
+/**
+ * Two script-made blob downloads from the same origin (each gets a new blob URL). A data: card
+ * names its content's hash (an exact match only), and an opaque-origin `blob:null` one binds to no
+ * origin: it matches only its exact URL (I4).
+ */
 function sameScriptDownload(a: string, b: string): boolean {
-  const kind = (url: string) =>
-    url.startsWith("blob:")
-      ? `blob:${url.slice(5, url.lastIndexOf("/"))}`
-      : url.startsWith("data:")
-        ? url.split(",")[0]
-        : null;
-  return kind(a) !== null && kind(a) === kind(b);
+  const origin = (url: string) =>
+    url.startsWith("blob:") ? url.slice(5, url.lastIndexOf("/")) : null;
+  const from = origin(a);
+  return from !== null && from !== "null" && from === origin(b);
 }

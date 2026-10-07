@@ -642,6 +642,27 @@ describe("fill_credential", () => {
     }
   });
 
+  it("hands a form with more destinations than a card can name to a person, never a cut list", async () => {
+    await tb.page.goto(`${login}/offsite-many`);
+    const d = deps();
+    // No card can show every destination, so none is raised.
+    expect(await ask(d, "site", "password", "#password")).toBeNull();
+    const call = ctx(humanApproval(env.userId));
+    expect(
+      await fillCredential(d, call, {
+        alias: "site",
+        field: "password",
+        target: await refs.ref("#password"),
+      }),
+    ).toEqual({ error: "needs_human" });
+    expect(call.handOvers).toHaveLength(1);
+    expect(call.handOvers[0]).toMatch(/too many places/);
+    expect(await tb.page.inputValue("#password")).toBe("");
+    const [row] = await env.owner
+      .sql`select outcome from vault_audit where run_id = ${runId} order by at desc limit 1`;
+    expect(row?.outcome).toBe("form_destinations_too_long");
+  });
+
   it("in auto mode hands the page to a person, naming where the form posts (needs_human)", async () => {
     await tb.page.goto(`${login}/offsite-form`);
     const auto = ctx(policyApproval(fx.origin("evil")));
