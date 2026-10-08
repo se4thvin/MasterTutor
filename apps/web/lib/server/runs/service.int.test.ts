@@ -11,6 +11,7 @@ import {
   runSteps,
   runs,
   settings,
+  type Database,
   type DbHandle,
 } from "@mastertutor/db";
 import {
@@ -22,8 +23,10 @@ import {
 } from "@mastertutor/db/testing";
 import { createRouterClient } from "@orpc/server";
 import { and, asc, eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRunProcedures } from "../rpc/runs.ts";
+import { getRun } from "./service.ts";
 import type { Viewer } from "../viewer.ts";
 
 const viewer: Viewer = { id: "u-runs", name: "R", email: "runs@example.test" };
@@ -344,6 +347,26 @@ describe("runs.* on the live router (Task 0A)", () => {
       .set({ controller: "agent", controlUserId: null })
       .where(eq(runs.id, runId));
     expect((await client().runs.get({ runId })).heldDownloads).toEqual([]);
+  });
+
+  it("reads held downloads only while a person has control, in one parallel round (QA-036)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId });
+    const queries: string[] = [];
+    const logged = drizzle({
+      client: web.sql,
+      logger: { logQuery: (query) => queries.push(query) },
+    }) as unknown as Database;
+    await getRun(logged, { workspaceId, actor: viewer.id }, runId);
+    // max(event id), the run, approvals and stored downloads: no held-downloads read.
+    expect(queries).toHaveLength(4);
+    expect(queries.filter((query) => query.includes('"downloads"."kept_at" is null'))).toEqual([]);
+    await owner.db
+      .update(runs)
+      .set({ controller: "user", controlUserId: viewer.id })
+      .where(eq(runs.id, runId));
+    queries.length = 0;
+    await getRun(logged, { workspaceId, actor: viewer.id }, runId);
+    expect(queries).toHaveLength(5);
   });
 
   it("lists steps after a seq, keeping only the StepAction fields", async () => {
