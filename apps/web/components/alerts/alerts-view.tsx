@@ -30,11 +30,22 @@ export function AlertsView() {
   const items: AlertView[] = alerts.data?.pages.flatMap((page) => page.items) ?? [];
   const loaded = items.length > 0;
 
-  // A push opens /settings/alerts#alert-<id>: once that row exists, bring it into view.
+  // A push opens /settings/alerts#alert-<id>. The rows arrive after navigation, so CSS :target
+  // never matches them: the hash is read here, and that row is marked current and scrolled to.
+  const [targeted, setTargeted] = useState<string | null>(null);
   useEffect(() => {
-    if (loaded && location.hash.startsWith("#alert-"))
-      document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "center" });
-  }, [loaded]);
+    const read = () =>
+      setTargeted(
+        location.hash.startsWith("#alert-") ? location.hash.slice("#alert-".length) : null,
+      );
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
+  useEffect(() => {
+    if (loaded && targeted)
+      document.getElementById(`alert-${targeted}`)?.scrollIntoView({ block: "center" });
+  }, [loaded, targeted]);
 
   const acknowledge = async (id: string) => {
     setPending(id);
@@ -86,7 +97,12 @@ export function AlertsView() {
         ) : (
           <ul className="group" aria-label="Alerts">
             {items.map((alert) => (
-              <li key={alert.id} id={`alert-${alert.id}`} className="row alert-row">
+              <li
+                key={alert.id}
+                id={`alert-${alert.id}`}
+                className="row alert-row"
+                aria-current={alert.id === targeted ? "true" : undefined}
+              >
                 <span className="min-w-0">
                   {alert.label}
                   <small>

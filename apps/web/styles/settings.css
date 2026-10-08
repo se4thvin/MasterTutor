@@ -14,12 +14,9 @@
     text-align: right;
     overflow-wrap: anywhere;
   }
-  /* A push opens /settings/alerts#alert-<id>: that row is the one lit. */
-  .alert-row {
-    scroll-margin: 6rem;
-    &:target {
-      background: var(--tint-wash);
-    }
+  /* A push opens /settings/alerts#alert-<id>: that row is the one lit (alerts-view.tsx). */
+  .alert-row[aria-current] {
+    background: var(--tint-wash);
   }
   .row-link {
     color: var(--label);
