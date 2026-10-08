@@ -23,6 +23,23 @@ take_snapshot() {
     "${excludes[@]}" -cf - . | tar -C "$snap" -xf -
 }
 
+# Playwright baselines a run may rewrite on purpose (--update-snapshots): every
+# <spec>.spec.ts-snapshots/*.png under apps/web/e2e.
+SNAPSHOT_BASELINES="apps/web/e2e"
+
+# publish_baselines <snapshot dir> <synced dir> <sync lock>: copies the baselines a run wrote or
+# changed back to the synced folder, for remote-test.sh to fetch, and names each one. Unchanged
+# baselines are left alone. Nothing is committed: the person reviews and commits them.
+publish_baselines() {
+  local snap=$1 base=$2 lock=$3 path
+  [[ -d "$snap/$SNAPSHOT_BASELINES" ]] || return 0
+  while IFS= read -r path; do
+    cmp -s "$snap/$path" "$base/$path" && continue
+    flock "$lock" bash -c 'mkdir -p "$(dirname "$2")" && cp -p "$1" "$2"' bash "$snap/$path" "$base/$path"
+    echo "remote-test: baseline updated: $path" >&2
+  done < <(cd "$snap" && find "$SNAPSHOT_BASELINES" -path '*.spec.ts-snapshots/*.png' -type f | sort)
+}
+
 # publish_results <snapshot dir> <synced dir> <sync lock>: copies the result folders a run made
 # back to where remote-test.sh fetches them (the last run of a suite wins, as before snapshots).
 publish_results() {

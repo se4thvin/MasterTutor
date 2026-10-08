@@ -89,8 +89,8 @@ describe("remote test runner (D45, X4, D48)", () => {
 
   it("runs the fixture UI suite with Playwright args and brings its reports back", () => {
     expect(host).toContain('exec pnpm --filter @mastertutor/web test:ui \\"\\$@\\"');
-    expect(client).toMatch(
-      /ui\) fetch apps\/web\/playwright-report && fetch apps\/web\/test-results && fetch apps\/web\/e2e\/visual\.spec\.ts-snapshots/,
+    expect(client).toContain(
+      "ui) fetch apps/web/playwright-report && fetch apps/web/test-results ;;",
     );
   });
 
@@ -294,6 +294,31 @@ esac
   });
 });
 
+describe("what the sync sends", () => {
+  it("sends the three benchmark protocol docs and nothing else from orchestration/ or env files", () => {
+    // rsync's first matching rule wins: the doc includes must come before the orchestration excludes.
+    const block = /rsync -az --delete \\\n([\s\S]*?)--rsync-path/.exec(client)![1]!;
+    const rules = [...block.matchAll(/--(include|exclude)=('[^']*'|\S+)/g)].map(
+      ([, kind, pattern]) => `${kind} ${pattern!.replace(/^'|'$/g, "")}`,
+    );
+    expect(rules.filter((r) => r.includes("orchestration"))).toEqual([
+      "include /orchestration/",
+      "include /orchestration/README.md",
+      "include /orchestration/benchmarks/",
+      "include /orchestration/benchmarks/README.md",
+      "include /orchestration/briefs/",
+      "include /orchestration/briefs/bench-fix.md",
+      "exclude /orchestration/**",
+      "exclude orchestration",
+    ]);
+    expect(rules.slice(0, 3)).toEqual([
+      "include /.env.test",
+      "include /.env.example",
+      "exclude .env*",
+    ]);
+  });
+});
+
 describe("per-run snapshots of one worktree's sync (remote-test/snapshot.sh)", () => {
   /** Runs snapshot.sh functions in a scratch tree: base/ is the synced worktree. */
   function snapshot(script: string) {
@@ -352,6 +377,52 @@ describe("per-run snapshots of one worktree's sync (remote-test/snapshot.sh)", (
       ls base/apps/web/test-results; cat base/apps/web/e2e/.out/o`);
     expect(status, stderr).toBe(0);
     expect(stdout.split("\n")).toEqual(["r2", "out", ""]);
+  });
+
+  it.runIf(hostShell)(
+    "publishes only the baselines a run wrote or changed, and names each one",
+    () => {
+      const { status, stdout, stderr } = snapshot(`${SETUP}
+      d=apps/web/e2e/visual.spec.ts-snapshots
+      mkdir -p base/$d base/apps/web/e2e/other.spec.ts-snapshots
+      echo same >base/$d/same.png; echo old >base/$d/changed.png; echo keep >base/apps/web/e2e/other.spec.ts-snapshots/x.png
+      take_snapshot "$PWD/base" "$PWD/run/src" "$PWD/sync.lock"
+      touch -d '2001-01-01' base/$d/same.png
+      echo new >run/src/$d/changed.png; echo added >run/src/$d/added.png; echo not-a-png >run/src/$d/notes.txt
+      publish_baselines "$PWD/run/src" "$PWD/base" "$PWD/sync.lock"
+      cat base/$d/changed.png base/$d/added.png base/apps/web/e2e/other.spec.ts-snapshots/x.png
+      date -r base/$d/same.png +%Y; ls base/$d`);
+      expect(status, stderr).toBe(0);
+      expect(stdout.split("\n")).toEqual([
+        "new",
+        "added",
+        "keep",
+        "2001",
+        "added.png",
+        "changed.png",
+        "same.png",
+        "",
+      ]);
+      expect(stderr.trim().split("\n")).toEqual([
+        "remote-test: baseline updated: apps/web/e2e/visual.spec.ts-snapshots/added.png",
+        "remote-test: baseline updated: apps/web/e2e/visual.spec.ts-snapshots/changed.png",
+      ]);
+    },
+  );
+
+  it("brings baselines back only for an explicit --update-snapshots, and never commits them", () => {
+    expect(host).toMatch(
+      /\[\[ "\$arg" == -u \|\| "\$arg" == --update-snapshots\* \]\] && update_baselines=1/,
+    );
+    expect(host).toContain(
+      'if [[ "$update_baselines" == 1 ]]; then publish_baselines "$run_dir/src" "$base" "$sync_lock" || true; fi',
+    );
+    expect(client).toContain(
+      'if [[ "$suite" == ui || "$suite" == e2e ]] && wants_baselines "$@"; then fetch_baselines; fi',
+    );
+    expect(client).toContain("--include='*.spec.ts-snapshots/*.png' --exclude='*'");
+    for (const text of [client, host, read("./remote-test/snapshot.sh")])
+      expect(text).not.toMatch(/git (add|commit)/);
   });
 
   it("syncs under the same per-worktree lock the host's snapshots take", () => {

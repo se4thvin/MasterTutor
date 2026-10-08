@@ -28,6 +28,14 @@ export function fakeLibraryServices(
     },
     localOcr: { text: async () => "", words: async () => [] },
     filing: { decide: async () => ({ path: ["Inbox"], createLeaf: true }) },
+    transcriber: {
+      transcribe: async () => [{ start: 0, end: 3, text: "Welcome to the lecture.", speaker: "A" }],
+    },
+    audioCapture: {
+      start: async () => {
+        throw new Error("this test has no audio-capture service");
+      },
+    },
     docling: null,
     pdf: {
       analyze: async () => {

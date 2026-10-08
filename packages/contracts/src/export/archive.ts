@@ -2,6 +2,7 @@ import { Zip, ZipDeflate, ZipPassThrough } from "fflate";
 import type { NoteDetail } from "../api/dto.ts";
 import { assetIdsIn } from "../asset-uri.ts";
 import { isAssetMimeType, type AssetMimeType } from "../constants.ts";
+import { Sha256Hex } from "../primitives.ts";
 import { archiveFileName, markdownFileName } from "./file-name.ts";
 import { buildNoteMarkdown } from "./note-markdown.ts";
 
@@ -11,7 +12,8 @@ export interface ArchiveAsset {
   sha256: string;
   mime: string;
   bytes: number;
-  open(): Promise<ReadableStream<Uint8Array>>;
+  /** The bytes, or null when the object is missing: the note then links it as #missing-asset. */
+  open(): Promise<ReadableStream<Uint8Array> | null>;
 }
 
 /** One extension per stored asset type (ASSET_MIME_TYPES, the allow-list `put` enforces). */
@@ -56,13 +58,12 @@ interface ArchiveInput {
   assets: readonly ArchiveAsset[];
 }
 
-/** The zip's chunks in order: the Markdown first, then each asset, read as it streams. */
+/**
+ * The zip's chunks in order: each asset, read as it streams, then the Markdown. The Markdown goes
+ * last so it links only what the zip really holds: a missing object becomes #missing-asset instead
+ * of failing the whole export (QA-097).
+ */
 async function* zipChunks(input: ArchiveInput): AsyncGenerator<Uint8Array> {
-  const byId = new Map(input.assets.map((asset) => [asset.id, asset]));
-  const pathOf = (id: string) => {
-    const asset = byId.get(id);
-    return asset ? `assets/${asset.sha256}.${extensionOf(asset.mime)}` : null;
-  };
   const ready: Uint8Array[] = [];
   let failure: Error | null = null;
   const zip = new Zip((error, chunk) => {
@@ -73,28 +74,35 @@ async function* zipChunks(input: ArchiveInput): AsyncGenerator<Uint8Array> {
     if (failure) throw failure;
     while (ready.length > 0) yield ready.shift()!;
   }
-  const markdown = new ZipDeflate(markdownFileName(input.detail.note.title), { level: 6 });
-  zip.add(markdown);
-  markdown.push(
-    new TextEncoder().encode(buildNoteMarkdown(input.detail, input.folderPath, pathOf)),
-    true,
-  );
-  yield* drain();
-  const written = new Set<string>();
+  const exported = new Map<string, string>();
+  const tried = new Set<string>();
   for (const asset of input.assets) {
-    const path = pathOf(asset.id);
-    if (!path || written.has(path)) continue;
-    written.add(path);
+    // The hash becomes a path inside the zip: only a real SHA-256 may, never `../` (QA-095).
+    if (!Sha256Hex.safeParse(asset.sha256).success) continue;
+    const path = `assets/${asset.sha256}.${extensionOf(asset.mime)}`;
+    if (tried.has(path)) continue;
+    tried.add(path);
+    const body = await asset.open();
+    if (!body) continue;
     const entry = new ZipPassThrough(path);
     zip.add(entry);
-    const reader = (await asset.open()).getReader();
+    const reader = body.getReader();
     for (let next = await reader.read(); !next.done; next = await reader.read()) {
       entry.push(next.value);
       yield* drain();
     }
     entry.push(new Uint8Array(0), true);
     yield* drain();
+    exported.set(asset.id, path);
   }
+  const markdown = new ZipDeflate(markdownFileName(input.detail.note.title), { level: 6 });
+  zip.add(markdown);
+  markdown.push(
+    new TextEncoder().encode(
+      buildNoteMarkdown(input.detail, input.folderPath, (id) => exported.get(id) ?? null),
+    ),
+    true,
+  );
   zip.end();
   yield* drain();
 }
@@ -105,16 +113,20 @@ export function streamNoteArchive(input: ArchiveInput): {
   body: ReadableStream<Uint8Array>;
 } {
   const chunks = zipChunks(input);
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const next = await chunks.next();
-      if (next.done) controller.close();
-      else controller.enqueue(next.value);
+  // highWaterMark 0: nothing is pulled, so no asset is opened, until the response is read.
+  const body = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        const next = await chunks.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      async cancel() {
+        await chunks.return(undefined);
+      },
     },
-    async cancel() {
-      await chunks.return(undefined);
-    },
-  });
+    { highWaterMark: 0 },
+  );
   return { fileName: archiveFileName(input.detail.note.title), body };
 }
 

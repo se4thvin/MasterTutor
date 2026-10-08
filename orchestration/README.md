@@ -14,6 +14,7 @@ orchestration/
       brief.md   # exact prompt sent to the subagent
       report.md  # subagent's full final report, verbatim
       artifacts/ # optional: any extra files the run produced
+  benchmarks/    # benchmark records (record.md per invocation) and tickets/
 ```
 
 ## Conventions

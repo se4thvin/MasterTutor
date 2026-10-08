@@ -15,9 +15,44 @@ const MOTION_KEYS = new Set([
   "restSpeed",
 ]);
 
+/**
+ * CSS motion properties as inline-style keys (QA-020): a literal value must be a motion variable
+ * from styles/motion.css, or none. The shorthands take none only, as stylelint bans `transition`.
+ */
+const STYLE_MOTION_LONGHANDS = new Set([
+  "transitionDuration",
+  "transitionDelay",
+  "transitionTimingFunction",
+  "animationDuration",
+  "animationDelay",
+  "animationTimingFunction",
+]);
+const STYLE_MOTION_SHORTHANDS = new Set(["transition", "animation"]);
+const MOTION_VARIABLES = /^var\(--motion-[a-z0-9-]+\)(\s*,\s*var\(--motion-[a-z0-9-]+\))*$/;
+
 interface AnyNode {
   type: string;
   [key: string]: unknown;
+}
+
+/** The string a literal style value spells, or null for a number or anything computed. */
+function literalText(node: AnyNode): string | null {
+  if (node.type === "Literal" && typeof node.value === "string") return node.value.trim();
+  if (node.type === "TemplateLiteral" && (node.expressions as unknown[]).length === 0)
+    return (
+      (node.quasis as Array<{ value: { cooked: string | null } }>)[0]?.value.cooked ?? ""
+    ).trim();
+  if (node.type === "JSXExpressionContainer") return literalText(node.expression as AnyNode);
+  return null;
+}
+
+function isRawStyleMotion(key: string, value: AnyNode | null | undefined): boolean {
+  const longhand = STYLE_MOTION_LONGHANDS.has(key);
+  if ((!longhand && !STYLE_MOTION_SHORTHANDS.has(key)) || !value || !isLiteralish(value))
+    return false;
+  const text = literalText(value);
+  if (text === "none") return false;
+  return !(longhand && text !== null && MOTION_VARIABLES.test(text));
 }
 
 function isLiteralish(node: AnyNode | null | undefined): boolean {
@@ -43,13 +78,19 @@ function isLiteralish(node: AnyNode | null | undefined): boolean {
 const noRawMotion: Rule.RuleModule = {
   meta: {
     type: "problem",
-    messages: { raw: "Use a token from lib/motion-tokens.ts instead of a raw '{{key}}' value." },
+    messages: {
+      raw: "Use a token from lib/motion-tokens.ts instead of a raw '{{key}}' value.",
+      rawStyle:
+        "Inline '{{key}}' takes a --motion-* variable from styles/motion.css (or none), never a raw time or curve.",
+    },
     schema: [],
   },
   create(context) {
     const check = (key: string, value: AnyNode | null | undefined, node: Rule.Node) => {
       if (MOTION_KEYS.has(key) && isLiteralish(value))
         context.report({ node, messageId: "raw", data: { key } });
+      else if (isRawStyleMotion(key, value))
+        context.report({ node, messageId: "rawStyle", data: { key } });
     };
     return {
       Property(node) {

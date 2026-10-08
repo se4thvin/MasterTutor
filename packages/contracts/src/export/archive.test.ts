@@ -4,6 +4,7 @@ import type { NoteDetail } from "../api/dto.ts";
 import {
   EXPORT_LIMITS,
   archiveFileName,
+  attachmentDisposition,
   buildNoteArchive,
   buildNoteMarkdown,
   exportTooLarge,
@@ -77,6 +78,11 @@ describe("the export (decision 18)", () => {
     expect(markdownFileName("Plants")).toBe("Plants.md");
     expect(archiveFileName("   ")).toBe("note.zip");
   });
+  it("encodes every RFC 5987 non-attr-char in filename*, ' ( ) * ! included (QA-096)", () => {
+    expect(attachmentDisposition("Don't (draft) *1*! é.zip")).toBe(
+      `attachment; filename="Don't (draft) *1*! _.zip"; filename*=UTF-8''Don%27t%20%28draft%29%20%2A1%2A%21%20%C3%A9.zip`,
+    );
+  });
   it("maps assets to content-addressed paths and adds times to transcripts", () => {
     const md = buildNoteMarkdown(detail, [], (id) =>
       id === asset ? "assets/aa.png" : id === inline ? "assets/bb.png" : null,
@@ -110,7 +116,7 @@ describe("the export (decision 18)", () => {
     expect(out.fileName.endsWith(".zip")).toBe(true);
     const reader = out.body.getReader();
     const chunks: Uint8Array[] = [];
-    const first = await reader.read(); // the Markdown entry comes first
+    const first = await reader.read(); // the first asset's entry, read only as the zip reaches it
     if (!first.done) chunks.push(first.value);
     expect(opened.length).toBeLessThan(2);
     for (let next = await reader.read(); !next.done; next = await reader.read())
@@ -119,6 +125,40 @@ describe("the export (decision 18)", () => {
     const files = unzipSync(new Uint8Array(await new Blob(chunks).arrayBuffer()));
     expect(files[`assets/${"a".repeat(64)}.png`]).toEqual(new Uint8Array([7, 7, 7]));
     expect(Object.keys(files)).toContain(markdownFileName(detail.note.title));
+  });
+
+  it("never writes a path from a hash that is not a SHA-256 (QA-095)", async () => {
+    const opened: string[] = [];
+    const out = await buildNoteArchive({
+      detail,
+      folderPath: [],
+      assets: [{ id: asset, ...source("../../escape", "image/png", 1, opened) }],
+    });
+    const files = unzipSync(out.bytes);
+    expect(Object.keys(files)).toEqual([markdownFileName(detail.note.title)]);
+    expect(opened).toEqual([]);
+    expect(new TextDecoder().decode(files[markdownFileName(detail.note.title)]!)).not.toContain(
+      "escape",
+    );
+  });
+
+  it("exports a missing object as #missing-asset instead of failing the export (QA-097)", async () => {
+    const opened: string[] = [];
+    const out = await buildNoteArchive({
+      detail,
+      folderPath: [],
+      assets: [
+        { id: asset, ...source("a".repeat(64), "image/png", 1, opened), open: async () => null },
+        { id: inline, ...source("b".repeat(64), "image/svg+xml", 1, opened) },
+      ],
+    });
+    const files = unzipSync(out.bytes);
+    expect(Object.keys(files).sort()).toEqual(
+      [`assets/${"b".repeat(64)}.svg`, markdownFileName(detail.note.title)].sort(),
+    );
+    const md = new TextDecoder().decode(files[markdownFileName(detail.note.title)]!);
+    expect(md).not.toContain("a".repeat(64));
+    expect(md).toContain(`[Rendered view](assets/${"b".repeat(64)}.svg)`);
   });
 
   it("collects the same zip in memory for small exports (fixture API)", async () => {

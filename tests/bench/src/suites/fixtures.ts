@@ -1,7 +1,8 @@
 import { parseEnv } from "node:util";
 import type { BenchApi } from "../app-client.ts";
 import type { BenchmarkSpec, SuiteDefinition } from "../types.ts";
-import { CREDENTIAL_HINT as HINT, signInInstruction } from "./prompts.ts";
+import { escapeRegExp } from "../discovery.ts";
+import { CREDENTIAL_HINT as HINT, discoveryInstruction, signInInstruction } from "./prompts.ts";
 
 /** The `bench-fixtures` service on T1's `fixtures` network (X2). Reachable only on the test stacks. */
 export const BENCH_ORIGIN = "http://bench.fixtures.test:8080";
@@ -47,8 +48,60 @@ function spec(toolProfile: "computer_use" | "browser_use"): BenchmarkSpec {
   };
 }
 
+const LIBRARY = `${BENCH_ORIGIN}/library`;
+const READINGS = [1, 2, 3] as const;
+
+/**
+ * Run 1's shape on the fixture site: the grading run discovers readings 1-3 of the library and their
+ * sections itself (mixed completion, an empty section and an unread one), read-only.
+ */
+function readings(): BenchmarkSpec {
+  return {
+    key: "readings",
+    toolProfile: "browser_use",
+    approvalMode: "auto_within_allowlist",
+    task:
+      `${LOGIN} ${HINT.browser_use} Open ${LIBRARY}. Find reading assignments 1 to 3 and complete every ` +
+      "participation activity in their sections. Finish when they are all complete.",
+    allowedOrigins: [BENCH_ORIGIN],
+    budget: { maxSteps: 40, maxUsd: 0.5, maxActiveMinutes: 10 },
+    criterion: {
+      kind: "discovered_readings",
+      readings: READINGS,
+      readingPattern: "^Reading (\\d+)$",
+      sectionUrlPattern: `^${escapeRegExp(LIBRARY)}/chapter/\\d+/section/\\d+$`,
+      groupPattern: "^Chapter \\d+",
+      activityPattern: "PARTICIPATION ACTIVITY (\\d+(?:\\.\\d+)+)",
+      otherActivityPattern: "CHALLENGE ACTIVITY",
+      completedPattern: "Activity completed",
+      questionPattern: "(\\d+)\\)",
+      stepPattern: "\\bStep (\\d+)\\b",
+      stepControlPattern: "^(?:Start|Play step)\\b",
+      requireInteraction: true,
+    },
+    verify: {
+      task: `${LOGIN} ${HINT.browser_use} Then: ${discoveryInstruction(LIBRARY, READINGS)}`,
+      budget: { maxSteps: 60, maxUsd: 1, maxActiveMinutes: 10 },
+      signInUrl: `${BENCH_ORIGIN}/signin`,
+    },
+    baselineMustPass: false,
+    freshLogin: false,
+    signInCheck: null,
+    requiredVaultItem: { alias: ALIAS, origin: BENCH_ORIGIN, fields: ["username", "password"] },
+    reset: null,
+    mockScenarios: {
+      main: "bench-readings-browser_use",
+      verify: "bench-readings-verify-browser_use",
+    },
+  };
+}
+
 export function fixturesSuite(): SuiteDefinition {
-  return { id: "fixtures", stack: "test", benchmarks: [spec("browser_use"), spec("computer_use")] };
+  return {
+    id: "fixtures",
+    stack: "test",
+    benchmarks: [spec("browser_use"), spec("computer_use"), readings()],
+  };
 }
 
 /** Test stacks only: the dummy fixture login comes from the committed `.env.test` (not a secret). */

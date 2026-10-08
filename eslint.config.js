@@ -73,15 +73,24 @@ const webImports = (
   },
 ];
 
+/**
+ * import() of a module matching `regex` (an esquery regex literal), whether the source is a string
+ * or a template literal such as `gsap/${name}` (QA-023): its first quasi is matched.
+ */
+const importExpressionsOf = (regex) => [
+  `ImportExpression[source.value=${regex}]`,
+  `ImportExpression[source.type='TemplateLiteral'][source.quasis.0.value.cooked=${regex}]`,
+];
+
 // D38: stateful OpenAI APIs and dynamic imports of the SDK. Every block that sets
 // no-restricted-syntax must include these, because a later block's no-restricted-syntax replaces
 // an earlier one's.
 const OPENAI_STATEFUL_BANS = [
-  {
-    selector: "ImportExpression[source.value=/^openai(\\/|$)/]",
+  ...importExpressionsOf("/^openai(\\/|$)/").map((selector) => ({
+    selector,
     message:
       "Import OpenAI only through @mastertutor/contracts/server/openai (stateless factory, openai-data-policy.md).",
-  },
+  })),
   {
     selector:
       "MemberExpression[property.name=/^(files|vectorStores|conversations|batches|fineTuning|evals)$/]:matches([object.name=/^(openai|client|openaiClient)$/i], [object.property.name=/^(openai|client|openaiClient)$/i])",
@@ -98,10 +107,12 @@ const OPENAI_STATEFUL_BANS = [
 const dynamicImportBan = (groups) => [
   "error",
   ...OPENAI_STATEFUL_BANS,
-  {
-    selector: `ImportExpression[source.value=/^(${groups.map((group) => group.replaceAll("/", "\\/")).join("|")})(\\/|$)/]`,
+  ...importExpressionsOf(
+    `/^(${groups.map((group) => group.replaceAll("/", "\\/")).join("|")})(\\/|$)/`,
+  ).map((selector) => ({
+    selector,
     message: "This library may not be imported here, dynamically or statically (spec §11.3–11.4).",
-  },
+  })),
 ];
 // D43: a library leaves this list only together with a lazy import() boundary like
 // LAYOUT_FEATURES_STATIC. Nothing in the delight pass needs one.
@@ -114,6 +125,20 @@ const ALL_BANNED = [
   "@hugeicons",
   SEALING_OPEN,
   FIXTURES,
+];
+
+// QA-019: the UI libraries are banned in every package, not only apps/web; the apps/web blocks
+// below carry them too and open the one sanctioned home of each (three in hero, lucide in icons).
+const UI_IMPORT_BANS = [ANIMATION_BANS, THREE_BAN, LUCIDE_BAN];
+const UI_LIBRARIES = [
+  "gsap",
+  "ogl",
+  "framer-motion",
+  "matter-js",
+  "@react-three",
+  "@hugeicons",
+  "three",
+  "lucide-react",
 ];
 
 const OPENAI_IMPORTS = {
@@ -166,8 +191,8 @@ export default defineConfig(
     files: ["**/*.{ts,tsx,js,mjs}"],
     ignores: ["packages/contracts/src/server/openai.ts"],
     rules: {
-      "no-restricted-imports": ["error", { patterns: [OPENAI_IMPORTS] }],
-      "no-restricted-syntax": ["error", ...OPENAI_STATEFUL_BANS],
+      "no-restricted-imports": ["error", { patterns: [OPENAI_IMPORTS, ...UI_IMPORT_BANS] }],
+      "no-restricted-syntax": dynamicImportBan(UI_LIBRARIES),
     },
   },
   {
@@ -180,6 +205,7 @@ export default defineConfig(
         {
           patterns: [
             OPENAI_IMPORTS,
+            ...UI_IMPORT_BANS,
             {
               regex: "(^|/)apps/[^/]+/src(/|$)",
               message:
@@ -195,7 +221,7 @@ export default defineConfig(
     // `input.files` or `dataTransfer.files` stay legal. The import ban above is the real boundary.
     files: ["apps/**/*.{ts,tsx}", "packages/*/src/server/**/*.ts"],
     rules: {
-      "no-restricted-syntax": ["error", ...OPENAI_STATEFUL_BANS],
+      "no-restricted-syntax": dynamicImportBan(UI_LIBRARIES),
     },
   },
   {
@@ -207,6 +233,7 @@ export default defineConfig(
         {
           patterns: [
             OPENAI_IMPORTS,
+            ...UI_IMPORT_BANS,
             {
               group: ["node:*", "pino"],
               message:

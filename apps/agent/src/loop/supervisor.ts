@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { NotifyPayload } from "@mastertutor/contracts";
 import type { DbHandle } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
+import { sweepObjectDeletions } from "../notes/object-sweep.ts";
 import { listenForAgentNotifications } from "../events/listen.ts";
 import { ModelCaller } from "../llm/caller.ts";
 import type { ModelClient } from "../llm/client.ts";
@@ -232,6 +233,10 @@ export class Supervisor {
     } catch {
       this.#options.log.warn({ errorCode: "sweep_failed" }, "sweep failed");
     }
+    // A deleted note's objects (web cannot delete objects): retried until each one is gone.
+    await sweepObjectDeletions(this.#options.db.db, this.#options.storage, this.#options.log).catch(
+      () => this.#options.log.warn({ errorCode: "object_sweep_failed" }, "object sweep failed"),
+    );
     this.#kick();
   }
 }

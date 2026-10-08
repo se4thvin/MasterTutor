@@ -76,7 +76,9 @@ export function createVault(options: VaultOptions): Vault {
         return `- ${item.alias} (${item.origin}): ${[...fields, "otp"].join(", ")}`;
       });
       return [
-        `Saved sign-ins for this task. To sign in, call fill_credential with the alias, the field and the target: the input's ref from read_page, or "focused" after clicking the input (use_passkey for a passkey). You never see the values; "otp" is a code from email or from the user.\n${lines.join("\n")}`,
+        // Profile-neutral (P10a-8): which target to pass is in the profile's own instructions, so a
+        // computer_use run is never pointed at read_page, a tool it does not have (QA-068).
+        `Saved sign-ins for this task. To sign in, call fill_credential with the alias, the field and the target your instructions describe (use_passkey for a passkey). You never see the values; "otp" is a code from email or from the user.\n${lines.join("\n")}`,
       ];
     },
     maskSources: (runId) => fingerprints.forRun(runId),

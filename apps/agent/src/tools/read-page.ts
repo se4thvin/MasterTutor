@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   ElementRef,
   READ_PAGE_ATTRS,
+  READ_PAGE_MAX_ELEMENTS,
   ReadPageArgs,
   ReadPageResult,
   type ReadPageElement,
@@ -12,7 +13,7 @@ import { readPageScript } from "./read-page-script.ts";
 import type { Tool } from "./types.ts";
 
 /** Below the contract caps (2,000 elements / 200,000 chars) to bound token cost per call. */
-export const MAX_ELEMENTS = 400;
+export const MAX_ELEMENTS = READ_PAGE_MAX_ELEMENTS;
 export const MAX_TEXT = 50_000;
 
 export async function readPage(
@@ -25,6 +26,7 @@ export async function readPage(
     attrs: READ_PAGE_ATTRS,
     max: MAX_ELEMENTS,
     maxText: MAX_TEXT,
+    offset: args.mode === "interactive" ? args.offset : null,
   });
   const scale = session.lastScale;
   const header = { url: raw.url, title: raw.title.slice(0, 1_000) };
@@ -41,6 +43,8 @@ export async function readPage(
             ? { x: Math.round(element.point.x * scale), y: Math.round(element.point.y * scale) }
             : null,
         })),
+        total: raw.total ?? raw.elements.length,
+        ...(args.offset !== null ? { offset: args.offset } : {}),
       }
     : { ...header, text: raw.text ?? "" };
   const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");

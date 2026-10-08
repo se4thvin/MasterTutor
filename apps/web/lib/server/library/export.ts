@@ -1,11 +1,13 @@
 import type { ExportResult, NoteDetail } from "@mastertutor/contracts";
 import { exportTooLarge, noteAssetIds, streamNoteArchive } from "@mastertutor/contracts/export";
 import { assets, type Database, folderPaths, listFolders, loadNoteDetail } from "@mastertutor/db";
-import type { Storage } from "@mastertutor/storage";
+import { createLogger } from "@mastertutor/contracts/server";
+import { ObjectNotFound, type Storage } from "@mastertutor/storage";
 import { and, eq, inArray } from "drizzle-orm";
 import { ServiceError } from "../service-error.ts";
 
 const EXPORT_LINK_TTL_SECONDS = 300;
+const log = createLogger({ service: "web" });
 
 interface ExportPlan {
   detail: NoteDetail;
@@ -55,7 +57,16 @@ export async function buildNoteExport(
   return streamNoteArchive({
     detail: plan.detail,
     folderPath,
-    assets: plan.assets.map((row) => ({ ...row, open: () => deps.storage.getStream(row.key) })),
+    assets: plan.assets.map((row) => ({
+      ...row,
+      // A missing object is linked as #missing-asset, never a failed export (QA-097).
+      open: () =>
+        deps.storage.getStream(row.key).catch((error: unknown) => {
+          if (!(error instanceof ObjectNotFound)) throw error;
+          log.warn({ noteId, assetId: row.id }, "export: asset object missing");
+          return null;
+        }),
+    })),
   });
 }
 

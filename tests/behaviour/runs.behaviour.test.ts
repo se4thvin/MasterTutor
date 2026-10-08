@@ -51,11 +51,17 @@ const scenario = (name: string, turns: MockTurn[]): string => {
 };
 const readInteractive: MockTurn = {
   outputs: [
-    { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+    {
+      type: "function",
+      name: "read_page",
+      args: { mode: "interactive", sinceHash: null, offset: null },
+    },
   ],
 };
 const readText: MockTurn = {
-  outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+  outputs: [
+    { type: "function", name: "read_page", args: { mode: "text", sinceHash: null, offset: null } },
+  ],
 };
 const clickNamed = (name: string): MockTurn => ({ outputs: [{ type: "click_named", name }] });
 const typeText = (text: string): MockTurn => ({
