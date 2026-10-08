@@ -71,10 +71,22 @@ rsync -az --delete \
 
 # Result folders are git-ignored or excluded from the sync, so --delete never touches them.
 fetch() { rsync -az "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
+# Baselines an explicit --update-snapshots (or -u) changed on the host (remote-test/snapshot.sh
+# publishes only those): the changed *.spec.ts-snapshots/*.png files, never committed here.
+fetch_baselines() {
+  rsync -az --prune-empty-dirs --out-format='remote-test: fetched baseline %n' \
+    --include='*/' --include='*.spec.ts-snapshots/*.png' --exclude='*' \
+    "$host:$remote_dir/apps/web/e2e/" "$root/apps/web/e2e/" >&2 ||
+    echo "remote-test: no baselines to fetch" >&2
+}
+wants_baselines() {
+  local arg
+  for arg in "$@"; do [[ "$arg" == -u || "$arg" == --update-snapshots* ]] && return 0; done
+  return 1
+}
 fetch_results() {
   case "$1" in
-    # ui also brings back visual baselines that an explicit --update-snapshots wrote (Task 8).
-    ui) fetch apps/web/playwright-report && fetch apps/web/test-results && fetch apps/web/e2e/visual.spec.ts-snapshots ;;
+    ui) fetch apps/web/playwright-report && fetch apps/web/test-results ;;
     e2e | qa) fetch apps/web/e2e/.out ;;
     bench-mock) fetch tests/bench/.out ;;
   esac
@@ -153,5 +165,6 @@ trap cancel INT TERM HUP
 status=0
 wait "$ssh_pid" || status=$?
 fetch_results "$suite"
+if [[ "$suite" == ui || "$suite" == e2e ]] && wants_baselines "$@"; then fetch_baselines; fi
 echo "remote-test: $suite exited $status after $((SECONDS - start))s" >&2
 exit "$status"
