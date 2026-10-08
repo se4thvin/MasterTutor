@@ -1,5 +1,6 @@
 import {
   encodeNotify,
+  TERMINAL_RUN_STATUSES,
   type ApprovalEdit,
   type ApprovalMode,
   type RunEvent,
@@ -15,7 +16,7 @@ import {
   settings,
   type DbHandle,
 } from "@mastertutor/db";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "../../packages/storage/src/index.ts";
 import { createOpenAIModelClient } from "../../apps/agent/src/llm/client.ts";
@@ -85,6 +86,12 @@ export async function startBehaviourAgent(
   const [existing] = await owner.db.select({ id: settings.workspaceId }).from(settings).limit(1);
   const workspaceId = existing?.id ?? (await seedWorkspace(owner.db));
   await owner.db.update(settings).set({ killSwitch: false });
+  // Runs an earlier file seeded and leased by hand (leaseSlotForTest) stay claimable, and a claim
+  // takes them before queued runs: this agent would spend its slots, and a restart each, on them.
+  await owner.db
+    .update(runs)
+    .set({ status: "cancelled", waitReason: null, controller: "agent", controlUserId: null })
+    .where(notInArray(runs.status, [...TERMINAL_RUN_STATUSES]));
   let agentDb = createDb(env.agentUrl);
   const make = () => {
     // One client per process, as in main.ts; tests point it at the mock.

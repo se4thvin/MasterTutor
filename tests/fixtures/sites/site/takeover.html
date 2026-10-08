@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Takeover fixture</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #ffffff;
+        font:
+          20px system-ui,
+          sans-serif;
+      }
+      /* A large centred block: the middle of the live video is always inside it. */
+      #block {
+        position: fixed;
+        inset: 15% 20%;
+        background: rgb(255, 0, 0);
+        color: #fff;
+        border: 0;
+      }
+      #block[data-on="1"] {
+        background: rgb(0, 220, 0);
+      }
+    </style>
+  </head>
+  <body>
+    <button id="block" type="button" aria-label="Toggle colour">Toggle</button>
+    <script>
+      const block = document.getElementById("block");
+      block.addEventListener("click", () => {
+        block.dataset.on = block.dataset.on === "1" ? "0" : "1";
+      });
+    </script>
+  </body>
+</html>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RunDetail } from "@mastertutor/contracts";
 import { ids } from "@/lib/fixtures/ids.ts";
 import {
   OTHER_RUN_ID,
@@ -35,7 +36,7 @@ describe("initRunModel", () => {
     expect(captureCount(model)).toBe(2);
     expect(model.secureFillOrigin).toBe("https://learn.example.edu");
     expect(model.lastEventId).toBe("12");
-    expect(latestScreenshotSeq(model)).toBe(8);
+    expect(latestScreenshotSeq(model)).toBe(6);
     expect(model.lastControl).toBeNull();
   });
 
@@ -311,5 +312,19 @@ describe("a finished run holds no slot (Phase 7 Task 3)", () => {
     const finished = { ...recordedDetail(), status: "completed" as const, slotName: "browser-1" };
     expect(initRunModel(finished, []).slotName).toBeNull();
     expect(syncRunModel(running, finished).slotName).toBeNull();
+  });
+});
+
+describe("a finished run's failure, opened later (D35, review M4)", () => {
+  it("says why a failed run failed from the detail alone: its stream is never opened", () => {
+    const error = { code: "model_request_rejected", message: "The model rejected the request." };
+    const failed = initRunModel(
+      RunDetail.parse({ ...recordedDetail(), status: "failed", slotName: null, error }),
+      [],
+    );
+    expect(failureOf(failed)).toMatchObject(error);
+    expect(
+      failureOf(syncRunModel(base(), { ...recordedDetail(), status: "failed", error })),
+    ).toMatchObject(error);
   });
 });

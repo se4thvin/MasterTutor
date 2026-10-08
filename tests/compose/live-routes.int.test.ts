@@ -70,6 +70,27 @@ describe("test file-provider live routers (spec §10.2.2)", () => {
     );
   });
 
+  it("rebuilds n.eko's server from pinned sources with the pion TCP-mux fix (I1), licences kept", () => {
+    const dockerfile = readFileSync(
+      new URL("../../apps/browser-slot/Dockerfile", import.meta.url),
+      "utf8",
+    );
+    expect(dockerfile).toMatch(/^FROM golang:[\w.-]+@sha256:[0-9a-f]{64} AS neko-server$/m);
+    // n.eko v3.1.6's tag commit, fetched by hash and checked.
+    expect(dockerfile).toContain(
+      'test "$(git rev-parse HEAD)" = 65fba485de2987998c7028b04240b21669d674e0',
+    );
+    expect(dockerfile).toContain("git apply /tmp/pion-ice-v4.2.2-tcp-mux-nat.patch");
+    expect(dockerfile).toContain("COPY --from=neko-server /neko /usr/bin/neko");
+    expect(dockerfile).toContain("/usr/share/doc/neko/LICENSE");
+    expect(dockerfile).toContain("/usr/share/doc/neko/pion-ice.LICENSE");
+    const patch = readFileSync(
+      new URL("../../apps/browser-slot/neko/pion-ice-v4.2.2-tcp-mux-nat.patch", import.meta.url),
+      "utf8",
+    );
+    expect(patch).toContain("TestTCPMux_InboundReachesAgentConnKeyedByAnotherLocalAddress");
+  });
+
   it("add the frame and sniffing guards to everything n.eko serves (S4)", () => {
     expect(dynamic).toContain(`contentSecurityPolicy: "frame-ancestors 'self'"`);
     expect(dynamic).toContain("contentTypeNosniff: true");

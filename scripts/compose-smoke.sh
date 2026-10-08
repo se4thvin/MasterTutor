@@ -11,12 +11,8 @@ cd "$(dirname "$0")/.."
 
 # shellcheck source=lib/test-stack.sh
 source scripts/lib/test-stack.sh
-env_test() { grep -E "^$1=" .env.test | cut -d= -f2; }
-# The shell's values win, as in Compose: the CI host gives each run its own TEST_HTTP_PORT
-# (scripts/remote-test/slots.sh) while the app's origin (PUBLIC_URL) stays the same.
-PORT="${TEST_HTTP_PORT:-$(env_test TEST_HTTP_PORT)}"
-BASE="http://localhost:${PORT:-18080}"
-ORIGIN="${PUBLIC_URL:-$(env_test PUBLIC_URL)}"
+# The app's origin: compose.test.yml sets BETTER_AUTH_URL from the same TEST_HTTP_PORT.
+BASE="$(stack_base_url)"
 
 take_stack_lock
 trap stop_stack EXIT
@@ -25,7 +21,7 @@ pass() { echo "ok - $*"; }
 psql_value() { "${DC[@]}" exec -T postgres psql -U owner -d mastertutor -tAc "$1"; }
 signup() {
   curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/sign-up/email" \
-    -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
+    -H 'Content-Type: application/json' -H "Origin: $BASE" \
     -d "{\"email\":\"$1\",\"password\":\"correct-horse-battery-staple\",\"name\":\"Smoke\"}"
 }
 
@@ -48,6 +44,8 @@ pass "web healthy through Traefik"
 
 [[ "$(signup owner@example.test)" == "200" ]] || fail "first sign-up"
 [[ "$(signup intruder@example.test)" == "403" ]] || fail "sign-up stayed open after the first user"
+# Closed sign-up answers a registered email exactly like an unknown one (no account enumeration).
+[[ "$(signup owner@example.test)" == "403" ]] || fail "closed sign-up told a registered email apart"
 [[ "$(psql_value "select role from workspace_members")" == "owner" ]] || fail "owner workspace not created"
 pass "Better Auth sign-up and workspace bootstrap"
 

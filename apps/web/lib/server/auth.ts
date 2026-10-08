@@ -12,7 +12,7 @@ import { createLogger } from "@mastertutor/contracts/server";
 import { eq } from "drizzle-orm";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { getDb } from "./db.ts";
 import { getWebEnv } from "./env.ts";
 
@@ -27,6 +27,8 @@ interface AuthDeps {
 
 const log = createLogger({ service: "web" });
 
+const SIGN_UP_CLOSED = () => new APIError("FORBIDDEN", { message: "Sign-up is closed" });
+
 /** v1 is one trusted workspace (D4): the first sign-up owns it; later sign-ups need AUTH_SIGNUP_OPEN. */
 export function createAuth({
   db,
@@ -35,6 +37,10 @@ export function createAuth({
   signupOpen,
   ensureMember = ensureWorkspaceMember,
 }: AuthDeps) {
+  /** The one sign-up gate: refuses once the workspace has its owner, unless sign-up is open. */
+  const refuseClosedSignUp = async () => {
+    if (!signupOpen && (await hasAnyUser(db))) throw SIGN_UP_CLOSED();
+  };
   return betterAuth({
     secret,
     baseURL,
@@ -44,14 +50,19 @@ export function createAuth({
       schema: { user, session, account, verification },
     }),
     emailAndPassword: { enabled: true, minPasswordLength: 12 },
+    hooks: {
+      // Refuse before Better Auth looks the email up or hashes the password: a registered email
+      // would otherwise get 422 (USER_ALREADY_EXISTS) and an unknown one a slower 403, which tells
+      // anyone which addresses have accounts.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path === "/sign-up/email") await refuseClosedSignUp();
+      }),
+    },
     databaseHooks: {
       user: {
         create: {
-          before: async () => {
-            if (!signupOpen && (await hasAnyUser(db))) {
-              throw new APIError("FORBIDDEN", { message: "Sign-up is closed" });
-            }
-          },
+          // Any other path that creates a user meets the same gate.
+          before: refuseClosedSignUp,
           // The check in `before` is only a fast path: two first sign-ups can both pass it.
           // The authoritative gate is ensureWorkspaceMember's advisory lock, which lets exactly
           // one user create the workspace; a loser is removed and refused.
@@ -69,7 +80,7 @@ export function createAuth({
                 );
               }
               if (error instanceof WorkspaceClosedError) {
-                throw new APIError("FORBIDDEN", { message: "Sign-up is closed" });
+                throw SIGN_UP_CLOSED();
               }
               throw error;
             }

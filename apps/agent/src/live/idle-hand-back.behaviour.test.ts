@@ -115,9 +115,13 @@ describe("15-minute idle hand-back, with a 1.5 s limit (spec §5.1)", () => {
     );
     expect(performance.now() - takenAt).toBeGreaterThanOrEqual(1_500);
     await waitForRun(agent, runId, (run) => run.controller === "agent", "agent holds again");
-    expect(
-      ((await admin.request(slot, "GET", "/api/room/control")) as { host_id?: string }).host_id,
-    ).toBe("agent");
+    // The row flips first; B1 then takes the n.eko host back (onAgentControl), so wait for it.
+    await waitFor(
+      async () =>
+        ((await admin.request(slot, "GET", "/api/room/control")) as { host_id?: string })
+          .host_id === "agent",
+      { label: "agent is n.eko host again" },
+    );
     await waitForRun(agent, runId, (run) => run.status === "completed", "completed");
   });
 });

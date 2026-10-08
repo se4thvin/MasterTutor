@@ -1,0 +1,6 @@
+# A test service hidden behind a profile on top of the production files (review I2): a check that
+# resolves without every profile would never see it.
+services:
+  model-sidecar:
+    profiles: ["bench"]
+    image: mastertutor/test-tools:local

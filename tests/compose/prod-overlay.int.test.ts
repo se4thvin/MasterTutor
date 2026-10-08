@@ -11,6 +11,7 @@ import {
 } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import { composeConfig, type ComposeService } from "./compose-json.ts";
+import { localPreflightProblems } from "../smoke/prod-smoke.ts";
 import { PROD_LIKE_LOCAL_FILES, prodModeProblems } from "./prod-mode.ts";
 
 const DOMAIN = "notes.example.org";
@@ -403,6 +404,19 @@ describe("the D47 bench stack", () => {
       expect(Object.keys(env(service)), name).not.toContain("WEB_FIXTURE_API");
     }
     expect(bench.services["llm-mock"]).toBeUndefined();
-    expect(prodModeProblems(bench)).toEqual([]);
+    // Its loopback Traefik is the one local exception (final review I1): accepted for the bench
+    // and smoke checks, refused by production's check-env.
+    expect(prodModeProblems(bench, { localIngress: true })).toEqual([]);
+    expect(prodModeProblems(bench)).toEqual(["service traefik: not a production service (D47)"]);
+  });
+
+  it("passes the local prod smoke's preflight (final review I1)", () => {
+    expect(
+      localPreflightProblems(".env.test", {
+        DOMAIN: "localhost",
+        TRAEFIK_ENTRYPOINT: "web",
+        TRAEFIK_TLS: "false",
+      }),
+    ).toEqual([]);
   });
 });
