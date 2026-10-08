@@ -21,9 +21,9 @@ activities in reading assignments 1–5, with **no takeover**, on both capabilit
    - A safety check that bypass or policy approves at once is logged `auto_approved (decided_by=bypass)` and listed in the record; it is never counted as a stop or used to classify a failure. Only a check the run waits on is a stop.
    - A bypass-approved `new_origin` is a breach and is reported (P10b-22).
 4. **One run, then STOP (D46).**
-   - The first zyBooks invocation runs EXACTLY ONE agent run (`login@browser_use`; `--once` is the default; `--retries 0`).
+   - The first zyBooks invocation is the full task, once (the user's D46 ruling): EXACTLY ONE agent run, `full@browser_use` (`--once` is the default; `--retries 0`). It signs in fresh through the vault, then finds reading assignments 1–5 and their sections itself and redoes every participation activity in them. No section list is supplied, and nothing runs before it. A read-only grading run follows it (rule 9); it is grading, not a second attempt.
    - The harness writes `orchestration/benchmarks/<YYYY-MM-DD>-zybooks-<NN>/record.md` (`NN` zero-padded) and exits. Nothing loops or retries automatically.
-   - Every later zyBooks invocation (survey, baseline, reading runs, the fix loop) needs `--continue-after-review <record>`. That record must be the newest one, and a human must have set `reviewed: true`, `reviewed_by: <name>` and `authorize: <N further invocations>` in its frontmatter.
+   - Every later zyBooks invocation (baseline, reading runs, the fix loop) needs `--continue-after-review <record>`. That record must be the newest one, and a human must have set `reviewed: true`, `reviewed_by: <name>` and `authorize: <N further invocations>` in its frontmatter.
    - Each invocation writes its own record.
    - **The durable ledger** `~/.mastertutor-bench/ledger.jsonl` (outside the repo and every stack volume, under an exclusive lock) records each real invocation as `running` before its first run starts, its spend at every checkpoint, and its end. Wiping the bench stack resets nothing.
      - Any earlier zyBooks entry refuses a new zyBooks invocation without `--continue-after-review`.
@@ -39,8 +39,8 @@ activities in reading assignments 1–5, with **no takeover**, on both capabilit
    - `signed_in` is graded on the main run's trace.
    - Never grant a lasting zyBooks sign-in during benchmarks.
 7. **Baseline (D32).**
-   - Readings 1–5 are already complete on the account; reading runs redo them.
-   - Run `pnpm bench baseline` (verify runs only) before the first reading run.
+   - Readings 1–5 are already complete on the account; the runs redo them, and the main run must have worked on every activity of every section it is graded on.
+   - Run 1 has no baseline run (one full-task run, D46). Later single-reading runs do: run `pnpm bench baseline` (grading runs only) before the first of them.
    - Reading runs pass `--reuse-baseline`. An attempt then skips its own baseline verify run when a record from the same UTC day lists its spec name in `baselines_passed`, and its record cites that record in `baseline_from` (P10b-21).
    - Otherwise the attempt runs its own baseline verify run first. If the page does not show completion, the attempt is recorded as `error` (`BaselineIncomplete`).
    - Only the user may authorise `--allow-incomplete-baseline`.
@@ -48,10 +48,12 @@ activities in reading assignments 1–5, with **no takeover**, on both capabilit
    - Fixes land in generic product code.
    - `tests/bench/src/no-site-hacks.test.ts` fails on any site or consent-vendor name in product source, `compose*.yml`, `infra/` or non-bench `scripts/`.
    - The only site-adjacent behaviour allowed in product code is **generic cookie/consent-banner dismissal**, by role and accessible name, with no vendor or site selectors.
-   - Prompts, patterns and section lists live only in `tests/bench/` and `orchestration/benchmarks/zybooks/`.
+   - Prompts and discovery patterns live only in `tests/bench/`.
 9. **Grading.**
-   - Grades come only from `read_page` tool output recorded by the agent: in a separate verify run for readings and for `login@computer_use`, or in the single run for `login@browser_use`. Never from the model's claims.
-   - A section passes when its completion count (per single result) is at least its activity count, and the main run clicked, typed, dragged or pressed keys on it at least once per activity.
+   - Grades come only from `read_page` tool output recorded by the agent, never from the model's claims: from a separate grading (verify) run for `full` and the readings, or from the single run for `login`.
+   - The grading run discovers the reading assignments and their sections itself: from the read_page output, the harness takes each reading's entry and the section links listed under it or on its page (patterns in `tests/bench/src/suites/zybooks.ts`).
+   - The record lists every section: reading, URL, outcome and why. A section passes when one single read_page result shows its completion count at least its activity count, and the main run clicked, typed, dragged or pressed keys on it at least once per activity.
+   - A section the grading run never read, or where no activity was found, is `unknown`; `unknown` never passes. So is a reading it could not find. Any non-passing section keeps the outcome below `passed`.
    - Verify (grading) runs are read-only: they may click, type or press keys only on the sign-in page (`VerifySpec.signInUrl`). Any other page input, including one action hidden in a batch, taints the run (`error`).
    - Opening a URL through the address bar (CTRL+L, the URL, ENTER that lands on that URL) and back, forward and reload are navigation, not input. An address-bar sequence that never lands on its URL counts as input.
    - Any takeover caps the outcome at `partial`.
@@ -63,10 +65,11 @@ activities in reading assignments 1–5, with **no takeover**, on both capabilit
 | Benchmark | Steps | USD (cap per run) | Active min |
 |---|---|---|---|
 | fixtures/activities (real) | 80 | 3 | 20 |
+| zybooks/full (run 1) | 3000 | 50 | 600 |
+| its grading run | 400 | 10 | 90 |
 | zybooks/login | 40 | 2 | 10 |
-| zybooks/survey | 120 | 6 | 30 |
 | zybooks/reading-N | 900 | 50 | 180 |
-| verify / baseline runs | 30–100 | 2–4 | 10–30 |
+| reading grading / baseline runs | 60–150 | 1–4 | 10–30 |
 
 - The harness clamps every run to min(spec, `--max-run-usd`, what is left of $500).
 - Budget hits: the fixtures suite finishes the run at once; a zyBooks budget pause waits for a person (the harness never decides it), and the human-wait timeout (20 min) then ends the run.
@@ -74,13 +77,11 @@ activities in reading assignments 1–5, with **no takeover**, on both capabilit
 
 ## Order of work
 1. T22A smoke passed (`bash scripts/bench-local.sh smoke`).
-2. **Run 1 (T25):** `login@browser_use`, then the record, then STOP. User review.
-3. **After review (T25B), each step one reviewed invocation:**
-   - `login@computer_use`;
-   - `survey`, then the orchestrator authors `orchestration/benchmarks/zybooks/sections.json` (never pasting raw page text, which contains the user's name);
-   - `baseline`;
-   - readings one at a time, `browser_use` then `computer_use`;
-   - the final full run.
+2. **Run 1 (T25):** `full@browser_use`, the full task once (sign in, then readings 1–5), then its grading run, the record, then STOP. User review.
+3. **After review (T25B), each step one reviewed invocation, as the review decides:**
+   - fixes for the tickets run 1 raised, each re-run as one reviewed invocation;
+   - `full@computer_use`, or single readings (`baseline`, then `reading-N` on each track) where a reading needs work on its own;
+   - the final full run on both tracks.
 
 ## Watching a live run
 - Start the harness with `run_in_background` and follow its log with Monitor.
