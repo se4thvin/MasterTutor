@@ -720,7 +720,7 @@ export class RunLoop {
       }
       let previous: TargetDescription | null = null;
       for (const [index, action] of call.actions.entries()) {
-        const target = await this.#deps.browser.targetFor(action, previous);
+        const target = await this.#deps.browser.targetFor(action, previous, signal);
         if (action.type === "click" || action.type === "double_click") previous = target;
         const need = needsApproval(action, target);
         if (need)
@@ -905,7 +905,7 @@ export class RunLoop {
           refusals.push(`Action ${index + 1} (${action.type}): ${decision.note ?? DENIED}`);
           return false;
         }
-        const target = await this.#deps.browser.targetFor(action, null);
+        const target = await this.#deps.browser.targetFor(action, null, signal);
         const need = needsApproval(action, target);
         // An approval covers what was approved, not the batch index: the same kind and label on
         // the same element (M10), and on the same record: an approval for Alice's row never

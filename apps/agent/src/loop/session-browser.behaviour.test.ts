@@ -96,6 +96,7 @@ describe("SessionLoopBrowser", () => {
     const target = await browser.targetFor(
       { type: "click", x: del.point.x, y: del.point.y, button: "left" },
       null,
+      signal,
     );
     expect(target?.label).toBe("Delete account");
     expect(
@@ -116,7 +117,7 @@ describe("SessionLoopBrowser", () => {
     await browser.navigate(`${SITE}/form-post.html`, signal);
     const reload = { type: "keypress" as const, keys: ["F5"] };
     const back = { type: "keypress" as const, keys: ["ALT", "ARROWLEFT"] };
-    expect(needsApproval(reload, await browser.targetFor(reload, null))).toBeNull();
+    expect(needsApproval(reload, await browser.targetFor(reload, null, signal))).toBeNull();
     await browser.observe(signal);
     const run = await browser.runComputer(
       [{ type: "click", x: 100, y: 90, button: "left" }],
@@ -126,14 +127,18 @@ describe("SessionLoopBrowser", () => {
     expect(run.executed).toBe(1);
     expect((await browser.observe(signal)).title).toBe("Order placed");
     // Reloading the POST result would send the order again.
-    expect(needsApproval(reload, await browser.targetFor(reload, null))?.kind).toBe("form_submit");
+    expect(needsApproval(reload, await browser.targetFor(reload, null, signal))?.kind).toBe(
+      "form_submit",
+    );
     // Going back lands on the plain form page: no resubmission.
-    expect(needsApproval(back, await browser.targetFor(back, null))).toBeNull();
+    expect(needsApproval(back, await browser.targetFor(back, null, signal))).toBeNull();
     await browser.navigate(`${SITE}/index.html`, signal);
     // Going back onto the POST result would resubmit it too.
-    expect(needsApproval(back, await browser.targetFor(back, null))?.kind).toBe("form_submit");
+    expect(needsApproval(back, await browser.targetFor(back, null, signal))?.kind).toBe(
+      "form_submit",
+    );
     const mouseBack = { type: "click" as const, x: 10, y: 10, button: "back" as const };
-    expect(needsApproval(mouseBack, await browser.targetFor(mouseBack, null))?.kind).toBe(
+    expect(needsApproval(mouseBack, await browser.targetFor(mouseBack, null, signal))?.kind).toBe(
       "form_submit",
     );
   });
@@ -149,7 +154,7 @@ describe("SessionLoopBrowser", () => {
     const paths: string[] = [];
     for (const frame of frames) {
       const click = { type: "click" as const, x: 140, y: frame.top + 40, button: "left" as const };
-      const target = await browser.targetFor(click, null);
+      const target = await browser.targetFor(click, null, signal);
       expect(target).toMatchObject({ label: "Delete account", tag: "button" });
       // The path names the frame element and its origin before the element inside it.
       expect(target!.path).toMatch(/iframe(:\d+)?@/);
@@ -160,7 +165,7 @@ describe("SessionLoopBrowser", () => {
       await browser.runComputer([click], signal, async () => true);
       for (const keys of [["ENTER"], ["SPACE"]]) {
         const key = { type: "keypress" as const, keys };
-        const focused = await browser.targetFor(key, null);
+        const focused = await browser.targetFor(key, null, signal);
         expect(focused).toMatchObject({ label: "Delete account" });
         expect(needsApproval(key, focused)?.kind).toBe("risky_click");
       }
@@ -179,7 +184,9 @@ describe("SessionLoopBrowser", () => {
       y: 10 * 2 + 30,
       button: "left" as const,
     };
-    expect(await browser.targetFor(reachable, null)).toMatchObject({ label: "Delete account" });
+    expect(await browser.targetFor(reachable, null, signal)).toMatchObject({
+      label: "Delete account",
+    });
     await browser.navigate(`${SITE}/nest.html?d=6`, signal);
     await browser.observe(signal);
     const deep = {
@@ -188,7 +195,7 @@ describe("SessionLoopBrowser", () => {
       y: 10 * 6 + 30,
       button: "left" as const,
     };
-    const target = await browser.targetFor(deep, null);
+    const target = await browser.targetFor(deep, null, signal);
     expect(target).toMatchObject({ opaqueFrame: true });
     expect(needsApproval(deep, target)?.kind).toBe("form_submit");
   });
@@ -207,7 +214,7 @@ describe("SessionLoopBrowser", () => {
     );
     for (const keys of [["SPACE"], ["SHIFT", "SPACE"], ["CTRL", "SPACE"], ["ALT", "SPACE"]]) {
       const key = { type: "keypress" as const, keys };
-      const target = await browser.targetFor(key, null);
+      const target = await browser.targetFor(key, null, signal);
       expect(target).toMatchObject({
         label: "Save",
         tag: "button",
@@ -223,7 +230,7 @@ describe("SessionLoopBrowser", () => {
     await browser.navigate(`${SITE}/record.html`, signal);
     const before = await browser.observe(signal);
     const click = { type: "click" as const, x: 100, y: 120, button: "left" as const };
-    const alice = await browser.targetFor(click, null);
+    const alice = await browser.targetFor(click, null, signal);
     expect(alice).toMatchObject({ label: "Delete" });
     const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
     const page = remote
@@ -234,12 +241,12 @@ describe("SessionLoopBrowser", () => {
     await page.evaluate(() => {
       document.querySelector("time")!.textContent = "12:01";
     });
-    expect((await browser.targetFor(click, null))?.context).toBe(alice!.context);
+    expect((await browser.targetFor(click, null, signal))?.context).toBe(alice!.context);
     await page.evaluate(() => {
       document.getElementById("record")!.textContent = "Bobby";
     });
     const after = await browser.observe(signal);
-    const bobby = await browser.targetFor(click, null);
+    const bobby = await browser.targetFor(click, null, signal);
     await remote.close();
     expect(after.domHash).toBe(before.domHash);
     expect(bobby!.path).toBe(alice!.path);
@@ -254,7 +261,7 @@ describe("SessionLoopBrowser", () => {
     // Outer (98,108) lands on "Delete account" (inner ~101,121); an unscaled mapping would read
     // "Cancel" (inner ~50,60).
     const click = { type: "click" as const, x: 98, y: 108, button: "left" as const };
-    const target = await browser.targetFor(click, null);
+    const target = await browser.targetFor(click, null, signal);
     expect(target).toMatchObject({ label: "Delete account" });
     expect(needsApproval(click, target)?.kind).toBe("risky_click");
   });
@@ -264,7 +271,7 @@ describe("SessionLoopBrowser", () => {
     await browser.navigate(`${SITE}/object-frame.html`, signal);
     await browser.observe(signal);
     const click = { type: "click" as const, x: 140, y: 80, button: "left" as const };
-    const target = await browser.targetFor(click, null);
+    const target = await browser.targetFor(click, null, signal);
     expect(target?.tag).not.toBe("object");
     expect(needsApproval(click, target)).not.toBeNull();
   });
@@ -279,10 +286,14 @@ describe("SessionLoopBrowser", () => {
       async () => true,
     );
     const typed = { type: "type" as const, text: "hello\r" };
-    expect(needsApproval(typed, await browser.targetFor(typed, null))?.kind).toBe("form_submit");
+    expect(needsApproval(typed, await browser.targetFor(typed, null, signal))?.kind).toBe(
+      "form_submit",
+    );
     for (const keys of [["\r"], ["NumpadEnter"]]) {
       const key = { type: "keypress" as const, keys };
-      expect(needsApproval(key, await browser.targetFor(key, null))?.kind).toBe("form_submit");
+      expect(needsApproval(key, await browser.targetFor(key, null, signal))?.kind).toBe(
+        "form_submit",
+      );
     }
     // What the gate prevents: "\r" is Enter to the browser and sends the form.
     await browser.runComputer([typed], signal, async () => true);
@@ -309,9 +320,9 @@ describe("SessionLoopBrowser", () => {
       ...point,
       button: "left" as const,
     });
-    const row1 = (await browser.targetFor(at(first!.point!), null))!.context;
-    expect((await browser.targetFor(at(first!.point!), null))!.context).toBe(row1);
-    expect((await browser.targetFor(at(second!.point!), null))!.context).not.toBe(row1);
+    const row1 = (await browser.targetFor(at(first!.point!), null, signal))!.context;
+    expect((await browser.targetFor(at(first!.point!), null, signal))!.context).toBe(row1);
+    expect((await browser.targetFor(at(second!.point!), null, signal))!.context).not.toBe(row1);
     const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
     const page = remote
       .contexts()[0]!
@@ -322,13 +333,13 @@ describe("SessionLoopBrowser", () => {
       document.getElementById("name-900")!.textContent = "Somebody else";
     });
     // Text outside the row does not move its context...
-    expect((await browser.targetFor(at(first!.point!), null))!.context).toBe(row1);
+    expect((await browser.targetFor(at(first!.point!), null, signal))!.context).toBe(row1);
     await page.evaluate(() => {
       document.getElementById("name-1")!.textContent = "Bobby";
     });
     await remote.close();
     // ...the row's own record does.
-    expect((await browser.targetFor(at(first!.point!), null))!.context).not.toBe(row1);
+    expect((await browser.targetFor(at(first!.point!), null, signal))!.context).not.toBe(row1);
   });
 
   // Every frame is mapped through its real geometry, level by level (fix round 4). Ground truth is a
@@ -438,7 +449,7 @@ describe("SessionLoopBrowser", () => {
               };
               const at = `${variant} ${id} at ${point.x},${point.y}`;
               const click = { type: "click" as const, ...point, button: "left" as const };
-              const target = await browser.targetFor(click, null);
+              const target = await browser.targetFor(click, null, signal);
               expect(await realHit(point.x, point.y), at).toBe(id);
               const need = needsApproval(click, target);
               if (id === "delete") expect(need, at).not.toBeNull();
@@ -460,7 +471,7 @@ describe("SessionLoopBrowser", () => {
     await browser.navigate(`${SITE}/button-to.html`, signal);
     await browser.observe(signal);
     const click = { type: "click" as const, x: 100, y: 120, button: "left" as const };
-    const alice = await browser.targetFor(click, null);
+    const alice = await browser.targetFor(click, null, signal);
     expect(alice).toMatchObject({ label: "Delete" });
     const remote = await chromium.connectOverCDP(SLOT_CDP["browser-1"]!);
     const page = remote
@@ -471,7 +482,7 @@ describe("SessionLoopBrowser", () => {
       document.getElementById("record")!.textContent = "Bobby";
     });
     await remote.close();
-    expect((await browser.targetFor(click, null))!.context).not.toBe(alice!.context);
+    expect((await browser.targetFor(click, null, signal))!.context).not.toBe(alice!.context);
   });
 
   it("redacts registered secrets from the page title, read_page and the record excerpt (M13, A3a)", async () => {
@@ -495,7 +506,11 @@ describe("SessionLoopBrowser", () => {
     );
     expect(output).not.toContain("Alice");
     expect(output).toContain(SECRET_REDACTION);
-    const target = await browser.targetFor({ type: "click", x: 100, y: 120, button: "left" }, null);
+    const target = await browser.targetFor(
+      { type: "click", x: 100, y: 120, button: "left" },
+      null,
+      signal,
+    );
     expect(target?.label).toBe("Delete");
     expect(target?.excerpt).toContain(SECRET_REDACTION);
     expect(target?.excerpt).not.toContain("Alice");
@@ -520,7 +535,7 @@ describe("SessionLoopBrowser", () => {
     await browser.observe(signal);
     const exportTable = { type: "click", x: 80, y: 140, button: "left" } as const;
     const gate = async () => ({
-      target: await browser.targetFor(exportTable, null),
+      target: await browser.targetFor(exportTable, null, signal),
       personApproved: false,
     });
     await browser.runComputer([exportTable], signal, gate);
