@@ -79,7 +79,11 @@ suite_args=()
 case "$suite" in
   unit | integration | security | behaviour)
     suite_args=(--project "$suite" --maxWorkers="$cpus" "$@") ;;
-  ui | e2e | qa)
+  ui)
+    # One next start serves every worker: Playwright's default (half of 88 cores) overloads it and
+    # turns timing into failures; 8 runs as fast (measured, D48). A --workers arg overrides it.
+    suite_args=(--workers=8 "$@") ;;
+  e2e | qa)
     suite_args=("$@") ;;
   web-build | agent-image | smoke | bench-mock)
     [[ $# -eq 0 ]] || die "$suite takes no extra arguments" ;;
