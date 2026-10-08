@@ -26,7 +26,24 @@ test.describe("at 1440 (hero checks run once)", () => {
   test("reduced motion keeps the poster and never downloads three", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     const hits = threeLoads(page);
+    await page.goto("/new?hero=live");
+    await page.waitForTimeout(2_500);
+    await expect(page.locator("[data-hero]")).not.toHaveAttribute("data-live", "");
+    expect(hits).toEqual([]);
+  });
+
+  // D49: this runner draws WebGL with SwiftShader (no GPU), which is exactly the software case.
+  // Every other test here asks for the live hero (?hero=live) so that it still exercises it.
+  test("software WebGL keeps the poster and never downloads three (D49)", async ({ page }) => {
+    const hits = threeLoads(page);
     await page.goto("/new");
+    await expect(page.locator("[data-hero]")).toBeAttached();
+    const renderer = await page.evaluate(() => {
+      const gl = document.createElement("canvas").getContext("webgl2");
+      const info = gl?.getExtension("WEBGL_debug_renderer_info");
+      return info ? String(gl!.getParameter(info.UNMASKED_RENDERER_WEBGL)) : null;
+    });
+    expect(renderer, "this check needs a software renderer").toMatch(/swiftshader|llvmpipe/i);
     await page.waitForTimeout(2_500);
     await expect(page.locator("[data-hero]")).not.toHaveAttribute("data-live", "");
     expect(hits).toEqual([]);
@@ -44,20 +61,20 @@ test.describe("at 1440 (hero checks run once)", () => {
       Object.defineProperty(navigator, "connection", { value: { saveData: true } });
     });
     const hits = threeLoads(page);
-    await page.goto("/new");
+    await page.goto("/new?hero=live");
     await page.waitForTimeout(2_500);
     expect(hits).toEqual([]);
   });
 
   test("loads three lazily and crossfades to the live scene", async ({ page }) => {
     const hits = threeLoads(page);
-    await page.goto("/new?debug");
+    await page.goto("/new?hero=live&debug");
     await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
     expect(hits.length).toBeGreaterThan(0);
   });
 
   test("hero:start plays the capture and emits hero:captured", async ({ page }) => {
-    await page.goto("/new?debug");
+    await page.goto("/new?hero=live&debug");
     await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
     const captured = await page.evaluate(
       () =>
@@ -71,7 +88,7 @@ test.describe("at 1440 (hero checks run once)", () => {
   });
 
   test("Start waits for the capture before opening the run", async ({ page }) => {
-    await page.goto("/new");
+    await page.goto("/new?hero=live");
     await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
     await page.getByLabel("Describe the task").fill("Capture example.com");
     await page.getByRole("button", { name: "Add domain" }).click();
@@ -95,14 +112,14 @@ test.describe("at 1440 (hero checks run once)", () => {
       };
     });
     const hits = threeLoads(page);
-    await page.goto("/new");
+    await page.goto("/new?hero=live");
     await page.waitForTimeout(2_500);
     await expect(page.locator("[data-hero]")).not.toHaveAttribute("data-live", "");
     expect(hits).toEqual([]);
   });
 
   test("an idle hero drops its frame rate, and wakes on input (final I3)", async ({ page }) => {
-    await page.goto("/new?debug");
+    await page.goto("/new?hero=live&debug");
     await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
     await expect.poll(async () => (await heroStats(page))?.idle, { timeout: 10_000 }).toBe(true);
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("hero:type")));
@@ -111,7 +128,7 @@ test.describe("at 1440 (hero checks run once)", () => {
 
   test("only a theme change rebuilds the studio lighting (final M7)", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
-    await page.goto("/new?debug");
+    await page.goto("/new?hero=live&debug");
     await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
     expect((await heroStats(page))?.studios).toBe(1);
     await page.evaluate(() => document.documentElement.classList.add("unrelated-class"));
@@ -129,7 +146,7 @@ test("turning reduced motion off never loads a hero that is offscreen (final M6)
   test.skip(page.viewportSize()?.width !== 390, "phone width only");
   await page.emulateMedia({ reducedMotion: "reduce" });
   const hits = threeLoads(page);
-  await page.goto("/new");
+  await page.goto("/new?hero=live");
   await expect(page.locator("[data-hero]")).toBeAttached();
   await page.waitForTimeout(1_000);
   await page.locator("#main").evaluate((main) => main.scrollTo({ top: main.scrollHeight }));
@@ -141,7 +158,7 @@ test("turning reduced motion off never loads a hero that is offscreen (final M6)
 
 test("pauses rendering offscreen", async ({ page }) => {
   test.skip(page.viewportSize()?.width !== 390, "phone width only");
-  await page.goto("/new?debug");
+  await page.goto("/new?hero=live&debug");
   await expect(page.locator("[data-hero]")).toHaveAttribute("data-live", "", { timeout: 15_000 });
   // The shell scrolls #main, not the window.
   await page.locator("#main").evaluate((main) => main.scrollTo({ top: main.scrollHeight }));

@@ -4,7 +4,12 @@ import { useEffect, useRef } from "react";
 import { durations } from "@/lib/motion-tokens.ts";
 import { whenIdle } from "@/lib/when-idle.ts";
 import { HERO_EVENTS } from "./hero-events.ts";
-import { CONTEXT_ATTRIBUTES, shouldLoad3D, type HeroEnvironment } from "./hero-gate.ts";
+import {
+  CONTEXT_ATTRIBUTES,
+  isSoftwareGL,
+  shouldLoad3D,
+  type HeroEnvironment,
+} from "./hero-gate.ts";
 import { PosterArt } from "./hero-poster.tsx";
 
 interface HeroInstance {
@@ -15,10 +20,15 @@ type HintedNavigator = Navigator & { connection?: { saveData?: boolean }; device
 
 /**
  * A WebGL2 constructor does not prove a context can be made (a blocklisted GPU): ask the hero's
- * own canvas before downloading three (final M2). The scene later gets this same context.
+ * own canvas before downloading three (final M2), and whether it draws on the CPU (D49). The scene
+ * later gets this same context.
  */
-const canMakeContext = (el: HTMLElement) =>
-  el.querySelector("canvas")?.getContext("webgl2", CONTEXT_ATTRIBUTES) != null;
+function probeContext(el: HTMLElement): Pick<HeroEnvironment, "hasWebGL2" | "softwareGL"> {
+  const gl = el.querySelector("canvas")?.getContext("webgl2", CONTEXT_ATTRIBUTES);
+  return gl
+    ? { hasWebGL2: true, softwareGL: isSoftwareGL(gl) }
+    : { hasWebGL2: false, softwareGL: false };
+}
 
 function environment(
   el: HTMLElement,
@@ -29,12 +39,14 @@ function environment(
   const cheap: HeroEnvironment = {
     reducedMotion: reduce.matches,
     hasWebGL2: true,
+    softwareGL: false,
     forcePoster: params.get("hero") === "poster",
+    forceLive: params.get("hero") === "live",
     saveData: nav.connection?.saveData === true,
     lowMemory: nav.deviceMemory !== undefined && nav.deviceMemory < 4,
   };
   // The context is the costly check: only made when nothing else already keeps the poster.
-  return shouldLoad3D(cheap) ? { ...cheap, hasWebGL2: canMakeContext(el) } : cheap;
+  return shouldLoad3D(cheap) ? { ...cheap, ...probeContext(el) } : cheap;
 }
 
 /** CSS poster first; the 3D scene is imported only near the viewport, when idle (spec §11.2). */
