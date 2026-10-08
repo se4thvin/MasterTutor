@@ -83,6 +83,8 @@ export const O2_TEMPLATE_RULE_VARIABLE = "{alert_name}";
  */
 export const O2_FIELDS = {
   timestamp: "_timestamp",
+  /** The OTel resource's service.name, on logs and traces. */
+  serviceName: "service_name",
   logSeverity: "severity",
   logBody: "body",
   traceId: "trace_id",
