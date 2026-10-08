@@ -163,8 +163,9 @@ case "$suite" in
     command="$install && exec pnpm --filter @mastertutor/web test:ui \"\$@\"" ;;
   agent-image)
     command="AGENT_IMAGE_TAG=mt-ci-agent-image-check:$project exec bash scripts/check-agent-image.sh" ;;
+  # After the specs, e2e's canary scan (tests/security/stack-canary.ts) runs workspace code in Node.
   e2e)
-    command='exec bash scripts/e2e.sh "$@"' ;;
+    command="$install && exec bash scripts/e2e.sh \"\$@\"" ;;
   smoke)
     # The compose smoke, then the Dokploy-format backup/restore drill (its own project, CI labels,
     # no fixed ports or subnet). Nothing may follow an exec (tests/deploy/drill.int.test.ts).
