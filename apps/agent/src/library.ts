@@ -14,6 +14,7 @@ import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
 import { isTimedtextUrl } from "./video/captions.ts";
 import { createTranscriber, type Transcriber } from "./video/transcriber.ts";
+import { createVideoTool } from "./video/video-tool.ts";
 
 export interface LibraryDeps {
   db: Database;
@@ -54,7 +55,11 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 /** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through composeRunHooks. */
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
   return {
-    functionTools: [register(createCaptureTool(services)), register(createAnnotateTool(services))],
+    functionTools: [
+      register(createCaptureTool(services)),
+      register(createAnnotateTool(services)),
+      register(createVideoTool(services)),
+    ],
     // Caption tracks the player fetched stay readable for the video tool (preflight Q5).
     responseLog: isTimedtextUrl,
     async onComplete({ run, log, step }) {
