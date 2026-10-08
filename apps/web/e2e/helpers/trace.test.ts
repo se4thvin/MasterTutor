@@ -27,9 +27,13 @@ const laidOut = (ts: number, nodeId: number, reason = "Style changed") =>
 
 /** Nodes 7 and 8 animate, in their own layer owned by 7 (ISOLATE); 1 is #document; 99 is elsewhere. */
 const SCOPE: MotionScope = { nodes: new Set([7, 8]), glass: new Set() };
+/** The motion's first frame (7 starts moving), which mounts and promotes and is never counted. */
+const start = (): TraceEvent[] => [styled(6_000, 7), paint(6_100, 7), laidOut(6_200, 7)];
 const window = (...events: TraceEvent[]) => [
   mark(MOTION_MARKS.ready, 0),
   mark(MOTION_MARKS.triggered, 5_000),
+  ...start(),
+  frame(7_000),
   ...events,
   mark(MOTION_MARKS.end, 200_000),
 ];
@@ -37,7 +41,7 @@ const window = (...events: TraceEvent[]) => [
 describe("analyzeTrace (D28, P8-28, I6)", () => {
   it("counts frames and long frames between the ready and end marks", () => {
     const v = analyzeTrace(window(...[10_000, 26_600, 43_200, 70_000, 86_600].map(frame)), SCOPE);
-    expect(v).toMatchObject({ frames: 5, longFrames: 1 });
+    expect(v).toMatchObject({ frames: 6, longFrames: 1 });
     expect(v.worstFrameMs).toBeCloseTo(26.8, 1);
   });
 
@@ -106,13 +110,49 @@ describe("analyzeTrace (D28, P8-28, I6)", () => {
         laidOut(61_000, 7), // the trigger's own frame, however late a busy host produces it
         frame(76_600),
         mark(MOTION_MARKS.triggered, 77_000),
-        laidOut(80_000, 7), // the motion
+        laidOut(80_000, 7), // the motion's first frame: it starts here, not counted
         frame(93_200),
+        laidOut(95_000, 7), // the motion
+        frame(109_800),
         mark(MOTION_MARKS.end, 200_000),
       ],
       SCOPE,
     );
-    expect(v).toMatchObject({ frames: 5, layouts: 1 });
+    expect(v).toMatchObject({ frames: 6, layouts: 1 });
+  });
+
+  it("starts counting on the frame after the motion's first, however late that frame comes", () => {
+    const late = (startAt: number) =>
+      analyzeTrace(
+        [
+          mark(MOTION_MARKS.ready, 0),
+          mark(MOTION_MARKS.triggered, 5_000),
+          frame(10_000),
+          frame(60_000), // a busy host: frames come late, the async trigger applies later still
+          styled(70_000, 7),
+          paint(70_100, 7), // first frame: mounts and first-paints, never counted
+          frame(startAt),
+          styled(startAt + 1_000, 7),
+          frame(startAt + 16_600),
+          mark(MOTION_MARKS.end, 400_000),
+        ],
+        SCOPE,
+      );
+    expect(late(80_000)).toMatchObject({ paints: 0, layouts: 0 });
+    expect(late(300_000)).toMatchObject({ paints: 0, layouts: 0 });
+  });
+
+  it("does not count a paint in a frame where scoped content entered", () => {
+    const v = analyzeTrace(
+      window(
+        styled(20_000, 7),
+        laidOut(20_100, 8, "Added to layout"), // a new digit
+        paint(20_200, 7),
+        frame(21_000),
+      ),
+      SCOPE,
+    );
+    expect(v.paints).toBe(0);
   });
 
   describe("frosted-glass panels (D49)", () => {
@@ -157,7 +197,7 @@ describe("analyzeTrace (D28, P8-28, I6)", () => {
       [frame(-5), laidOut(-4, 7), ...window(), frame(300_000), laidOut(299_000, 7)],
       SCOPE,
     );
-    expect(v).toMatchObject({ frames: 0, paints: 0, layouts: 0 });
+    expect(v).toMatchObject({ frames: 1, paints: 0, layouts: 0 });
   });
 
   it("refuses a trace without its marks (a harness error, not a pass)", () => {

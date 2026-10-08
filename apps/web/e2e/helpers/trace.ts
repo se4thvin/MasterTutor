@@ -68,15 +68,18 @@ const CONTENT_REASONS = new Set([
 /**
  * Spec §12 / D28: no frame over 16.7 ms, and no layout or paint caused by motion inside the
  * animated subtree. Frames count from the ready mark, stamped before the trigger. Layout and paint
- * count frames from the triggered mark to the end mark (I6). traceMotion stamps the triggered mark
- * from the second requestAnimationFrame after the trigger, so the trigger's own frame (its hover,
- * press or content change) is behind it however long the host takes to produce frames:
+ * count the motion's frames, from the frame after the first one where a scoped element moves to
+ * the end mark (I6). That first frame mounts, promotes and first-paints what moves, and is not
+ * counted. traceMotion stamps the triggered mark from the second requestAnimationFrame after the
+ * trigger, so the trigger's own frame (its hover, press or content change) is behind the window,
+ * and the window is found by what moves, not by wall time, so a slow host only shifts it:
  * - a layout frame has a layout invalidation on a scoped element (invalidation tracking names the
  *   element even when the relayout's root is the document);
  * - a paint frame has a style or layout invalidation on a scoped element and a Paint of the
  *   subtree's own layer (ISOLATE). Chromium emits no Paint for transform or opacity changes, so
  *   compositor-only motion counts zero.
- * Content entering or leaving the page is not motion and does not count. A frame where only
+ * Content entering or leaving the page is not motion and does not count, nor does a paint in a
+ * frame where scoped content entered (a new digit, a new caption). A frame where only
  * frosted-glass panels painted counts against each panel's GLASS_PAINT_FRAMES instead.
  */
 export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope): MotionVerdict {
@@ -104,6 +107,10 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
   const node = (e: TraceEvent) => e.args?.data?.nodeId;
   const motion = (e: TraceEvent) =>
     scope.nodes.has(node(e) ?? -1) && !CONTENT_REASONS.has(e.args?.data?.reason ?? "");
+  const content = (e: TraceEvent) =>
+    scope.nodes.has(node(e) ?? -1) && CONTENT_REASONS.has(e.args?.data?.reason ?? "");
+  // A frame where content enters the subtree (a new digit, a new caption) paints it: not motion.
+  const contentFrames = new Set<number>();
   const layoutFrames = new Set<number>();
   const changedFrames = new Set<number>();
   const painted = new Map<number, Set<number>>(); // frame -> the scoped layers that painted
@@ -111,15 +118,22 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
     if (e.ts < triggered || e.ts > end) continue;
     const at = frameOf(e.ts);
     if ((e.name === LAYOUT_CHANGE || e.name === STYLE_CHANGE) && motion(e)) changedFrames.add(at);
+    if (e.name === LAYOUT_CHANGE && content(e)) contentFrames.add(at);
     if (e.name === LAYOUT_CHANGE && motion(e)) layoutFrames.add(at);
     const layer = node(e) ?? -1;
     if (e.name === "Paint" && scope.nodes.has(layer))
       painted.set(at, (painted.get(at) ?? new Set()).add(layer));
   }
+  // The motion's own window: it starts on the first frame a scoped element moves, which also
+  // mounts, promotes and first-paints what moves; counting starts on the frame after it. An async
+  // trigger (an event the page applies a frame or two later) and a slow host only shift it.
+  const moving = [...changedFrames].filter((at) => at >= 0);
+  const started = moving.length > 0 ? Math.min(...moving) : frames.length;
+  const inMotion = (at: number) => at > started;
   let paints = 0;
   const glassFrames = new Map<number, number>(); // glass panel -> frames it painted on
   for (const [at, layers] of painted) {
-    if (!changedFrames.has(at)) continue;
+    if (!inMotion(at) || !changedFrames.has(at) || contentFrames.has(at)) continue;
     if (![...layers].every((layer) => scope.glass.has(layer))) {
       paints++;
       continue;
@@ -135,7 +149,7 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
     frames: frames.length,
     longFrames,
     worstFrameMs: worst / 1000,
-    layouts: layoutFrames.size,
+    layouts: [...layoutFrames].filter(inMotion).length,
     paints,
     glassPaints,
   };
