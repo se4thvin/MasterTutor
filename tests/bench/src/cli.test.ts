@@ -9,9 +9,11 @@ import {
   exitCodeOf,
   listRecords,
   parseCli,
+  recordedRun,
   vaultCheck,
   writeRecord,
 } from "./cli.ts";
+import { openLedger } from "./ledger.ts";
 import type { SuiteDefinition } from "./types.ts";
 import type { BenchmarkResult, RecordSummary, SuiteRunResult } from "./report.ts";
 
@@ -269,5 +271,105 @@ describe("records", () => {
       ["2026-10-06-fixtures-02", 0, "2026-10-06-fixtures-01"],
     ]);
     expect(listRecords("zybooks", root)).toEqual([]);
+  });
+});
+
+describe("hard caps (I2): no flag or env raises them for zyBooks", () => {
+  it("refuses --max-run-usd above $50 and --max-total-usd above $500", () => {
+    expect(() => run(["run", "--suite", "zybooks", "--max-run-usd", "51"])).toThrow(/\$50/);
+    expect(() => run(["run", "--suite", "zybooks", "--max-run-usd", "500"])).toThrow(/\$50/);
+    expect(run(["run", "--suite", "zybooks", "--max-run-usd", "50"]).options.maxRunUsd).toBe(50);
+    expect(() => run(["run", "--suite", "zybooks", "--max-total-usd", "501"])).toThrow(/500/);
+  });
+});
+
+describe("bench resolve (I1)", () => {
+  it("parses a ledger id and nothing else", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(parseCli(["resolve", id], () => [])).toEqual({ kind: "resolve", id });
+    expect(() => parseCli(["resolve", "x"], () => [])).toThrow(UsageError);
+  });
+});
+
+describe("recordedRun: the ledger around one invocation (I1, I2)", () => {
+  const outcome = (spentBeforeUsd: number, spentAfterUsd: number) =>
+    ({ spentBeforeUsd, spentAfterUsd }) as SuiteRunResult;
+
+  it("writes the running intent before the run, hands it the ledger total, and closes it at the end", async () => {
+    const ledger = openLedger(mkdtempSync(join(tmpdir(), "bench-ledger-")));
+    try {
+      ledger.end(ledger.start("fixtures", "earlier"), 2.5, null);
+      const { path } = await recordedRun(
+        ledger,
+        "fixtures",
+        null,
+        "run --suite fixtures",
+        async (book) => {
+          expect(ledger.entries().at(-1)).toMatchObject({ status: "running", suite: "fixtures" });
+          expect(book.priorUsd).toBe(2.5);
+          book.checkpoint(0.4);
+          expect(ledger.entries().at(-1)!.usd).toBe(0.4);
+          return outcome(2.5, 3.2);
+        },
+        () => "rec.md",
+      );
+      expect(path).toBe("rec.md");
+      expect(ledger.entries().at(-1)).toMatchObject({
+        status: "finished",
+        usd: expect.closeTo(0.7),
+        record: "rec.md",
+      });
+    } finally {
+      ledger.close();
+    }
+  });
+
+  it("leaves a run that died as running, and the next invocation is refused until resolved", async () => {
+    const ledger = openLedger(mkdtempSync(join(tmpdir(), "bench-ledger-")));
+    try {
+      const boom = recordedRun(
+        ledger,
+        "zybooks",
+        null,
+        "run",
+        async (book) => {
+          book.checkpoint(9);
+          throw new Error("stream died");
+        },
+        () => "x",
+      );
+      await expect(boom).rejects.toThrow(/stream died/);
+      expect(ledger.entries()).toMatchObject([{ status: "running", usd: 9 }]);
+      const next = vi.fn(async () => outcome(0, 0));
+      await expect(recordedRun(ledger, "fixtures", null, "run", next, () => "x")).rejects.toThrow(
+        /bench resolve/,
+      );
+      expect(next).not.toHaveBeenCalled();
+    } finally {
+      ledger.close();
+    }
+  });
+
+  it("refuses a second zyBooks invocation without --continue-after-review, starting nothing (D46)", async () => {
+    const ledger = openLedger(mkdtempSync(join(tmpdir(), "bench-ledger-")));
+    try {
+      await recordedRun(
+        ledger,
+        "zybooks",
+        null,
+        "run",
+        async () => outcome(0, 7),
+        () => "a.md",
+      );
+      const second = vi.fn(async () => outcome(7, 7));
+      await expect(
+        recordedRun(ledger, "zybooks", null, "run", second, () => "b.md"),
+      ).rejects.toThrow(/continue-after-review/);
+      expect(second).not.toHaveBeenCalled();
+      await recordedRun(ledger, "zybooks", "2026-10-08-zybooks-01", "run", second, () => "b.md");
+      expect(second).toHaveBeenCalledTimes(1);
+    } finally {
+      ledger.close();
+    }
   });
 });
