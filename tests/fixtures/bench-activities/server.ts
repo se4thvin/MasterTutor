@@ -16,7 +16,7 @@ export function isLoopback(address: string | undefined): boolean {
 }
 
 const CONSENT = `<div id="consent" role="dialog" aria-modal="true" aria-label="Cookie consent"
-style="position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.45)"><div style="position:absolute;left:0;right:0;bottom:0;height:120px;background:#fff">
+style="position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.45)"><div style="position:absolute;left:0;right:0;top:0;height:120px;background:#fff">
 <p style="position:absolute;left:40px;top:20px;margin:0">This site uses cookies.</p>
 <button class="at" style="left:1000px;top:38px;width:200px"
 onclick="document.cookie='consent=1; Path=/; SameSite=Lax';document.getElementById('consent').remove()">Accept</button></div></div>`;

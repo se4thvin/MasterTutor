@@ -43,7 +43,7 @@ const done = turn([{ type: "turn", status: "done", reason: "Finished" }]);
 
 /** Consent, then sign in by coordinates (computer_use). */
 const signInByCoordinates: MockTurn[] = [
-  turn([click(1100, 740)]),
+  turn([click(1100, 60)]),
   turn([click(640, 302)]),
   turn([fillFocused("username")]),
   turn([click(640, 372)]),
