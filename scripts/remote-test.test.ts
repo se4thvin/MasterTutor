@@ -71,6 +71,8 @@ describe("remote test runner (D45, X4, D48)", () => {
 
   it("runs every suite but the long-lived qa stack under `all`", () => {
     expect(allSuites).toEqual(suites.filter((suite) => suite !== "qa"));
+    expect(client).toMatch(/^behaviour_shards=[2-9]$/m);
+    expect(client).toContain('entries+=("behaviour --shard=$i/$behaviour_shards")');
     expect(readme).toContain("scripts/remote-test.sh all");
   });
 
