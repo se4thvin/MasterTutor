@@ -2,7 +2,7 @@ import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import { createAnnotateTool } from "./capture/annotate-tool.ts";
 import { createCaptureTool } from "./capture/capture-tool.ts";
-import { createLocalOcr, type LocalOcr } from "./capture/local-ocr.ts";
+import { createLocalOcr, type LocalOcr } from "./browser/local-ocr.ts";
 import { createOcrModel, type OcrModel } from "./capture/opaque.ts";
 import type { StatelessOpenAI } from "./llm/openai.ts";
 import type { RunHooks } from "./loop/hooks.ts";

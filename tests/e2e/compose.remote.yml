@@ -4,6 +4,11 @@
 # the slots take the mastertutor-slot AppArmor profile (infra/host/apparmor/) on top of seccomp. Slots
 # publish nothing: the e2e runner reaches their media over cdp from Traefik's namespace. Traefik
 # stays on 127.0.0.1.
+# Several stacks run at once (D48), so each run brings its own (scripts/remote-test/slots.sh):
+#   - subnets for every network (CDP_SUBNET_PREFIX and FIXTURES_SUBNET_PREFIX feed compose.yml and
+#     compose.test.yml; the MT_CI_*_SUBNET ones pin the rest instead of Docker's shared pool);
+#   - Traefik's dynamic config with the live-auth address on this run's cdp subnet;
+#   - image tags named after the run, so a concurrent build from another branch never replaces them.
 x-ci-labels: &ci-labels
   mastertutor.ci: "1"
   mastertutor.ci.run: ${MT_CI_RUN_ID:?set by scripts/remote-test.sh}
@@ -14,42 +19,62 @@ services:
   garage:
     labels: *ci-labels
   garage-init:
+    image: mastertutor/node-runtime:${MT_CI_RUN_ID}
     labels: *ci-labels
   migrate:
+    image: mastertutor/node-runtime:${MT_CI_RUN_ID}
     labels: *ci-labels
   web:
+    image: mastertutor/web:${MT_CI_RUN_ID}
     labels: *ci-labels
   agent:
+    image: mastertutor/node-runtime:${MT_CI_RUN_ID}
     labels: *ci-labels
   traefik:
+    volumes: !override
+      - ${MT_CI_RUN_DIR:?set by scripts/remote-test.sh}/traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
     labels: *ci-labels
   greenmail:
     labels: *ci-labels
   llm-mock:
+    image: mastertutor/test-tools:${MT_CI_RUN_ID}
     labels: *ci-labels
   fixtures:
     labels: *ci-labels
   vault-fixtures:
+    image: mastertutor/test-tools:${MT_CI_RUN_ID}
     labels: *ci-labels
   e2e:
+    image: mastertutor/e2e:${MT_CI_RUN_ID}
     labels: *ci-labels
   bench-fixtures:
     labels: *ci-labels
   browser-1:
+    image: mastertutor/browser-slot:${MT_CI_RUN_ID}
     security_opt: [apparmor=mastertutor-slot]
     ports: !override []
     labels: *ci-labels
   browser-2:
+    image: mastertutor/browser-slot:${MT_CI_RUN_ID}
     security_opt: [apparmor=mastertutor-slot]
     ports: !override []
     labels: *ci-labels
 
 networks:
   edge:
+    ipam:
+      config:
+        - subnet: ${MT_CI_EDGE_SUBNET:?set by scripts/remote-test.sh}
     labels: *ci-labels
   backend:
+    ipam:
+      config:
+        - subnet: ${MT_CI_BACKEND_SUBNET:?set by scripts/remote-test.sh}
     labels: *ci-labels
   egress:
+    ipam:
+      config:
+        - subnet: ${MT_CI_EGRESS_SUBNET:?set by scripts/remote-test.sh}
     labels: *ci-labels
   cdp:
     labels: *ci-labels

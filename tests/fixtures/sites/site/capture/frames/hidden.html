@@ -12,9 +12,14 @@
           Oxidative phosphorylation makes most of the cell's ATP as protons flow back through ATP
           synthase across the inner mitochondrial membrane.
         </p>
-        <div style="display: none">
-          <iframe srcdoc="<p>Hidden frame sentinel text</p>" width="300" height="200"></iframe>
-        </div>
+        <!-- visibility:hidden keeps the inner document rendered (its text is readable) while the
+             owner is not visible: only the owner check keeps it from counting (re-review m1). -->
+        <iframe
+          style="visibility: hidden"
+          srcdoc="<p>Hidden frame sentinel text</p>"
+          width="300"
+          height="200"
+        ></iframe>
       </article>
     </main>
   </body>

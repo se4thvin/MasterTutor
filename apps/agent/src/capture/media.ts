@@ -1,7 +1,7 @@
 import type { Box, MaskSources } from "../browser/masking.ts";
 import { AssetRejected, type AssetInput, type AssetStore } from "../notes/assets.ts";
 import { screenText } from "../notes/note-writer.ts";
-import { pixelsAreClean, type LocalOcr } from "./local-ocr.ts";
+import { pixelsAreClean, type LocalOcr } from "../browser/local-ocr.ts";
 import { decodeDataUrl, type FetchedResource } from "./fetch-resource.ts";
 import { imageInfo, isSafeSvg, sniffSvg } from "./images.ts";
 import type { PageMedia } from "./page/types.ts";
@@ -12,7 +12,7 @@ export interface MediaContext {
   /** The run's vault: an asset's source URL is screened before it is stored. */
   secrets: MaskSources;
   /** Local OCR: canvas pixels are screened for vault secrets on this host before storage. */
-  localOcr: LocalOcr;
+  localOcr: Pick<LocalOcr, "text">;
   /** fetchInBrowser bound to the item's frame (network policy applies). */
   fetch(url: string): Promise<FetchedResource | null>;
   /** pageSanitizeSvg in the capture world; null when nothing safe is left. */
