@@ -54,6 +54,19 @@ test.describe("layout detector self-test", () => {
     expect((await findLayoutIssues(page)).join("\n")).toContain("text clipped by its own box");
   });
 
+  test("an ellipsis label inside a clipping box is its box, not its full text (fe-typography)", async ({
+    page,
+  }) => {
+    const label = `<span style="display:block;width:80px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">a long label that is truncated</span>`;
+    await page.setContent(`<div style="width:120px;overflow:hidden">${label}</div>`);
+    expect(await findLayoutIssues(page)).toEqual([]);
+    // The label's own box still counts: one wider than the clipping box is flagged.
+    await page.setContent(
+      `<div style="width:60px;overflow:hidden">${label.replace("width:80px", "width:200px")}</div>`,
+    );
+    expect((await findLayoutIssues(page)).join("\n")).toContain("text clipped by its own box");
+  });
+
   test("flags text clipped by its own overflow:hidden box", async ({ page }) => {
     await page.setContent(
       `<div style="width:60px;overflow:hidden;white-space:nowrap">long text that is cut off</div>`,

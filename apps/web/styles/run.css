@@ -239,7 +239,8 @@
   }
   .run-chrome {
     display: grid;
-    grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+    /* On a phone one dot shows, so its column is only as wide as the dot: the host needs the room. */
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.5rem;
     min-height: var(--hit);
@@ -283,8 +284,12 @@
     border-radius: var(--r-pill);
     background: var(--fill-2);
     color: var(--label-2);
-    font: var(--weight-regular) var(--text-13)/1 var(--font-ui);
+    font: var(--weight-regular) var(--text-12)/1 var(--font-ui);
+    @variant sm {
+      font-size: var(--text-13);
+    }
   }
+  /* Never truncated: a cut host could hide a spoofed one (Review Focus 10). */
   .run-host {
     flex: none;
     color: var(--label);
