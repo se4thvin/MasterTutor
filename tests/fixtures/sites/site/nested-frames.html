@@ -32,9 +32,9 @@
       const params = new URLSearchParams(location.search);
       const embed = document.getElementById("embed");
       const border = Number(params.get("border") ?? 0);
-      const [left, top] = params.get("at") === "near" ? [204, 50] : [600, 400];
-      embed.style.left = `${left}px`;
-      embed.style.top = `${top - border}px`;
+      const [x, y] = params.get("at") === "near" ? [204, 50] : [600, 400];
+      embed.style.left = `${x}px`;
+      embed.style.top = `${y - border}px`;
       embed.style.borderTop = `${border}px solid #ccc`;
       embed.src = `http://other.fixtures-isolated.test/nest-a.html?${params.get("inner") ?? ""}`;
     </script>
