@@ -185,6 +185,14 @@ describe("video tool (B4 done-when: the YouTube fixture produces a chaptered not
     });
   }, 120_000);
 
+  it("ignores a content length that belongs to another video (SPA navigation, N2)", async () => {
+    const scope = await seedRun(env.db.db);
+    // The URL names fakevid0011; the page's inline player response is still fakevid0010's (5 s).
+    await env.session.goto(`${FIXTURES}/youtube/watch-stale.html?v=fakevid0011`, signal);
+    const result = await op(scope, { op: "keyframes", range: null });
+    expect(result).toMatchObject({ op: "keyframes", kept: 4 });
+  }, 120_000);
+
   it("never stores a keyframe whose pixels show a secret on a secret-holding run", async () => {
     const vault: MaskSources = {
       nodeIds: () => [],
