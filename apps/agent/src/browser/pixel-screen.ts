@@ -35,7 +35,9 @@ const SEPARATOR_ROWS = 24;
  * Each OCR call has a fixed cost: past this many new bands, or this share of new rows, one read of
  * the whole frame is cheaper than one read per band.
  */
-const MAX_BAND_READS = 2;
+const MAX_BAND_READS = 4;
+/** Blank rows between new bands stacked into one read. */
+const STACK_GAP = 24;
 const WHOLE_FRAME_SHARE = 0.5;
 
 type Span = readonly [top: number, bottom: number];
@@ -251,12 +253,40 @@ export async function screenPixels(
           : missing.reduce((best, i) => (distance(i, middle) < distance(best, middle) ? i : best));
       fresh.get(owner)!.push(...shift([line], -bands[owner]![0]));
     }
-  } else {
+  } else if (missing.length > 0) {
+    // The new bands stacked in one image (blank rows between them): one OCR call, not one each.
+    const offsets: number[] = [];
+    let height = 0;
     for (const i of missing) {
-      const [top, bottom] = bands[i]!;
-      const lines = await read(await crop(top, bottom - top, 1));
-      if (lines === null) return { kind: "failed" };
-      fresh.set(i, lines);
+      offsets.push(height);
+      height += bands[i]![1] - bands[i]![0] + STACK_GAP;
+    }
+    const stacked = new Uint8Array(
+      await sharp({
+        create: { width: pixels.width, height, channels: 3, background: "#ffffff" },
+      })
+        .composite(
+          await Promise.all(
+            missing.map(async (i, k) => ({
+              input: Buffer.from(await crop(bands[i]![0], bands[i]![1] - bands[i]![0], 1)),
+              left: 0,
+              top: offsets[k]!,
+            })),
+          ),
+        )
+        .withMetadata({ density: 72 })
+        .png()
+        .toBuffer(),
+    );
+    const lines = await read(stacked);
+    if (lines === null) return { kind: "failed" };
+    for (const i of missing) fresh.set(i, []);
+    for (const line of lines) {
+      if (line.words.length === 0) continue;
+      const top = Math.min(...line.words.map((word) => word.box.y));
+      const k = offsets.findLastIndex((offset) => offset <= top);
+      if (k < 0) continue;
+      fresh.get(missing[k]!)!.push(...shift([line], -offsets[k]!));
     }
   }
   // 2×: small, unsure or unread ink parts of each new band.
