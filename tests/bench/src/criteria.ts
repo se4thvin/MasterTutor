@@ -141,15 +141,16 @@ export function evaluate(
   };
 }
 
-/** A verify run must only read: one that clicks or types on a graded page did the work itself (P10a-24). */
-export function verifyTainted(criterion: Criterion, verify: RunTrace): boolean {
-  const graded =
-    criterion.kind === "page_text"
-      ? [criterion.url]
-      : criterion.kind === "sections_complete"
-        ? criterion.sections.map((s) => s.url)
-        : [];
-  return graded.some((url) => interactionsOn(verify, url) > 0);
+/**
+ * A grading (verify) run must only read (P10a-24, I3): any click, type or key press on any page
+ * taints it, so it cannot do the work on a page that is not graded. The one exception is the
+ * declared sign-in page, which a fresh-login run must fill and submit.
+ */
+export function verifyTainted(verify: RunTrace, signInUrl: string | null): boolean {
+  return verify.steps.some(
+    (s) =>
+      s.interaction && (signInUrl === null || s.url === null || !sameDocument(s.url, signInUrl)),
+  );
 }
 
 /** D32 baseline: the pages already show completion; no interaction is expected from a verify run. */

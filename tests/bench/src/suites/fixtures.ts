@@ -26,6 +26,7 @@ function spec(toolProfile: "computer_use" | "browser_use"): BenchmarkSpec {
     verify: {
       task: `${LOGIN} ${HINT[toolProfile]} Then open ${BENCH_ORIGIN}/book and call read_page with mode "text" once. Do not click anything else. Then finish.`,
       budget: { maxSteps: 20, maxUsd: 1, maxActiveMinutes: 5 },
+      signInUrl: `${BENCH_ORIGIN}/signin`,
     },
     baselineMustPass: false,
     freshLogin: false,

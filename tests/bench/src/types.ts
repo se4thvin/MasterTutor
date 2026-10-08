@@ -47,6 +47,8 @@ export type Criterion =
 export interface VerifySpec {
   task: string;
   budget: Budget;
+  /** The only page a grading run may interact with (to sign in); null: no interaction at all (I3). */
+  signInUrl: string | null;
 }
 
 export interface VaultRequirement {

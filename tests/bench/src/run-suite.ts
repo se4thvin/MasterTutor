@@ -296,7 +296,7 @@ export async function runBenchmark(
       const base = await verifyRun(spec, options, deps, guard);
       verifyRunIds.push(base.runId);
       if (base.spendCapHit) throw new SpendCapReached(options.maxTotalUsd, 0, options.maxTotalUsd);
-      if (verifyTainted(spec.criterion, base.trace)) throw new TaintedVerify();
+      if (verifyTainted(base.trace, spec.verify!.signInUrl)) throw new TaintedVerify();
       const verdict = evaluate(baselineCriterion(spec.criterion), null, base.trace);
       if (verdict.outcome !== "passed" && !options.allowIncompleteBaseline)
         throw new BaselineIncomplete(verdict.summary);
@@ -322,7 +322,7 @@ export async function runBenchmark(
     }
     const main = await deps.loadTrace(deps.compose, started.runId);
     const verdict = grade(spec, main, after?.trace ?? null);
-    const tainted = after !== null && verifyTainted(spec.criterion, after.trace);
+    const tainted = after !== null && verifyTainted(after.trace, spec.verify!.signInUrl);
     const graded = await deps.api.benchmarks.grade({
       benchmarkRunId: started.benchmarkRunId,
       outcome: tainted ? "error" : verdict.outcome,
@@ -495,7 +495,7 @@ export function runBaseline(
     }
     const base = await verifyRun(spec, options, deps, guard);
     const verdict = evaluate(baselineCriterion(spec.criterion), null, base.trace);
-    const tainted = verifyTainted(spec.criterion, base.trace);
+    const tainted = verifyTainted(base.trace, spec.verify!.signInUrl);
     const mode = modeOf(spec, options);
     return {
       ...errorResult(suite.id, spec, options, attempt, null),
