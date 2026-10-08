@@ -24,6 +24,9 @@ export async function movingAnimations(page: Page, selector: string): Promise<st
         const target = effect?.target;
         if (!effect || !(target instanceof Element) || !scopes.some((s) => s.contains(target)))
           return [];
+        // A toast's countdown fuse is a timer and progress indicator, not motion: it keeps running
+        // under reduced motion by design (swipe-toast.tsx), as settle() in test.ts already allows.
+        if (target.matches(".toast-fuse")) return [];
         // A 1ms animation still moves if a delay holds its offset from-frame on screen first.
         const timing = effect.getComputedTiming();
         if (Number(timing.duration ?? 0) <= 1 && Number(timing.delay ?? 0) <= 1) return [];
