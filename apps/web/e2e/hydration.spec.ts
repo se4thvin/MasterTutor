@@ -19,4 +19,6 @@ test("the library hydrates cleanly after the sidebar has loaded the folders", as
   await expect(page.locator('[data-qa="note-card"]').first()).toBeVisible();
   await expect(page.getByRole("main").getByRole("heading", { name: "Folders" })).toBeVisible();
   expect(uncaught).toEqual([]);
+  // Idle prefetches may still be in the handler when the page closes.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
