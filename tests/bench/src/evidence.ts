@@ -10,11 +10,12 @@ import {
   ToolName,
   Uuid,
   WaitReason,
+  CallResult,
+  summaryMayReachPage,
+  unwrapUntrusted,
+  type ActionEffect,
 } from "@mastertutor/contracts";
 import { z } from "zod";
-import { CallResult } from "../../../apps/agent/src/loop/call-result.ts";
-import type { ActionEffect } from "../../../apps/agent/src/tools/action-effect.ts";
-import { unwrapUntrusted } from "../../../apps/agent/src/tools/untrusted.ts";
 
 const run = promisify(execFile);
 
@@ -76,9 +77,6 @@ export interface RunTrace {
   approvals: TraceApproval[];
 }
 
-/** The first words of describeCall's summary for the actions that change a page. */
-const INTERACTION = /^(?:click|double click|drag|press|type) /;
-
 /**
  * What each action of a computer step did. Rows that recorded no effects (older rows, calls that
  * never ran) fall back to the summary, strictly: a batch ("(+n more)") may hide a click (N1).
@@ -87,7 +85,7 @@ function effectsOf(summary: string, result: unknown): ActionEffect[] {
   const parsed = CallResult.safeParse(result);
   if (parsed.success && parsed.data.kind === "computer" && parsed.data.effects)
     return parsed.data.effects;
-  return [INTERACTION.test(summary) || / \(\+\d+ more\)$/.test(summary) ? "input" : "passive"];
+  return [summaryMayReachPage(summary) ? "input" : "passive"];
 }
 
 /**

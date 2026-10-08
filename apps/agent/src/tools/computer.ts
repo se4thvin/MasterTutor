@@ -1,4 +1,4 @@
-import type { ComputerAction } from "@mastertutor/contracts";
+import type { ActionEffect, ComputerAction } from "@mastertutor/contracts";
 import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
@@ -7,7 +7,6 @@ import { armClickGuard, armTypingGuard, markUnguarded } from "../browser/input-g
 import { pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
-import type { ActionEffect } from "./action-effect.ts";
 import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
 
 export interface ComputerRun {
