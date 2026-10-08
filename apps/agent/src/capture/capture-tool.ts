@@ -8,6 +8,7 @@ import {
   type Fidelity,
   type SourceKind,
 } from "@mastertutor/contracts";
+import { ATTR } from "@mastertutor/contracts/telemetry";
 import type { LibraryServices } from "../library.ts";
 import { sha256Hex } from "../notes/hash.ts";
 import {
@@ -193,6 +194,10 @@ export function createCaptureTool(services: LibraryServices): Tool<CaptureArgs, 
     args: CaptureArgs,
     result: CaptureResult,
     untrusted: false,
+    telemetry: (_args, result) => ({
+      [ATTR.captureFidelity]: result.fidelity,
+      [ATTR.captureCoverage]: result.coverage,
+    }),
     async run(ctx, args) {
       const kind = args.kind ?? ((await isPdf(ctx)) ? "pdf" : "web");
       if (kind === "pdf") {

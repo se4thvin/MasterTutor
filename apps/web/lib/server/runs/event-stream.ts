@@ -10,6 +10,7 @@ import {
   type RunStatus,
 } from "@mastertutor/contracts";
 import { getRunForMember, runEvents, type DbHandle } from "@mastertutor/db";
+import { recordSseConnection } from "@mastertutor/telemetry/record";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 /** bigserial's maximum. EventId admits 19-digit values above it; resuming after one is a bad request. */
@@ -105,6 +106,7 @@ export async function runEventStream(
   const stop = () => {
     if (closed) return;
     closed = true;
+    recordSseConnection(-1);
     clearInterval(heartbeat);
     demand?.();
     demand = null;
@@ -162,6 +164,7 @@ export async function runEventStream(
   const stream = new ReadableStream<Uint8Array>({
     async start(streamController) {
       controller = streamController;
+      recordSseConnection(1);
       request.signal.addEventListener("abort", stop);
       send(`retry: ${SSE_RETRY_MS}\n\n`);
       try {

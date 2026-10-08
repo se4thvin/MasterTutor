@@ -1,4 +1,5 @@
 import type { ApprovalRequest, FunctionToolName, RunEvent, Usage } from "@mastertutor/contracts";
+import type { ToolAttributes } from "@mastertutor/contracts/telemetry";
 import type { DbTx } from "@mastertutor/db";
 import type { z } from "zod";
 import type { MaskSources } from "../browser/masking.ts";
@@ -97,6 +98,8 @@ export interface Tool<A, R> {
    * The tool re-checks at act time that what was approved still holds.
    */
   approval?(ctx: ApprovalContext, args: A): Promise<ApprovalRequest | null>;
+  /** Allowlisted span attributes for this call (spec §7.5): never page text, values or arguments verbatim. */
+  telemetry?(args: A, result: R): ToolAttributes;
 }
 
 export interface RegisteredTool {
@@ -105,6 +108,11 @@ export interface RegisteredTool {
   invoke(ctx: ToolContext, rawArgs: unknown): Promise<unknown>;
   /** Null when the call needs no approval, or when its arguments are invalid (it is refused then). */
   approval(ctx: ApprovalContext, rawArgs: unknown): Promise<ApprovalRequest | null>;
+  /**
+   * The span attributes the tool declares for a call that returned `result` (what invoke
+   * resolved, already validated). Never throws: a failing declaration adds nothing.
+   */
+  telemetry?(rawArgs: unknown, result: unknown): ToolAttributes;
 }
 
 /** Erases the generics: args and results are validated at the boundary in both directions. */
@@ -118,5 +126,16 @@ export function register<A, R>(tool: Tool<A, R>): RegisteredTool {
       const args = tool.args.safeParse(rawArgs);
       return args.success && tool.approval ? tool.approval(ctx, args.data) : null;
     },
+    telemetry: tool.telemetry
+      ? (rawArgs, result) => {
+          try {
+            const args = tool.args.safeParse(rawArgs);
+            // invoke() already parsed the result; re-parsing it would cost a second pass.
+            return args.success ? tool.telemetry!(args.data, result as R) : {};
+          } catch {
+            return {};
+          }
+        }
+      : undefined,
   };
 }

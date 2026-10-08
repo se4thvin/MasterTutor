@@ -9,16 +9,22 @@
     "./server": "./src/server/index.ts",
     "./server/openai": "./src/server/openai.ts",
     "./testing": "./src/testing/index.ts",
-    "./export": "./src/export/index.ts"
+    "./export": "./src/export/index.ts",
+    "./telemetry": "./src/telemetry.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/api-logs": "0.223.0",
     "@orpc/contract": "1.15.4",
     "fflate": "0.8.3",
     "openai": "7.28.0",
     "pino": "10.4.0",
     "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@opentelemetry/context-async-hooks": "2.12.0"
   }
 }

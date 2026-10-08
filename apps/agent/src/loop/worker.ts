@@ -1,7 +1,9 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { RunStatus, WaitReason } from "@mastertutor/contracts";
+import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
+import { instrument } from "@mastertutor/telemetry/instrument";
 import { ControlGuard } from "../browser/guard.ts";
 import { modelErrorLog, type ModelCaller } from "../llm/caller.ts";
 import type { Clock } from "../runtime/clock.ts";
@@ -316,9 +318,19 @@ export class RunWorker {
     const slot = this.#claim.slotName;
     this.#guard.hold();
     if (!this.#abort.signal.aborted) this.#abort.abort(new Interrupted("takeover"));
-    const given = await this.#deps.hooks.control
-      .onUserControl(slot, this.runId, { afterRestore })
-      .catch((): UserControlResult => ({ ok: false, code: "takeover_failed" }));
+    // Seam 8: handing the browser to the person (spec §7.3).
+    const given = await instrument(
+      SPAN.takeover,
+      { [ATTR.runId]: this.runId, [ATTR.slotName]: slot, [ATTR.controlHolder]: "user" },
+      async (span) => {
+        const result = await this.#deps.hooks.control
+          .onUserControl(slot, this.runId, { afterRestore })
+          .catch((): UserControlResult => ({ ok: false, code: "takeover_failed" }));
+        span.set({ [ATTR.takeoverOutcome]: result.ok ? "ok" : result.code });
+        if (!result.ok) span.fail(result.code);
+        return result;
+      },
+    );
     if (!given.ok) return this.#revertTakeover();
     await this.#loop!.markTakeover();
     for (;;) {
@@ -329,9 +341,23 @@ export class RunWorker {
       if (run.controller === "agent") {
         // B6 retries n.eko with a bounded backoff; if the host still cannot be taken back, the
         // run ends with the guard held (never both inputs, never a retry loop here).
-        try {
-          await this.#deps.hooks.control.onAgentControl(slot, this.runId);
-        } catch {
+        // Seam 8: taking the browser back from the person.
+        const restored = await instrument(
+          SPAN.takeover,
+          { [ATTR.runId]: this.runId, [ATTR.slotName]: slot, [ATTR.controlHolder]: "agent" },
+          async (span) => {
+            try {
+              await this.#deps.hooks.control.onAgentControl(slot, this.runId);
+              span.set({ [ATTR.takeoverOutcome]: "ok" });
+              return true;
+            } catch {
+              span.set({ [ATTR.takeoverOutcome]: "control_restore_failed" });
+              span.fail("control_restore_failed");
+              return false;
+            }
+          },
+        );
+        if (!restored) {
           this.#deps.log.error(
             { runId: this.runId, errorCode: "control_restore_failed" },
             "could not take the live view back",
