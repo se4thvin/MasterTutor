@@ -1,7 +1,7 @@
 // The single definition of "production mode" for a resolved compose config (D47). Used by the
 // compose overlay tests (Task 12), the production env check (Task 14), the real-model smoke
 // (Task 15) and the bench harness preflight (Phase 10). Problems name keys and services only.
-import { composeConfig, type ComposeConfig } from "./compose-json.ts";
+import { composeConfig, type ComposeConfig, type ComposeService } from "./compose-json.ts";
 
 /**
  * The production services (compose.yml + compose.prod.yml), plus the slots (`browser-N`). An
@@ -55,13 +55,42 @@ const SLOT = /^browser-\d+$/;
 export function resolveForProdCheck(
   envFile: string | readonly string[],
   files: readonly string[],
+  env?: Readonly<Record<string, string>>,
 ): ComposeConfig {
-  return composeConfig(envFile, files, { profiles: ["*"] });
+  return composeConfig(envFile, files, { profiles: ["*"], ...(env ? { env } : {}) });
 }
 
 /** True for a production service or a slot: anything else must not run in production (review I2). */
 export function isProductionService(name: string): boolean {
   return SLOT.test(name) || (PRODUCTION_SERVICES as readonly string[]).includes(name);
+}
+
+/**
+ * The one service a prod-like LOCAL stack (D47 bench and smoke, tests/bench/compose.local.yml)
+ * adds: a loopback Traefik standing in for Dokploy's ingress. Never production: behind Dokploy
+ * there is no Traefik service, and one holding docker.sock would be a privilege risk. Only the
+ * bench and smoke checks opt in (`localIngress`); check-env never does.
+ */
+export const LOCAL_INGRESS_SERVICE = "traefik";
+
+export interface ProdModeOptions {
+  /** Accept the strict local-ingress Traefik (bench and smoke only, never check-env). */
+  localIngress?: boolean;
+}
+
+/** Why a `traefik` service is not the strict local ingress: official image, loopback, socket read-only. */
+function localIngressProblems(service: ComposeService): string[] {
+  const problems: string[] = [];
+  if (!/^traefik:[\w.-]+(@sha256:[0-9a-f]{64})?$/.test(service.image ?? ""))
+    problems.push(`${LOCAL_INGRESS_SERVICE}.image: must be the official traefik image (D47)`);
+  if ((service.ports ?? []).some((port) => port.host_ip !== "127.0.0.1"))
+    problems.push(`${LOCAL_INGRESS_SERVICE}.ports: must publish on 127.0.0.1 only (D47)`);
+  for (const volume of service.volumes ?? []) {
+    const socket = volume.source === "/var/run/docker.sock";
+    if (!socket || volume.read_only !== true)
+      problems.push(`${LOCAL_INGRESS_SERVICE}.volumes: only docker.sock, read-only (D47)`);
+  }
+  return problems;
 }
 
 interface WorkerRule {
@@ -132,11 +161,13 @@ function workerProblems(config: ComposeConfig, name: string, rule: WorkerRule): 
   return problems;
 }
 
-export function prodModeProblems(config: ComposeConfig): string[] {
+export function prodModeProblems(config: ComposeConfig, options: ProdModeOptions = {}): string[] {
   const problems: string[] = [];
   const envOf = (service: string) => config.services[service]?.environment ?? {};
   for (const [name, service] of Object.entries(config.services)) {
-    if (!isProductionService(name))
+    if (options.localIngress && name === LOCAL_INGRESS_SERVICE)
+      problems.push(...localIngressProblems(service));
+    else if (!isProductionService(name))
       problems.push(`service ${name}: not a production service (D47)`);
     if (service.image && isTestImage(service.image))
       problems.push(`service ${name}: runs a test image (D47)`);

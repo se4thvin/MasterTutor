@@ -6,9 +6,11 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { composeConfig } from "../../compose/compose-json.ts";
 import {
+  LOCAL_INGRESS_SERVICE,
   PROD_LIKE_LOCAL_FILES,
   isProductionService,
   prodModeProblems,
+  type ProdModeOptions,
 } from "../../compose/prod-mode.ts";
 import { PreconditionFailed } from "./run-suite.ts";
 
@@ -22,10 +24,14 @@ export interface InspectedContainer {
   cmd: readonly string[];
 }
 
-export function runningModeProblems(running: readonly InspectedContainer[]): string[] {
+export function runningModeProblems(
+  running: readonly InspectedContainer[],
+  options: ProdModeOptions = {},
+): string[] {
   const problems: string[] = [];
   for (const c of running) {
-    if (!isProductionService(c.service))
+    const ingress = options.localIngress === true && c.service === LOCAL_INGRESS_SERVICE;
+    if (!ingress && !isProductionService(c.service))
       problems.push(`${c.service}: test-only service is running`);
   }
   for (const name of ["web", "agent"] as const) {
@@ -78,7 +84,9 @@ export async function assertProdMode(compose: readonly string[]): Promise<void> 
     env: i.Config.Env ?? [],
     cmd: i.Config.Cmd ?? [],
   }));
-  const problems = [...prodModeProblems(config), ...runningModeProblems(running)];
+  // The bench stack is the local prod-like one: its loopback Traefik is the one exception.
+  const local = { localIngress: true };
+  const problems = [...prodModeProblems(config, local), ...runningModeProblems(running, local)];
   if (problems.length)
     throw new PreconditionFailed(`not a prod-like stack (D47):\n- ${problems.join("\n- ")}`);
 }
