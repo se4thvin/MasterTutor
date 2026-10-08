@@ -7,8 +7,10 @@ const WARN_EVERY_MS = 60_000;
 let log: Log | null = null;
 let lastWarn = Number.NEGATIVE_INFINITY;
 
+/** A new log (each start or shutdown) starts a fresh warning window. */
 export function setTelemetryLog(next: Log | null): void {
   log = next;
+  lastWarn = Number.NEGATIVE_INFINITY;
 }
 
 /** Counts dropped telemetry and says so on stdout at most once a minute (module telemetry, unbridged). */
