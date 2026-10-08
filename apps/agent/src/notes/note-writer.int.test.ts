@@ -5,6 +5,7 @@ import {
   type DbHandle,
   noteBlocks,
   notes,
+  refreshNoteQuality,
   runEvents,
   runs,
   sources,
@@ -174,6 +175,39 @@ describe("NoteWriter", () => {
         blocks: [block("x")],
       }),
     ).rejects.toMatchObject({ code: "unknown_block" });
+  });
+
+  it("waits for a concurrent Mark verified instead of overwriting it with stale fidelity (QA-075)", async () => {
+    const scope = await seedRun(h.db);
+    const notesWriter = writer();
+    const w1 = testWrite(scope);
+    const noteId = await notesWriter.ensureNote(w1, { title: "N", lede: null });
+    const [unverified] = await notesWriter.appendBlocks(w1, {
+      noteId,
+      sourceId: null,
+      afterBlockId: null,
+      blocks: [block("Not on the page", { verified: false })],
+    });
+    notesWriter.stageQuality(w1, noteId, 1);
+    await commitStep(h.db, scope.runId, w1.step);
+
+    const w2 = testWrite(scope);
+    notesWriter.stageQuality(w2, noteId, 1);
+    let agentCommit: Promise<void> | undefined;
+    // Web's markVerified: the note row locked first, then the block verified and fidelity refreshed.
+    await h.db.transaction(async (tx) => {
+      await tx.select({ id: notes.id }).from(notes).where(eq(notes.id, noteId)).for("update");
+      await tx.update(noteBlocks).set({ verified: true }).where(eq(noteBlocks.id, unverified!));
+      expect(await refreshNoteQuality(tx, scope.workspaceId, noteId, 1)).toBe("verified");
+      agentCommit = commitStep(h.db, scope.runId, w2.step);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    await agentCommit;
+    const [note] = await h.db
+      .select({ fidelity: notes.fidelity })
+      .from(notes)
+      .where(eq(notes.id, noteId));
+    expect(note?.fidelity).toBe("verified");
   });
 
   it("marks a note partial when a source lost media", async () => {
