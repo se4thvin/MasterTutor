@@ -10,6 +10,7 @@ import { createAssetStore, type AssetStore } from "./notes/assets.ts";
 import { createEmbedder } from "./notes/embedder.ts";
 import { createFilingModel, fileRunNote, type FilingModel } from "./notes/filing.ts";
 import { NoteWriter } from "./notes/note-writer.ts";
+import type { DoclingClient } from "./pdf/docling.ts";
 import type { Log } from "./runtime/types.ts";
 import { register } from "./tools/types.ts";
 
@@ -30,6 +31,8 @@ export interface LibraryServices {
   /** Self-hosted OCR that screens pixels for vault secrets before storage or OpenAI (A-M1). */
   localOcr: LocalOcr;
   filing: FilingModel;
+  /** docling-serve (profile `pdf`), or null for the pdf.js path. */
+  docling: DoclingClient | null;
   log: Log;
 }
 
@@ -42,6 +45,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     ocr: createOcrModel(deps.openai),
     localOcr: createLocalOcr(),
     filing: createFilingModel(deps.openai),
+    docling: null,
     log: deps.log,
   };
 }

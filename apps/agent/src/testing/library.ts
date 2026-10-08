@@ -28,6 +28,7 @@ export function fakeLibraryServices(
     },
     localOcr: { text: async () => "" },
     filing: { decide: async () => ({ path: ["Inbox"], createLeaf: true }) },
+    docling: null,
     log: testLog,
     ...overrides,
     storage,
