@@ -1,4 +1,6 @@
+import { recordedEvents } from "../lib/fixtures/run-recording.ts";
 import { findLayoutIssues } from "./helpers/layout-qa.ts";
+import { emit, gotoRun } from "./helpers/run.ts";
 import { expect, test } from "./helpers/test.ts";
 
 test.describe("layout detector self-test", () => {
@@ -96,5 +98,78 @@ test.describe("layout detector self-test", () => {
         <div style="position:fixed;top:150px;left:0">Lost text</div>
       </div>`);
     expect((await findLayoutIssues(page)).join("\n")).toContain("clipped by");
+  });
+});
+
+test.describe("layout detector: 44px targets, struck-out words, run-view obstacles (Phase 8)", () => {
+  test.skip(({ viewport }) => viewport?.width !== 1440, "runs once");
+
+  test("flags a target under 44px only when asked, and counts the ::after hit area", async ({
+    page,
+  }) => {
+    await page.setContent(`
+      <style>.hit{position:relative}.hit::after{content:"";position:absolute;inset:-0.25rem}</style>
+      <button style="width:30px;height:30px;padding:0">x</button>
+      <button class="hit" style="width:120px;height:36px;padding:0;border:0">Save note</button>`);
+    expect(await findLayoutIssues(page)).toEqual([]);
+    const issues = await findLayoutIssues(page, { minTargetPx: 44 });
+    expect(issues.filter((i) => i.startsWith("target smaller than 44px"))).toHaveLength(1);
+    expect(issues.join("\n")).toContain("(30×30)");
+  });
+
+  test("exempts inline links in running text, disabled controls and label-wrapped inputs", async ({
+    page,
+  }) => {
+    await page.setContent(`
+      <p style="width:300px">Read <a href="#">more</a> here.</p>
+      <button disabled style="width:20px;height:20px;padding:0">x</button>
+      <label style="display:inline-flex;align-items:center;min-height:44px;padding:0 8px">
+        <input type="checkbox" style="width:16px;height:16px"> Remember me
+      </label>`);
+    expect(await findLayoutIssues(page, { minTargetPx: 44 })).toEqual([]);
+  });
+
+  test("a struck-out word that wraps is flagged without opting in; nowrap fixes it (D22)", async ({
+    page,
+  }) => {
+    await page.setContent(`<p style="width:40px">You → Browser · <s>the model</s></p>`);
+    expect((await findLayoutIssues(page)).join("\n")).toContain("wraps onto a second line");
+    await page.setContent(
+      `<p style="width:40px">You → Browser · <s style="white-space:nowrap">the model</s></p>`,
+    );
+    expect(await findLayoutIssues(page)).toEqual([]);
+  });
+
+  test("ellipsis exempts text, not a clipped control (isTextOnly sees the element itself)", async ({
+    page,
+  }) => {
+    await page.setContent(`
+      <div style="width:80px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">
+        <button style="width:200px">A long button label</button>
+      </div>`);
+    expect((await findLayoutIssues(page)).join("\n")).toContain("clipped by");
+  });
+
+  test("the run callout and leader avoid the timeline, and the rule bites when they meet (P8-5)", async ({
+    page,
+  }) => {
+    await gotoRun(page);
+    await emit(page, [recordedEvents()[0]!]);
+    await expect(page.locator(".run-callout[data-qa-avoid]")).toBeVisible();
+    await expect(page.locator(".run-leader[data-qa-avoid]")).toBeAttached();
+    await expect(page.locator("aside.run-tl[data-qa-obstacle]")).toBeVisible();
+    expect((await findLayoutIssues(page)).filter((i) => i.startsWith("overlaps"))).toEqual([]);
+    await page.evaluate(() => {
+      const callout = document.querySelector(".run-callout")!.getBoundingClientRect();
+      const timeline = document.querySelector<HTMLElement>("aside.run-tl")!;
+      Object.assign(timeline.style, {
+        position: "fixed",
+        left: `${callout.left}px`,
+        top: `${callout.top}px`,
+        width: "200px",
+        height: "200px",
+      });
+    });
+    expect((await findLayoutIssues(page)).join("\n")).toContain("overlaps");
   });
 });
