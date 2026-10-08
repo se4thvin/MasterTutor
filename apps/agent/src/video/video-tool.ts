@@ -37,7 +37,7 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
     video: VideoContext,
     range: { start: number; end: number },
   ): Promise<VideoResult> {
-    const sampled = await sampleKeyframes(ctx, video.worlds, range);
+    const sampled = await sampleKeyframes({ ...ctx, ocr: services.localOcr }, video.worlds, range);
     const blocks: TimedBlockDraft[] = [];
     let screened = 0;
     for (const frame of sampled.frames) {
@@ -101,7 +101,7 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
             "range_too_long",
             "Use a range of at most 600 seconds and page through the video",
           );
-        const chapters = await readChapters(video.worlds);
+        const { chapters, bound } = await readChapters(video.worlds, video.url);
         const boundaries = chapters.map((c) => c.start);
         try {
           switch (args.op) {
@@ -121,22 +121,28 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
                   typeof row.anchor?.tStart === "number" ? [row.anchor.tStart] : [],
                 ),
               );
-              await append(ctx, video, chapterBlocks(chapters, starts));
+              await append(ctx, video, chapterBlocks(chapters, starts, bound));
               services.writer.stageSourceMeta(w, video.sourceId, { chapters });
               return { op: "chapters", chapters };
             }
             case "captions": {
-              const track = await captureTimedtext(ctx.session, video.worlds, {
+              const capture = await captureTimedtext(ctx.session, video.worlds, {
                 signal: ctx.signal,
               });
+              const track = capture.kind === "track" ? capture.track : null;
               const segments = track ? parseJson3(track.body) : null;
-              if (!track || !segments) {
+              if (!track || !segments || segments.length === 0) {
+                // A track the player shows but we cannot read is lost captions: the note is not
+                // verified, and transcribe stays refused for this captioned video (final I4, D4).
+                const lost = capture.kind !== "none";
+                const prior = typeof video.meta.mediaLost === "number" ? video.meta.mediaLost : 0;
                 services.writer.stageSourceMeta(w, video.sourceId, {
                   captions: {
                     segments: 0,
                     language: null,
-                    format: track ? "unsupported" : "none",
+                    format: lost ? "unreadable" : "none",
                   },
+                  ...(lost ? { mediaLost: prior + 1 } : {}),
                 });
                 return { op: "captions", blockIds: [], segments: 0, language: null };
               }
@@ -167,8 +173,9 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
             case "keyframes":
               return await keyframes(ctx, video, range);
             case "transcribe": {
-              const known = video.meta.captions as { segments?: number } | undefined;
-              if ((known?.segments ?? 0) > 0)
+              const known = video.meta.captions as
+                { segments?: number; format?: string } | undefined;
+              if ((known?.segments ?? 0) > 0 || known?.format === "unreadable")
                 throw new ToolError(
                   "captions_available",
                   "Captions exist; use op captions instead",
@@ -178,7 +185,8 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
                 signal: ctx.signal,
                 timeoutMs: 5_000,
               });
-              if (probe && (parseJson3(probe.body)?.length ?? 0) > 0)
+              // Any caption track the player offers, readable or not, rules transcription out.
+              if (probe.kind !== "none")
                 throw new ToolError(
                   "captions_available",
                   "Captions exist; use op captions instead",
