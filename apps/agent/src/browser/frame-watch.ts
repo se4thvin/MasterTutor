@@ -44,7 +44,9 @@ function childChannel(parent: CdpChannel, sessionId: string) {
       new Promise<R>((resolve, reject) => {
         const id = ++next;
         pending.set(id, (reply) =>
-          reply.error === undefined ? resolve(reply.result as R) : reject(new Error(method)),
+          reply.error === undefined
+            ? resolve(reply.result as R)
+            : reject(new Error(`${method}: ${JSON.stringify(reply.error)}`)),
         );
         parent
           .send("Target.sendMessageToTarget", {
