@@ -22,6 +22,7 @@ export function runSummaryOf(row: RunRow): RunSummary {
     waitReason: row.waitReason,
     controller: row.controller,
     approvalMode: row.approvalMode,
+    toolProfile: row.toolProfile,
     model: row.model,
     noteId: row.noteId,
     usage: row.usage,
