@@ -60,7 +60,7 @@ export function SettingsView() {
                 <span className="min-w-0">
                   Model<small>Planning and page understanding</small>
                 </span>
-                <span className="mono muted settings-value">
+                <span className="tabular muted settings-value">
                   {MODELS.agentPrimary} → {MODELS.agentFallback}
                 </span>
               </div>
