@@ -167,6 +167,8 @@ export interface NetworkPolicyOptions {
 export interface NetworkPolicy {
   /** Resolves once every response seen so far has been checked against its connected address. */
   settled(): Promise<void>;
+  /** The policy's private-host check: other fetch decisions share it and its DNS cache (M9). */
+  readonly privateHosts: PrivateHostCheck;
 }
 
 /** Only http(s) documents, plus about:blank, may be loaded at top level. */
@@ -253,5 +255,5 @@ export async function installNetworkPolicy(
     pending.add(check);
     void check.finally(() => pending.delete(check));
   });
-  return { settled: async () => void (await Promise.all([...pending])) };
+  return { privateHosts, settled: async () => void (await Promise.all([...pending])) };
 }

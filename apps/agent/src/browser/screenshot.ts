@@ -10,6 +10,7 @@ import {
   type Box,
   type MaskSources,
 } from "./masking.ts";
+import { screenPixels, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
 import type { BrowserSession, Layout } from "./session.ts";
 
 export interface ModelScreenshot {
@@ -20,7 +21,16 @@ export interface ModelScreenshot {
   scale: number;
   masked: number;
   dropped: boolean;
+  /** Why a dropped screenshot was withheld, in words the model is told (null when sent). */
+  withheld: string | null;
 }
+
+/** The model is told why it sees a black frame instead of the page. */
+export const WITHHELD = {
+  moved: "a secret field moved while it was taken",
+  unreadable: "it could not be checked for saved secrets",
+  navigating: "the page kept navigating while it was taken",
+} as const;
 
 const MAX_ATTEMPTS = 3;
 
@@ -39,14 +49,31 @@ async function blackPng(width: number, height: number): Promise<Buffer> {
     .toBuffer();
 }
 
-async function blackFrame(layout: Layout): Promise<ModelScreenshot> {
+async function blackFrame(layout: Layout, reason: string): Promise<ModelScreenshot> {
   const { scale, width, height } = targetSize(layout);
-  return { png: await blackPng(width, height), width, height, scale, masked: 0, dropped: true };
+  return {
+    png: await blackPng(width, height),
+    width,
+    height,
+    scale,
+    masked: 0,
+    dropped: true,
+    withheld: reason,
+  };
 }
 
 /** The same frame with nothing on it, for a capture that cannot be trusted (geometry kept). */
-export async function withheldScreenshot(shot: ModelScreenshot): Promise<ModelScreenshot> {
-  return { ...shot, png: await blackPng(shot.width, shot.height), masked: 0, dropped: true };
+export async function withheldScreenshot(
+  shot: ModelScreenshot,
+  reason: string,
+): Promise<ModelScreenshot> {
+  return {
+    ...shot,
+    png: await blackPng(shot.width, shot.height),
+    masked: 0,
+    dropped: true,
+    withheld: reason,
+  };
 }
 
 async function finalize(
@@ -67,8 +94,40 @@ async function finalize(
     height: box.height * scale,
   }));
   const png = scaled.length > 0 ? await drawMasks(sized, scaled, { width, height }) : sized;
-  return { png, width, height, scale, masked: boxes.length, dropped: false };
+  return { png, width, height, scale, masked: boxes.length, dropped: false, withheld: null };
 }
+
+/**
+ * I-1: on a run that holds secrets, the image the model would receive is read locally (the one
+ * tesseract worker) before it leaves. Words that show a registered secret are filled; a second
+ * read must then come back clean. A failed read, or a secret still readable, gives null: the
+ * step's screenshot is withheld and the model is told so (fail closed, no pause).
+ */
+async function screened(
+  shot: ModelScreenshot,
+  sources: MaskSources,
+  ocr: LocalOcr,
+  signal: AbortSignal,
+): Promise<ModelScreenshot | null> {
+  const first = await screenPixels(ocr, sources, shot.png, signal);
+  if (first.kind === "clean") return shot;
+  if (first.kind === "failed") return null;
+  const png = await drawMasks(shot.png, first.boxes.map(pad), {
+    width: shot.width,
+    height: shot.height,
+  });
+  const again = await screenPixels(ocr, sources, png, signal);
+  if (again.kind !== "clean") return null;
+  return { ...shot, png, masked: shot.masked + first.boxes.length };
+}
+
+/** OCR boxes hug the glyphs: a little margin so no antialiased edge stays readable. */
+const pad = (box: Box): Box => ({
+  x: Math.max(0, box.x - 3),
+  y: Math.max(0, box.y - 3),
+  width: box.width + 6,
+  height: box.height + 6,
+});
 
 /**
  * The only way the model sees the page (spec §9): CDP Page.captureScreenshot, never Playwright's
@@ -79,10 +138,11 @@ export async function captureModelScreenshot(
   session: BrowserSession,
   sources: MaskSources,
   signal: AbortSignal,
+  ocr: LocalOcr = sharedLocalOcr(),
 ): Promise<ModelScreenshot> {
   let layout = await session.layout();
-  const drop = async () => {
-    const dropped = await blackFrame(layout);
+  const drop = async (reason: string = WITHHELD.moved) => {
+    const dropped = await blackFrame(layout, reason);
     session.lastScale = dropped.scale;
     return dropped;
   };
@@ -123,7 +183,8 @@ export async function captureModelScreenshot(
       continue;
     }
     if (await containsSecretText(session, sources, signal)) return drop();
-    const shot = await finalize(raw, layout, after.boxes);
+    const shot = await screened(await finalize(raw, layout, after.boxes), sources, ocr, signal);
+    if (shot === null) return drop(WITHHELD.unreadable);
     session.lastScale = shot.scale;
     return shot;
   }

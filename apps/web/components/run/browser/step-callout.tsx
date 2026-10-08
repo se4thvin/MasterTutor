@@ -27,13 +27,14 @@ export function StepCallout({
   const placed = calloutPlacement(target, box, label ?? FALLBACK_LABEL);
   return (
     <div className="run-callouts" aria-hidden="true" data-testid="step-callout">
-      <svg className="run-leader" width={box.width} height={box.height}>
+      <svg className="run-leader" data-qa-avoid width={box.width} height={box.height}>
         <line x1={placed.line.x1} y1={placed.line.y1} x2={placed.line.x2} y2={placed.line.y2} />
         <circle cx={target.x} cy={target.y} r={3} />
       </svg>
       <div
         ref={ref}
         className="run-callout glass"
+        data-qa-avoid
         style={{ transform: `translate(${placed.left}px, ${placed.top}px)` }}
       >
         <b>Step {number}.</b> <bdi>{text}</bdi>
