@@ -34,13 +34,13 @@ export interface ComposeService {
   tmpfs?: string[];
   read_only?: boolean;
   restart?: string;
+  depends_on?: Record<string, { condition?: string; required?: boolean }>;
   sysctls?: Record<string, string>;
   volumes?: ComposeVolumeMount[];
   mem_limit?: string | number;
   cpus?: string | number;
   pids_limit?: number;
   logging?: { driver?: string; options?: Record<string, string> };
-  depends_on?: Record<string, { condition: string; required?: boolean }>;
 }
 export interface ComposeNetwork {
   name?: string;

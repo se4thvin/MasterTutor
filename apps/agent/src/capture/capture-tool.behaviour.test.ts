@@ -224,6 +224,26 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     const result = await failing.run(env.context(scope), page);
     expect(result.fidelity).not.toBe("verified");
   });
+  it("counts canvas past the OCR tile cap as lost, so the note is never verified (final I2)", async () => {
+    const { result, source } = await capture("opaque/tall.html");
+    // Five viewports of canvas, three read: two are not in the note.
+    expect((source.meta as { mediaLost: number }).mediaLost).toBeGreaterThanOrEqual(2);
+    expect(result.fidelity).not.toBe("verified");
+  });
+  it("counts an empty OCR read of a canvas region as lost, never verified (final I2)", async () => {
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+    const blank = createCaptureTool({ ...env.services, ocr: { transcribe: async () => "" } });
+    const ctx = env.context(scope);
+    const result = await blank.run(ctx, page);
+    await env.commit(ctx);
+    expect(result.fidelity).toBe("partial");
+    const [source] = await env.db.db
+      .select()
+      .from(sources)
+      .where(sql`${sources.meta}->>'noteId' = ${result.noteId}`);
+    expect((source!.meta as { mediaLost: number }).mediaLost).toBeGreaterThanOrEqual(1);
+  });
   it("reads frames without a placeholder and counts unread text as missing (re-review N2)", async () => {
     const { result, blocks, source } = await capture("frames/aside.html");
     expect(blocks.some((b) => b.markdown.includes("Small frame sentinel"))).toBe(false);

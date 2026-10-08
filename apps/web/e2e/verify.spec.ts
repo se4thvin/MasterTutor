@@ -14,6 +14,18 @@ test("Mark verified springs, clears the review state and updates fidelity", asyn
   await expect(page.locator(".srcstrip").getByText("Verified", { exact: true })).toBeVisible();
 });
 
+test("a note with lost media stays partial after its last block is verified (one fidelity rule)", async ({
+  page,
+}) => {
+  // Note 9 lost a keyframe: the server's rule (noteFidelity) says partial, never verified.
+  await page.goto("/notes/00000000-0000-4000-8000-000002000009");
+  await page.getByRole("checkbox", { name: "Mark verified" }).click();
+  await expect(page.getByText("Marked verified")).toBeVisible();
+  const strip = page.locator(".srcstrip");
+  await expect(strip.getByText(/^Partial/)).toBeVisible();
+  await expect(strip.getByText("Verified", { exact: true })).toHaveCount(0);
+});
+
 test("a failed verify rolls back and tells the user (Review Focus 5)", async ({ page }) => {
   await page.route("**/api/rpc/notes/markVerified", (route) =>
     route.fulfill({ status: 500, json: { json: { code: "INTERNAL_SERVER_ERROR" } } }),
