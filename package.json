@@ -26,7 +26,9 @@
     "deploy:check-env": "node scripts/deploy/check-env.ts",
     "deploy:restore-drill": "bash scripts/deploy/restore-drill.sh",
     "prod:smoke": "node tests/smoke/prod-smoke.ts",
-    "bench": "node tests/bench/src/cli.ts"
+    "bench": "node tests/bench/src/cli.ts",
+    "bench:mock": "bash scripts/remote-test.sh bench-mock",
+    "bench:real-fixtures": "bash scripts/bench-real-fixtures.sh"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -38,7 +38,7 @@ import {
   type SuiteRunResult,
 } from "./report.ts";
 import { runBaseline, runSuite, type RunnerDeps, type SuiteRunOptions } from "./run-suite.ts";
-import { fixturesSuite } from "./suites/fixtures.ts";
+import { ensureFixtureVaultItem, fixturesSuite } from "./suites/fixtures.ts";
 import { zybooksSuite } from "./suites/zybooks.ts";
 import {
   BENCH_APPROVAL_MODES,
@@ -357,6 +357,12 @@ async function main(argv: string[]): Promise<void> {
     for (const line of lines) log(line);
     process.exitCode = code;
     return;
+  }
+  if (suite.id === "fixtures") {
+    // Test stack only (suite.stack is "test"): the dummy login comes from the committed .env.test.
+    log(
+      `fixture vault item: ${await ensureFixtureVaultItem(api, readFileSync(".env.test", "utf8"))}`,
+    );
   }
   // D47: the prod-like stack runs only after its preflight. Task 22A replaces this line with
   // `await assertProdMode(STACK_COMPOSE.local);` (tests/bench/src/prod-check.ts), so until then it refuses.
