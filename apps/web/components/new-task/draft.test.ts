@@ -108,6 +108,7 @@ describe("buildCreateRunInput", () => {
     });
     expect(buildCreateRunInput(draft({ approvalMode: "auto_within_allowlist" }))).toEqual({
       error: "Auto mode needs an allowed domain. Add one, or choose Ask me.",
+      field: "domains",
     });
     expect(
       buildCreateRunInput(draft({ goal: "x".repeat(4_100), domains: ["https://a.example"] })),

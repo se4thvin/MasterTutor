@@ -205,8 +205,25 @@ describe("goalText", () => {
     );
     expect(text).toContain("Allowed origins: none yet");
     expect(text).toContain("blank page");
-    expect(text).toContain("search the web");
+    expect(text).toContain("https://html.duckduckgo.com/html/?q=");
+    // Result links go through a redirector on another origin: open the destination directly.
+    expect(text).toContain("uddg");
+    expect(text).toContain("open the destination directly with CTRL+L");
     expect(text).toContain("risky actions wait for the user's approval");
+  });
+  it("never sends the search guidance to a run with allowed origins (benchmarks, sourced runs)", () => {
+    for (const approvalMode of ["ask", "auto_within_allowlist", "bypass"] as const) {
+      const text = goalText(
+        { goal: "Do X", allowedOrigins: ["https://learn.example.edu"], approvalMode },
+        [],
+      );
+      expect(text).not.toMatch(/duckduckgo|search the web|find sources|not limits|none yet/i);
+    }
+    for (const profile of ["computer_use", "browser_use"] as const) {
+      const instructions = agentInstructions(profile);
+      expect(instructions).not.toMatch(/duckduckgo|Finding sources|not limits/i);
+      expect(instructions).toContain("- Stay on the allowed origins listed in the task.\n");
+    }
   });
 });
 
@@ -415,9 +432,6 @@ describe("tool profiles (Phase 10)", () => {
       expect(text).toContain("cookie or consent banner");
       expect(text).toContain("<untrusted_page_content>");
       expect(text).not.toMatch(/zybook|osano/i);
-      // Goal-only runs: a free, self-hosted-friendly search page reached through normal browsing.
-      expect(text).toContain("https://html.duckduckgo.com/html/?q=");
-      expect(text).toContain("the executor asks the user first");
     }
   });
 });

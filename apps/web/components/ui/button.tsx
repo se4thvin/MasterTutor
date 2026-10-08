@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import { cx } from "@/lib/cx.ts";
 import { Icon, type IconName } from "./icon.tsx";
 
@@ -21,7 +21,7 @@ export function Button({
   children,
   type = "button",
   ...rest
-}: Look & ButtonHTMLAttributes<HTMLButtonElement>) {
+}: Look & ButtonHTMLAttributes<HTMLButtonElement> & { ref?: Ref<HTMLButtonElement> }) {
   return (
     <button type={type} className={classes({ variant, size }, className)} {...rest}>
       {icon ? <Icon name={icon} size="sm" /> : null}

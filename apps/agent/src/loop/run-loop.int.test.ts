@@ -390,7 +390,7 @@ describe("RunLoop (spec §5.3)", () => {
       ...click(),
       check: (r) => {
         const input = JSON.stringify(r.body.input);
-        for (const text of ["Allowed origins: none yet", "search the web", "about:blank"])
+        for (const text of ["Allowed origins: none yet", "html.duckduckgo.com/html", "about:blank"])
           if (!input.includes(text)) throw new Error(`no "${text}" in the first input`);
       },
     };
@@ -414,6 +414,36 @@ describe("RunLoop (spec §5.3)", () => {
     expect(await drive(resumed)).toEqual({ kind: "completed" });
     expect(browser.navigations).toEqual([search]);
     expect((await status(run.id))?.allowedOrigins).toEqual(["https://html.duckduckgo.com"]);
+  });
+
+  it("a bypass goal-only run is never asked about new sites: each is approved as bypass and opened", async () => {
+    const search = "https://html.duckduckgo.com/html/?q=rust%20lifetimes";
+    const result = "https://doc.rust-lang.org/nomicon/lifetimes.html";
+    const { run, browser, loop } = await setup(
+      [click(), click(30, 40), doneExpecting("allowed by this run's bypass mode")],
+      { allowedOrigins: [], approvalMode: "bypass" },
+    );
+    browser.url = "about:blank";
+    const blocked = [
+      { url: search, origin: "https://html.duckduckgo.com" },
+      { url: result, origin: "https://doc.rust-lang.org" },
+    ];
+    browser.computerHook = async () => {
+      const next = blocked.shift();
+      if (next) browser.blocked.push(next);
+    };
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.navigations).toEqual([search, result]);
+    expect(
+      (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
+    ).toEqual([
+      ["new_origin", "approved", "bypass"],
+      ["new_origin", "approved", "bypass"],
+    ]);
+    expect((await status(run.id))?.allowedOrigins).toEqual([
+      "https://html.duckduckgo.com",
+      "https://doc.rust-lang.org",
+    ]);
   });
 
   describe("downloads (spec §9)", () => {
