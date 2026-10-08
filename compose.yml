@@ -201,8 +201,9 @@ services:
         condition: service_completed_successfully
       garage-init:
         condition: service_completed_successfully
+      # Started, not healthy: the agent falls back to pdf.js, so docling never holds it back.
       docling:
-        condition: service_healthy
+        condition: service_started
         required: false
     networks:
       backend: {}
