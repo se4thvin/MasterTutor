@@ -17,6 +17,9 @@ importers:
       '@mastertutor/db':
         specifier: workspace:*
         version: link:packages/db
+      '@mastertutor/observability':
+        specifier: workspace:*
+        version: link:packages/observability
       '@mastertutor/sealing':
         specifier: workspace:*
         version: link:packages/sealing

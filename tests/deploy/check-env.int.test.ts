@@ -145,8 +145,22 @@ describe("checkProductionEnv", () => {
     expectNoValues(problems, values);
   });
 
-  // Passes once compose.prod.yml requires the secret with `:?set OBSERVE_ROOT_PASSWORD` (Task B7).
-  it.todo("reports a missing observability secret by key");
+  it("reports a missing observability secret by key", async () => {
+    const values = goodEnv();
+    delete values.OBSERVE_ROOT_PASSWORD;
+    const problems = await checkProductionEnv(envFile(values));
+    expect(problems).toContain("OBSERVE_ROOT_PASSWORD: required");
+    expectNoValues(problems, values);
+  });
+
+  it("refuses an OpenObserve password the image would refuse, naming the key only", async () => {
+    const values = { ...goodEnv(), OBSERVE_INGEST_PASSWORD: "a".repeat(40) };
+    const problems = await checkProductionEnv(envFile(values));
+    expect(problems.some((p) => p.startsWith("observability-init.OBSERVE_INGEST_PASSWORD"))).toBe(
+      true,
+    );
+    expectNoValues(problems, values);
+  });
 });
 
 describe("pnpm deploy:check-env (CLI)", () => {
