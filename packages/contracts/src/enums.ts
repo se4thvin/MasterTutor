@@ -178,3 +178,8 @@ export type NeedHuman = z.infer<typeof NeedHuman>;
 export const AGENT_TURN_STATUSES = ["continue", "done", "need_human"] as const;
 export const AgentTurnStatus = z.enum(AGENT_TURN_STATUSES);
 export type AgentTurnStatus = z.infer<typeof AgentTurnStatus>;
+
+/** Per-run tool set (benchmark tracks). browser_use is the full product set and the default. */
+export const TOOL_PROFILES = ["browser_use", "computer_use"] as const;
+export const ToolProfile = z.enum(TOOL_PROFILES);
+export type ToolProfile = z.infer<typeof ToolProfile>;

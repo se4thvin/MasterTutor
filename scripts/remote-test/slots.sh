@@ -76,21 +76,31 @@ slot_conflict() {
 }
 
 # The host's Docker network subnets and listening TCP ports, for slot_conflict.
+# One inspect per network: a concurrent run may remove a network between ls and inspect, and a
+# network that is gone holds no subnet.
+# Listing itself failing (no daemon) is still an error: never allocate blind.
 host_subnets() {
-  docker network ls -q | xargs -r docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+  local id ids
+  ids="$(docker network ls -q)" || return 1
+  for id in $ids; do
+    docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$id" 2>/dev/null || true
+  done
 }
 host_ports() { ss -ltnH | awk '{ sub(/.*:/, "", $4); print $4 }'; }
 
 # Takes the first free, conflict-free slot below $1, waiting while all are busy. Sets SLOT and
 # keeps SLOT_FD open (holding the seat) until this shell exits. $2 is the folder for the lock files.
+# The host is probed after the seat is taken, so the check and the allocation are one step under
+# the lock: a slot's previous holder frees its seat only after its cleanup has finished, so a
+# subnet still being torn down in this slot's block is a crashed run's leftover and is skipped.
 acquire_slot() {
   local max=$1 dir=$2 i fd subnets ports why
   while true; do
-    subnets="$(host_subnets)"
-    ports="$(host_ports)"
     for ((i = 0; i < max; i++)); do
       exec {fd}>"$dir/slot-$i.lock"
       if flock -n "$fd"; then
+        subnets="$(host_subnets)"
+        ports="$(host_ports)"
         why="$(slot_conflict "$i" "$subnets" "$ports")"
         if [[ -z "$why" ]]; then
           SLOT=$i SLOT_FD=$fd

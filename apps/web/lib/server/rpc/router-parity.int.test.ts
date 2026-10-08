@@ -32,8 +32,6 @@ const MISSING = "00000000-0000-4000-8000-00000000dead";
 // The .env.test dummy public key (Phase 0), as vault.int.test.ts uses. It protects nothing.
 const TEST_PUBLIC = "y5DgMx35MF/R/d3MSLtIufXczYHJAqVtEIEMLY/Qf3M=";
 
-/** T18 wires benchmarks.* and deletes this exclusion. */
-const UNTIL_T18 = "benchmarks";
 /** Branch b245-t0 (P3, B2 library handlers; Task 0C binds them) wires these and deletes this exclusion. */
 const UNTIL_P3_B2 = [
   "notes/list",
@@ -51,8 +49,17 @@ const UNTIL_P3_B2 = [
   "folders/delete",
   "assets/url",
 ] as const;
-/** Live procedures still answering NOT_IMPLEMENTED outside benchmarks.*. Empty after P3. */
+/** Live procedures still answering NOT_IMPLEMENTED. Empty after P3. */
 const LIVE_DEFERRED: ReadonlySet<string> = new Set(UNTIL_P3_B2);
+/**
+ * The fixture router's benchmarks.* writes stay a test double (NOT_IMPLEMENTED): fe never drives
+ * them, and the live behaviour is pinned by benchmarks/service.int.test.ts (T18).
+ */
+const FIXTURE_DEFERRED: ReadonlySet<string> = new Set([
+  "benchmarks/create",
+  "benchmarks/start",
+  "benchmarks/grade",
+]);
 
 /** One probe per procedure without a lasting side effect: unknown ids, or a harmless read. */
 const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
@@ -89,6 +96,10 @@ const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
   ["settings/get", {}, "ok"],
   ["settings/usage", { from: "2026-10-01", to: "2026-10-05" }, "ok"],
   ["assets/url", { assetId: MISSING }, "not_found"],
+  ["benchmarks/list", {}, "ok"],
+  ["benchmarks/start", { benchmarkId: MISSING }, "not_found"],
+  ["benchmarks/runs", {}, "ok"],
+  ["benchmarks/grade", { benchmarkRunId: MISSING, outcome: "failed" }, "not_found"],
 ];
 /** Procedures that create or change state, with inputs each call may repeat. */
 const CREATE_INPUTS: Record<string, () => unknown> = {
@@ -102,6 +113,12 @@ const CREATE_INPUTS: Record<string, () => unknown> = {
   }),
   "settings/update": () => ({ version: "stale-version" }),
   "settings/setKillSwitch": () => ({ on: false }),
+  "benchmarks/create": () => ({
+    name: `Probe ${crypto.randomUUID().slice(0, 8)}`,
+    task: "probe",
+    allowedOrigins: ["https://example.com"],
+    successCriteria: "probe",
+  }),
 };
 const EVERY_CALL: ReadonlyArray<readonly [string, () => unknown]> = [
   ...PROBES.map(([path, input]) => [path, () => input] as const),
@@ -144,7 +161,7 @@ const worlds: ReadonlyArray<readonly [string, World]> = [
         })),
       anonymous: () =>
         createRouterClient(fixtureRouter, { context: { ns: "parity-anon", viewer: null } }),
-      deferred: new Set(),
+      deferred: FIXTURE_DEFERRED,
       folder: async (name) => (await fixtureSession!.folders.create({ name })).id,
       // Each session is a fresh namespace, so the recorded approval is still pending there.
       pendingApproval: async () => RECORDED_APPROVAL_ID,
@@ -212,10 +229,10 @@ afterAll(async () => {
   await tdb?.stop();
 });
 
-it("probes every procedure outside benchmarks.*", () => {
-  const all = Object.entries(apiContract)
-    .filter(([group]) => group !== UNTIL_T18)
-    .flatMap(([group, procedures]) => Object.keys(procedures).map((name) => `${group}/${name}`));
+it("probes every procedure", () => {
+  const all = Object.entries(apiContract).flatMap(([group, procedures]) =>
+    Object.keys(procedures).map((name) => `${group}/${name}`),
+  );
   expect(EVERY_CALL.map(([path]) => path).sort()).toEqual(all.sort());
   for (const path of LIVE_DEFERRED) expect(all, path).toContain(path);
 });
@@ -371,17 +388,13 @@ describe.each(worlds)("the API contract on %s (P7-14)", (_name, world) => {
   );
 });
 
-describe("liveRouter is fully wired outside benchmarks.* and the deferred procedures (P7-2, X1)", () => {
+describe("liveRouter is fully wired outside the deferred procedures (P7-2, X1)", () => {
   it("never answers NOT_IMPLEMENTED", async () => {
     const api = live().session();
     const unwired: string[] = [];
     for (const [path, input] of EVERY_CALL.filter(([path]) => !LIVE_DEFERRED.has(path)))
       if ((await outcome(call(api, path)(input()))) === "NOT_IMPLEMENTED") unwired.push(path);
     expect(unwired).toEqual([]);
-  });
-
-  it("still answers NOT_IMPLEMENTED for benchmarks.* (T18 deletes this case)", async () => {
-    expect(await outcome(live().session().benchmarks.list({}))).toBe("NOT_IMPLEMENTED");
   });
 
   it("still answers NOT_IMPLEMENTED for each deferred procedure (wiring one means deleting it from UNTIL_P3_B2)", async () => {

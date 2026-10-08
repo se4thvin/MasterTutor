@@ -1,4 +1,4 @@
-import { AgentTurn, CompactionSummary } from "@mastertutor/contracts";
+import { AgentTurn, CompactionSummary, type ToolProfile } from "@mastertutor/contracts";
 import { createOpenAI, zodTextFormat, type ResponseInputItem } from "./openai.ts";
 import type { TokenUsage } from "./pricing.ts";
 import { agentTools } from "./tools.ts";
@@ -9,6 +9,8 @@ export interface ModelRequest {
   instructions: string;
   input: ResponseInputItem[];
   format: "agent_turn" | "compaction_summary";
+  /** The run's tool profile: the same tools on every request, so replayed calls stay valid (Phase 10). */
+  toolProfile: ToolProfile;
 }
 
 export interface ModelReply {
@@ -44,7 +46,7 @@ export function createOpenAIModelClient(options: {
           include: ["reasoning.encrypted_content"],
           reasoning: { effort: "medium" },
           // Tools are always declared so replayed calls stay valid; a summary must not call them.
-          tools: agentTools(),
+          tools: agentTools(request.toolProfile),
           ...(request.format === "compaction_summary" ? { tool_choice: "none" as const } : {}),
           text: { format: FORMATS[request.format] },
         },
