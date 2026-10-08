@@ -3,7 +3,12 @@ import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LeaseLost } from "../runtime/errors.ts";
-import { reclaimExpiredSlots, releaseSlot } from "../slots/leases.ts";
+import {
+  listRestartingSlots,
+  markSlotIdle,
+  reclaimExpiredSlots,
+  releaseSlot,
+} from "../slots/leases.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { NO_SESSION_STORE, StepStore } from "./step-store.ts";
@@ -236,6 +241,45 @@ describe("leases", () => {
     await owner.db.update(runs).set({ slotName: "browser-3" }).where(eq(runs.id, run.id));
     expect(await reclaimExpiredSlots(agent.db, SLOTS)).toEqual(["browser-3"]);
     expect((await owner.db.select().from(runs).where(eq(runs.id, run.id)))[0]?.slotName).toBeNull();
+  });
+
+  it("tells a never-leased slot from one a run left behind, so boot resets only the latter", async () => {
+    // As seeding leaves them: restarting, never stamped.
+    await setIdle([]);
+    await owner.db.update(browserSlots).set({ restartedAt: null });
+    // browser-1 and browser-2 come up; a run leases browser-1 and releases it.
+    for (const name of ["browser-1", "browser-2"]) await markSlotIdle(agent.db, name);
+    await insertRun(owner.db, { workspaceId });
+    const claim = await claimNextRun(agent.db, OPTIONS);
+    if (!claim) throw new Error("no claim");
+    await agent.db.transaction((tx) =>
+      releaseSlot(tx, { name: claim.slotName, runId: claim.run.id }),
+    );
+    // browser-3 is held by a dead agent mid-run. Even a row never stamped by markSlotIdle
+    // must come back as needing a reset once its lease is reclaimed.
+    const stale = await insertRun(owner.db, { workspaceId, status: "running" });
+    await owner.db
+      .update(browserSlots)
+      .set({
+        state: "leased",
+        runId: stale.id,
+        leaseOwner: "dead",
+        leaseExpiresAt: sql`now() - interval '1 second'`,
+      })
+      .where(eq(browserSlots.name, "browser-3"));
+    await owner.db.update(runs).set({ slotName: "browser-3" }).where(eq(runs.id, stale.id));
+    expect(await reclaimExpiredSlots(agent.db, SLOTS)).toEqual(["browser-3"]);
+    // browser-2 only kept the claim's warm-slot rule happy; put it back as seeding left it.
+    await owner.db
+      .update(browserSlots)
+      .set({ state: "restarting", restartedAt: null })
+      .where(eq(browserSlots.name, "browser-2"));
+
+    expect(await listRestartingSlots(agent.db, SLOTS)).toEqual([
+      { name: "browser-1", neverLeased: false },
+      { name: "browser-2", neverLeased: true },
+      { name: "browser-3", neverLeased: false },
+    ]);
   });
 
   it("writes slot restarting and runs.slot_name = null atomically (rolled back together)", async () => {

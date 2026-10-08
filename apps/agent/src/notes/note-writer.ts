@@ -113,6 +113,25 @@ export function screenValue(secrets: MaskSources, value: unknown): void {
     }
 }
 
+/** A video block: its anchor carries the time it starts at (spec §8). */
+export type TimedBlockDraft = BlockDraft & { anchor: Anchor & { tStart: number } };
+
+export function timeAnchor(tStart: number, tEnd: number): Anchor & { tStart: number } {
+  return {
+    selector: null,
+    xpath: null,
+    start: null,
+    end: null,
+    textFragment: null,
+    tStart,
+    tEnd: Math.max(tEnd, tStart),
+  };
+}
+
+/** At one time, a chapter heading comes before its keyframe, and both before transcript text. */
+const TYPE_RANK: Partial<Record<BlockType, number>> = { heading: 0, keyframe: 1 };
+const timedKey = (t: number, type: BlockType) => t * 10 + (TYPE_RANK[type] ?? 2) / 10;
+
 /** A block's place in its note, committed or staged in this step. */
 export interface PlacedBlock {
   id: string;
@@ -288,6 +307,49 @@ export class NoteWriter {
       options.sourceId,
       options.blocks.map((draft, i) => ({ draft, position: keys[i] ?? "" })),
     );
+  }
+
+  /** Video layout (spec §8): one source's blocks ordered by (tStart, heading < keyframe < text). */
+  async appendTimedBlocks(
+    w: WriteContext,
+    options: { noteId: string; sourceId: string; blocks: readonly TimedBlockDraft[] },
+  ): Promise<string[]> {
+    const ordered = await this.placed(w, options.noteId);
+    const mine = ordered
+      .map((row, index) => ({ ...row, index }))
+      .filter((row) => row.sourceId === options.sourceId && typeof row.anchor?.tStart === "number")
+      .map((row) => ({ ...row, key: timedKey(row.anchor?.tStart ?? 0, row.type) }));
+    const incoming = options.blocks
+      .map((draft) => ({ draft, key: timedKey(draft.anchor.tStart, draft.type) }))
+      .sort((a, b) => a.key - b.key);
+    // The gap is how many of the source's blocks sort at or before the key; a run of incoming
+    // blocks that share a gap is placed together between that gap's neighbours.
+    const gapOf = (key: number) => mine.filter((row) => row.key <= key).length;
+    const bounds = (gap: number): [string | null, string | null] => {
+      const first = mine[0];
+      const last = mine.at(-1);
+      if (!first || !last) return [ordered.at(-1)?.position ?? null, null];
+      const before =
+        gap > 0 ? (mine[gap - 1]?.position ?? null) : (ordered[first.index - 1]?.position ?? null);
+      const after =
+        gap < mine.length
+          ? (mine[gap]?.position ?? null)
+          : (ordered[last.index + 1]?.position ?? null);
+      return [before, after];
+    };
+    const items: { draft: BlockDraft; position: string }[] = [];
+    for (let i = 0; i < incoming.length;) {
+      const gap = gapOf(incoming[i]?.key ?? 0);
+      let j = i;
+      while (j < incoming.length && gapOf(incoming[j]?.key ?? 0) === gap) j++;
+      const [before, after] = bounds(gap);
+      const keys = keysBetween(before, after, j - i);
+      incoming
+        .slice(i, j)
+        .forEach((item, k) => items.push({ draft: item.draft, position: keys[k] ?? "" }));
+      i = j;
+    }
+    return this.stageBlockRows(w, options.noteId, options.sourceId, items);
   }
 
   /** Screens, embeds, then stages the inserts and one block_added event per block. */

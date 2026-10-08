@@ -18,6 +18,43 @@ PORT="${TEST_HTTP_PORT:-$(env_test TEST_HTTP_PORT)}"
 ORIGIN="${PUBLIC_URL:-$(env_test PUBLIC_URL)}"
 pnpm bench init --stack test --base-url "http://localhost:${PORT:-18080}" \
   --origin "${ORIGIN:-http://localhost:18080}"
-pnpm bench run --suite fixtures --mock --track both --max-total-usd 10
-pnpm bench run --suite fixtures --mock --track computer_use \
+pnpm bench run --suite fixtures --mock --only activities --track both --max-total-usd 10
+pnpm bench run --suite fixtures --mock --only activities --track computer_use \
   --approval-mode bypass --acknowledge-bypass --max-total-usd 10
+
+# Run 1's shape on the fixture library: the main run works some activities (all of 1.1, one of 2.2's
+# two questions, 3.3), then a read-only grading run discovers readings 1-3 itself (expanding reading
+# 3's collapsed chapter) and grades every section per activity. Mixed results, so it must not pass;
+# the record must grade every section with where and why, and reading 4 is out of scope. Then the
+# record is re-graded from its stored traces alone (I5), which must agree.
+set +e
+discovery="$(pnpm bench run --suite fixtures --mock --only readings --track browser_use \
+  --max-total-usd 10 2>&1)"
+status=$?
+set -e
+printf '%s\n' "$discovery"
+[[ "$status" == 1 ]] || { echo "discovery: expected exit 1 (mixed results), got $status" >&2; exit 1; }
+record="$(sed -n 's/.* record: //p' <<<"$discovery" | tail -1)"
+chapter=http://bench.fixtures.test:8080/library/chapter
+all="every question answered and every animation step played"
+expected=(
+  "| 1 | 1.1 Variables | $chapter/1/section/1 | passed | 2/2 activities complete, $all |"
+  "| 1 | 1.2 Types | $chapter/1/section/2 | **failed** | 1/1 activities complete, but activity 1.2.1: answered 0/1 questions |"
+  "| 2 | 2.1 Loops | $chapter/2/section/1 | **failed** | 1/2 activities complete |"
+  "| 2 | 2.2 Functions | $chapter/2/section/2 | **failed** | 1/1 activities complete, but activity 2.2.1: answered 1/2 questions |"
+  "| 3 | 3.1 Overview | $chapter/3/section/1 | **unknown** | no activity found on the page |"
+  "| 3 | 3.2 Review | $chapter/3/section/2 | **unknown** | never read in the grading run |"
+  "| 3 | 3.3 Extra | $chapter/3/section/3 | passed | 1/1 activities complete, $all |"
+  "- Outcome: **partial**"
+)
+check() {
+  local what="$1" text="$2" line
+  for line in "${expected[@]}"; do
+    grep -qF -- "$line" <<<"$text" || { echo "$what lacks: $line" >&2; exit 1; }
+  done
+  if grep -qF "4.1 Beyond" <<<"$text"; then echo "$what graded reading 4, out of scope" >&2; exit 1; fi
+}
+check "discovery: $record" "$(cat "$record")"
+pnpm bench regrade "$record"
+check "regrade of $record" "$(sed -n '/^## Regrade/,$p' "$record")"
+echo "discovery: every section graded as expected, and the regrade agrees ($record)"

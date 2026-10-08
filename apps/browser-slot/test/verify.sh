@@ -49,7 +49,8 @@ docker run -d --name "$SLOT" --network "$NET" --ip "$PREFIX.20" \
   --cap-add NET_ADMIN --cap-add SYS_PTRACE --security-opt "seccomp=$HERE/seccomp/chromium.json" \
   --shm-size 2g --tmpfs /tmp/chromium-profile:uid=1000,gid=1000,mode=0700 \
   -e SLOT_NAME=browser-1 -e NEKO_ADMIN_SECRET="$ADMIN_SECRET" -e NEKO_MEMBER_SECRET="$MEMBER_SECRET" \
-  -e CDP_ALLOWED_IP="$PREFIX.10" -e NEKO_ALLOWED_IPS="$PREFIX.11,$PREFIX.12" \
+  -e CDP_ALLOWED_IP="$PREFIX.10" -e PULSE_ALLOWED_IP="$PREFIX.13" \
+  -e NEKO_ALLOWED_IPS="$PREFIX.11,$PREFIX.12" \
   -e NEKO_WEBRTC_NAT1TO1=127.0.0.1 \
   "$IMAGE" >/dev/null
 

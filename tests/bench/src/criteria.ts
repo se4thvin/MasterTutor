@@ -1,24 +1,25 @@
 import type { ReadPageResult } from "@mastertutor/contracts";
 import type { RunTrace } from "./evidence.ts";
 import type { Criterion } from "./types.ts";
+import { sameDocument } from "./url.ts";
+import { discoverReadings, type DiscoveredReadingsCriterion } from "./discovery.ts";
+
+/** One discovered section's grade: where it is and why it got that outcome. Unknown never passes. */
+export interface SectionOutcome {
+  reading: number;
+  title: string;
+  url: string | null;
+  outcome: "passed" | "failed" | "unknown";
+  reason: string;
+}
 
 export interface Verdict {
   outcome: "passed" | "partial" | "failed";
   summary: string;
   unmet: string[];
   unvisited: string[];
-}
-
-export function sameDocument(a: string, b: string): boolean {
-  const norm = (u: string) => {
-    try {
-      const url = new URL(u);
-      return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
-    } catch {
-      return u;
-    }
-  };
-  return norm(a) === norm(b);
+  /** Per-section grades, for criteria graded section by section from discovery. */
+  sections?: SectionOutcome[];
 }
 
 function flatten(result: Exclude<ReadPageResult, { unchanged: true }>): string {
@@ -95,6 +96,7 @@ export function evaluate(
     };
   }
   if (verify === null) return failed("no verify run evidence");
+  if (criterion.kind === "discovered_readings") return evaluateDiscovered(criterion, main, verify);
   if (criterion.kind === "page_text") {
     const results = evidenceResults(verify, criterion.url);
     if (results.length === 0)
@@ -141,21 +143,204 @@ export function evaluate(
   };
 }
 
+/** One participation activity in a section's text (I2): challenge activities end a block, never count. */
+interface ActivityBlock {
+  id: string;
+  complete: boolean;
+  questions: Set<string>;
+  steps: Set<string>;
+}
+
+function activityBlocks(text: string, c: DiscoveredReadingsCriterion): ActivityBlock[] {
+  const headers = [
+    ...[...text.matchAll(new RegExp(c.activityPattern, "giu"))].map((m) => ({
+      at: m.index,
+      id: m[1] ?? null,
+    })),
+    ...[...text.matchAll(new RegExp(c.otherActivityPattern, "giu"))].map((m) => ({
+      at: m.index,
+      id: undefined,
+    })),
+  ].sort((a, b) => a.at - b.at);
+  const blocks: ActivityBlock[] = [];
+  headers.forEach((header, i) => {
+    if (header.id === undefined) return; // a challenge activity
+    const body = text.slice(header.at, headers[i + 1]?.at ?? text.length);
+    const ids = (pattern: string, flags: string) =>
+      new Set([...body.matchAll(new RegExp(pattern, flags))].map((m, k) => m[1] ?? String(k + 1)));
+    blocks.push({
+      id: header.id ?? `#${blocks.length + 1}`,
+      complete: new RegExp(c.completedPattern, "iu").test(body),
+      questions: ids(`(?:^|\\n)[ \\t]*(?:${c.questionPattern})`, "giu"),
+      steps: ids(c.stepPattern, "giu"),
+    });
+  });
+  return blocks;
+}
+
+/** Which activity, and which question in it, an input landed in: from its recorded enclosing text. */
+function placeOf(
+  ancestors: readonly string[],
+  c: DiscoveredReadingsCriterion,
+): { activity: string; question: string | null } | null {
+  const activity = new RegExp(`^\\s*(?:${c.activityPattern})`, "iu");
+  const question = new RegExp(`^\\s*(?:${c.questionPattern})`, "iu");
+  let inQuestion: string | null = null;
+  for (const text of ancestors) {
+    const a = activity.exec(text);
+    if (a) return { activity: a[1] ?? "", question: inQuestion };
+    const q = question.exec(text);
+    if (q && inQuestion === null) inQuestion = q[1] ?? "";
+  }
+  return null;
+}
+
+function evaluateDiscovered(
+  criterion: DiscoveredReadingsCriterion,
+  main: RunTrace | null,
+  verify: RunTrace,
+): Verdict {
+  const rows: SectionOutcome[] = [];
+  const unvisited: string[] = [];
+  const stepControl = new RegExp(criterion.stepControlPattern, "iu");
+  for (const found of discoverReadings(criterion, verify)) {
+    if (found.problem !== null) {
+      rows.push({
+        reading: found.reading,
+        title: `Reading ${found.reading}`,
+        url: found.page,
+        outcome: "unknown",
+        reason: found.problem,
+      });
+      continue;
+    }
+    for (const section of found.sections) {
+      const grade = (outcome: SectionOutcome["outcome"], reason: string) =>
+        rows.push({
+          reading: found.reading,
+          title: section.title,
+          url: section.url,
+          outcome,
+          reason,
+        });
+      const results = evidenceResults(verify, section.url);
+      if (results.length === 0) {
+        grade("unknown", "never read in the grading run");
+        continue;
+      }
+      // The fullest single read (I2): most activities, then most complete; never merged (P10b-8).
+      const blocks = results
+        .map((text) => activityBlocks(text, criterion))
+        .reduce((a, b) => {
+          const done = (x: ActivityBlock[]) => x.filter((block) => block.complete).length;
+          return b.length > a.length || (b.length === a.length && done(b) > done(a)) ? b : a;
+        });
+      if (blocks.length === 0) {
+        grade("unknown", "no activity found on the page");
+        continue;
+      }
+      const complete = blocks.filter((block) => block.complete).length;
+      const done = `${complete}/${blocks.length} activities complete`;
+      if (complete < blocks.length) {
+        grade("failed", done);
+        continue;
+      }
+      if (!criterion.requireInteraction) {
+        grade("passed", done);
+        continue;
+      }
+      // I3: the account starts complete, so a pass needs the main run's own work on every question
+      // and every animation step of every activity, tied to them by where each input landed.
+      const inputs = (main?.steps ?? [])
+        .filter((step) => step.url !== null && sameDocument(step.url, section.url))
+        .flatMap((step) => step.actions.filter((a) => a.effect === "input" && a.target !== null))
+        .flatMap((a) => {
+          const place = placeOf(a.target!.ancestors, criterion);
+          return place ? [{ ...place, step: stepControl.test(a.target!.label) }] : [];
+        });
+      if (inputs.length === 0) unvisited.push(section.url);
+      let verdict: [SectionOutcome["outcome"], string] = [
+        "passed",
+        `${done}, every question answered and every animation step played`,
+      ];
+      for (const block of blocks) {
+        const mine = inputs.filter((input) => input.activity === block.id);
+        const answered = new Set(
+          mine.flatMap((input) =>
+            input.question !== null && block.questions.has(input.question) ? [input.question] : [],
+          ),
+        );
+        const played = mine.filter((input) => input.step).length;
+        if (block.questions.size + block.steps.size === 0) {
+          verdict = ["unknown", `activity ${block.id}: no question or animation step found`];
+          break;
+        }
+        if (answered.size < block.questions.size) {
+          verdict = [
+            "failed",
+            `${done}, but activity ${block.id}: answered ${answered.size}/${block.questions.size} questions`,
+          ];
+          break;
+        }
+        if (played < block.steps.size) {
+          verdict = [
+            "failed",
+            `${done}, but activity ${block.id}: played ${played}/${block.steps.size} animation steps`,
+          ];
+          break;
+        }
+      }
+      grade(...verdict);
+    }
+  }
+  const passed = rows.filter((r) => r.outcome === "passed").length;
+  const unknown = rows.filter((r) => r.outcome === "unknown").length;
+  return {
+    outcome:
+      rows.length > 0 && passed === rows.length ? "passed" : passed > 0 ? "partial" : "failed",
+    summary: `${passed}/${rows.length} sections passed, ${unknown} unknown`,
+    unmet: rows.filter((r) => r.outcome !== "passed").map((r) => `${r.title}: ${r.reason}`),
+    unvisited,
+    sections: rows,
+  };
+}
+
+/** Whether a URL is a page the criterion grades (where a grading run must touch nothing). */
+function gradedPage(criterion: Criterion, url: string): boolean {
+  if (criterion.kind === "page_text") return sameDocument(url, criterion.url);
+  if (criterion.kind === "sections_complete")
+    return criterion.sections.some((s) => sameDocument(url, s.url));
+  if (criterion.kind === "discovered_readings")
+    return new RegExp(criterion.sectionUrlPattern, "u").test(url);
+  return false;
+}
+
 /**
  * A grading (verify) run must only read (P10a-24, I3): any click, type or key press on any page
  * taints it, so it cannot do the work on a page that is not graded. The one exception is the
- * declared sign-in page, which a fresh-login run must fill and submit.
+ * declared sign-in page, which a fresh-login run must fill and submit. An expand click (disclosure)
+ * opens collapsed listings and is harmless there, but on a graded page a toggle could do the work
+ * (a "Show answer" that gives credit), so there it taints too (re-review N1).
  */
-export function verifyTainted(verify: RunTrace, signInUrl: string | null): boolean {
-  return verify.steps.some(
-    (s) =>
-      s.interaction && (signInUrl === null || s.url === null || !sameDocument(s.url, signInUrl)),
-  );
+export function verifyTainted(
+  verify: RunTrace,
+  signInUrl: string | null,
+  criterion: Criterion,
+): boolean {
+  return verify.steps.some((s) => {
+    const signingIn = signInUrl !== null && s.url !== null && sameDocument(s.url, signInUrl);
+    if (s.interaction && !signingIn) return true;
+    return (
+      s.url !== null &&
+      gradedPage(criterion, s.url) &&
+      s.actions.some((a) => a.effect === "disclosure")
+    );
+  });
 }
 
 /** D32 baseline: the pages already show completion; no interaction is expected from a verify run. */
 export function baselineCriterion(criterion: Criterion): Criterion {
-  return criterion.kind === "sections_complete"
+  return criterion.kind === "sections_complete" || criterion.kind === "discovered_readings"
     ? { ...criterion, requireInteraction: false }
     : criterion;
 }
