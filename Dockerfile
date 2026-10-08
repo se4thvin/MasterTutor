@@ -45,3 +45,15 @@ COPY --from=web-build --chown=node:node /repo/apps/web/.next/static ./apps/web/.
 USER node
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]
+
+# agent: node-runtime + parec, which records a slot's PulseAudio over TCP (spec §8 transcribe).
+# pulseaudio-utils adds ~13 MB; Debian's ffmpeg would add ~570 MB for the same raw PCM stream.
+FROM node-runtime AS agent
+USER root
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends pulseaudio-utils; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+USER node
+CMD ["node", "apps/agent/src/main.ts"]

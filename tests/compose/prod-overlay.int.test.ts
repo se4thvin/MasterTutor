@@ -269,8 +269,10 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
       expect(service.image, name).toMatch(/^mastertutor\/[a-z-]+:prod$/);
       expect(ciImages.has(service.image), name).toBe(false);
     }
-    const runtime = ["migrate", "agent", "garage-init"].map((n) => config.services[n]!.image);
+    const runtime = ["migrate", "garage-init"].map((n) => config.services[n]!.image);
     expect(new Set(runtime).size).toBe(1);
+    // The agent's own image: node-runtime plus parec (B4 transcription).
+    expect(config.services.agent!.image).toBe("mastertutor/agent:prod");
   });
 
   it("bounds every service's memory, CPU, processes and logs on the shared host (review I5)", () => {

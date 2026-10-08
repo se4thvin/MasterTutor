@@ -10,6 +10,16 @@ import {
   pageScrollMetrics,
   pageScrollTo,
 } from "./page/prepare.ts";
+import {
+  pageCaptionsClick,
+  pageCaptionsState,
+  pageVideoPause,
+  pageVideoPlay,
+  pageVideoReveal,
+  pageVideoSeek,
+  pageVideoState,
+  pageYoutubeData,
+} from "../video/page/player.ts";
 import { captureLibrarySource } from "./worlds.ts";
 
 /** Every function sent to the page as source text; later tasks extend this list. */
@@ -22,6 +32,14 @@ const PAGE_FUNCTIONS = [
   pageExtract,
   pageLocateBlocks,
   pageSanitizeSvg,
+  pageVideoState,
+  pageVideoReveal,
+  pageVideoSeek,
+  pageVideoPlay,
+  pageVideoPause,
+  pageCaptionsState,
+  pageCaptionsClick,
+  pageYoutubeData,
 ];
 
 describe("page functions", () => {

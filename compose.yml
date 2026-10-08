@@ -1,8 +1,9 @@
 # MasterTutor: one Compose app (spec §3.1, §13). Local: `pnpm env:init`, then use compose.test.yml.
 name: mastertutor
 
-# Only `migrate` builds this image; agent and garage-init reuse the tag (several services building
-# one tag fails on Docker Desktop with "image already exists"). Always start with `--build`.
+# Only `migrate` builds this image; garage-init reuses the tag (several services building one tag
+# fails on Docker Desktop with "image already exists"). The agent builds its own image on top of it
+# (target `agent`, which adds parec). Always start with `--build`.
 x-node-runtime: &node-runtime
   image: mastertutor/node-runtime:local
   networks:
@@ -158,6 +159,11 @@ services:
 
   agent:
     <<: *node-runtime
+    # node-runtime plus parec (remote-PulseAudio capture for video transcription, spec §8).
+    image: mastertutor/agent:local
+    build:
+      context: .
+      target: agent
     restart: unless-stopped
     command: ["node", "apps/agent/src/main.ts"]
     # Graceful stop: running runs sleep with a wake, then slot restarts get AGENT_SHUTDOWN_DRAIN_MS.
