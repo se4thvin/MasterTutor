@@ -16,6 +16,11 @@ async function importsOf(dir: string): Promise<Array<{ file: string; from: strin
 }
 
 describe("module boundaries (CLAUDE.md principle 5: no circular dependencies)", () => {
+  it("notes never import capture, video or pdf (preflight F15)", async () => {
+    const banned = new Set(["../capture", "../video", "../pdf"]);
+    expect((await importsOf("notes")).filter((entry) => banned.has(entry.from))).toEqual([]);
+  });
+
   it("guardrails depend on tools, never the other way round", async () => {
     expect((await importsOf("tools")).filter((entry) => entry.from === "../guardrails")).toEqual(
       [],

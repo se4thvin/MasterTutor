@@ -9,6 +9,7 @@
 | `scan-test-code.ts`    | The scanner `check-agent-image.sh` runs inside the image.                |
 | `e2e.sh`               | Boots the E2E stack and runs the Playwright stack suite in it.           |
 | `lib/test-stack.sh`    | The test stack's Compose command and the laptop stack lock (sourced).    |
+| `qa-stack.sh`          | The Phase 8 QA stack: up, wiring, shoot, ui, down (below).               |
 
 ## Remote test runner
 
@@ -33,6 +34,22 @@ scripts/remote-test.sh qa --down      # removes the QA stack and frees the stack
 scripts/remote-test.sh bench-mock     # Phase 10 harness self-test (scripts/bench-mock.sh; `pnpm bench:mock`)
 scripts/remote-test.sh all            # every suite but qa at once, one table of results (below)
 ```
+
+### The QA suite (Phase 8)
+
+```sh
+scripts/remote-test.sh qa up                     # fresh seeded QA stack (no agent, no slots)
+scripts/remote-test.sh qa wiring [--grep "G3 "]  # real-stack wiring smoke
+pnpm qa:shoot --group G3 --run <run-id>          # one group's shots, filed under the run (Task 9)
+scripts/remote-test.sh qa --down                 # always: the QA stack holds the shared stack lock until then
+```
+
+Visual baselines run in the fixture `ui` suite on the host (`e2e/visual.spec.ts`, skipped elsewhere).
+A missing baseline fails; write new ones only on purpose, then review every PNG before committing:
+`scripts/remote-test.sh ui e2e/visual.spec.ts --update-snapshots=missing`.
+
+To open the QA stack in a browser on the Mac: `ssh -N -L 18080:127.0.0.1:18080 coursebite-build`,
+then go to `http://localhost:18080`. Hold `/tmp/mt-behaviour.lock` while a local browser drives it.
 
 Output streams back and the script exits with the suite's exit code. Ctrl-C tears the run down.
 

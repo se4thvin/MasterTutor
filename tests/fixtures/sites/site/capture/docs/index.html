@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cellular Respiration Reference</title>
+<meta name="description" content="Reference notes on cellular respiration with tables, code, math and figures.">
+<link rel="canonical" href="https://fixtures.example/docs/">
+<style>
+  body { font-family: sans-serif; max-width: 860px; margin: 0 auto; padding: 24px; }
+  .katex-mathml { position: absolute; clip: rect(1px, 1px, 1px, 1px); height: 1px; width: 1px; overflow: hidden; }
+  .spacer { height: 1400px; }
+</style>
+</head>
+<body>
+<nav><a href="/">Home</a> <a href="/docs/">Docs</a></nav>
+<article id="content">
+<h1>Cellular Respiration Reference</h1>
+<p>Cellular respiration converts glucose and oxygen into carbon dioxide, water and usable energy stored as adenosine triphosphate. Every living cell depends on a steady supply of that energy, so the pathway is among the most conserved processes in biology.</p>
+<p>The process runs in three linked stages. Glycolysis happens in the cytoplasm, while the Krebs cycle and the electron transport chain take place inside the mitochondrion. Each stage hands its products to the next one.</p>
+<h2>Stages at a glance</h2>
+<table id="stages">
+<thead><tr><th>Stage</th><th>Location</th><th>Net ATP</th></tr></thead>
+<tbody>
+<tr><td>Glycolysis</td><td>Cytoplasm</td><td>2</td></tr>
+<tr><td>Krebs cycle</td><td>Mitochondrial matrix</td><td>2</td></tr>
+<tr><td>Electron transport chain</td><td>Inner membrane</td><td>about 26</td></tr>
+</tbody>
+</table>
+<h2>Electron carriers</h2>
+<table id="carriers">
+<thead><tr><th>Carrier</th><th>Produced in</th><th>Electrons delivered to</th></tr></thead>
+<tbody>
+<tr><td rowspan="2">NADH</td><td>Glycolysis</td><td rowspan="3">Electron transport chain</td></tr>
+<tr><td>Krebs cycle</td></tr>
+<tr><td>FADH2</td><td>Krebs cycle</td></tr>
+</tbody>
+</table>
+<h2>Energy yield formula</h2>
+<p>The overall reaction balances six carbon atoms on each side of the equation.</p>
+<p><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>C</mi><mn>6</mn></msub><msub><mi>H</mi><mn>12</mn></msub><msub><mi>O</mi><mn>6</mn></msub><mo>+</mo><mn>6</mn><msub><mi>O</mi><mn>2</mn></msub><mo>→</mo><mn>6</mn><mi>C</mi><msub><mi>O</mi><mn>2</mn></msub><mo>+</mo><mn>6</mn><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></mrow><annotation encoding="application/x-tex">C_6H_{12}O_6 + 6O_2 \rightarrow 6CO_2 + 6H_2O</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">C6H12O6 + 6O2 → 6CO2 + 6H2O</span></span></span></p>
+<h2>Simulating ATP yield</h2>
+<p>The helper below estimates the ATP produced from a number of glucose molecules.</p>
+<pre><code class="language-python">def atp_yield(glucose: int) -&gt; int:
+    """Approximate ATP produced per glucose molecule."""
+    return glucose * 30
+</code></pre>
+<h2>Mitochondrion diagram</h2>
+<figure>
+<img src="img/diagram-400.svg" srcset="img/diagram-400.svg 400w, img/diagram-1200.svg 1200w" sizes="400px" width="400" height="240" alt="Labelled mitochondrion diagram">
+<figcaption>Figure 1. The inner membrane folds into cristae that enlarge its surface.</figcaption>
+</figure>
+<h2>Pathway sketch</h2>
+<svg id="pathway" width="480" height="160" viewBox="0 0 480 160" role="img" aria-label="Pathway sketch from glucose to ATP">
+  <rect x="10" y="50" width="120" height="60" fill="#9cf"/><text x="70" y="85" text-anchor="middle">Glucose</text>
+  <rect x="180" y="50" width="120" height="60" fill="#fc9"/><text x="240" y="85" text-anchor="middle">Pyruvate</text>
+  <rect x="350" y="50" width="120" height="60" fill="#9f9"/><text x="410" y="85" text-anchor="middle">ATP</text>
+</svg>
+<h2>ATP by stage</h2>
+<p>The chart compares the net ATP each stage contributes.</p>
+<canvas id="chart" width="480" height="200" aria-label="Bar chart of ATP by stage"></canvas>
+<script>
+  const ctx = document.getElementById("chart").getContext("2d");
+  [[2, "#69c"], [2, "#c96"], [26, "#6c9"]].forEach(([v, c], i) => { ctx.fillStyle = c; ctx.fillRect(40 + i * 140, 190 - v * 6, 100, v * 6); });
+</script>
+<h2>Embedded worksheet</h2>
+<iframe id="worksheet" src="frame.html" width="640" height="220" title="Worksheet"></iframe>
+<h2>Component notes</h2>
+<open-note></open-note>
+<closed-note></closed-note>
+<script>
+  customElements.define("open-note", class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<p>Open shadow note: NADH carries high energy electrons to the transport chain.</p>"; }
+  });
+  customElements.define("closed-note", class extends HTMLElement {
+    constructor() { super(); const root = this.attachShadow({ mode: "closed" }); root.innerHTML = "<p>Closed shadow note: oxygen is the final electron acceptor of the chain.</p>"; }
+  });
+</script>
+<div class="spacer"></div>
+<h2>Late figure</h2>
+<img src="img/lazy.svg" loading="lazy" width="320" height="200" alt="Lazily loaded Krebs cycle figure">
+<p>The Krebs cycle turns twice for each glucose molecule, releasing carbon dioxide on every turn and refilling the pool of electron carriers.</p>
+<p hidden>This hidden paragraph must never appear in the note.</p>
+</article>
+<footer>Fixture site footer</footer>
+</body>
+</html>

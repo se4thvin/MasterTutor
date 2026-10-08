@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Region capture</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      #art {
+        width: 400px;
+        height: 200px;
+        background: #2a6;
+      }
+      #pw {
+        position: absolute;
+        left: 20px;
+        top: 240px;
+        width: 200px;
+        height: 30px;
+      }
+      #frame {
+        position: absolute;
+        left: 600px;
+        top: 20px;
+        width: 300px;
+        height: 150px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="art"></div>
+    <input id="pw" type="password" value="hunter2-canary" />
+    <iframe id="frame" src="http://other.fixtures.test/index.html" title="Other site"></iframe>
+  </body>
+</html>

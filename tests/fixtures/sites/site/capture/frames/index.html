@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Embedded worksheets</title>
+  </head>
+  <body>
+    <main>
+      <article>
+        <h1>Embedded worksheets</h1>
+        <p>Two worksheets follow: one loaded from its own address and one written inline.</p>
+        <iframe src="../docs/frame.html" width="640" height="220" title="Loaded"></iframe>
+        <iframe
+          srcdoc="<p>Srcdoc sentinel: glycolysis splits glucose into two pyruvate molecules.</p>"
+          width="640"
+          height="220"
+          title="Inline"
+        ></iframe>
+      </article>
+    </main>
+  </body>
+</html>

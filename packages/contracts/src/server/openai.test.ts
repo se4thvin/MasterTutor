@@ -1,0 +1,115 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { policyProblems } from "../../../../tests/llm-mock/src/policy.ts";
+import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
+import { hashEmbedding } from "../testing/embedding.ts";
+import { createOpenAI, statelessParams } from "./openai.ts";
+
+let mock: LlmMock;
+beforeAll(async () => {
+  mock = await startLlmMock();
+});
+afterAll(async () => {
+  await mock?.close();
+});
+const client = () => createOpenAI({ apiKey: "k", baseURL: `${mock.url}/v1` });
+const signal = () => new AbortController().signal;
+
+describe("the single OpenAI factory (openai-data-policy.md)", () => {
+  it("parses structured answers statelessly with the task text in instructions", async () => {
+    mock.setStructured("probe_format", () => ({ answer: 42 }));
+    const reply = await client().responses.parse(
+      {
+        model: "gpt-6-luna",
+        instructions: "Answer.",
+        input: [{ role: "user", content: "q" }],
+        schema: z.object({ answer: z.number() }),
+        name: "probe_format",
+      },
+      { signal: signal() },
+    );
+    expect(reply.parsed).toEqual({ answer: 42 });
+    expect(reply.tokens).toEqual({ input: 1_000, cached: 0, output: 100 });
+    const sent = mock.requests.at(-1)!;
+    expect(sent.body).toMatchObject({ store: false, instructions: "Answer." });
+    expect(JSON.stringify(sent.body.input)).not.toContain('"system"');
+  });
+
+  it("rejects a structured answer that does not match the schema", async () => {
+    mock.setStructured("bad_format", () => ({ answer: "x" }));
+    await expect(
+      client().responses.parse(
+        {
+          model: "m",
+          instructions: "i",
+          input: [],
+          schema: z.object({ answer: z.number() }),
+          name: "bad_format",
+        },
+        { signal: signal() },
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("fixes the embeddings model and encoding and reports tokens", async () => {
+    const out = await client().embeddings.create({ input: ["a b", "c"] }, { signal: signal() });
+    expect(out.data[1]!.embedding).toEqual(hashEmbedding("c"));
+    expect(out.tokens).toBe(2);
+    expect(mock.requests.at(-1)!.body).toMatchObject({
+      model: "text-embedding-3-small",
+      encoding_format: "float",
+    });
+  });
+
+  it("forces the diarized transcription fields", async () => {
+    const out = await client().audio.transcriptions.create(
+      { bytes: new TextEncoder().encode("RIFF"), filename: "chunk-000.wav" },
+      { signal: signal() },
+    );
+    expect(out.segments[0]).toEqual({
+      start: 0,
+      end: 3,
+      text: "Welcome to the lecture.",
+      speaker: "A",
+    });
+    expect(out.seconds).toBe(6);
+    expect(mock.requests.at(-1)!.body).toMatchObject({
+      model: "gpt-4o-transcribe-diarize",
+      response_format: "diarized_json",
+      chunking_strategy: "auto",
+    });
+  });
+
+  it("leaves every recorded request policy-clean", () => {
+    expect(policyProblems(mock.requests)).toEqual([]);
+    expect(mock.failures).toEqual([]);
+  });
+
+  it("never logs a request, even when OPENAI_LOG asks for debug output (Task 0 review M2)", async () => {
+    const previous = process.env.OPENAI_LOG;
+    process.env.OPENAI_LOG = "debug";
+    const spies = (["log", "info", "debug", "warn", "error"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => undefined),
+    );
+    try {
+      await client().embeddings.create({ input: ["MARMOT4CANARY8VELVET"] }, { signal: signal() });
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      if (previous === undefined) delete process.env.OPENAI_LOG;
+      else process.env.OPENAI_LOG = previous;
+    }
+  });
+
+  it("still strips chaining and identifiers whatever the caller passed", () => {
+    expect(
+      statelessParams({
+        model: "m",
+        input: [],
+        store: true,
+        user: "u",
+        metadata: { a: "b" },
+      } as never),
+    ).toEqual({ model: "m", input: [], store: false });
+  });
+});

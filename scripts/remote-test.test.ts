@@ -65,8 +65,15 @@ describe("remote test runner (D45, X4, D48)", () => {
   it("runs the fixture UI suite with Playwright args and brings its reports back", () => {
     expect(host).toContain('exec pnpm --filter @mastertutor/web test:ui \\"\\$@\\"');
     expect(client).toMatch(
-      /ui\) fetch apps\/web\/playwright-report && fetch apps\/web\/test-results/,
+      /ui\) fetch apps\/web\/playwright-report && fetch apps\/web\/test-results && fetch apps\/web\/e2e\/visual\.spec\.ts-snapshots/,
     );
+  });
+
+  it("runs fixture-mode UI (visual baselines included) only as the slotted ui suite, never under qa's lock (I3)", () => {
+    const qaStack = read("./qa-stack.sh");
+    expect(qaStack).not.toMatch(/^ {2}ui\)/m);
+    expect(qaStack).not.toContain('playwright test "$@"');
+    expect(client).toMatch(/^ {4}e2e \| qa\) fetch apps\/web\/e2e\/\.out ;;$/m);
   });
 
   it("refuses an unknown suite, arguments to `all` and a bad concurrency before any sync", () => {
