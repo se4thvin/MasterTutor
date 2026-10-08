@@ -64,6 +64,15 @@ export const totp = () =>
      <button id="submit" type="submit">Verify</button></form>`,
   );
 
+/** One code box whose code the test knows: the person types it into CodeSlots (E2E). */
+export const fixedOtp = () =>
+  layout(
+    "Verification code",
+    `<form method="post" action="/otp-fixed"><label for="code">Verification code</label>
+     <input id="code" name="code" autocomplete="one-time-code" inputmode="numeric">
+     <button id="submit" type="submit">Verify</button></form>`,
+  );
+
 export const splitPin = (length: number, autoSubmit: boolean) =>
   layout(
     "PIN",

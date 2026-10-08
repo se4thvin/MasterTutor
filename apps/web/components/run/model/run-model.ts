@@ -164,6 +164,18 @@ function heldSlot(status: RunStatus, slotName: string | null): string | null {
   return isTerminal(status) ? null : slotName;
 }
 
+/** Adds the snapshot's stored error unless the stream already delivered it. */
+function withError(errors: readonly RunError[], detail: RunDetail): RunError[] {
+  const error = detail.error;
+  if (!error || errors.some((e) => e.code === error.code && e.message === error.message))
+    return [...errors];
+  const at = detail.finishedAt ?? detail.createdAt;
+  return [
+    ...errors,
+    { eventId: `snapshot-${detail.id}`, code: error.code, message: error.message, at },
+  ];
+}
+
 export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel {
   const steps = views
     .map((v): StepRow => ({
@@ -213,7 +225,8 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
     })),
     // From the snapshot: after a reload the stream resumes past their download_pending events (A11).
     heldDownloads: detail.heldDownloads.map(({ id, filename, bytes }) => ({ id, filename, bytes })),
-    errors: [],
+    // A finished run's stream is never opened: its failure comes from the snapshot (D35).
+    errors: withError([], detail),
     lastControl: null,
     secureFillOrigin: secure,
     filedPath: null,
@@ -358,6 +371,7 @@ export function syncRunModel(model: RunModel, detail: RunDetail): RunModel {
     usage: detail.usage,
     budget: detail.budget,
     approvals: pendingFrom(detail),
+    errors: withError(model.errors, detail),
     // The re-read is authoritative for what is still held; any newer streamed one is kept too.
     heldDownloads:
       detail.controller === "agent"

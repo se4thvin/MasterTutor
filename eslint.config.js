@@ -171,6 +171,9 @@ export default defineConfig(
       "packages/db/migrations/**",
       "apps/web/test-results/**",
       "apps/web/playwright-report/**",
+      // Generated test output (gitignored): the stack suite's report and the canary scan's dump.
+      "apps/web/e2e/.out/**",
+      "tests/security/.out/**",
       "orchestration/**",
       "design/**",
       "docs/**",

@@ -10,6 +10,7 @@ import {
   SLOT_CDP,
   nekoBaseUrlForTests,
 } from "./constants.ts";
+import { endNekoViewer } from "./slot-tools.ts";
 
 const SLOT = "browser-2";
 const runId = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -47,6 +48,7 @@ afterAll(async () => {
   await admin("POST", "/api/room/control/take").catch(() => undefined);
   await admin("POST", "/api/members/user", { can_host: false }).catch(() => undefined);
   socket?.close();
+  await endNekoViewer(SLOT);
   await browser?.close(); // connectOverCDP: disconnects Playwright, the slot browser keeps running
 });
 

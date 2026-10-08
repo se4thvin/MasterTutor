@@ -85,6 +85,27 @@ describe("Better Auth wiring", () => {
     expect(users[0]?.n).toBe(1);
   });
 
+  it("answers a registered and an unknown email identically while sign-up is closed (no enumeration)", async () => {
+    const auth = createAuth({ db: handle.db, secret, baseURL, signupOpen: false });
+    const [owner] = await handle.sql<{ email: string }[]>`select email from "user" limit 1`;
+    const attempt = async (email: string) => {
+      const response = await auth.handler(
+        new Request(`${baseURL}/api/auth/sign-up/email`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: baseURL },
+          body: JSON.stringify({ email, password: "correct-horse-battery-staple", name: "Probe" }),
+        }),
+      );
+      return { status: response.status, body: await response.text() };
+    };
+    const registered = await attempt(owner!.email);
+    const unknown = await attempt("nobody-here@example.test");
+    expect(registered).toEqual(unknown);
+    expect(registered.status).toBe(403);
+    const users = await handle.sql`select count(*)::int as n from "user"`;
+    expect(users[0]?.n).toBe(1);
+  });
+
   it("adds later users as members when sign-up is open", async () => {
     const result = await signUp(true, "teammate@example.test");
     const rows =

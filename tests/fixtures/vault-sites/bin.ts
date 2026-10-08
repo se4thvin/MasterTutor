@@ -17,6 +17,7 @@ const fixtures = await startVaultFixtures({
     to: GREENMAIL_USER.address,
   },
   listen: { host: process.env.HOST ?? "0.0.0.0", port: Number(process.env.PORT ?? "80") },
+  fixedOtp: STACK_CANARIES.otp,
 });
 // The origin only: never the account.
 console.log(JSON.stringify({ listening: fixtures.origin("login") }));

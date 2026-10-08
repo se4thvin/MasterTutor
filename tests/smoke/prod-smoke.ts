@@ -21,8 +21,11 @@ import {
   type CreateRunInput,
 } from "@mastertutor/contracts";
 import { chromium } from "playwright-core";
-import { composeConfig } from "../compose/compose-json.ts";
-import { PROD_LIKE_LOCAL_FILES, prodModeProblems } from "../compose/prod-mode.ts";
+import {
+  PROD_LIKE_LOCAL_FILES,
+  prodModeProblems,
+  resolveForProdCheck,
+} from "../compose/prod-mode.ts";
 
 export interface SmokeOptions {
   base: URL;
@@ -185,12 +188,22 @@ async function waitFor<T>(
   }
 }
 
+/** D47 for the local prod-like stack: production mode, plus its loopback Traefik (localIngress). */
+export function localPreflightProblems(
+  envFiles: string | readonly string[],
+  env?: Readonly<Record<string, string>>,
+): string[] {
+  return prodModeProblems(resolveForProdCheck(envFiles, PROD_LIKE_LOCAL_FILES, env), {
+    localIngress: true,
+  });
+}
+
 export async function runProdSmoke(options: SmokeOptions): Promise<void> {
   if (needsLocalPreflight(options.base)) {
     if (!existsSync("/tmp/mt-behaviour.lock")) {
       throw new Error("hold /tmp/mt-behaviour.lock first (one heavy stack at a time)");
     }
-    const mode = prodModeProblems(composeConfig(options.envFiles, PROD_LIKE_LOCAL_FILES));
+    const mode = localPreflightProblems(options.envFiles);
     if (mode.length > 0) throw new Error(`stack is not production mode:\n${mode.join("\n")}`);
   }
 

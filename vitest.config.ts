@@ -41,9 +41,14 @@ export default defineConfig({
         },
       },
       {
+        extends: true,
         test: {
           name: "security",
-          include: ["apps/**/*.security.test.ts", "tests/**/*.security.test.ts"],
+          include: [
+            "apps/**/*.security.test.ts",
+            "packages/**/*.security.test.ts",
+            "tests/**/*.security.test.ts",
+          ],
           exclude,
           testTimeout: 120_000,
           hookTimeout: 300_000,

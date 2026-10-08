@@ -35,6 +35,31 @@ test.describe("OTP card", () => {
     expect(consoleText.join("\n")).not.toContain("481516");
   });
 
+  test("the confirmation stays visible when the run resumes before submitOtp answers (review M3)", async ({
+    page,
+  }) => {
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    await gotoRun(page, {
+      handlers: {
+        "runs/submitOtp": async () => {
+          await answered;
+          return { ok: true };
+        },
+      },
+    });
+    await emit(page, [otpWait()]);
+    await page.getByLabel("One-time code").focus();
+    await page.keyboard.type("481516");
+    // The agent took the code and the run moved on: the card leaves before the RPC answers.
+    await emit(page, [rec({ type: "status", status: "running", waitReason: null, reason: null })]);
+    await expect(page.getByLabel("One-time code")).toHaveCount(0);
+    answer();
+    await expect(
+      page.getByText("Sent to the browser. The agent only saw “code entered”."),
+    ).toBeVisible();
+  });
+
   test("pasting an 8-digit code with separators submits all 8", async ({ page }) => {
     const calls = await gotoRun(page);
     await emit(page, [otpWait()]);
