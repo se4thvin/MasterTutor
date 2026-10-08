@@ -47,7 +47,8 @@ case "$sub" in
     ;;
   shoot)
     need_stack
-    # Each remote sync deletes apps/web/e2e/.out (git-ignored), so sign in again for AUTH_STATE.
+    # Each remote run refreshes the QA snapshot, which drops apps/web/e2e/.out (remote-test/
+    # snapshot.sh take_snapshot), so sign in again for AUTH_STATE.
     runner pnpm exec playwright test --config playwright.stack.config.ts --project=setup
     runner node e2e/stack/qa/shoot.ts "$@"
     ;;
