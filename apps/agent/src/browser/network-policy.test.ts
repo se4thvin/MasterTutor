@@ -166,6 +166,38 @@ describe("installNetworkPolicy routing", () => {
     const { run } = await harness();
     expect(await run(url, { navigation: true, main: true })).toBe("abort");
   });
+  it("stops a top-level redirect hop to an origin outside the allowlist and reports it", async () => {
+    const listeners: Record<string, (value: unknown) => void> = {};
+    const context = {
+      route: async () => undefined,
+      on: (event: string, listener: (value: unknown) => void) => void (listeners[event] = listener),
+    } as unknown as BrowserContext;
+    const blocked: unknown[] = [];
+    await installNetworkPolicy(context, {
+      allowedOrigins: () => ["http://ok.test"],
+      testMode: false,
+      onBlockedNavigation: (b) => blocked.push(b),
+      resolveHost: async () => ["93.184.216.34"],
+    });
+    const gotos: string[] = [];
+    const hop = (url: string, options: { redirected?: boolean; main?: boolean } = {}) =>
+      listeners["request"]!({
+        url: () => url,
+        redirectedFrom: () => (options.redirected === false ? null : {}),
+        isNavigationRequest: () => true,
+        frame: () => ({
+          parentFrame: () => (options.main === false ? {} : null),
+          goto: async (target: string) => void gotos.push(target),
+        }),
+      });
+    hop("http://ok.test/next");
+    hop("http://evil.test/landing", { main: false });
+    hop("http://evil.test/first", { redirected: false });
+    expect(gotos).toEqual([]);
+    hop("http://evil.test/landing?x=1");
+    expect(blocked).toEqual([{ url: "http://evil.test/landing?x=1", origin: "http://evil.test" }]);
+    expect(gotos).toEqual(["about:blank"]);
+  });
   it("lets about:blank and non-navigation non-http requests through", async () => {
     const { run } = await harness();
     expect(await run("about:blank", { navigation: true, main: true })).toBe("continue");

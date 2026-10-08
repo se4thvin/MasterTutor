@@ -111,6 +111,7 @@ async function setup(
     budget?: Budget;
     hooks?: Partial<RunHooks>;
     leaseExpired?: () => boolean;
+    allowedOrigins?: string[];
   } = {},
 ) {
   const name = `s${++counter}`;
@@ -118,6 +119,7 @@ async function setup(
   const row = await insertRun(owner.db, {
     workspaceId,
     goal: `[scenario:${name}] Do the task`,
+    allowedOrigins: options.allowedOrigins,
     status: "running",
     leaseOwner: OWNER,
     approvalMode: options.approvalMode,
@@ -380,6 +382,68 @@ describe("RunLoop (spec §5.3)", () => {
       { kind: "new_origin", status: "denied", decidedBy: "policy" },
     ]);
     expect((await status(run.id))?.allowedOrigins).toEqual(["http://site.fixtures.test"]);
+  });
+
+  it("runs a goal-only run from a blank page: told to find sources, and every site it opens asks first", async () => {
+    const search = "https://html.duckduckgo.com/html/?q=rust%20lifetimes";
+    const firstTurn: MockTurn = {
+      ...click(),
+      check: (r) => {
+        const input = JSON.stringify(r.body.input);
+        for (const text of ["Allowed origins: none yet", "html.duckduckgo.com/html", "about:blank"])
+          if (!input.includes(text)) throw new Error(`no "${text}" in the first input`);
+      },
+    };
+    const { run, browser, loop, reload } = await setup(
+      [firstTurn, doneExpecting("the user allowed https://html.duckduckgo.com")],
+      { allowedOrigins: [] },
+    );
+    browser.url = "about:blank";
+    browser.computerHook = async () => {
+      browser.blocked.push({ url: search, origin: "https://html.duckduckgo.com" });
+    };
+    expect(await drive(loop)).toMatchObject({ kind: "waiting", reason: "approval" });
+    expect(browser.navigations).toEqual([]);
+    expect(await approvalRows(run.id)).toMatchObject([
+      { kind: "new_origin", status: "pending", request: { origin: "https://html.duckduckgo.com" } },
+    ]);
+    await decideApproval(run.id, "approved");
+    browser.computerHook = null;
+    const resumed = await reload();
+    await resumed.resume(new AbortController().signal);
+    expect(await drive(resumed)).toEqual({ kind: "completed" });
+    expect(browser.navigations).toEqual([search]);
+    expect((await status(run.id))?.allowedOrigins).toEqual(["https://html.duckduckgo.com"]);
+  });
+
+  it("a bypass goal-only run is never asked about new sites: each is approved as bypass and opened", async () => {
+    const search = "https://html.duckduckgo.com/html/?q=rust%20lifetimes";
+    const result = "https://doc.rust-lang.org/nomicon/lifetimes.html";
+    const { run, browser, loop } = await setup(
+      [click(), click(30, 40), doneExpecting("allowed by this run's bypass mode")],
+      { allowedOrigins: [], approvalMode: "bypass" },
+    );
+    browser.url = "about:blank";
+    const blocked = [
+      { url: search, origin: "https://html.duckduckgo.com" },
+      { url: result, origin: "https://doc.rust-lang.org" },
+    ];
+    browser.computerHook = async () => {
+      const next = blocked.shift();
+      if (next) browser.blocked.push(next);
+    };
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.navigations).toEqual([search, result]);
+    expect(
+      (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
+    ).toEqual([
+      ["new_origin", "approved", "bypass"],
+      ["new_origin", "approved", "bypass"],
+    ]);
+    expect((await status(run.id))?.allowedOrigins).toEqual([
+      "https://html.duckduckgo.com",
+      "https://doc.rust-lang.org",
+    ]);
   });
 
   describe("downloads (spec §9)", () => {

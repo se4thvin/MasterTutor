@@ -12,6 +12,8 @@ const render = (folderName: string) =>
       sources: [],
       domains: [],
       onDomains: noop,
+      domainsError: null,
+      addDomainRef: null,
       budget: "standard",
       onBudget: noop,
       standardBudget: DEFAULT_BUDGET,

@@ -16,9 +16,11 @@ import {
   buildCreateRunInput,
   startErrorCopy,
   type BudgetPreset,
+  type DraftError,
   type SourceChip,
 } from "./draft.ts";
 import { OptionsGrid } from "./options-grid.tsx";
+import { useSavedDraft } from "./saved-draft.ts";
 import { SourceField } from "./source-field.tsx";
 
 const SUGGESTIONS = [
@@ -27,7 +29,7 @@ const SUGGESTIONS = [
   "Every code listing from a docs page",
 ] as const;
 
-export function NewTaskForm() {
+export function NewTaskForm({ viewerId }: { viewerId: string }) {
   const router = useRouter();
   const toast = useToast();
   const goalId = useId();
@@ -49,9 +51,24 @@ export function NewTaskForm() {
     setBypassAcknowledged(false);
   };
   const [folderId, setFolderId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DraftError | null>(null);
+  const addDomainRef = useRef<HTMLButtonElement>(null);
+  const goalError = error && !error.field ? error.error : null;
   const [busy, setBusy] = useState(false);
+  const savedDraft = useSavedDraft(
+    viewerId,
+    { goal, sources, domains: domainEdits, budget, folderId },
+    (saved) => {
+      setGoal(saved.goal);
+      setSources(saved.sources);
+      setDomainEdits(saved.domains);
+      setBudget(saved.budget);
+      setFolderId(saved.folderId);
+    },
+  );
   const domains = domainEdits ?? settings.data?.defaultAllowedOrigins ?? [];
+  // A restored folder may have been deleted since: only a folder that still exists is used.
+  const targetFolderId = folders.some((folder) => folder.id === folderId) ? folderId : null;
   const standardBudget = settings.data?.defaultBudget ?? DEFAULT_BUDGET;
   const killed = settings.data?.killSwitch === true;
   const bypassUnconfirmed = approvalMode === "bypass" && !bypassAcknowledged;
@@ -65,12 +82,13 @@ export function NewTaskForm() {
       budget,
       standardBudget,
       approvalMode,
-      targetFolderId: folderId,
+      targetFolderId,
       bypassAcknowledged,
     });
     if ("error" in input) {
-      setError(input.error);
-      goalRef.current?.focus();
+      setError(input);
+      if (input.field === "domains") addDomainRef.current?.focus();
+      else goalRef.current?.focus();
       return;
     }
     setError(null);
@@ -78,6 +96,8 @@ export function NewTaskForm() {
     emitHero("start");
     try {
       const [run] = await Promise.all([api.runs.create(input), heroCaptureFloor()]);
+      // Only a created run retires the draft; a failed start keeps it (and the page) as it was.
+      savedDraft.clear();
       router.push(`/runs/${run.id}`);
     } catch (failure) {
       setBusy(false);
@@ -109,8 +129,8 @@ export function NewTaskForm() {
             Take notes on<span className="period">…</span>
           </h1>
           <p className="nt-lede">
-            I'll open my own browser, capture the source faithfully, and ask before anything
-            consequential.
+            Add a source, or just the goal and I&apos;ll find one. I work in my own browser, capture
+            faithfully, and ask before anything consequential.
           </p>
           <div className="nt-composer">
             <label className="sr-only" htmlFor={goalId}>
@@ -123,8 +143,8 @@ export function NewTaskForm() {
               value={goal}
               maxLength={4_000}
               placeholder="Week 3 of the ML course: every lecture, figure and table. Skip the quizzes."
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? `${goalId}-error` : undefined}
+              aria-invalid={goalError ? true : undefined}
+              aria-describedby={goalError ? `${goalId}-error` : undefined}
               onChange={(e) => setGoal(e.target.value)}
               onInput={() => emitHero("type")}
               onFocus={() => emitHero("focus", true)}
@@ -192,9 +212,9 @@ export function NewTaskForm() {
               Confirm bypass mode under Approvals to start.
             </p>
           ) : null}
-          {error ? (
+          {goalError ? (
             <p id={`${goalId}-error`} role="alert" className="nt-error">
-              {error}
+              {goalError}
             </p>
           ) : null}
           <div className="nt-suggest">
@@ -220,6 +240,8 @@ export function NewTaskForm() {
         sources={sources}
         domains={domains}
         onDomains={setDomainEdits}
+        domainsError={error?.field === "domains" ? error.error : null}
+        addDomainRef={addDomainRef}
         budget={budget}
         onBudget={setBudget}
         standardBudget={standardBudget}
@@ -228,7 +250,7 @@ export function NewTaskForm() {
         bypassAcknowledged={bypassAcknowledged}
         onBypassAcknowledged={setBypassAcknowledged}
         folders={folders}
-        folderId={folderId}
+        folderId={targetFolderId}
         onFolder={setFolderId}
       />
     </form>
