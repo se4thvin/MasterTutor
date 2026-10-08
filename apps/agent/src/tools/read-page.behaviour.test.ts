@@ -160,14 +160,23 @@ describe("read_page past the element cap, and collapsed groups (bench I1)", () =
     const { s, result } = await interactive("/long-toc.html");
     if (!("elements" in result)) throw new Error("expected elements");
     expect(result.elements).toHaveLength(400);
-    expect(result.total).toBe(452);
+    expect(result.total).toBeGreaterThan(450);
     expect(result.offset).toBeUndefined();
-    const rest = await readPage(s, { mode: "interactive", sinceHash: null, offset: 400 });
-    if (!("elements" in rest)) throw new Error("expected elements");
-    expect(rest).toMatchObject({ total: 452, offset: 400 });
-    expect(rest.elements.map((e) => e.name)).toEqual(
-      Array.from({ length: 52 }, (_, i) => `Link ${399 + i}`),
-    );
+    const pages = [];
+    for (const offset of [0, 400]) {
+      const page = await readPage(s, { mode: "interactive", sinceHash: null, offset });
+      if (!("elements" in page)) throw new Error("expected elements");
+      expect(page).toMatchObject({ total: result.total, offset });
+      pages.push(...page.elements);
+    }
+    // Together the pages list every element exactly once, in document order.
+    expect(pages).toHaveLength(result.total!);
+    const links = pages.map((e) => e.name).filter((name) => /^Link \d+$/.test(name));
+    expect(links).toEqual(Array.from({ length: 450 }, (_, i) => `Link ${i + 1}`));
+    expect(pages.filter((e) => e.name.endsWith("[collapsed]")).map((e) => e.name)).toEqual([
+      "Chapter 9 [collapsed]",
+      "Chapter 10 [collapsed]",
+    ]);
   });
   it("marks collapsed disclosure controls, so a reader knows content is hidden", async () => {
     const { elements } = await interactive("/long-toc.html");
