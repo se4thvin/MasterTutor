@@ -289,6 +289,14 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
     }
   });
 
+  it("runs pdf-worker from the production image with no env, on the pdf network only (B5 I-1)", () => {
+    const worker = config.services["pdf-worker"]!;
+    expect(worker.image).toBe("mastertutor/node-runtime:prod");
+    expect(Object.keys(worker.networks ?? {})).toEqual(["pdf"]);
+    expect(worker.environment ?? {}).toEqual({});
+    expect(worker.read_only).toBe(true);
+  });
+
   it("runs docling under the pdf profile on its own network, wired to the agent (P9-32, D42)", () => {
     const pdf = prod({}, ["pdf"]);
     const docling = pdf.services.docling!;

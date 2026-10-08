@@ -2,7 +2,10 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { createCanvas } from "@napi-rs/canvas";
 import { getDocument, OPS, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
-import type { AnalyzeRequest, AnalyzeResult, PdfPageText } from "./protocol.ts";
+import type { PdfPageText } from "../protocol.ts";
+import type { ChildRequest, ChildResult } from "./protocol.ts";
+
+class TooLarge extends Error {}
 
 const require = createRequire(import.meta.url);
 const PDFJS_DIR = dirname(require.resolve("pdfjs-dist/package.json"));
@@ -16,8 +19,10 @@ const IMAGE_OPS = new Set([
   OPS.paintImageXObjectRepeat,
 ]);
 
-async function readPages(doc: PDFDocumentProxy): Promise<PdfPageText[]> {
+/** I-3: items per page and characters overall are bounded here, before anything is laid out. */
+async function readPages(doc: PDFDocumentProxy, limits: ChildRequest): Promise<PdfPageText[]> {
   const pages: PdfPageText[] = [];
+  let chars = 0;
   for (let n = 1; n <= doc.numPages; n++) {
     const page = await doc.getPage(n);
     const viewport = page.getViewport({ scale: 1 });
@@ -37,6 +42,8 @@ async function readPages(doc: PDFDocumentProxy): Promise<PdfPageText[]> {
         },
       ];
     });
+    chars += items.reduce((sum, item) => sum + item.str.length, 0);
+    if (items.length > limits.maxPageItems || chars > limits.maxTextChars) throw new TooLarge();
     pages.push({
       page: n,
       width: viewport.width,
@@ -76,7 +83,7 @@ async function titleOf(doc: PDFDocumentProxy): Promise<string | null> {
 }
 
 /** Everything the agent needs from one parse: text layer, title, renders. Runs only inside the worker. */
-export async function analyze(request: AnalyzeRequest, bytes: Uint8Array): Promise<AnalyzeResult> {
+export async function analyze(request: ChildRequest, bytes: Uint8Array): Promise<ChildResult> {
   if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-")
     return { ok: false, error: "not_pdf" };
   const task = getDocument({
@@ -88,11 +95,14 @@ export async function analyze(request: AnalyzeRequest, bytes: Uint8Array): Promi
     standardFontDataUrl: STANDARD_FONTS,
     cMapUrl: CMAPS,
     cMapPacked: true,
+    // I-2: an image or canvas past these bounds is skipped, never allocated.
+    maxImageSize: request.maxImagePixels,
+    canvasMaxAreaInBytes: request.maxPixels * 4,
   });
   try {
     const doc = await task.promise;
     if (doc.numPages > request.maxPages) return { ok: false, error: "too_large" };
-    const pages = await readPages(doc);
+    const pages = await readPages(doc, request);
     const wanted =
       request.render === "auto"
         ? [
@@ -112,8 +122,8 @@ export async function analyze(request: AnalyzeRequest, bytes: Uint8Array): Promi
       });
     }
     return { ok: true, title: await titleOf(doc), pages, renders };
-  } catch {
-    return { ok: false, error: "parse_failed" };
+  } catch (error) {
+    return { ok: false, error: error instanceof TooLarge ? "too_large" : "parse_failed" };
   } finally {
     // G3: in pdfjs-dist 6.4.299 the loading task owns teardown; PDFDocumentProxy has no destroy().
     await task.destroy();

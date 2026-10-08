@@ -1,5 +1,5 @@
 import { escapeMarkdownText, type BBox } from "@mastertutor/contracts";
-import type { PdfPageText, PdfTextItem } from "./worker/protocol.ts";
+import type { PdfPageText, PdfTextItem } from "../protocol.ts";
 
 export interface PdfBlock {
   type: "heading" | "paragraph" | "list";
@@ -20,69 +20,80 @@ interface Line {
 
 const LIST = /^\s*([•◦▪‣\-–*]|\d{1,3}[.)])\s+/;
 
+/**
+ * Items into lines in O(n log n): sorted top-to-bottom, an item joins the line being built when its
+ * top is within half its height of that line's top (the only line it can belong to once sorted).
+ */
 function lines(items: readonly PdfTextItem[]): Line[] {
   const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
-  const out: (Line & { items: PdfTextItem[] })[] = [];
+  const groups: PdfTextItem[][] = [];
+  let current: PdfTextItem[] | null = null;
+  let top = 0;
   for (const item of sorted) {
-    const line = out.find((l) => Math.abs(l.top - item.y) < Math.max(item.height, 1) * 0.5);
-    if (line) line.items.push(item);
-    else
-      out.push({
-        text: "",
-        size: 0,
-        top: item.y,
-        bottom: item.y + item.height,
-        left: item.x,
-        right: item.x + item.width,
-        items: [item],
-      });
+    if (current && Math.abs(top - item.y) < Math.max(item.height, 1) * 0.5) current.push(item);
+    else {
+      current = [item];
+      top = item.y;
+      groups.push(current);
+    }
   }
-  return out.map((line) => {
-    const parts = line.items.sort((a, b) => a.x - b.x);
+  return groups.map((group) => {
+    const parts = group.sort((a, b) => a.x - b.x);
     let text = "";
     let prevRight = -Infinity;
+    let size = 0;
+    let lineTop = Infinity;
+    let bottom = -Infinity;
+    let left = Infinity;
+    let right = -Infinity;
     for (const part of parts) {
       const gap = part.x - prevRight;
       if (text && gap > part.height * 0.25 && !text.endsWith(" ") && !part.str.startsWith(" "))
         text += " ";
       text += part.str;
       prevRight = part.x + part.width;
+      size = Math.max(size, part.height);
+      lineTop = Math.min(lineTop, part.y);
+      bottom = Math.max(bottom, part.y + part.height);
+      left = Math.min(left, part.x);
+      right = Math.max(right, part.x + part.width);
     }
-    return {
-      text: text.replace(/\s+/g, " ").trim(),
-      size: Math.max(...parts.map((p) => p.height)),
-      top: Math.min(...parts.map((p) => p.y)),
-      bottom: Math.max(...parts.map((p) => p.y + p.height)),
-      left: Math.min(...parts.map((p) => p.x)),
-      right: Math.max(...parts.map((p) => p.x + p.width)),
-    };
+    return { text: text.replace(/\s+/g, " ").trim(), size, top: lineTop, bottom, left, right };
   });
 }
 
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)] ?? 11;
+/** The size most characters are set in: a median weighted by line length, without one entry per character. */
+function bodySize(all: readonly Line[]): number {
+  const sorted = [...all].sort((a, b) => a.size - b.size);
+  const total = sorted.reduce((sum, line) => sum + Math.max(1, line.text.length), 0);
+  let seen = 0;
+  for (const line of sorted) {
+    seen += Math.max(1, line.text.length);
+    if (seen > total / 2) return line.size;
+  }
+  return 11;
 }
 
 const union = (ls: readonly Line[]): BBox => {
-  const x = Math.min(...ls.map((l) => l.left));
-  const y = Math.min(...ls.map((l) => l.top));
-  return {
-    x,
-    y,
-    width: Math.max(...ls.map((l) => l.right)) - x,
-    height: Math.max(...ls.map((l) => l.bottom)) - y,
-  };
+  let x = Infinity;
+  let y = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const l of ls) {
+    x = Math.min(x, l.left);
+    y = Math.min(y, l.top);
+    right = Math.max(right, l.right);
+    bottom = Math.max(bottom, l.bottom);
+  }
+  return { x, y, width: right - x, height: bottom - y };
 };
 
 /** pdf.js path (spec §7.6): lines → headings by size, paragraphs by gap, lists by marker. */
 export function pdfBlocks(pages: readonly PdfPageText[]): PdfBlock[] {
-  const all = pages.flatMap((p) => lines(p.items));
-  const body = median(
-    all.flatMap((l) => Array(Math.max(1, l.text.length)).fill(l.size) as number[]),
-  );
+  const perPage = pages.map((page) => ({ page, lines: lines(page.items) }));
+  const body = bodySize(perPage.flatMap((p) => p.lines));
   const blocks: PdfBlock[] = [];
-  for (const page of pages) {
+  for (const { page, lines: pageLines } of perPage) {
     let group: Line[] = [];
     let kind: PdfBlock["type"] = "paragraph";
     const flush = () => {
@@ -115,7 +126,7 @@ export function pdfBlocks(pages: readonly PdfPageText[]): PdfBlock[] {
       });
       group = [];
     };
-    for (const line of lines(page.items)) {
+    for (const line of pageLines) {
       if (!line.text) continue;
       const lineKind: PdfBlock["type"] =
         line.size >= body * 1.2 && line.text.length < 200

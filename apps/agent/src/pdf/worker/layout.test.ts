@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pdfBlocks } from "./layout.ts";
-import type { PdfPageText } from "./worker/protocol.ts";
+import type { PdfPageText } from "../protocol.ts";
 
 const item = (str: string, y: number, height = 11, x = 72) => ({
   str,
@@ -40,5 +40,13 @@ describe("pdfBlocks", () => {
       page: 1,
       bbox: { x: 72, y: 100, width: expect.any(Number), height: expect.any(Number) },
     });
+  });
+  it("lays out 50k items on one page in well under a second (I-3: no quadratic line search)", () => {
+    const items = Array.from({ length: 50_000 }, (_, i) => item(`word${i}`, i, 1));
+    const page: PdfPageText = { page: 1, width: 612, height: 792, hasImages: false, items };
+    const started = performance.now();
+    const blocks = pdfBlocks([page]);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(blocks.map((b) => b.text).join(" ")).toContain("word49999");
   });
 });

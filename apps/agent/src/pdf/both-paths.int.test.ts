@@ -4,11 +4,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { StepCollector } from "../loop/step-collector.ts";
 import type { AssetStore } from "../notes/assets.ts";
+import { startTestPdfWorker } from "../testing/pdf-worker.ts";
 import { testLog } from "../testing/tool-context.ts";
 import { createDoclingClient } from "./docling.ts";
 import { buildPdfCapture, type PdfCaptureDeps } from "./pdf-capture.ts";
 
-const DOCLING_IMAGE = "quay.io/docling-project/docling-serve-cpu:v1.36.0";
+const DOCLING_IMAGE =
+  "quay.io/docling-project/docling-serve-cpu:v1.36.0@sha256:225c8586e20d5d0fc6811a9e0e044fa602bcc4393f00389009bad42d6787b58f";
 const fixture = async () =>
   new Uint8Array(
     await readFile(new URL("../../../../tests/fixtures/sites/site/pdf/paper.pdf", import.meta.url)),
@@ -28,6 +30,7 @@ const deps = (docling: PdfCaptureDeps["docling"]): PdfCaptureDeps => ({
   ocr: { transcribe: async () => "Scanned page text" },
   localOcr: { text: async () => "" },
   docling,
+  pdf: worker.client,
   log: testLog,
 });
 const ctx = () => ({
@@ -38,7 +41,9 @@ const ctx = () => ({
 });
 
 let docling: StartedTestContainer | undefined;
+let worker: Awaited<ReturnType<typeof startTestPdfWorker>>;
 beforeAll(async () => {
+  worker = await startTestPdfWorker();
   docling = await new GenericContainer(DOCLING_IMAGE)
     .withEnvironment({
       DOCLING_SERVE_ENABLE_UI: "false",
@@ -51,6 +56,7 @@ beforeAll(async () => {
 }, 900_000);
 afterAll(async () => {
   await docling?.stop();
+  await worker?.close();
 });
 
 describe("B5 done-when: the PDF fixture is verified on both paths", () => {

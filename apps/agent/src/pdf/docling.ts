@@ -1,5 +1,6 @@
 import { escapeMarkdownText, type BBox } from "@mastertutor/contracts";
 import { z } from "zod";
+import { readCappedText } from "../runtime/read-capped.ts";
 
 export interface DoclingBlock {
   type: "heading" | "paragraph" | "list" | "code" | "table" | "math" | "figure";
@@ -13,7 +14,22 @@ export interface DoclingClient {
   convert(bytes: Uint8Array, filename: string, signal: AbortSignal): Promise<DoclingBlock[]>;
 }
 
-const Ref = z.object({ $ref: z.string() });
+/** I-6: docling's answer is bounded before it is parsed, and its shape before it is used. */
+export const MAX_DOCLING_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_ITEMS = 50_000;
+export const MAX_DOCLING_BLOCKS = 20_000;
+export const MAX_DOCLING_CROPS = 400;
+export const MAX_DOCLING_CROPS_PER_PAGE = 32;
+
+/** docling's answer is over a cap or off-schema: the capture falls back to pdf.js. */
+export class DoclingRejected extends Error {
+  constructor(reason: string) {
+    super(`docling answer rejected: ${reason}`);
+    this.name = "DoclingRejected";
+  }
+}
+
+const Ref = z.object({ $ref: z.string().max(64) });
 const Prov = z.object({
   page_no: z.number().int().positive(),
   bbox: z.object({
@@ -37,7 +53,7 @@ const Cell = z.object({
 });
 
 export const DoclingDocument = z.object({
-  body: z.object({ children: z.array(Ref) }),
+  body: z.object({ children: z.array(Ref).max(MAX_ITEMS) }),
   texts: z
     .array(
       z.object({
@@ -49,21 +65,26 @@ export const DoclingDocument = z.object({
         code_language: z.string().nullish(),
       }),
     )
+    .max(MAX_ITEMS)
     .default([]),
   tables: z
     .array(
       z.object({
         ...Common,
-        captions: z.array(Ref).default([]),
+        captions: z.array(Ref).max(MAX_ITEMS).default([]),
         data: z.object({ grid: z.array(z.array(Cell)).default([]) }),
       }),
     )
     .default([]),
-  pictures: z.array(z.object({ ...Common, captions: z.array(Ref).default([]) })).default([]),
+  pictures: z
+    .array(z.object({ ...Common, captions: z.array(Ref).default([]) }))
+    .max(MAX_ITEMS)
+    .default([]),
   groups: z
     .array(
       z.object({ self_ref: z.string(), label: z.string(), children: z.array(Ref).default([]) }),
     )
+    .max(MAX_ITEMS)
     .default([]),
   pages: z
     .record(
@@ -250,6 +271,18 @@ export function doclingBlocks(doc: DoclingDocument): DoclingBlock[] {
   return out;
 }
 
+/** Block and crop counts within bounds (I-6: each crop is an image extract and an asset write). */
+export function checkedBlocks(blocks: DoclingBlock[]): DoclingBlock[] {
+  if (blocks.length > MAX_DOCLING_BLOCKS) throw new DoclingRejected("too many blocks");
+  const crops = new Map<number, number>();
+  for (const block of blocks.filter((b) => b.crop))
+    crops.set(block.page, (crops.get(block.page) ?? 0) + 1);
+  const total = [...crops.values()].reduce((sum, n) => sum + n, 0);
+  if (total > MAX_DOCLING_CROPS || [...crops.values()].some((n) => n > MAX_DOCLING_CROPS_PER_PAGE))
+    throw new DoclingRejected("too many crops");
+  return blocks;
+}
+
 export function createDoclingClient(
   baseUrl: string,
   options: { timeoutMs?: number } = {},
@@ -269,10 +302,14 @@ export function createDoclingClient(
         signal: AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 180_000)]),
       });
       if (!response.ok) throw new Error(`docling HTTP ${response.status}`);
-      const body = ConvertResponse.parse(await response.json());
-      if (body.status === "failure" || !body.document.json_content)
-        throw new Error(`docling status ${body.status}`);
-      return doclingBlocks(DoclingDocument.parse(body.document.json_content));
+      const text = await readCappedText(response.body, MAX_DOCLING_RESPONSE_BYTES);
+      const body = ConvertResponse.safeParse(JSON.parse(text));
+      if (!body.success) throw new DoclingRejected("response shape");
+      if (body.data.status === "failure" || !body.data.document.json_content)
+        throw new Error(`docling status ${body.data.status}`);
+      const doc = DoclingDocument.safeParse(body.data.document.json_content);
+      if (!doc.success) throw new DoclingRejected("document shape");
+      return checkedBlocks(doclingBlocks(doc.data));
     },
   };
 }

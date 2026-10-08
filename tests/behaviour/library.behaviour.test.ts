@@ -9,7 +9,11 @@ import { createRun, startBehaviourAgent, waitForRun, type BehaviourAgent } from 
 
 let agent: BehaviourAgent;
 beforeAll(async () => {
-  agent = await startBehaviourAgent({ hooks: (deps) => libraryHooks(createLibraryServices(deps)) });
+  // No PDF is captured here: the pdf-worker address only has to be well formed.
+  agent = await startBehaviourAgent({
+    hooks: (deps) =>
+      libraryHooks(createLibraryServices({ ...deps, pdfWorkerUrl: "http://127.0.0.1:9" })),
+  });
 });
 afterAll(async () => {
   await agent?.stop();

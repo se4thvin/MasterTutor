@@ -19,6 +19,7 @@ const agentSource = {
   S3_ACCESS_KEY_ID: "GK5aa6eb9e4f040236e79864f3",
   S3_SECRET_ACCESS_KEY: "0974bfbf76eb6fb9faf77bf05f5b21d703c85dbd797421167285185ae7ff3568",
   BROWSER_SLOTS: "browser-1, browser-2",
+  PDF_WORKER_URL: "http://pdf-worker:5002",
 };
 
 describe("parseEnv", () => {

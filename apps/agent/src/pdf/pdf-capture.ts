@@ -1,33 +1,34 @@
 import { escapeMarkdownText, VERIFIED_COVERAGE, type BBox } from "@mastertutor/contracts";
 import sharp from "sharp";
 import { fetchInBrowser } from "../capture/fetch-resource.ts";
-import { pixelsAreClean, type LocalOcr } from "../capture/local-ocr.ts";
+import { pixelsAreClean, type LocalOcr } from "../browser/local-ocr.ts";
 import { blockPlainText, limitBlockSize, splitMarkdown } from "../capture/markdown-blocks.ts";
 import type { OcrModel } from "../capture/opaque.ts";
-import { blockPrecision, coverageOf } from "../capture/text.ts";
+import { coverageOf, precisionAgainst } from "../capture/text.ts";
 import { AssetRejected, type AssetStore } from "../notes/assets.ts";
 import { sha256Hex } from "../notes/hash.ts";
 import { NoteWriteError, screenText, screenValue, type BlockDraft } from "../notes/note-writer.ts";
 import type { Log } from "../runtime/types.ts";
 import { ToolError, type ToolContext } from "../tools/types.ts";
 import type { DoclingBlock, DoclingClient } from "./docling.ts";
-import { pdfBlocks, pdfReferenceText } from "./layout.ts";
 import {
-  analyzePdf,
-  MAX_PDF_BYTES,
   PdfWorkerError,
   type PdfAnalysis,
+  type PdfAnalyzer,
+  type PdfBlock,
   type PdfRender,
 } from "./pdf-worker.ts";
+import { MAX_PDF_BYTES, type AnalyzeOptions } from "./protocol.ts";
 
 export interface PdfCaptureDeps {
   assets: AssetStore;
   ocr: OcrModel;
   /** Screens page images for vault secrets before they are stored or sent to OpenAI (A-M1). */
-  localOcr: LocalOcr;
+  localOcr: Pick<LocalOcr, "text">;
   docling: DoclingClient | null;
+  /** The pdf-worker service: PDFs are parsed there, never in this process (B5 review I-1). */
+  pdf: PdfAnalyzer;
   log: Log;
-  analyze?: typeof analyzePdf;
 }
 
 export interface PdfCapture {
@@ -40,8 +41,10 @@ export interface PdfCapture {
   pagePng: Uint8Array | null;
   /** The original PDF, or null when it is over the asset limit or its pixels could not be screened. */
   pdfAssetId: string | null;
+  /** Why the original is not stored (shown on the note), or null when it is. */
+  originalWithheld: "too_large" | "unscreened" | null;
   pages: number;
-  /** Page images and scanned-page text the note does not hold. */
+  /** Page images and page text (scanned, outlined, OCR'd empty, skipped by docling) the note does not hold. */
   mediaLost: number;
 }
 
@@ -67,14 +70,20 @@ const titleFrom = (url: string) => {
   }
 };
 
+/** A page render with nothing on it (I-4: a blank separator page is not missing text). */
+async function isBlank(png: Uint8Array): Promise<boolean> {
+  const { channels } = await sharp(png).flatten({ background: "#ffffff" }).stats();
+  return channels.every((channel) => channel.min >= 250);
+}
+
 async function analyzeOrRefuse(
-  analyze: typeof analyzePdf,
+  pdf: PdfAnalyzer,
   bytes: Uint8Array,
-  options: Parameters<typeof analyzePdf>[1],
+  options: AnalyzeOptions,
   signal: AbortSignal,
 ): Promise<PdfAnalysis> {
   try {
-    return await analyze(bytes, options, signal);
+    return await pdf.analyze(bytes, options, signal);
   } catch (error) {
     if (error instanceof PdfWorkerError)
       throw new ToolError("pdf_unavailable", "The PDF could not be read");
@@ -93,17 +102,16 @@ export async function buildPdfCapture(
   bytes: Uint8Array,
   url: string,
 ): Promise<PdfCapture> {
-  const analyze = deps.analyze ?? analyzePdf;
   if (!isPdfBytes(bytes)) throw new ToolError("pdf_unavailable", "The document is not a PDF");
   const analysis = await analyzeOrRefuse(
-    analyze,
+    deps.pdf,
     bytes,
     { render: "auto", scale: RENDER_SCALE },
     ctx.signal,
   );
-  const { pages } = analysis;
-  const reference = pdfReferenceText(pages);
+  const { pages, reference } = analysis;
   screenValue(ctx.mask, [reference, analysis.title]);
+  const precision = precisionAgainst(reference);
 
   const renders = new Map<string, Uint8Array>();
   const rendered = new Set<string>();
@@ -118,7 +126,7 @@ export async function buildPdfCapture(
   };
   await keepClean(analysis.renders);
   const pageRender = (page: number) => renders.get(`${page}@${RENDER_SCALE}`);
-  const textPages = new Set(pages.filter((p) => p.items.length > 0).map((p) => p.page));
+  const textPages = new Set(pages.filter((p) => p.hasText).map((p) => p.page));
   let mediaLost = 0;
 
   const storePng = async (png: Uint8Array) => {
@@ -164,7 +172,7 @@ export async function buildPdfCapture(
       origin: ocrPage ? "ocr_model" : "pdf",
       assetId: null,
       anchor: anchor(page, bbox),
-      verified: !ocrPage && (plain === "" || blockPrecision(plain, reference) >= VERIFIED_COVERAGE),
+      verified: !ocrPage && (plain === "" || precision(plain) >= VERIFIED_COVERAGE),
     };
   };
 
@@ -186,7 +194,11 @@ export async function buildPdfCapture(
         ),
       ];
       if (missing.length > 0) {
-        const extra = await analyze(bytes, { render: missing, scale: RENDER_SCALE }, ctx.signal);
+        const extra = await deps.pdf.analyze(
+          bytes,
+          { render: missing, scale: RENDER_SCALE },
+          ctx.signal,
+        );
         await keepClean(extra.renders);
       }
       let lost = 0;
@@ -205,6 +217,13 @@ export async function buildPdfCapture(
             blocks.push(textBlock(part, block.page, block.bbox, ocrPage));
         }
       }
+      // I-4: a page without a text layer that docling gave no text is missing text, unless blank.
+      const read = new Set(converted.filter((b) => !b.crop).map((b) => b.page));
+      for (const page of pages) {
+        if (page.hasText || read.has(page.page)) continue;
+        const png = pageRender(page.page);
+        if (!png || !(await isBlank(png))) lost++;
+      }
       engine = "docling";
       mediaLost += lost;
     } catch (error) {
@@ -215,13 +234,15 @@ export async function buildPdfCapture(
     }
   }
   if (engine === "pdfjs") {
-    const laid = pdfBlocks(pages);
+    const laid = new Map<number, PdfBlock[]>();
+    for (const block of analysis.blocks)
+      laid.set(block.page, [...(laid.get(block.page) ?? []), block]);
     for (const page of pages) {
       ctx.signal.throwIfAborted();
-      for (const block of laid.filter((b) => b.page === page.page))
+      for (const block of laid.get(page.page) ?? [])
         for (const part of limitBlockSize(block))
           blocks.push(textBlock(part, page.page, block.bbox, false));
-      if (!page.hasImages) continue;
+      if (page.hasText && !page.hasImages) continue;
       const png = pageRender(page.page);
       if (!png) {
         mediaLost++;
@@ -229,15 +250,17 @@ export async function buildPdfCapture(
       }
       const whole = { x: 0, y: 0, width: page.width, height: page.height };
       const label = `Page ${page.page}`;
-      if (page.items.length > 0) {
+      if (page.hasText) {
         const id = await storePng(png);
         blocks.push(figureBlock("figure", label, id, anchor(page.page, whole)));
         continue;
       }
-      // A scanned page: transcribed, and the text screened, before the image is stored.
+      // I-4: no text layer (scanned, or text drawn as outlines): read like a scanned page.
+      if (await isBlank(png)) continue;
+      // Transcribed, and the text screened, before the image is stored.
       let text: string | null;
       try {
-        text = await deps.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step });
+        text = (await deps.ocr.transcribe(png, { signal: ctx.signal, step: ctx.step })).trim();
       } catch (error) {
         if (ctx.signal.aborted) throw error;
         deps.log.warn({ errName: (error as Error).name }, "OCR failed for a PDF page");
@@ -251,7 +274,8 @@ export async function buildPdfCapture(
       }
       const id = await storePng(png);
       blocks.push(figureBlock("image", label, id, anchor(page.page, whole)));
-      if (text === null) {
+      // I-4: a page that shows something but reads as no text is missing text, not an empty page.
+      if (!text) {
         mediaLost++;
         continue;
       }
@@ -268,7 +292,7 @@ export async function buildPdfCapture(
   }
 
   // The original keeps every page's pixels: stored only once each image page passed the screen.
-  const imagePages = pages.filter((p) => p.hasImages || p.items.length === 0).map((p) => p.page);
+  const imagePages = pages.filter((p) => p.hasImages || !p.hasText).map((p) => p.page);
   const pixelsScreened =
     rendersWithheld === 0 &&
     (!ctx.mask.hasSecrets() || imagePages.every((page) => pageRender(page) !== undefined));
@@ -283,7 +307,9 @@ export async function buildPdfCapture(
     contentSha256: sha256Hex(bytes),
     engine,
     pagePng: renders.get("1@1") ?? null,
-    pdfAssetId: pixelsScreened ? await storeOriginal(deps, ctx, bytes, url) : null,
+    ...(pixelsScreened
+      ? await storeOriginal(deps, ctx, bytes, url)
+      : { pdfAssetId: null, originalWithheld: "unscreened" as const }),
     pages: pages.length,
     mediaLost,
   };
@@ -298,18 +324,22 @@ function figureBlock(
   return { type, markdown, origin: "pdf", assetId, anchor: at, verified: true };
 }
 
-/** PDFs over the asset limit keep their blocks and page images, not the original file. */
+/**
+ * PDFs over the asset limit (25 MiB; PDFs up to 100 MiB are captured) keep their blocks and page
+ * images, not the original file; the note records why. Revisit once object reads stream (S8).
+ */
 async function storeOriginal(
   deps: PdfCaptureDeps,
   ctx: PdfCaptureContext,
   bytes: Uint8Array,
   url: string,
-): Promise<string | null> {
+): Promise<Pick<PdfCapture, "pdfAssetId" | "originalWithheld">> {
   try {
     const input = { bytes, mime: "application/pdf", width: null, height: null, sourceUrl: url };
-    return (await deps.assets.put(ctx.workspaceId, input, ctx.mask)).assetId;
+    const { assetId } = await deps.assets.put(ctx.workspaceId, input, ctx.mask);
+    return { pdfAssetId: assetId, originalWithheld: null };
   } catch (error) {
-    if (error instanceof AssetRejected) return null;
+    if (error instanceof AssetRejected) return { pdfAssetId: null, originalWithheld: "too_large" };
     throw error;
   }
 }
