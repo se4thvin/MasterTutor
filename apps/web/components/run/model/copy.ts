@@ -14,14 +14,18 @@ import { untrustedText } from "./untrusted-text.ts";
 
 export type Tone = "signal" | "tint" | "warn" | "muted" | "ok";
 
-export const STATE_PILL: Record<BrowserState, { label: string; tone: Tone; pulse: boolean }> = {
-  live: { label: "Live", tone: "signal", pulse: true },
-  acting: { label: "Agent acting", tone: "tint", pulse: true },
-  approval: { label: "Needs you", tone: "signal", pulse: true },
-  control: { label: "You", tone: "tint", pulse: false },
-  paused: { label: "Paused", tone: "muted", pulse: false },
-  reconnecting: { label: "Reconnecting", tone: "warn", pulse: false },
-  replay: { label: "Replay", tone: "muted", pulse: false },
+/** `short` is what the frame pill shows at 480px and below; the full label stays its accessible name. */
+export const STATE_PILL: Record<
+  BrowserState,
+  { label: string; short: string; tone: Tone; pulse: boolean }
+> = {
+  live: { label: "Live", short: "Live", tone: "signal", pulse: true },
+  acting: { label: "Agent acting", short: "Acting", tone: "tint", pulse: true },
+  approval: { label: "Needs you", short: "Waiting", tone: "signal", pulse: true },
+  control: { label: "You", short: "You", tone: "tint", pulse: false },
+  paused: { label: "Paused", short: "Paused", tone: "muted", pulse: false },
+  reconnecting: { label: "Reconnecting", short: "Waiting", tone: "warn", pulse: false },
+  replay: { label: "Replay", short: "Replay", tone: "muted", pulse: false },
 };
 
 interface UrlParts {
@@ -94,6 +98,18 @@ interface PausedCopy {
   title: string;
   detail: string;
   canResume: boolean;
+}
+
+/** The frame pill's two labels; a paused frame names why (pausedCopy), short as Paused, Waiting or Stopped. */
+export function statePillLabels(
+  state: BrowserState,
+  model: RunModel,
+): { label: string; short: string } {
+  const pill = STATE_PILL[state];
+  if (state !== "paused") return { label: pill.label, short: pill.short };
+  const short =
+    model.status === "sleeping" ? "Paused" : isTerminal(model.status) ? "Stopped" : "Waiting";
+  return { label: pausedCopy(model).title, short };
 }
 
 export function pausedCopy(model: RunModel): PausedCopy {
