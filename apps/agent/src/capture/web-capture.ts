@@ -4,6 +4,7 @@ import {
   VERIFIED_COVERAGE,
   type BlockType,
 } from "@mastertutor/contracts";
+import { deleteUnusedAssets } from "@mastertutor/db";
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import { PageScriptError } from "../browser/isolated-world.ts";
 import { containsSecretText } from "../browser/masking.ts";
@@ -524,8 +525,38 @@ async function opaqueBlocks(
   return { blocks, withheld, lost };
 }
 
-/** Spec §7 for a web page: prepare → secret gate → snapshot → extract (frames too) → assets → verify. */
+/**
+ * Spec §7 for a web page: prepare → secret gate → snapshot → extract (frames too) → assets → verify.
+ * Assets are written as they are stored; a vault-secret refusal after that (OpenAI's tile
+ * transcription seeing what the local screen missed, or a frame's text) deletes the ones nothing
+ * else uses, so "nothing was stored" holds (QA-094).
+ */
 export async function captureWeb(
+  services: LibraryServices,
+  ctx: ToolContext,
+  scope: CaptureScope,
+): Promise<WebCapture> {
+  const stored: string[] = [];
+  const recording: LibraryServices = {
+    ...services,
+    assets: {
+      async put(workspaceId, input, secrets) {
+        const asset = await services.assets.put(workspaceId, input, secrets);
+        stored.push(asset.assetId);
+        return asset;
+      },
+    },
+  };
+  try {
+    return await readWebPage(recording, ctx, scope);
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === "secret_on_page" && stored.length > 0)
+      await deleteUnusedAssets(services.db, ctx.workspaceId, stored);
+    throw error;
+  }
+}
+
+async function readWebPage(
   services: LibraryServices,
   ctx: ToolContext,
   scope: CaptureScope,
@@ -535,11 +566,14 @@ export async function captureWeb(
   // D8: a page that shows a vault secret is refused before any snapshot or asset is written.
   if (ctx.mask.hasSecrets() && (await containsSecretText(ctx.session, ctx.mask, ctx.signal)))
     throw new ToolError("secret_on_page", "The page shows a saved secret; nothing was stored");
-  const snapshot = await screenedSnapshot(
+  // page.png's local screen (up to ~20 s of OCR on a secret run) runs while the page is read; it
+  // only has to finish before the snapshot is uploaded (QA-092).
+  const screening = screenedSnapshot(
     services,
     ctx,
     await takeSnapshot(ctx.session, ctx.mask, ctx.signal),
   );
+  screening.catch(() => undefined); // awaited below; a read that fails first must not leave it unhandled
   const worlds = await captureWorlds(ctx.session);
   const main = await captureDocument(services, ctx, worlds, await worlds.mainFrameId(), scope, 0);
   const blocks = [...main.blocks];
@@ -557,6 +591,7 @@ export async function captureWeb(
   }
   // Unread frames are missing content: the note cannot claim to be verified (I4).
   mediaLost += main.framesMissing;
+  const snapshot = await screening;
   // Coverage of what the note finally holds (I2).
   const captured = blocks.map((b) => blockPlainText(b)).join("\n");
   const page = coverageOf(pageText, captured);

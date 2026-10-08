@@ -1,5 +1,5 @@
-import { noteBlocks, notes, runs, sources } from "@mastertutor/db";
-import { eq, sql } from "drizzle-orm";
+import { assets, noteBlocks, notes, objectDeletions, runs, sources } from "@mastertutor/db";
+import { eq, inArray, like, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MaskSources } from "../browser/masking.ts";
 import { FIXTURES } from "../testing/browser-harness.ts";
@@ -249,13 +249,16 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     // Only the viewport-sized page-region tiles: local OCR (a fake that reads nothing) passes the
     // canvas, and OpenAI's transcription of a tile is what shows the secret here.
     const tiles: string[] = [];
+    const stored: string[] = [];
     const leaking = createCaptureTool({
       ...env.services,
       assets: {
-        put: (workspaceId, input, secrets) => {
+        put: async (workspaceId, input, secrets) => {
           if (input.width === viewport.clientWidth && input.height === viewport.clientHeight)
             tiles.push(input.mime);
-          return env.services.assets.put(workspaceId, input, secrets);
+          const asset = await env.services.assets.put(workspaceId, input, secrets);
+          stored.push(asset.assetId);
+          return asset;
         },
       },
       ocr: { transcribe: async () => "Password: hunter2-canary" },
@@ -264,6 +267,56 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     await expect(leaking.run(ctx, page)).rejects.toMatchObject({ code: "secret_on_page" });
     await env.discard(ctx);
     expect(tiles).toEqual([]);
+    // The canvas the local screen passed was stored first; the refusal deletes it (QA-094).
+    expect(stored.length).toBeGreaterThan(0);
+    const left = await env.db.db
+      .select({ key: assets.key })
+      .from(assets)
+      .where(inArray(assets.id, stored));
+    expect(left).toEqual([]);
+    const queued = await env.db.db
+      .select({ key: objectDeletions.key })
+      .from(objectDeletions)
+      .where(like(objectDeletions.key, `assets/${scope.workspaceId}/%`));
+    expect(queued.length).toBeGreaterThan(0);
+  });
+  it("withholds an opaque tile OpenAI could not read on a secret run, keeps it otherwise (QA-079)", async () => {
+    const vault: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text,
+    };
+    for (const [mask, kept] of [
+      [vault, false],
+      [undefined, true],
+    ] as const) {
+      const scope = await seedRun(env.db.db);
+      await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+      const { cssVisualViewport: viewport } = await (
+        await env.session.cdp()
+      ).send("Page.getLayoutMetrics");
+      const tiles: string[] = [];
+      const tool = createCaptureTool({
+        ...env.services,
+        assets: {
+          put: (workspaceId, input, secrets) => {
+            if (input.width === viewport.clientWidth && input.height === viewport.clientHeight)
+              tiles.push(input.mime);
+            return env.services.assets.put(workspaceId, input, secrets);
+          },
+        },
+        ocr: {
+          transcribe: async () => {
+            throw new Error("upstream 503");
+          },
+        },
+      });
+      const ctx = env.context(scope, mask);
+      const result = await tool.run(ctx, page);
+      await env.commit(ctx);
+      expect(tiles.length > 0).toBe(kept);
+      expect(result.fidelity).not.toBe("verified");
+    }
   });
   it("counts only frames inside the capture scope and visible (A-I1)", async () => {
     // An element capture is not held back by an unrelated text frame elsewhere on the page.
@@ -318,6 +371,43 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       expect(stored.filter((key) => key.startsWith("assets/"))).toEqual([]);
       expect(stored.filter((key) => key.endsWith("page.png"))).toEqual([]);
     }
+  });
+
+  it("reads the page while page.png is screened, not after it (QA-092)", async () => {
+    const vault: MaskSources = { nodeIds: () => [], hasSecrets: () => true, redact: (t) => t };
+    let stored = false;
+    const storedDuringScreen: boolean[] = [];
+    const localOcr = {
+      // The page's own read stores the article image; each screen waits for that (5 s at most).
+      text: async () => {
+        for (let waited = 0; !stored && waited < 5_000; waited += 50)
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        storedDuringScreen.push(stored);
+        return "";
+      },
+      words: async () => [],
+    };
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/article/index.html`, signal);
+    const ctx = env.context(scope, vault);
+    const tool = createCaptureTool({
+      ...env.services,
+      localOcr,
+      assets: {
+        put: async (workspaceId, input, secrets) => {
+          stored = true;
+          return env.services.assets.put(workspaceId, input, secrets);
+        },
+      },
+    });
+    const result = await tool.run(ctx, page);
+    await env.commit(ctx);
+    expect(storedDuringScreen[0]).toBe(true);
+    const [source] = await env.db.db
+      .select()
+      .from(sources)
+      .where(sql`${sources.meta}->>'noteId' = ${result.noteId}`);
+    expect(source?.screenshotKey).toMatch(/page\.png$/);
   });
 
   it("withholds page.png when local OCR finds a secret or fails (A-M2)", async () => {
