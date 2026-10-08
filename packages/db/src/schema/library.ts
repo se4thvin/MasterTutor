@@ -71,22 +71,29 @@ export const folders = pgTable(
   ],
 );
 
-export const sources = pgTable("sources", {
-  id: id(),
-  workspaceId: workspaceRef(),
-  kind: sourceKindEnum("kind").notNull(),
-  url: text("url").notNull(),
-  canonicalUrl: text("canonical_url"),
-  origin: text("origin").notNull(),
-  title: text("title"),
-  faviconAssetId: uuid("favicon_asset_id").references(() => assets.id, { onDelete: "set null" }),
-  capturedAt: tstz("captured_at").notNull().defaultNow(),
-  mhtmlKey: text("mhtml_key"),
-  screenshotKey: text("screenshot_key"),
-  snapshotSha256: text("snapshot_sha256"),
-  meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: createdAt(),
-});
+export const sources = pgTable(
+  "sources",
+  {
+    id: id(),
+    workspaceId: workspaceRef(),
+    kind: sourceKindEnum("kind").notNull(),
+    url: text("url").notNull(),
+    canonicalUrl: text("canonical_url"),
+    origin: text("origin").notNull(),
+    title: text("title"),
+    faviconAssetId: uuid("favicon_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    capturedAt: tstz("captured_at").notNull().defaultNow(),
+    mhtmlKey: text("mhtml_key"),
+    screenshotKey: text("screenshot_key"),
+    snapshotSha256: text("snapshot_sha256"),
+    meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // stageQuality and findSource look sources up by their note on every capture step.
+    index("sources_note_idx").on(t.workspaceId, sql`(${t.meta}->>'noteId')`),
+  ],
+);
 
 export const notes = pgTable(
   "notes",
@@ -133,10 +140,15 @@ export const noteBlocks = pgTable(
     edited: boolean("edited").notNull().default(false),
     originalMarkdown: text("original_markdown"),
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    /** Full-text over block Markdown (B2; Phase 0 note 6). Generated, never written. */
+    search: tsvector("search").generatedAlwaysAs(
+      sql`to_tsvector('english'::regconfig, "markdown")`,
+    ),
     createdAt: createdAt(),
   },
   (t) => [
     unique("note_blocks_note_position_uq").on(t.noteId, t.position),
     index("note_blocks_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("note_blocks_search_idx").using("gin", t.search),
   ],
 );

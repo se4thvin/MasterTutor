@@ -15,6 +15,7 @@ import { RECORDED_APPROVAL_ID } from "../../fixtures/run-recording.ts";
 import { createSealer } from "../vault/sealer.ts";
 import { FIXTURE_VIEWER, type Viewer } from "../viewer.ts";
 import { createLiveRouter } from "./live-router.ts";
+import { fakeEmbeddingsClient } from "@mastertutor/contracts/testing";
 
 type Api = ContractRouterClient<ApiContract>;
 interface World {
@@ -40,14 +41,11 @@ const UNTIL_P3_B2 = [
   "notes/markVerified",
   "notes/move",
   "notes/delete",
-  "notes/export",
-  "notes/search",
   "folders/tree",
   "folders/create",
   "folders/rename",
   "folders/move",
   "folders/delete",
-  "assets/url",
 ] as const;
 /** Live procedures still answering NOT_IMPLEMENTED. Empty after P3. */
 const LIVE_DEFERRED: ReadonlySet<string> = new Set(UNTIL_P3_B2);
@@ -217,6 +215,7 @@ beforeAll(async () => {
   liveRouter = createLiveRouter({
     db: () => web,
     sealer: () => createSealer(TEST_PUBLIC),
+    embeddings: () => fakeEmbeddingsClient(),
     live: () => ({
       db: web.db,
       nekoMemberSecret: "parity-neko-member-secret-0123456789",

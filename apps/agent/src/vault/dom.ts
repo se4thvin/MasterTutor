@@ -170,7 +170,7 @@ const vaultWorlds = new WeakMap<CDPSession, IsolatedWorlds>();
 function worldsOf(cdp: CDPSession): IsolatedWorlds {
   let worlds = vaultWorlds.get(cdp);
   if (!worlds) {
-    worlds = new IsolatedWorlds(cdp, WORLD);
+    worlds = new IsolatedWorlds(cdp, { name: WORLD });
     vaultWorlds.set(cdp, worlds);
   }
   return worlds;

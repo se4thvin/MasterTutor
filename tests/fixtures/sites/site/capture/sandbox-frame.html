@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sandboxed frame</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      #art {
+        width: 400px;
+        height: 200px;
+        background: #2a6;
+      }
+      #box {
+        position: absolute;
+        left: 600px;
+        top: 20px;
+        width: 300px;
+        height: 150px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="art"></div>
+    <!-- Same-origin URL, but sandboxed without allow-same-origin: an opaque origin the page cannot read. -->
+    <iframe
+      id="box"
+      sandbox="allow-scripts"
+      src="/capture/sandboxed-inner.html"
+      title="Sandboxed"
+    ></iframe>
+  </body>
+</html>

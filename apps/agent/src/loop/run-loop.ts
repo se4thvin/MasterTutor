@@ -85,6 +85,7 @@ import type { LoopBrowser, Observation } from "./loop-browser.ts";
 import { buildModelInput, rehydrateImages } from "./model-input.ts";
 import { lastInputTokens, readRunControl, readWakeRequest, type RunSnapshot } from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
+import { StepCollector } from "./step-collector.ts";
 import {
   GARAGE_REF,
   lastUserEventId,
@@ -121,6 +122,8 @@ export interface RunLoopDeps {
 interface Executed {
   result: CallResult;
   ran: boolean;
+  /** A function tool answered with an error: its staged step writes are discarded. */
+  failed: boolean;
   wait: "otp" | null;
   /** The executor handed the page to the user (the reason to show): the run waits for a takeover. */
   handOver: string | null;
@@ -314,7 +317,11 @@ export class RunLoop {
   }
 
   #pageHeader(obs: Observation): string {
-    return `Current page: ${wrapUntrusted(obs.origin, `${obs.title}\n${obs.url}`)}`;
+    const header = `Current page: ${wrapUntrusted(obs.origin, `${obs.title}\n${obs.url}`)}`;
+    // A black frame alone would look like a blank page: the model is told it was withheld (I-1).
+    return obs.screenshot.withheld
+      ? `${header}\nScreenshot withheld: ${obs.screenshot.withheld}.`
+      : header;
   }
 
   #callById(callId: string): PendingCall | undefined {
@@ -390,7 +397,7 @@ export class RunLoop {
       url: obs.url,
       screenshotKey: key,
       screenshot: obs.screenshot.png,
-      caption: obs.screenshot.dropped ? "Screenshot withheld: a secret field moved" : null,
+      caption: obs.screenshot.withheld ? `Screenshot withheld: ${obs.screenshot.withheld}` : null,
       result: unchanged
         ? { unchanged: true }
         : { url: obs.url, title: obs.title.slice(0, 300), domHash: obs.domHash },
@@ -886,7 +893,7 @@ export class RunLoop {
    * Runs one call. Every action of a batch is re-gated at execution time except the ones the user
    * (or policy) explicitly approved; a refused one stops the batch (Review Focus 3).
    */
-  async #execute(call: PendingCall, signal: AbortSignal): Promise<Executed> {
+  async #execute(call: PendingCall, signal: AbortSignal, step: StepCollector): Promise<Executed> {
     if (call.kind === "computer") {
       const refusals: string[] = [];
       const clicked: Array<{ index: number; label: string }> = [];
@@ -958,12 +965,19 @@ export class RunLoop {
       return {
         result: { kind: "computer", notes: [...run.notes, ...refusals], acknowledged },
         ran: run.executed > 0,
+        failed: false,
         wait: null,
         handOver: run.handOver,
       };
     }
     if (!isFunctionTool(call.name))
-      return { result: notRun(call, "Unknown tool."), ran: false, wait: null, handOver: null };
+      return {
+        result: notRun(call, "Unknown tool."),
+        ran: false,
+        failed: false,
+        wait: null,
+        handOver: null,
+      };
     // The decision for exactly this call (same call id and arguments), so a tool can tell a human
     // approval (a lasting vault grant) from a policy one (this call only).
     const decision = this.#decided.get(functionItem(call.callId));
@@ -978,11 +992,12 @@ export class RunLoop {
             decidedAt: decision.decidedAt,
           }
         : null;
-    const run = await this.#deps.browser.runFunction(call.name, call.args, signal, approval);
+    const run = await this.#deps.browser.runFunction(call.name, call.args, signal, approval, step);
     if (run.notesChanged) this.#notesChanged = true;
     return {
       result: { kind: "function", output: run.output },
       ran: true,
+      failed: run.failed,
       wait: run.wait,
       // fill_credential's needs_human: a form only a person may approve (T10-12 review).
       handOver: run.handOver,
@@ -1019,27 +1034,41 @@ export class RunLoop {
         callId: call.callId,
       };
       await store.commit({ steps: [{ seq, phase: "act", state: "started", action }] });
+      // One collector per call: a function tool's note writes join this act's commit (B2 seam F2).
+      const step = new StepCollector();
       let executed: Executed;
       try {
-        executed = await this.#execute(call, signal);
+        executed = await this.#execute(call, signal, step);
       } catch (error) {
+        await this.#discard(step);
+        // What the tool already spent (OCR, embeddings…) is charged even though it was cut short (M7).
+        this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
         if (interruptionOf(error) === null && !signal.aborted) throw error;
         this.#results.set(call.callId, notRun(call, INTERRUPTED));
         this.#answerRest(NOT_STARTED);
         await store
-          .commit({ steps: [{ seq, phase: "act", state: "aborted", action }] })
+          .commit({
+            steps: [{ seq, phase: "act", state: "aborted", action }],
+            run: { usage: this.#run.usage },
+          })
           .catch(() => undefined);
         throw error;
       }
+      if (executed.failed) await this.#discard(step);
       ran ||= executed.ran;
       wait ??= executed.wait;
       handOver ??= executed.handOver;
       this.#results.set(call.callId, executed.result);
       const storage = await browser.collectStorage().catch(() => null);
+      // Spend already happened (OCR, embeddings…), so it is charged even for a failed tool.
+      this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
       await store.commit({
         steps: [{ seq, phase: "act", state: "done", action, result: executed.result }],
         storage,
+        ...step.commitParts(),
+        run: { usage: this.#run.usage },
       });
+      await step.afterCommitted(this.#deps.log);
     }
     this.#next = "observe";
     const blocked = browser.drainBlockedNavigations();
@@ -1127,16 +1156,28 @@ export class RunLoop {
   /* --------------------------------- endings --------------------------------- */
 
   async #complete(): Promise<StepOutcome> {
-    const result = await this.#deps.hooks.onComplete({ run: this.#run, log: this.#deps.log });
+    const step = new StepCollector();
+    const result = await this.#deps.hooks.onComplete({ run: this.#run, log: this.#deps.log, step });
     if (!result.ok) {
+      await this.#discard(step);
       this.#notes.push(`Executor: the run cannot finish yet: ${result.reason}`);
       this.#next = "observe";
       return CONTINUE;
     }
+    this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
     await this.#deps.store.commit({
       transition: { from: ["running"], to: "completed", waitReason: null, reason: null },
+      ...step.commitParts(),
+      run: { usage: this.#run.usage },
     });
+    await step.afterCommitted(this.#deps.log);
     return { kind: "completed" };
+  }
+
+  /** Drops a step's staged writes (failed or interrupted tool) and deletes the objects it uploaded. */
+  async #discard(step: StepCollector): Promise<void> {
+    const keys = step.reset();
+    await Promise.allSettled(keys.map((key) => this.#deps.storage.delete(key)));
   }
 
   /* ------------------------------ waits and control ------------------------------ */

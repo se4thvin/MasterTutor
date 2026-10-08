@@ -8,13 +8,15 @@ import { NO_MASK_SOURCES, redactDeep, type MaskSources } from "../browser/maskin
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
 import type { ApprovalRequest } from "@mastertutor/contracts";
-import type { ApprovalContext, RegisteredTool, ToolContext } from "./types.ts";
+import { ToolError, type ApprovalContext, type RegisteredTool, type ToolContext } from "./types.ts";
 import { wrapUntrusted } from "./untrusted.ts";
 
 export interface ToolRun {
   output: string;
   /** True when the tool wrote note blocks (capture, annotate, video), which counts as progress. */
   notesChanged: boolean;
+  /** True when the tool answered with an error: the loop discards its staged step writes. */
+  failed: boolean;
   /** The tool asked the loop to wait for the user (spec §9: a one-time code), else null. */
   wait: "otp" | null;
   /** The tool asked to hand the page to a person (the reason to show), else null. */
@@ -60,6 +62,7 @@ export class ToolRegistry {
       return {
         output: JSON.stringify({ error: "tool_unavailable" }),
         notesChanged: false,
+        failed: true,
         wait: null,
         handOver: null,
       };
@@ -79,13 +82,23 @@ export class ToolRegistry {
       );
       const text = JSON.stringify(result);
       const output = tool.untrusted ? wrapUntrusted(toOrigin(ctx.session.page.url()), text) : text;
-      return { output, notesChanged: wroteBlocks(result), wait, handOver };
+      return { output, notesChanged: wroteBlocks(result), failed: false, wait, handOver };
     } catch (error) {
       if (interruptionOf(error) !== null || ctx.signal.aborted) throw error;
+      if (error instanceof ToolError)
+        return {
+          // Tool-written, but a message can quote what it looked for: redacted all the same (M4).
+          output: JSON.stringify({ error: error.code, message: this.#mask.redact(error.message) }),
+          notesChanged: false,
+          failed: true,
+          wait: null,
+          handOver: null,
+        };
       if (error instanceof StaleRef)
         return {
           output: JSON.stringify({ error: "stale_ref" }),
           notesChanged: false,
+          failed: true,
           wait: null,
           handOver: null,
         };
@@ -93,6 +106,7 @@ export class ToolRegistry {
       return {
         output: JSON.stringify({ error: "tool_failed" }),
         notesChanged: false,
+        failed: true,
         wait: null,
         handOver: null,
       };

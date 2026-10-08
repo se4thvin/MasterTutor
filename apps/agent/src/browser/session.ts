@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chromium,
   type Browser,
@@ -11,11 +12,12 @@ import type { Log } from "../runtime/types.ts";
 import { DownloadGate, type DownloadFolder } from "./download-gate.ts";
 import { PendingNavigations } from "./pending-navigations.ts";
 import { ControlGuard } from "./guard.ts";
-import { IsolatedWorlds } from "./isolated-world.ts";
+import { IsolatedWorlds, type WorldOptions } from "./isolated-world.ts";
 import { NavigationTracker } from "./navigation.ts";
 import {
   installNetworkPolicy,
   isAllowedNavigationScheme,
+  isFixtureHost,
   type BlockedNavigation,
   type HostResolver,
   type NetworkPolicy,
@@ -29,6 +31,23 @@ export interface Layout {
   scrollY: number;
 }
 
+/** A main-frame response kept for a later Network.getResponseBody (newest last). */
+export interface LoggedResponse {
+  requestId: string;
+  url: string;
+  status: number;
+  frameId: string;
+  /** Encoded body size once loading finished; null while in flight. */
+  bytes: number | null;
+}
+
+const RESPONSE_LOG_SIZE = 8;
+/** Chromium's body buffers while the response log is on: caption tracks are small (M8). */
+export const RESPONSE_LOG_BUFFERS = {
+  maxTotalBufferSize: 16 * 1024 * 1024,
+  maxResourceBufferSize: 4 * 1024 * 1024,
+} as const;
+
 export interface BrowserSessionOptions {
   cdpBaseUrl: string;
   allowedOrigins(): readonly string[];
@@ -38,6 +57,10 @@ export interface BrowserSessionOptions {
   resolveHost?: HostResolver;
   /** The run's downloads folder (`/downloads/<runId>`). Without it downloads stay denied even when approved. */
   downloads?: DownloadFolder;
+  /** Keeps matching main-frame responses so a tool can read a body the page fetched earlier (B4). */
+  responseLog?: (url: URL) => boolean;
+  /** Applied to every URL the response log keeps (the run's vault redactor), before any copy (M12). */
+  redactUrl?: (url: string) => string;
 }
 
 /** Playwright refuses a separate CDP session for a frame in its parent's process with this. */
@@ -71,6 +94,12 @@ export class BrowserSession {
   /** Resolves once the slot's browser is gone (closed or the connection dropped). */
   readonly disconnected: Promise<void>;
   readonly #pendingNavigations = new PendingNavigations();
+  readonly #testMode: boolean;
+  readonly #responseLog: ((url: URL) => boolean) | null;
+  readonly #redactUrl: (url: string) => string;
+  #responses: LoggedResponse[] = [];
+  readonly #named = new Map<string, Promise<IsolatedWorlds>>();
+  readonly #responseWaiters = new Set<(entry: LoggedResponse) => void>();
 
   private constructor(
     browser: Browser,
@@ -83,6 +112,9 @@ export class BrowserSession {
     this.#page = page;
     this.#log = options.log;
     this.guard = options.guard ?? new ControlGuard();
+    this.#testMode = options.testMode;
+    this.#responseLog = options.responseLog ?? null;
+    this.#redactUrl = options.redactUrl ?? ((url) => url);
     this.disconnected = new Promise((resolve) => browser.once("disconnected", () => resolve()));
   }
 
@@ -146,6 +178,10 @@ export class BrowserSession {
         await cdp.send("DOM.enable");
         // Frame events (Page.frameAttached/frameNavigated) for the typing guard.
         await cdp.send("Page.enable");
+        const page = this.#page;
+        // Current only while this tab is followed through this very session: a re-adopted opener
+        // gets a new session, and its old one must not log a second copy (N2).
+        await this.#watchResponses(cdp, () => page === this.#page && this.#cdp === attempt);
         return cdp;
       });
       this.#cdp = attempt;
@@ -270,6 +306,126 @@ export class BrowserSession {
     return this.#worlds;
   }
 
+  /** A further isolated world on the foreground tab with its own name and prelude; cached per tab. */
+  /**
+   * A further isolated world on the foreground tab with its own name and prelude; cached per tab
+   * by name and prelude source, so a caller with another prelude never gets this one (M6).
+   */
+  async namedWorlds(options: WorldOptions & { name: string }): Promise<IsolatedWorlds> {
+    const source = options.prelude ? await options.prelude() : "";
+    const key = `${options.name}\u0000${createHash("sha256").update(source).digest("hex")}`;
+    const cached = this.#named.get(key);
+    if (cached) return cached;
+    const attempt = this.cdp().then(
+      (cdp) =>
+        new IsolatedWorlds(cdp, {
+          name: options.name,
+          ...(options.prelude ? { prelude: async () => source } : {}),
+        }),
+    );
+    this.#named.set(key, attempt);
+    attempt.catch(() => {
+      if (this.#named.get(key) === attempt) this.#named.delete(key);
+    });
+    return attempt;
+  }
+
+  /**
+   * Whether a page-supplied URL may be fetched through this browser (spec §5.5): http(s) only, never
+   * a private, loopback, link-local or reserved host. `Network.loadNetworkResource` bypasses
+   * context.route, so every resource fetch asks here first (preflight S1). Fixture hosts pass in
+   * test mode only. The slot's iptables rules stay the boundary for redirects.
+   */
+  async allowsFetch(raw: string): Promise<boolean> {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return false;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (this.#testMode && isFixtureHost(url.hostname)) return true;
+    if (!this.#policy) return false;
+    return !(await this.#policy.privateHosts.isPrivate(url.hostname));
+  }
+
+  /** Responses `responseLog` accepted on this tab's main frame, oldest first. */
+  recentResponses(): readonly LoggedResponse[] {
+    return [...this.#responses];
+  }
+
+  /** The next logged response that finishes loading and passes `test`; null at the timeout (event-driven). */
+  nextResponse(
+    test: (entry: LoggedResponse) => boolean,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ): Promise<LoggedResponse | null> {
+    signal.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.#responseWaiters.delete(waiter);
+        signal.removeEventListener("abort", onAbort);
+      };
+      const waiter = (entry: LoggedResponse) => {
+        if (!test(entry)) return;
+        finish();
+        resolve(entry);
+      };
+      const onAbort = () => {
+        finish();
+        reject(signal.reason);
+      };
+      const timer = setTimeout(() => {
+        finish();
+        resolve(null);
+      }, timeoutMs);
+      this.#responseWaiters.add(waiter);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /**
+   * Logs the followed tab's matching main-frame responses. A tab the session no longer follows (an
+   * opener after a popup was adopted) keeps its CDP session, so `current()` drops its events: they
+   * are another document's (I3), or a second copy once the opener is re-adopted (N2).
+   */
+  async #watchResponses(cdp: CDPSession, current: () => boolean): Promise<void> {
+    const match = this.#responseLog;
+    if (!match) return;
+    const redact = this.#redactUrl;
+    const { frameTree } = await cdp.send("Page.getFrameTree");
+    const mainFrame = frameTree.frame.id;
+    cdp.on("Network.responseReceived", (event) => {
+      if (!current() || event.frameId !== mainFrame) return;
+      let url: URL;
+      try {
+        url = new URL(event.response.url);
+      } catch {
+        return;
+      }
+      if (!match(url)) return;
+      this.#responses.push({
+        requestId: event.requestId,
+        // Redacted before any copy exists: a later note or log stores this string (M12).
+        url: redact(url.href),
+        status: event.response.status,
+        frameId: event.frameId,
+        bytes: null,
+      });
+      if (this.#responses.length > RESPONSE_LOG_SIZE) this.#responses.shift();
+    });
+    cdp.on("Network.loadingFinished", (event) => {
+      if (!current()) return;
+      const entry = this.#responses.find((logged) => logged.requestId === event.requestId);
+      if (!entry) return;
+      entry.bytes = event.encodedDataLength;
+      for (const waiter of [...this.#responseWaiters]) waiter(entry);
+    });
+    // Bounded: Chromium keeps bodies for Network.getResponseBody only up to these sizes (M8).
+    await cdp.send("Network.enable", RESPONSE_LOG_BUFFERS);
+  }
+
   async layout(): Promise<Layout> {
     const metrics = await (await this.cdp()).send("Page.getLayoutMetrics");
     const viewport = metrics.cssVisualViewport;
@@ -332,6 +488,16 @@ export class BrowserSession {
       void entry.then((found) => found?.worlds.cdp.detach().catch(() => undefined));
     this.#outOfProcess.clear();
     this.#inProcess = new WeakMap();
+    this.#named.clear();
+    this.#responses = [];
+    // A logged response belongs to the document that fetched it: a new main-frame URL (including
+    // same-document SPA navigations) starts a fresh log.
+    page.on("framenavigated", (frame) => {
+      if (page === this.#page && frame === page.mainFrame()) this.#responses = [];
+    });
+    // The log covers the adopted tab from here on; requests it made before adoption (a popup is
+    // adopted after domcontentloaded) are not in it.
+    if (this.#responseLog) void this.cdp().catch(() => undefined);
     this.navigations.attach(page);
     // F2: a frame that navigates, even to the same URL (a reload after a crash), may come back in
     // another process: probe it again rather than trust the cache.

@@ -2,7 +2,7 @@ import type { CDPSession } from "playwright-core";
 import { NO_MASK_SOURCES, type MaskSources } from "../browser/masking.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import type { Log } from "../runtime/types.ts";
-import type { RegisteredTool } from "../tools/types.ts";
+import type { RegisteredTool, StepWriter } from "../tools/types.ts";
 import type { RunSnapshot } from "./run-state.ts";
 import { NO_SESSION_STORE, type SessionStore } from "./step-store.ts";
 
@@ -44,10 +44,14 @@ export interface ReleasedSlot {
 
 /** Extension points later phases implement; B1 ships safe defaults. */
 export interface RunHooks {
+  /** Runs before `completed` commits; its step writes join that commit. `{ok:false}` keeps running. */
   onComplete(context: {
     run: RunSnapshot;
     log: Log;
+    step: StepWriter;
   }): Promise<{ ok: true } | { ok: false; reason: string }>;
+  /** Main-frame responses the browser session keeps for a later body read (B4 caption tracks). */
+  responseLog: ((url: URL) => boolean) | null;
   sessionStore: SessionStore;
   maskSources(runId: string): MaskSources;
   control: ControlTransitions;
@@ -69,6 +73,7 @@ export interface RunHooks {
 
 export const DEFAULT_HOOKS: RunHooks = {
   onComplete: async () => ({ ok: true }),
+  responseLog: null,
   sessionStore: NO_SESSION_STORE,
   maskSources: () => NO_MASK_SOURCES,
   control: {
