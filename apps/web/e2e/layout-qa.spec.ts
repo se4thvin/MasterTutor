@@ -1,6 +1,8 @@
-import { recordedEvents } from "../lib/fixtures/run-recording.ts";
+import type { Page } from "@playwright/test";
+import { recordedDetail, recordedEvents } from "../lib/fixtures/run-recording.ts";
 import { findLayoutIssues } from "./helpers/layout-qa.ts";
-import { emit, gotoRun } from "./helpers/run.ts";
+import { emit, frame, gotoRun } from "./helpers/run.ts";
+import { RUN_SCENARIOS } from "./helpers/run-scenarios.ts";
 import { expect, test } from "./helpers/test.ts";
 
 test.describe("layout detector self-test", () => {
@@ -50,6 +52,19 @@ test.describe("layout detector self-test", () => {
     expect(await findLayoutIssues(page)).toEqual([]);
     await page.setContent(
       `<div style="width:60px;height:20px;overflow:hidden;white-space:nowrap">long text that is cut off</div>`,
+    );
+    expect((await findLayoutIssues(page)).join("\n")).toContain("text clipped by its own box");
+  });
+
+  test("an ellipsis label inside a clipping box is its box, not its full text (fe-typography)", async ({
+    page,
+  }) => {
+    const label = `<span style="display:block;width:80px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">a long label that is truncated</span>`;
+    await page.setContent(`<div style="width:120px;overflow:hidden">${label}</div>`);
+    expect(await findLayoutIssues(page)).toEqual([]);
+    // The label's own box still counts: one wider than the clipping box is flagged.
+    await page.setContent(
+      `<div style="width:60px;overflow:hidden">${label.replace("width:80px", "width:200px")}</div>`,
     );
     expect((await findLayoutIssues(page)).join("\n")).toContain("text clipped by its own box");
   });
@@ -185,5 +200,79 @@ test.describe("layout detector: 44px targets, struck-out words, run-view obstacl
       });
     });
     expect((await findLayoutIssues(page)).join("\n")).toContain("overlaps");
+  });
+});
+
+/** Boxes in the frame chrome that overlap each other or leave the chrome; [] when all is clear. */
+async function chromeCollisions(page: Page): Promise<string[]> {
+  return frame(page)
+    .locator(".run-chrome")
+    .evaluate((chrome) => {
+      const box = (el: Element) => el.getBoundingClientRect();
+      const named = (sel: string) =>
+        [...chrome.querySelectorAll(sel)]
+          .filter((el) => box(el).width > 0)
+          .map((el) => [sel, box(el)] as const);
+      // The shield sits in its own slot in the origin pill; the end group holds the chips and pill.
+      const parts = [
+        ...named(".run-dots i"),
+        ...named(".run-origin > :not(.run-path)"),
+        ...named(".run-chrome-end > *"),
+      ];
+      const issues: string[] = [];
+      const outer = box(chrome);
+      for (const [sel, r] of parts) {
+        if (r.left < outer.left - 0.5 || r.right > outer.right + 0.5)
+          issues.push(`${sel} leaves the chrome`);
+      }
+      for (let i = 0; i < parts.length; i++)
+        for (let j = i + 1; j < parts.length; j++) {
+          const [a, ra] = parts[i]!;
+          const [b, rb] = parts[j]!;
+          const x = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+          const y = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+          if (x > 0.5 && y > 0.5) issues.push(`${a} overlaps ${b}`);
+        }
+      return issues;
+    });
+}
+
+test.describe("run frame chrome at 390: nothing overlaps in any status (coordinator ruling)", () => {
+  test.skip(({ viewport }) => viewport?.width !== 390, "the 390 phone width");
+
+  const PAUSED_STATUSES = [
+    ["queued", "Queued", "Waiting"],
+    ["completed", "Finished", "Stopped"],
+    ["failed", "Stopped", "Stopped"],
+    ["cancelled", "Cancelled", "Stopped"],
+  ] as const;
+
+  for (const s of RUN_SCENARIOS) {
+    test(`${s.name}`, async ({ page }) => {
+      await s.setup(page);
+      await expect(frame(page)).toHaveAttribute("data-state", s.state, { timeout: 5_000 });
+      await expect(frame(page).locator(".run-keyshield")).toBeVisible();
+      await expect(frame(page).locator(".run-pill .run-pill-full")).toBeHidden();
+      expect(await chromeCollisions(page)).toEqual([]);
+    });
+  }
+
+  for (const [status, label, short] of PAUSED_STATUSES) {
+    test(`paused: ${status}`, async ({ page }) => {
+      await gotoRun(page, { detail: recordedDetail({ status }) });
+      const pill = frame(page).getByRole("img", { name: label, exact: true });
+      await expect(pill).toHaveAttribute("title", label);
+      await expect(pill.locator(".run-pill-short")).toHaveText(short);
+      expect(await chromeCollisions(page)).toEqual([]);
+    });
+  }
+
+  test("the rule bites: a status group that cannot wrap collides", async ({ page }) => {
+    await gotoRun(page, { detail: recordedDetail({ approvalMode: "bypass" }) });
+    expect(await chromeCollisions(page)).toEqual([]);
+    await frame(page)
+      .locator(".run-chrome")
+      .evaluate((el) => void (el.style.flexWrap = "nowrap"));
+    expect((await chromeCollisions(page)).join("\n")).toMatch(/overlaps|leaves the chrome/);
   });
 });

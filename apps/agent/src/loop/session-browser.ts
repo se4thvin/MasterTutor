@@ -8,16 +8,17 @@ import {
 } from "@mastertutor/contracts";
 import type { Page } from "playwright-core";
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
-import { sharedLocalOcr, type CachedScreen } from "../browser/local-ocr.ts";
-import type { MaskSources } from "../browser/masking.ts";
+import { sharedLocalOcr } from "../browser/local-ocr.ts";
+import type { BandRead } from "../browser/pixel-screen.ts";
+import { secretFieldBoxesScript, type MaskSources } from "../browser/masking.ts";
 import { createScreenCache, type ScreenCache } from "../browser/screen-cache.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash, UNCOMPARABLE_HASH } from "../browser/phash.ts";
 import { captureModelScreenshot, WITHHELD, withheldScreenshot } from "../browser/screenshot.ts";
 import { slotDownloadPath } from "../browser/download-gate.ts";
-import { BrowserSession } from "../browser/session.ts";
+import { BrowserSession, notAnswering } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
-import { markUnguarded } from "../browser/input-guard.ts";
+import { markStillUnguarded } from "../browser/input-guard.ts";
 import {
   applyStorageState,
   collectStorageState,
@@ -26,6 +27,7 @@ import {
 } from "../browser/storage-state.ts";
 import { isCaptchaFrameUrl, isChallengePage } from "../guardrails/captcha.ts";
 import { HISTORY_TAG, downloadRequest, redactedExcerpt } from "../guardrails/policy.ts";
+import { abortable } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
@@ -136,7 +138,7 @@ export class SessionLoopBrowser implements LoopBrowser {
   readonly #registry: ToolRegistry;
   readonly #mask: MaskSources;
   /** This run's pixel-screen cache: lives and dies with this lease (QA-098 ruling). */
-  readonly #screens: ScreenCache<CachedScreen>;
+  readonly #screens: ScreenCache<BandRead>;
   readonly #run: () => RunSnapshot;
   readonly #log: Log;
   readonly #slotName: string;
@@ -179,7 +181,11 @@ export class SessionLoopBrowser implements LoopBrowser {
       this.#screens,
     );
     const page = await readPage(session, { mode: "interactive", sinceHash: null, offset: null });
-    const state = await (await session.worlds()).evaluate(pageStateScript, null);
+    const worlds = await session.worlds();
+    const [state, secretFields] = await Promise.all([
+      worlds.evaluate(pageStateScript, null),
+      worlds.evaluate(secretFieldBoxesScript, null),
+    ]);
     return {
       url,
       title: this.#mask.redact(state.title),
@@ -188,6 +194,7 @@ export class SessionLoopBrowser implements LoopBrowser {
       screenshot,
       phash: await perceptualHash(screenshot.png),
       captcha: await detectCaptcha(session.page),
+      signIn: secretFields.length > 0,
       scroll: { x: state.scrollX, y: state.scrollY },
       videoTime: state.videoTime,
     };
@@ -196,8 +203,9 @@ export class SessionLoopBrowser implements LoopBrowser {
   async targetFor(
     action: ComputerAction,
     previous: TargetDescription | null,
+    signal: AbortSignal,
   ): Promise<TargetDescription | null> {
-    const target = await this.#classify(action, previous);
+    const target = await this.#classify(action, previous, signal);
     if (target?.excerpt === undefined) return target;
     // Redacted before it is capped for the approval card (M13), so no part of a secret shows.
     const { excerpt, ...rest } = target;
@@ -208,6 +216,7 @@ export class SessionLoopBrowser implements LoopBrowser {
   async #classify(
     action: ComputerAction,
     previous: TargetDescription | null,
+    signal: AbortSignal,
   ): Promise<TargetDescription | null> {
     const history =
       action.type === "keypress"
@@ -218,15 +227,24 @@ export class SessionLoopBrowser implements LoopBrowser {
     if (history === "reload" || history === "back" || history === "forward")
       return historyTarget(this.#session, history);
     if (action.type === "click" || action.type === "double_click") {
-      const point = await this.#executor.toPage(action.x, action.y);
+      // The page answers nothing while its own document waits on a navigation that never answers.
+      await this.#session.stopStuckNavigation(signal, 1_000);
+      // Still not answering: no target (the executor then refuses while the page settles).
+      const point = await this.#executor.toPage(action.x, action.y, signal).catch(notAnswering);
       // While some document of the page could not be armed (a frame that hangs, or too many),
       // clicking and typing count as acting inside an uninspectable page: they need approval.
-      return point
-        ? markUnguarded(this.#session, (await hitTest(this.#session, point)).target)
-        : null;
+      if (!point) return null;
+      const hit = await abortable(hitTest(this.#session, point), signal).catch(notAnswering);
+      return hit ? markStillUnguarded(this.#session, hit.target, signal) : null;
     }
-    if (action.type === "type" || action.type === "keypress")
-      return markUnguarded(this.#session, previous ?? (await focusTarget(this.#session)));
+    if (action.type === "type" || action.type === "keypress") {
+      await this.#session.stopStuckNavigation(signal, 1_000);
+      return markStillUnguarded(
+        this.#session,
+        previous ?? (await abortable(focusTarget(this.#session), signal)),
+        signal,
+      );
+    }
     return null;
   }
 

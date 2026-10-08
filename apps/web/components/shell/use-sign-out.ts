@@ -2,13 +2,14 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { clearSavedDrafts } from "@/components/new-task/saved-draft-key.ts";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { clearAllDrafts } from "@/lib/notes/edit-drafts.ts";
 
 /**
  * Ends the session and returns to sign-in. The auth client loads only when it is needed. On
- * success the query cache and every unsaved block draft are cleared, so nothing from this session
- * (notes, vault list, settings, drafts) survives into the next sign-in in the same tab. A failure keeps the user here and says so.
+ * success the query cache, every unsaved block draft and every saved New task draft are cleared, so
+ * nothing from this session (notes, vault list, settings, drafts) survives into the next sign-in in the same tab. A failure keeps the user here and says so.
  */
 export function useSignOut(): () => Promise<void> {
   const router = useRouter();
@@ -25,6 +26,7 @@ export function useSignOut(): () => Promise<void> {
     }
     qc.clear();
     clearAllDrafts();
+    clearSavedDrafts();
     router.replace("/sign-in");
     router.refresh();
   };

@@ -122,6 +122,24 @@ describe("runs.* on the live router (Task 0A)", () => {
     });
   });
 
+  it("creates a goal-only run: no source and no allowed origin, still queued and notified", async () => {
+    let created: { id: string } | undefined;
+    const payload = await nextNotification(web.sql, "run_queued", async () => {
+      created = await client().runs.create({ goal: "Find a good intro to Rust lifetimes" });
+    });
+    expect(decodeNotify("run_queued", payload)).toEqual({ runId: created!.id });
+    expect(await runRow(created!.id)).toMatchObject({
+      goal: "Find a good intro to Rust lifetimes",
+      status: "queued",
+      approvalMode: "ask",
+      allowedOrigins: [],
+    });
+    // Auto mode denies every new origin, so with no allowed origin it could open nothing.
+    await expect(
+      client().runs.create({ goal: "x", approvalMode: "auto_within_allowlist" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("refuses a folder outside the workspace, bypass without the acknowledgement, and the kill switch", async () => {
     const stranger = await seedMember(owner.db);
     const [foreign] = await owner.db

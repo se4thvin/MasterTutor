@@ -1,11 +1,18 @@
+import typeTokens from "./apps/web/lint/typography-stylelint-plugin.ts";
+
 /** Motion rules for CSS (spec §11.4, D28). styles/motion.css is the only place raw timing lives. */
 const ANIMATABLE = "(transform|opacity|scale|translate|rotate|visibility)";
-const RAW_TIMING_KEYWORD = "/(?<![-\\w])(ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)(?![-\\w(])/";
+const RAW_TIMING_KEYWORD =
+  "/(?<![-\\w])(ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)(?![-\\w(])/";
 const RAW_LINEAR_FN = "/(?<![-\\w])linear\\(/";
 
 export default {
   ignoreFiles: ["**/node_modules/**", "**/.next/**", "apps/web/styles/motion.css"],
+  plugins: [typeTokens],
   rules: {
+    // Spec §11.1: SF Pro and the type scale tokens only. The SF Mono exceptions are these note
+    // code blocks; every other id, number or meter is SF Pro with tabular-nums.
+    "mastertutor/type-tokens": [true, { codeSelectors: [".prose pre", ".prose :not(pre) > code"] }],
     "unit-disallowed-list": [
       ["ms", "s"],
       { message: "Use a --motion-dur-* variable from styles/motion.css" },

@@ -40,11 +40,34 @@ export function OriginPill({ url, secure }: { url: string | null; secure: boolea
   );
 }
 
-export function StatePill({ label, tone, pulse }: { label: string; tone: Tone; pulse: boolean }) {
+/** At 480px and below the short label shows; the full one is the name and the tooltip. */
+export function StatePill({
+  label,
+  short,
+  tone,
+  pulse,
+}: {
+  label: string;
+  short: string;
+  tone: Tone;
+  pulse: boolean;
+}) {
   return (
-    <span className="run-pill" data-tone={tone} data-pulse={pulse || undefined}>
+    <span
+      className="run-pill"
+      role="img"
+      aria-label={label}
+      title={label}
+      data-tone={tone}
+      data-pulse={pulse || undefined}
+    >
       <i aria-hidden="true" />
-      <span>{label}</span>
+      <span className="run-pill-full" aria-hidden="true">
+        {label}
+      </span>
+      <span className="run-pill-short" aria-hidden="true">
+        {short}
+      </span>
     </span>
   );
 }

@@ -10,7 +10,8 @@ import {
   type Box,
   type MaskSources,
 } from "./masking.ts";
-import { screenPixels, sharedLocalOcr, type CachedScreen, type LocalOcr } from "./local-ocr.ts";
+import { sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
+import { screenPixels, type BandRead } from "./pixel-screen.ts";
 import type { ScreenCache } from "./screen-cache.ts";
 import type { BrowserSession, Layout } from "./session.ts";
 
@@ -34,6 +35,8 @@ export const WITHHELD = {
 } as const;
 
 const MAX_ATTEMPTS = 3;
+/** How long an observation waits for a main-frame navigation before stopping it. */
+const STUCK_NAVIGATION_WAIT_MS = 5_000;
 
 function targetSize(layout: Layout) {
   const scale = Math.min(1, VIEWPORT.width / layout.width, VIEWPORT.height / layout.height);
@@ -77,6 +80,15 @@ export async function withheldScreenshot(
   };
 }
 
+/** Widest scrollbar a 1:1 capture can carry beside the CSS viewport. */
+const MAX_SCROLLBAR_PX = 32;
+
+/**
+ * The model image. A 1:1 capture (the deployed window) is cropped to the CSS viewport: no
+ * scrollbars, whose strip a page can paint (review I2) and whose thumb moves on every scroll, and
+ * no squeeze of the capture into the viewport width (model x = CSS x). Any other capture (zoom,
+ * a resized window) is fitted to the target size as before.
+ */
 async function finalize(
   raw: Buffer,
   layout: Layout,
@@ -84,10 +96,21 @@ async function finalize(
 ): Promise<ModelScreenshot> {
   const { scale, width, height } = targetSize(layout);
   const meta = await sharp(raw).metadata();
+  const extraX = (meta.width ?? 0) - layout.width;
+  const extraY = (meta.height ?? 0) - layout.height;
+  const oneToOne =
+    extraX >= 0 && extraY >= 0 && extraX <= MAX_SCROLLBAR_PX && extraY <= MAX_SCROLLBAR_PX;
+  const content = oneToOne
+    ? await sharp(raw)
+        .extract({ left: 0, top: 0, width: layout.width, height: layout.height })
+        .png()
+        .toBuffer()
+    : raw;
+  const contentSize = oneToOne ? layout : { width: meta.width ?? 0, height: meta.height ?? 0 };
   const sized =
-    meta.width === width && meta.height === height
-      ? raw
-      : await sharp(raw).resize(width, height, { fit: "fill" }).png().toBuffer();
+    contentSize.width === width && contentSize.height === height
+      ? content
+      : await sharp(content).resize(width, height, { fit: "fill" }).png().toBuffer();
   const scaled = boxes.map((box) => ({
     x: box.x * scale,
     y: box.y * scale,
@@ -99,17 +122,18 @@ async function finalize(
 }
 
 /**
- * I-1: on a run that holds secrets, the image the model would receive is read locally (the one
- * tesseract worker) before it leaves. Words that show a registered secret are filled; a second
- * read must then come back clean. A failed read, or a secret still readable, gives null: the
- * step's screenshot is withheld and the model is told so (fail closed, no pause).
+ * I-1: on a run that holds secrets, the exact image the model would receive is read locally (the
+ * one tesseract worker) before it leaves. Words that show a registered secret are filled; a
+ * second read must then come back clean. A failed read, or a secret still readable, gives null:
+ * the step's screenshot is withheld and the model is told so (fail closed, no pause). Nothing
+ * outside the screened pixels reaches the model.
  */
 async function screened(
   shot: ModelScreenshot,
   sources: MaskSources,
   ocr: LocalOcr,
   signal: AbortSignal,
-  cache: ScreenCache<CachedScreen> | undefined,
+  cache: ScreenCache<BandRead> | undefined,
 ): Promise<ModelScreenshot | null> {
   const first = await screenPixels(ocr, sources, shot.png, signal, { urgent: true, cache });
   if (first.kind === "clean") return shot;
@@ -142,8 +166,10 @@ export async function captureModelScreenshot(
   signal: AbortSignal,
   ocr: LocalOcr = sharedLocalOcr(),
   /** The run's screen cache (session-browser): unchanged regions are not read again. */
-  cache?: ScreenCache<CachedScreen>,
+  cache?: ScreenCache<BandRead>,
 ): Promise<ModelScreenshot> {
+  // The page answers nothing while its main frame waits on a navigation that never answers.
+  await session.stopStuckNavigation(signal, STUCK_NAVIGATION_WAIT_MS);
   let layout = await session.layout();
   const drop = async (reason: string = WITHHELD.moved) => {
     const dropped = await blackFrame(layout, reason);

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
-import {
-  externalizeImages,
-  recentScreenshotKeys,
-  resolveGarageRef,
-  type TranscriptEntry,
-} from "./transcript.ts";
+import { externalizeImages, resolveGarageRef, type TranscriptEntry } from "./transcript.ts";
 
 const run = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const other = "9b2504e0-4f89-41d3-9a0c-0305e82c3302";
@@ -16,37 +11,14 @@ const entry = (item: Record<string, unknown>): TranscriptEntry => ({
   userEventId: null,
 });
 
-describe("recentScreenshotKeys", () => {
-  it("takes only image fields under this run's transcript prefix", () => {
-    const mine = `runs/${run}/transcript/1-0-ab.png`;
-    const entries = [
-      entry({
-        type: "computer_call_output",
-        call_id: "c",
-        output: { type: "computer_screenshot", image_url: `garage:${mine}` },
-      }),
-      entry({
-        role: "user",
-        content: [{ type: "input_text", text: `garage:runs/${other}/transcript/1-0.png` }],
-      }),
-      entry({
-        role: "user",
-        content: [{ type: "input_image", image_url: `garage:runs/${other}/transcript/2-0.png` }],
-      }),
-      entry({
-        type: "function_call_output",
-        call_id: "f",
-        output: `garage:runs/${run}/transcript/9-0.png`,
-      }),
-      entry({
-        role: "user",
-        content: [
-          { type: "input_image", image_url: `garage:runs/${run}/transcript/../../${other}/x.png` },
-        ],
-      }),
-    ];
-    expect(recentScreenshotKeys(entries, run, 3)).toEqual([mine]);
+describe("resolveGarageRef", () => {
+  it("resolves only this run's own image keys", () => {
+    expect(resolveGarageRef(run, `garage:runs/${run}/transcript/1-0-ab.png`)).toBe(
+      `runs/${run}/transcript/1-0-ab.png`,
+    );
     expect(resolveGarageRef(run, `garage:runs/${other}/transcript/1-0.png`)).toBeNull();
+    expect(resolveGarageRef(run, `garage:runs/${run}/transcript/../../${other}/x.png`)).toBeNull();
+    expect(resolveGarageRef(run, `runs/${run}/transcript/1-0.png`)).toBeNull();
   });
 });
 

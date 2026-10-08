@@ -3,7 +3,7 @@ import type { RunStatus, WaitReason } from "@mastertutor/contracts";
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import { ControlGuard } from "../browser/guard.ts";
-import type { ModelCaller } from "../llm/caller.ts";
+import { modelErrorLog, type ModelCaller } from "../llm/caller.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import {
@@ -187,6 +187,12 @@ export class RunWorker {
           runId: this.runId,
           errorCode: failure.code,
           err: error instanceof Error ? error.name : "unknown",
+          // Why OpenAI refused, with this run's vault secrets redacted from its message.
+          ...(error instanceof ModelUnavailable
+            ? modelErrorLog(error.cause, (text) =>
+                this.#deps.hooks.maskSources(this.runId).redact(text),
+              )
+            : {}),
         },
         "run failed",
       );
@@ -247,7 +253,7 @@ export class RunWorker {
     const removeRestore = state ? await browser.applyStorage(state) : null;
     const target = run.currentUrl ?? startUrl(run.goal, run.allowedOrigins);
     try {
-      if (target) await browser.navigate(target, this.#abort.signal);
+      await browser.navigate(target, this.#abort.signal);
     } finally {
       // Even when the navigation is interrupted: a stale restore script must never outlive it (I3).
       await removeRestore?.().catch(() => undefined);

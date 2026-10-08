@@ -1,10 +1,10 @@
 import type { ActionEffect, ActionTarget, ComputerAction } from "@mastertutor/contracts";
 import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import type { BrowserSession } from "../browser/session.ts";
+import { notAnswering, pageAnswer, type BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
 import { armClickGuard, armTypingGuard, markUnguarded } from "../browser/input-guard.ts";
-import { pause } from "../runtime/abortable.ts";
+import { abortable, pause } from "../runtime/abortable.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { OmniboxEmulator, matchAccelerator, type Accelerator } from "./accelerators.ts";
 import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
@@ -45,6 +45,8 @@ export const TARGET_MOVED_REFUSAL =
   "Nothing was clicked: what is under the pointer changed after the click was checked. Look at the screen and decide again.";
 export const UNGUARDED_CLICK_REFUSAL =
   "Nothing was clicked: the page's embedded frames could not all be guarded against the click landing somewhere else (one is not responding, or there are too many). Clicking on this page needs the user's approval: ask for it again as its own step.";
+export const PAGE_SETTLING_REFUSAL =
+  "Nothing was clicked: the page is still settling (an embedded frame is not responding yet), so the click could not be guarded. Try again in a moment.";
 /** Why the run waits for the user when a page has more documents than a click can be guarded in. */
 export const PAGE_TOO_COMPLEX =
   "This page has too many embedded frames for the agent to click on it safely. Please take over.";
@@ -55,6 +57,9 @@ export const SECRET_FIELD_REFUSAL =
 const TYPE_CHUNK = 24;
 /** How long a click waits for frames mid-navigation to commit before it is refused. */
 const NAVIGATION_SETTLE_MS = 1_000;
+/** How long an approved click waits for every document of the page to arm, and between tries. */
+const ARM_SETTLE_MS = 1_000;
+const ARM_RETRY_MS = 50;
 const SCROLL_STEP = 240;
 
 /** True when the combo would type a character: no Ctrl/Alt/Meta and any non-modifier key is printable. */
@@ -167,9 +172,14 @@ export class ComputerExecutor {
     return { executed, notes, effects, targets, handOver: this.#handOver };
   }
 
-  async toPage(x: number, y: number): Promise<{ x: number; y: number } | null> {
+  /** Throws PageNotAnswering when the page does not answer in time; ended by `signal`. */
+  async toPage(
+    x: number,
+    y: number,
+    signal?: AbortSignal,
+  ): Promise<{ x: number; y: number } | null> {
     const scale = this.#session.lastScale;
-    const layout = await this.#session.layout();
+    const layout = await this.#session.layout(signal);
     // Whole CSS pixels: the hit test, the browser's own hit test and the click all use this point.
     const px = Math.floor(x / scale);
     const py = Math.floor(y / scale);
@@ -234,23 +244,39 @@ export class ComputerExecutor {
   ): Promise<string | null> {
     this.omnibox.cancel();
     if (button === "back" || button === "forward") return this.#accelerator(button, signal);
-    const point = await this.toPage(x, y);
+    // While the page's own document is being replaced it answers nothing (not even its layout):
+    // wait a moment, then refuse rather than stall.
+    const loadedBy = Date.now() + NAVIGATION_SETTLE_MS;
+    while (this.#session.mainFrameNavigating()) {
+      if (Date.now() >= loadedBy) return this.#refuse(PAGE_SETTLING_REFUSAL);
+      await pause(25, signal);
+    }
+    // Every call into the page below is bounded and ends with the run's signal: a page that stops
+    // answering (a navigation began meanwhile) refuses the click as settling, never stalls it.
+    const point = await this.toPage(x, y, signal).catch(notAnswering);
+    if (point === null && this.#session.mainFrameNavigating())
+      return this.#refuse(PAGE_SETTLING_REFUSAL);
     if (!point) return this.#outside(x, y);
     const mouse = this.#session.page.mouse;
     this.#session.guard.assertAgent(signal);
-    await mouse.move(point.x, point.y);
-    // A frame mid-navigation refuses the click (its next document is not guarded): give a page
-    // whose frames load all the time a moment to settle, then check what is under the pointer.
-    for (let waited = 0; waited < NAVIGATION_SETTLE_MS && this.#session.navigationPending();)
-      waited += await pause(25, signal).then(() => 25);
-    const hit = await hitTest(this.#session, point);
+    await abortable(mouse.move(point.x, point.y), signal);
+    // A frame mid-navigation near the point refuses the click (its next document is not
+    // guarded): give a page whose frames load all the time a moment to settle (a bounded wait,
+    // each check bounded too), then check what is under the pointer.
+    const navigationSettleBy = Date.now() + NAVIGATION_SETTLE_MS;
+    while (await this.#session.navigationNear(point)) {
+      if (Date.now() >= navigationSettleBy) return this.#refuse(PAGE_SETTLING_REFUSAL);
+      await pause(25, signal);
+    }
+    const hit = await pageAnswer(hitTest(this.#session, point), signal).catch(notAnswering);
+    if (!hit) return this.#refuse(PAGE_SETTLING_REFUSAL);
     this.#target = hit.target;
     const urlBefore = this.#session.page.url();
     // The page may have changed since the gate classified this click (TOCTOU): if anything
     // differs, nothing is pressed and the model's next click is gated again.
     if (verdict && !sameTarget(verdict.target, markUnguarded(this.#session, hit.target)))
       return this.#refuse(TARGET_MOVED_REFUSAL);
-    if (hit.snap) await mouse.move(hit.snap.x, hit.snap.y);
+    if (hit.snap) await abortable(mouse.move(hit.snap.x, hit.snap.y), signal);
     // Only now that the press will go to the approved link (m6).
     if (verdict?.allowDownload) {
       const { url: approvedUrl, approvedBy } = verdict.allowDownload;
@@ -259,31 +285,52 @@ export class ComputerExecutor {
     // ...and from here to the press, the page itself cancels a press that reaches anything but
     // the element just classified. (Inside an uninspectable frame there is none to hold it to:
     // that click was approved as it is.)
-    const guard =
+    let guard =
       hit.target && !hit.target.opaqueFrame
         ? await armClickGuard(this.#session, signal, hit.key)
         : null;
     let cancelled = false;
     try {
+      // A document the guard could not arm (a hung or slow frame) would take an unchecked press:
+      // fail closed, as typing does (approval needed). Once a person approved this element, only
+      // an unarmed document near the press point holds it back (a frame elsewhere cannot take
+      // it): the page gets a moment to settle, then nothing is pressed if one still is.
+      const pressAt = hit.snap ?? point;
+      const unarmed = () => guard !== null && !guard.complete && !guard.tooMany;
+      if (unarmed() && verdict?.personApproved !== true)
+        return this.#refuse(UNGUARDED_CLICK_REFUSAL);
+      const settleBy = Date.now() + ARM_SETTLE_MS;
+      while (unarmed() && (await guard!.unguardedAt(pressAt)) && Date.now() < settleBy) {
+        await guard!.disarm();
+        await pause(ARM_RETRY_MS, signal);
+        guard = await armClickGuard(this.#session, signal, hit.key);
+      }
       // Past the document cap nothing is armed, so not even an approved click is safe: the user
       // takes over.
       if (guard?.tooMany) {
         this.#handOver = PAGE_TOO_COMPLEX;
         return this.#refuse(PAGE_TOO_COMPLEX_REFUSAL);
       }
-      // A document the guard could not arm (a hung frame) would take an unchecked press: fail
-      // closed, as typing does (approval needed), unless a person approved this very element.
-      if (guard && !guard.complete && verdict?.personApproved !== true)
-        return this.#refuse(UNGUARDED_CLICK_REFUSAL);
+      if (unarmed() && (await guard!.unguardedAt(pressAt)))
+        return this.#refuse(PAGE_SETTLING_REFUSAL);
       this.#session.guard.assertAgent(signal);
       const options = {
         button: button === "right" ? "right" : button === "wheel" ? "middle" : "left",
       } as const;
       for (let clickCount = 1; clickCount <= (double ? 2 : 1); clickCount++) {
-        // A document added or replaced since arming is not guarded: press nothing.
-        if (guard && (await guard.changedNow())) return this.#refuse(TARGET_MOVED_REFUSAL);
-        await mouse.down({ ...options, clickCount });
-        await mouse.up({ ...options, clickCount });
+        // A document added or replaced since arming is not guarded, and an unarmed frame may
+        // have moved under the point: press nothing. The geometry is the last check.
+        if (guard && (await guard.changedNow(pressAt))) return this.#refuse(TARGET_MOVED_REFUSAL);
+        if (unarmed() && (await guard!.unguardedAt(pressAt)))
+          return this.#refuse(TARGET_MOVED_REFUSAL);
+        await abortable(mouse.down({ ...options, clickCount }), signal);
+        // Never leave the button down after an abort (a takeover or kill mid-press).
+        await abortable(mouse.up({ ...options, clickCount }), signal).catch(
+          async (error: unknown) => {
+            await mouse.up({ ...options, clickCount }).catch(() => undefined);
+            throw error;
+          },
+        );
       }
     } finally {
       if (signal.aborted) void guard?.disarm();

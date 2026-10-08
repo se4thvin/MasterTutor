@@ -4,7 +4,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
-import { ModelCaller, backoffMs, classifyModelError, retryAfterMs } from "./caller.ts";
+import { createLogger } from "@mastertutor/contracts/server";
+import {
+  MODEL_ERROR_MESSAGE_MAX,
+  ModelCaller,
+  backoffMs,
+  classifyModelError,
+  modelErrorLog,
+  retryAfterMs,
+} from "./caller.ts";
 import {
   createOpenAIModelClient,
   type ModelClient,
@@ -198,6 +206,33 @@ describe("goalText", () => {
     ])
       expect(text).toContain(part);
   });
+  it("tells a goal-only run it starts on a blank page and must find its own sources", () => {
+    const text = goalText(
+      { goal: "Find a good intro to Rust lifetimes", allowedOrigins: [], approvalMode: "ask" },
+      [],
+    );
+    expect(text).toContain("Allowed origins: none yet");
+    expect(text).toContain("blank page");
+    expect(text).toContain("https://html.duckduckgo.com/html/?q=");
+    // Result links go through a redirector on another origin: open the destination directly.
+    expect(text).toContain("uddg");
+    expect(text).toContain("open the destination directly with CTRL+L");
+    expect(text).toContain("risky actions wait for the user's approval");
+  });
+  it("never sends the search guidance to a run with allowed origins (benchmarks, sourced runs)", () => {
+    for (const approvalMode of ["ask", "auto_within_allowlist", "bypass"] as const) {
+      const text = goalText(
+        { goal: "Do X", allowedOrigins: ["https://learn.example.edu"], approvalMode },
+        [],
+      );
+      expect(text).not.toMatch(/duckduckgo|search the web|find sources|not limits|none yet/i);
+    }
+    for (const profile of ["computer_use", "browser_use"] as const) {
+      const instructions = agentInstructions(profile);
+      expect(instructions).not.toMatch(/duckduckgo|Finding sources|not limits/i);
+      expect(instructions).toContain("- Stay on the allowed origins listed in the task.\n");
+    }
+  });
 });
 
 describe("ModelCaller", () => {
@@ -237,6 +272,52 @@ describe("ModelCaller", () => {
       caller(scripted([apiError(400)]).client).call(request, signal()),
     ).rejects.toBeInstanceOf(ModelUnavailable);
     expect(classifyModelError(new Error("socket hang up"))).toBe("server");
+  });
+  it("keeps why OpenAI refused (status, type, code, param, redacted capped message) for the run log", async () => {
+    const refusal = APIError.generate(
+      400,
+      {
+        error: {
+          type: "invalid_request_error",
+          code: null,
+          param: "input",
+          message: `Computer tool cannot use multiple image inputs. hunter2 sk-proj-abcdef123456 ${"x".repeat(400)}`,
+        },
+      },
+      "x",
+      new Headers(),
+    );
+    const failure = await caller(scripted([refusal]).client)
+      .call(request, signal())
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "model_request_rejected" });
+    const fields = modelErrorLog((failure as ModelUnavailable).cause, (text) =>
+      text.replaceAll("hunter2", "[secret]"),
+    );
+    expect(fields).toMatchObject({
+      modelStatus: 400,
+      modelErrorType: "invalid_request_error",
+      modelErrorCode: null,
+      modelErrorParam: "input",
+    });
+    const lines: string[] = [];
+    createLogger({
+      service: "t",
+      destination: { write: (line: string) => lines.push(line) },
+    }).error({ errorCode: "model_request_rejected", ...fields }, "run failed");
+    const logged = JSON.parse(lines[0]!) as Record<string, unknown>;
+    const message = String(logged.modelErrorMessage);
+    expect(
+      message.startsWith("Computer tool cannot use multiple image inputs. [secret] sk-[redacted]"),
+    ).toBe(true);
+    expect(message).toHaveLength(MODEL_ERROR_MESSAGE_MAX);
+    expect(logged).toMatchObject({
+      modelErrorParam: "input",
+      modelErrorType: "invalid_request_error",
+    });
+    expect(lines[0]).not.toContain("hunter2");
+    expect(lines[0]).not.toContain("abcdef123456");
+    expect(modelErrorLog(new Error("socket"), (text) => text)).toEqual({});
   });
   it("treats context overflow as compact-now, 408/409 as retryable and honours Retry-After", async () => {
     expect(classifyModelError(apiError(400, "context_length_exceeded"))).toBe("context_overflow");

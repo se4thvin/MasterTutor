@@ -49,6 +49,22 @@
       ad.title = "Advert";
       ad.src = `http://ads.fixtures-hung.test/hang.html?ms=${new URLSearchParams(location.search).get("ms") ?? 15000}`;
       document.body.append(ad);
+      // ?ad=X: the advert's left edge at X px (default 500, away from the fields).
+      const params = new URLSearchParams(location.search);
+      if (params.has("ad")) ad.style.left = `${params.get("ad")}px`;
+      // ?slide=N: N ms after the pointer enters Code, the advert slides over it.
+      const code = document.getElementById("code");
+      if (params.has("slide"))
+        code.addEventListener("mouseenter", () =>
+          setTimeout(
+            () => {
+              ad.style.left = "40px";
+              ad.style.width = "200px";
+              ad.style.height = "30px";
+            },
+            Number(params.get("slide")),
+          ),
+        );
     </script>
   </body>
 </html>

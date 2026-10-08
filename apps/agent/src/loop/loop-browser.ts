@@ -26,6 +26,8 @@ export interface Observation {
   screenshot: ModelScreenshot;
   phash: PerceptualHash;
   captcha: boolean;
+  /** A visible password, one-time-code or PIN field (isSecretField): the page wants a sign-in. */
+  signIn: boolean;
   scroll: ScrollPosition;
   videoTime: number | null;
 }
@@ -33,9 +35,11 @@ export interface Observation {
 /** Everything the loop needs from a browser; the real one is SessionLoopBrowser (Task 17). */
 export interface LoopBrowser {
   observe(signal: AbortSignal): Promise<Observation>;
+  /** `signal`: the run's (a takeover or kill ends the classification at once). */
   targetFor(
     action: ComputerAction,
     previous: TargetDescription | null,
+    signal: AbortSignal,
   ): Promise<TargetDescription | null>;
   runComputer(
     actions: readonly ComputerAction[],

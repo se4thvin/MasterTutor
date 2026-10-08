@@ -19,6 +19,7 @@ import {
   markFor,
   pausedCopy,
   shortRunId,
+  statePillLabels,
   statusLabel,
   stepLabel,
   takeControlErrorCopy,
@@ -69,6 +70,17 @@ describe("paused copy", () => {
     });
     expect(pausedCopy(model({ status: "completed" })).title).toBe("Finished");
     expect(pausedCopy(model({ status: "queued" })).canResume).toBe(false);
+  });
+
+  it("shortens a paused frame's pill to Paused, Waiting or Stopped", () => {
+    const short = (status: "sleeping" | "queued" | "completed" | "failed" | "cancelled") =>
+      statePillLabels("paused", model({ status }));
+    expect(short("sleeping")).toEqual({ label: "Paused", short: "Paused" });
+    expect(short("queued")).toEqual({ label: "Queued", short: "Waiting" });
+    expect(short("completed")).toEqual({ label: "Finished", short: "Stopped" });
+    expect(short("failed").short).toBe("Stopped");
+    expect(short("cancelled")).toEqual({ label: "Cancelled", short: "Stopped" });
+    expect(statePillLabels("acting", model())).toEqual({ label: "Agent acting", short: "Acting" });
   });
 
   it("states a failure by its real cause, never an informational error (A7)", () => {
@@ -152,6 +164,16 @@ describe("state pill and takeover notices", () => {
       "approval",
     ]);
     expect(STATE_PILL.control.label).toBe("You");
+    // Narrow frames (≤480px): every short label fits the ruling's set or is already short.
+    expect(BROWSER_STATES.map((s) => STATE_PILL[s].short)).toEqual([
+      "Live",
+      "Acting",
+      "Waiting",
+      "You",
+      "Paused",
+      "Waiting",
+      "Replay",
+    ]);
   });
 
   it("says plainly who holds control after a takeover attempt", () => {

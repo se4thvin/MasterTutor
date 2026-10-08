@@ -83,14 +83,20 @@ import {
 import type { RunHooks } from "./hooks.ts";
 import type { LoopBrowser, Observation } from "./loop-browser.ts";
 import { buildModelInput, rehydrateImages } from "./model-input.ts";
-import { lastInputTokens, readRunControl, readWakeRequest, type RunSnapshot } from "./run-state.ts";
+import {
+  lastInputTokens,
+  readRunControl,
+  readWakeRequest,
+  signInNeeded,
+  signInPausedOrigins,
+  type RunSnapshot,
+} from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
 import { StepCollector } from "./step-collector.ts";
 import {
   GARAGE_REF,
   lastUserEventId,
   loadTranscript,
-  recentScreenshotKeys,
   unansweredCalls,
   type TranscriptEntry,
 } from "./transcript.ts";
@@ -207,6 +213,8 @@ export class RunLoop {
   #observation: Observation | null = null;
   #screenshotKey: string | null = null;
   #lastInputTokens = 0;
+  /** Origins this run already paused on for a sign-in (at most once each). */
+  #signInPaused = new Set<string>();
   #firstTurn: boolean;
   #userCursor: string | null;
   #pending: PendingApproval | null = null;
@@ -240,6 +248,7 @@ export class RunLoop {
     loop.#calls = unansweredCalls(transcript);
     loop.#pending = await loadPendingApproval(deps.db, run.id);
     loop.#lastInputTokens = await lastInputTokens(deps.db, run.id);
+    loop.#signInPaused = await signInPausedOrigins(deps.db, run.id);
     // While a risky item waits for approval its calls have not run yet; anything else unanswered
     // either finished (its act row holds the result) or is answered without being re-run.
     const awaitingItem = loop.#pending !== null && loop.#pending.item !== null;
@@ -429,6 +438,18 @@ export class RunLoop {
     });
     this.#notesChanged = false;
     if (obs.captcha) return this.#wait("captcha", "A CAPTCHA needs a person", commit);
+    // Missing data, not an approval: every approval mode pauses. Once per origin per run: a person
+    // who resumes without adding a sign-in lets the agent go on signed out there (the executor
+    // still refuses typing into secret fields).
+    if (
+      obs.signIn &&
+      obs.origin !== null &&
+      !this.#signInPaused.has(obs.origin) &&
+      !(await this.#deps.hooks.hasSignIn(this.#run, obs.origin))
+    ) {
+      this.#signInPaused.add(obs.origin);
+      return this.#wait("takeover", signInNeeded(obs.origin), commit);
+    }
     if (stuck) return this.#wait("takeover", "stuck", commit);
     const exceeded = budgetExceeded(this.#run.usage, this.#run.budget);
     await this.#deps.store.commit(commit);
@@ -530,9 +551,7 @@ export class RunLoop {
       record("in", pending, null, "compaction");
       record("out", compacted.call.reply.output, compacted.call.reply.id, "compaction");
       deltas.push(usageDelta(compacted.call.model, compacted.call.reply.usage, 0));
-      // Only this run's own screenshots are referenced (Group D: resolveGarageRef).
-      const keys = recentScreenshotKeys(history, runId, 2);
-      const items = seedFromSummary(compacted.summary, keys, {
+      const items = seedFromSummary(compacted.summary, {
         pageText: this.#pageHeader(obs),
         screenshotKey: this.#screenshotKey!,
         // The first turn's context (the vault's alias list) is not in the summary: send it again,
@@ -720,7 +739,7 @@ export class RunLoop {
       }
       let previous: TargetDescription | null = null;
       for (const [index, action] of call.actions.entries()) {
-        const target = await this.#deps.browser.targetFor(action, previous);
+        const target = await this.#deps.browser.targetFor(action, previous, signal);
         if (action.type === "click" || action.type === "double_click") previous = target;
         const need = needsApproval(action, target);
         if (need)
@@ -905,7 +924,7 @@ export class RunLoop {
           refusals.push(`Action ${index + 1} (${action.type}): ${decision.note ?? DENIED}`);
           return false;
         }
-        const target = await this.#deps.browser.targetFor(action, null);
+        const target = await this.#deps.browser.targetFor(action, null, signal);
         const need = needsApproval(action, target);
         // An approval covers what was approved, not the batch index: the same kind and label on
         // the same element (M10), and on the same record: an approval for Alice's row never

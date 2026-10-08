@@ -107,13 +107,13 @@ export function AuditView() {
                       <Action entry={e} />
                     </td>
                     <td>
-                      <span className="mono">{e.alias}</span>
+                      <span className="tabular">{e.alias}</span>
                       {e.origin ? <span className="t-foot"> · {hostOf(e.origin)}</span> : null}
                     </td>
                     <td>{e.field ? fieldLabel(e.field) : "–"}</td>
                     <td>
                       {e.runId ? (
-                        <Link className="mono" href={`/runs/${e.runId}`}>
+                        <Link className="tabular" href={`/runs/${e.runId}`}>
                           Run {e.runId.slice(-6)}
                         </Link>
                       ) : (
@@ -138,7 +138,7 @@ export function AuditView() {
               >
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Action entry={e} />
-                  <span className="mono audit-alias">{e.alias}</span>
+                  <span className="tabular audit-alias">{e.alias}</span>
                 </div>
                 <span className="t-foot">
                   <When at={e.at} />

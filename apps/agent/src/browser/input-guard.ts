@@ -32,10 +32,19 @@ export interface InputGuard {
   /** True once a document was added or replaced since arming: it is not armed, so stop typing. */
   readonly changed: boolean;
   /**
+   * For a click on an incomplete guard: whether a document the guard could not arm could take a
+   * press at `point` (top viewport CSS pixels): the box of the frame it is in, 8 px around, holds
+   * the point, or that cannot be told (the page itself, or a box that cannot be read). Unarmed
+   * frames elsewhere cannot take it. Checked again at the press, as a frame can move.
+   */
+  unguardedAt(point: { x: number; y: number }): Promise<boolean>;
+  /**
    * `changed` as of now: every session that armed answers first, so the frame events it sent
    * before are seen. One that does not answer within the budget counts as changed (fail closed).
+   * A navigation in flight counts too: in the main frame always, in a subframe when it could put
+   * a document under `point` (BrowserSession.navigationNear), measured now.
    */
-  changedNow(): Promise<boolean>;
+  changedNow(point: { x: number; y: number }): Promise<boolean>;
   /** Whether a page script moved focus out of the home document since arming. */
   focusMoved(): Promise<boolean>;
   /**
@@ -47,6 +56,24 @@ export interface InputGuard {
 
 /** Sessions whose last arm could not cover every document (until an arm covers them all again). */
 const incomplete = new WeakSet<BrowserSession>();
+
+/**
+ * markUnguarded, after one fresh arm (and disarm) of a page marked unguarded: when every document
+ * now arms, the mark is cleared first, so a frame that recovered no longer asks for approval.
+ */
+export async function markStillUnguarded(
+  session: BrowserSession,
+  target: TargetDescription | null,
+  signal: AbortSignal,
+): Promise<TargetDescription | null> {
+  if (target && incomplete.has(session)) {
+    // A click-mode arm (frame holds and new-document scripts included), as a click would need;
+    // its key keeps nothing, and it is disarmed at once. The run's signal ends it (takeover).
+    const guard = await armGuard(session, signal, "");
+    await guard.disarm();
+  }
+  return markUnguarded(session, target);
+}
 
 /**
  * While some document of the page could not be armed, acting on the page (typing, clicking)
@@ -237,6 +264,12 @@ async function armGuard(
   let known: Promise<ReadonlySet<string>> = Promise.resolve(new Set());
   const sent: Doc[] = [];
   const answered = new Set<Doc>();
+  // For a click: the out-of-process frames found (by CDP frame id), each session whose frame tree
+  // was read and whose new-frame hold was in place before the guard settled, and the top frame.
+  let outOfProcessFound: ReadonlyMap<string, IsolatedWorlds> | null = null;
+  const treeRead = new Set<IsolatedWorlds>();
+  const holding = new Set<IsolatedWorlds>();
+  let topFrameId: string | null = null;
   let home: Doc | undefined;
   const send = (doc: Doc, forceHome: boolean) => {
     sent.push(doc);
@@ -281,6 +314,7 @@ async function armGuard(
       scripts.push({ cdp: worlds.cdp, identifier });
       holds.push(hold);
       if (settled) void releaseHolds().then(removeScripts);
+      else holding.add(worlds);
     }
     const { frameTree } = await worlds.cdp.send("Page.getFrameTree");
     const docs: Doc[] = [];
@@ -290,6 +324,7 @@ async function armGuard(
     };
     walk(frameTree);
     if (settled) return;
+    treeRead.add(worlds);
     if (sent.length + docs.length > MAX_DOCUMENTS) {
       tooMany = true;
       throw new Error("too many documents");
@@ -301,7 +336,13 @@ async function armGuard(
     const outOfProcess = session.outOfProcessFrames();
     known = outOfProcess.then((frames) => new Set(frames.keys()));
     const topArm = armSession(top);
-    const others = [...(await outOfProcess).values()];
+    void top.mainFrameId().then(
+      (id) => (topFrameId = id),
+      () => undefined,
+    );
+    const found = await outOfProcess;
+    if (!settled) outOfProcessFound = found;
+    const others = [...found.values()];
     await Promise.all([topArm, ...others.map(armSession)]);
     // No document claimed focus (a background window): the top document is home, as before.
     if (click === null && !home && !settled)
@@ -382,14 +423,48 @@ async function armGuard(
   settled = true;
   if (complete) incomplete.delete(session);
   else incomplete.add(session);
+  // Where a document the guard could not arm lives: the page itself (null), or a frame (by CDP id)
+  // whose owner's box bounds it. A session armed in full gives none.
+  const unarmedFrames = async (): Promise<Array<string | null>> => {
+    const top = await session.worlds();
+    if (outOfProcessFound === null) return [null];
+    const sessions: Array<[IsolatedWorlds, string | null]> = [
+      [top, null],
+      ...[...outOfProcessFound].map(
+        ([frameId, worlds]) => [worlds, frameId] as [IsolatedWorlds, string],
+      ),
+    ];
+    const frames: Array<string | null> = [];
+    for (const [worlds, frameId] of sessions) {
+      const docs = sent.filter((doc) => doc.worlds === worlds);
+      const whole = !holding.has(worlds) || !treeRead.has(worlds);
+      const missing = docs.filter((doc) => !answered.has(doc));
+      if (!whole && missing.length === 0) continue;
+      // An out-of-process frame's documents all lie within its own box.
+      if (frameId !== null) frames.push(frameId);
+      else if (whole) frames.push(null);
+      else for (const doc of missing) frames.push(doc.frameId === topFrameId ? null : doc.frameId);
+    }
+    return frames;
+  };
   let disarming: Promise<boolean> | null = null;
   return {
     complete,
     tooMany,
+    unguardedAt: async (point) => {
+      if (complete) return false;
+      const covers = async () => {
+        const frames = await unarmedFrames();
+        if (frames.includes(null)) return true;
+        const near = await Promise.all(frames.map((frameId) => session.frameNear(frameId!, point)));
+        return near.includes(true);
+      };
+      return Promise.race([covers().catch(() => true), timeout(ARM_BUDGET_MS).then(() => true)]);
+    },
     get changed() {
       return changed;
     },
-    changedNow: async () => {
+    changedNow: async (point) => {
       // Sessions that armed (a session that never answered is why the guard is incomplete).
       const armed = watched
         .map(({ worlds }) => worlds)
@@ -403,7 +478,7 @@ async function armGuard(
       ]);
       // A navigation already under way when the guard armed is never held (its new document
       // gets no guard): while any is in flight the page counts as changed.
-      return changed || !flushed || session.navigationPending();
+      return changed || !flushed || session.navigationNear(point);
     },
     focusMoved: async () =>
       home
