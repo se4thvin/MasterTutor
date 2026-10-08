@@ -1,4 +1,4 @@
-import type { ComputerAction } from "@mastertutor/contracts";
+import type { ActionEffect, ComputerAction } from "@mastertutor/contracts";
 import { focusTarget, hitTest, scrollState, type ScrollState } from "../browser/hit-test.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { BrowserSession } from "../browser/session.ts";
@@ -12,6 +12,8 @@ import { UnknownKey, normalizeCombo, toPlaywrightCombo } from "./keys.ts";
 export interface ComputerRun {
   executed: number;
   notes: string[];
+  /** What each executed action did, in order (one per executed action). */
+  effects: ActionEffect[];
   /** Set when only the user can go on (the run waits for a takeover), with the reason to show. */
   handOver: string | null;
 }
@@ -103,6 +105,8 @@ export class ComputerExecutor {
   readonly #waitActionMs: number;
   /** Set when the current action ended in a refusal or no-op note (the batch must stop). */
   #refused = false;
+  /** What the action being executed did; handlers that route it elsewhere overwrite it. */
+  #effect: ActionEffect = "passive";
   /** Set when an action found the page beyond what the agent can act on safely. */
   #handOver: string | null = null;
 
@@ -118,6 +122,7 @@ export class ComputerExecutor {
     gate: ActionGate = async () => true,
   ): Promise<ComputerRun> {
     const notes: string[] = [];
+    const effects: ActionEffect[] = [];
     let executed = 0;
     this.#handOver = null;
     for (const [index, action] of actions.entries()) {
@@ -131,8 +136,10 @@ export class ComputerExecutor {
       }
       const urlBefore = this.#session.page.url();
       this.#refused = false;
+      this.#effect = PAGE_INPUT.has(action.type) ? "input" : "passive";
       const note = await this.execute(action, signal, verdict === true ? undefined : verdict);
       executed += 1;
+      effects.push(this.#effect);
       if (note) notes.push(note);
       const remaining = actions.length - index - 1;
       if (this.#refused) {
@@ -151,7 +158,7 @@ export class ComputerExecutor {
         break;
       }
     }
-    return { executed, notes, handOver: this.#handOver };
+    return { executed, notes, effects, handOver: this.#handOver };
   }
 
   async toPage(x: number, y: number): Promise<{ x: number; y: number } | null> {
@@ -389,6 +396,7 @@ export class ComputerExecutor {
   async #type(text: string, signal: AbortSignal, approved: boolean): Promise<string | null> {
     if (this.omnibox.active) {
       this.omnibox.type(text);
+      this.#effect = "address_bar";
       return null;
     }
     if (text.includes("\t")) {
@@ -440,23 +448,28 @@ export class ComputerExecutor {
     if (this.omnibox.active) {
       const combo = normalizeCombo(keys);
       if (combo === "ENTER") {
+        this.#effect = "address_bar";
         const url = this.omnibox.take();
         if (!url) return this.#refuse("That is not a valid http(s) URL; nothing was opened.");
         const opened = await this.#session.goto(url, signal);
         if (!opened) return this.#refuse(`Could not open ${url}.`);
         await settle(this.#session, signal);
+        if (sameDocument(this.#session.page.url(), url)) this.#effect = "address_bar_landed";
         return null;
       }
       if (combo === "ESC") {
         this.omnibox.cancel();
+        this.#effect = "address_bar";
         return null;
       }
       if (combo === "BACKSPACE") {
         this.omnibox.backspace();
+        this.#effect = "address_bar";
         return null;
       }
       if (combo === "CTRL+A" || combo === "META+A") {
         this.omnibox.clear();
+        this.#effect = "address_bar";
         return null;
       }
       this.omnibox.cancel();
@@ -497,6 +510,8 @@ export class ComputerExecutor {
   async #accelerator(kind: Accelerator, signal: AbortSignal): Promise<string | null> {
     const page = this.#session.page;
     this.#session.guard.assertAgent(signal);
+    if (kind === "back" || kind === "forward" || kind === "reload") this.#effect = "navigate";
+    if (kind === "address_bar") this.#effect = "address_bar";
     switch (kind) {
       case "back":
       case "forward": {
@@ -522,5 +537,27 @@ export class ComputerExecutor {
           "Tabs are managed automatically. Use CTRL+L to open a URL in the current tab.",
         );
     }
+  }
+}
+
+/** Actions that reach the page unless the executor routes them elsewhere (address bar, history). */
+const PAGE_INPUT: ReadonlySet<ComputerAction["type"]> = new Set([
+  "click",
+  "double_click",
+  "drag",
+  "keypress",
+  "type",
+]);
+
+/** The same document: origin and path, ignoring query, hash and a trailing slash. */
+function sameDocument(a: string, b: string): boolean {
+  const norm = (u: string) => {
+    const url = new URL(u);
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  };
+  try {
+    return norm(a) === norm(b);
+  } catch {
+    return false;
   }
 }

@@ -55,6 +55,10 @@ export const AgentEnv = z.object({
   DATABASE_URL: PostgresUrl,
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_BASE_URL: z.url().optional(),
+  /** docling-serve base URL; set only with COMPOSE_PROFILES containing `pdf` (spec §7.6). */
+  DOCLING_URL: z.url({ protocol: /^https?$/ }).optional(),
+  /** The pdf-worker service on the internal `pdf` network: the only place PDFs are parsed (B5 I-1). */
+  PDF_WORKER_URL: z.url({ protocol: /^https?$/ }),
   VAULT_PRIVATE_KEY: Base64Key32,
   NEKO_ADMIN_SECRET: Secret,
   ...S3Access,

@@ -4,6 +4,7 @@ import {
   type ComputerAction,
   type FunctionToolName,
   type ScrollPosition,
+  type ActionEffect,
 } from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
@@ -120,6 +121,13 @@ export class FakeLoopBrowser implements LoopBrowser {
     gate: ActionGate,
   ): Promise<ComputerRun> {
     let executed = 0;
+    // A fake executor routes nothing to the address bar: page actions are input, the rest passive.
+    const effects = (n: number): ActionEffect[] =>
+      actions
+        .slice(0, n)
+        .map((a) =>
+          ["move", "scroll", "wait", "screenshot"].includes(a.type) ? "passive" : "input",
+        );
     for (const action of actions) {
       const verdict = await gate(action);
       this.verdicts.push(verdict);
@@ -127,6 +135,7 @@ export class FakeLoopBrowser implements LoopBrowser {
         return {
           executed,
           notes: ["Stopped before an action: it needs approval."],
+          effects: effects(executed),
           handOver: null,
         };
       // The executor's own hold at the moment it presses (B1 round 5): allowed, yet not run.
@@ -134,15 +143,27 @@ export class FakeLoopBrowser implements LoopBrowser {
         return {
           executed,
           notes: ["Stopped before an action: its target changed."],
+          effects: effects(executed),
           handOver: null,
         };
       // The executor's own refusal at the press (its note), as a real executor would return it.
       const refusal = this.refuseWith?.(action) ?? null;
-      if (refusal) return { executed: executed + 1, notes: [refusal], handOver: null };
+      if (refusal)
+        return {
+          executed: executed + 1,
+          notes: [refusal],
+          effects: effects(executed + 1),
+          handOver: null,
+        };
       // A page the executor cannot act on safely even with approval (B1 breaker fix 2).
       const handOver = this.handOverOn?.(action) ?? null;
       if (handOver)
-        return { executed: executed + 1, notes: ["Nothing was clicked: handed over."], handOver };
+        return {
+          executed: executed + 1,
+          notes: ["Nothing was clicked: handed over."],
+          effects: effects(executed + 1),
+          handOver,
+        };
       this.guard?.assertAgent(signal);
       if (verdict !== true && verdict.allowDownload)
         this.allowedDownloads.push(verdict.allowDownload);
@@ -152,7 +173,7 @@ export class FakeLoopBrowser implements LoopBrowser {
     }
     this.computerRuns.push([...actions]);
     await this.computerHook?.(actions, signal);
-    return { executed, notes: [], handOver: null };
+    return { executed, notes: [], effects: effects(executed), handOver: null };
   }
 
   /** The approval request a function call raises in the approve phase (none by default). */

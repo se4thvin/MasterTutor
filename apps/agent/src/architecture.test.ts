@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = new URL(".", import.meta.url).pathname;
@@ -50,6 +50,36 @@ describe("approval modes reach only the approval decisions (D44 hard invariants)
     // So bypass mode cannot switch off the network policy, the sandbox, secret masking, the
     // vault's origin pinning, the kill switch or takeover: none of them can see the mode.
     expect(readers).toEqual([]);
+  });
+});
+
+describe("the agent process holds no PDF parser (B5 review I-1)", () => {
+  /** Every module main.ts loads, following relative imports; bare specifiers are collected. */
+  async function agentGraph(): Promise<{ files: Set<string>; packages: Set<string> }> {
+    const files = new Set<string>();
+    const packages = new Set<string>();
+    const visit = async (file: string): Promise<void> => {
+      if (files.has(file)) return;
+      files.add(file);
+      const text = await readFile(file, "utf8");
+      for (const match of text.matchAll(/(?:from|import)\s*\(?\s*"([^"]+)"/g)) {
+        const spec = match[1]!;
+        if (spec.startsWith(".")) await visit(resolve(dirname(file), spec));
+        else packages.add(spec);
+      }
+    };
+    await visit(join(SRC, "main.ts"));
+    return { files, packages };
+  }
+
+  it("main.ts never reaches pdf.js, the canvas binding or the worker's code", async () => {
+    const { files, packages } = await agentGraph();
+    expect([...files].filter((file) => file.includes("/pdf/worker/"))).toEqual([]);
+    expect([...packages].filter((pkg) => /^(pdfjs-dist|@napi-rs\/canvas)(\/|$)/.test(pkg))).toEqual(
+      [],
+    );
+    // The client is reached: PDFs are sent to the pdf-worker service.
+    expect([...files].some((file) => file.endsWith("/pdf/pdf-worker.ts"))).toBe(true);
   });
 });
 

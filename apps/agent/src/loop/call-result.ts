@@ -1,18 +1,5 @@
-import { z } from "zod";
+import type { CallResult } from "@mastertutor/contracts";
 import type { PendingCall } from "../llm/items.ts";
-
-/** What the executor did for one model call; stored on the act step and turned into its output. */
-export const CallResult = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("computer"),
-    notes: z.array(z.string()),
-    acknowledged: z.array(
-      z.object({ id: z.string(), code: z.string().nullable(), message: z.string().nullable() }),
-    ),
-  }),
-  z.object({ kind: z.literal("function"), output: z.string() }),
-]);
-export type CallResult = z.infer<typeof CallResult>;
 
 export const RESTARTED =
   "Not retried: the agent restarted before this action finished. Look at the screen and decide again.";

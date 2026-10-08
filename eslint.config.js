@@ -168,6 +168,26 @@ export default defineConfig(
     },
   },
   {
+    // CLAUDE.md 5, 6: the benchmark harness reads the product only through @mastertutor/contracts,
+    // never an app's source. This block replaces the one above, so it carries the OpenAI ban too.
+    files: ["tests/bench/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            OPENAI_IMPORTS,
+            {
+              regex: "(^|/)apps/[^/]+/src(/|$)",
+              message:
+                "tests/bench may not import an app's source; share the shape through @mastertutor/contracts.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Scoped to OpenAI client objects (`openai`, `client`, `this.client`, `x.openai`), so DOM
     // `input.files` or `dataTransfer.files` stay legal. The import ban above is the real boundary.
     files: ["apps/**/*.{ts,tsx}", "packages/*/src/server/**/*.ts"],

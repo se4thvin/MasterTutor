@@ -1,4 +1,10 @@
-import { FilingDecision, FolderName, MAX_FOLDER_DEPTH, MODELS } from "@mastertutor/contracts";
+import {
+  FilingDecision,
+  FolderName,
+  MAX_FOLDER_DEPTH,
+  MODELS,
+  wrapUntrusted,
+} from "@mastertutor/contracts";
 import {
   createFolder,
   type DbLike,
@@ -45,7 +51,7 @@ export function filingPrompt(input: {
     : "(no folders yet)";
   return [
     `Existing folders:\n${paths}`,
-    `<untrusted_page_content origin="note">\nTitle: ${strip(input.title)}\nLede: ${strip(input.lede ?? "")}\n</untrusted_page_content>`,
+    wrapUntrusted("note", `Title: ${strip(input.title)}\nLede: ${strip(input.lede ?? "")}`),
   ].join("\n\n");
 }
 
