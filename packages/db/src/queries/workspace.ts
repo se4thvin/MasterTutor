@@ -69,12 +69,17 @@ export async function ensureWorkspaceMember(
   });
 }
 
-/** The workspace a signed-in user belongs to, or null (D4: one workspace in v1). */
-export async function workspaceIdOf(db: Database, userId: string): Promise<string | null> {
+/** The user's workspace and role, or null (D4: one workspace in v1). The owner check uses it. */
+export async function memberRoleOf(db: Database, userId: string): Promise<Membership | null> {
   const [row] = await db
-    .select({ workspaceId: workspaceMembers.workspaceId })
+    .select({ workspaceId: workspaceMembers.workspaceId, role: workspaceMembers.role })
     .from(workspaceMembers)
     .where(eq(workspaceMembers.userId, userId))
     .limit(1);
-  return row?.workspaceId ?? null;
+  return row ?? null;
+}
+
+/** The workspace a signed-in user belongs to, or null (D4: one workspace in v1). */
+export async function workspaceIdOf(db: Database, userId: string): Promise<string | null> {
+  return (await memberRoleOf(db, userId))?.workspaceId ?? null;
 }

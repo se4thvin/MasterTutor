@@ -83,6 +83,12 @@ const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
   ["benchmarks/start", { benchmarkId: MISSING }, "not_found"],
   ["benchmarks/runs", {}, "ok"],
   ["benchmarks/grade", { benchmarkRunId: MISSING, outcome: "failed" }, "not_found"],
+  ["alerts/list", {}, "ok"],
+  ["alerts/active", {}, "ok"],
+  ["alerts/acknowledge", { id: MISSING }, "not_found"],
+  ["alerts/pushConfig", {}, "ok"],
+  // Idempotent: turning off a subscription that is not there is ok.
+  ["alerts/unsubscribe", { endpoint: "https://web.push.apple.com/probe" }, "ok"],
 ];
 /** Procedures that create or change state, with inputs each call may repeat. */
 const CREATE_INPUTS: Record<string, () => unknown> = {
@@ -101,6 +107,10 @@ const CREATE_INPUTS: Record<string, () => unknown> = {
     task: "probe",
     allowedOrigins: ["https://example.com"],
     successCriteria: "probe",
+  }),
+  "alerts/subscribe": () => ({
+    endpoint: "https://web.push.apple.com/probe",
+    keys: { p256dh: `B${"A".repeat(86)}`, auth: "A".repeat(22) },
   }),
 };
 const EVERY_CALL: ReadonlyArray<readonly [string, () => unknown]> = [
@@ -220,6 +230,8 @@ beforeAll(async () => {
       nekoMemberSecret: "parity-neko-member-secret-0123456789",
       liveCookieSecret: "parity-live-cookie-secret-0123456789",
     }),
+    // As the fixture server: no VAPID keys, so phone alerts are unavailable.
+    push: () => ({ available: false, publicKey: null }),
   });
 });
 afterAll(async () => {

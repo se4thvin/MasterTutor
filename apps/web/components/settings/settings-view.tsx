@@ -3,6 +3,7 @@
 import { MODELS } from "@mastertutor/contracts";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { NotificationsGroup } from "@/components/alerts/notifications-group.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
@@ -45,6 +46,8 @@ export function SettingsView() {
               <KillSwitchRow settings={data} />
             </div>
 
+            <NotificationsGroup />
+
             <h2 className="t-title3 group-title">Defaults for new tasks</h2>
             <div className="group group-pad">
               {/* Keyed on the saved defaults only: a kill-switch change must not discard a draft. */}
@@ -83,6 +86,12 @@ export function SettingsView() {
               <Link className="row row-link" href="/settings/audit">
                 <span>
                   <Icon name="audit" /> Audit log
+                </span>
+                <Icon name="chevronRight" />
+              </Link>
+              <Link className="row row-link" href="/settings/alerts">
+                <span>
+                  <Icon name="needsReview" /> Alerts
                 </span>
                 <Icon name="chevronRight" />
               </Link>

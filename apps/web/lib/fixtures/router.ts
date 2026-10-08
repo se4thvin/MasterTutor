@@ -536,4 +536,28 @@ export const fixtureRouter = os.router({
     runs: os.benchmarks.runs.handler(() => ({ items: [] })),
     grade: os.benchmarks.grade.handler(notImplemented),
   },
+  // Fixture builds run on http with no VAPID keys, so phone alerts are unavailable (spec §13.4).
+  alerts: {
+    list: os.alerts.list.handler(({ context, input }) =>
+      paginate(stateFor(context.ns).alerts, input),
+    ),
+    active: os.alerts.active.handler(({ context }) => ({
+      items: stateFor(context.ns)
+        .alerts.filter((alert) => alert.acknowledgedAt === null)
+        .slice(0, 5),
+    })),
+    acknowledge: os.alerts.acknowledge.handler(({ context, input }) => {
+      const alert = stateFor(context.ns).alerts.find((a) => a.id === input.id);
+      if (!alert) throw notFound("Alert");
+      alert.acknowledgedAt ??= now();
+      return { ok: true as const };
+    }),
+    pushConfig: os.alerts.pushConfig.handler(() => ({ available: false, publicKey: null })),
+    subscribe: os.alerts.subscribe.handler(() => {
+      throw new ORPCError("PRECONDITION_FAILED", {
+        message: "Phone alerts aren't set up on this server.",
+      });
+    }),
+    unsubscribe: os.alerts.unsubscribe.handler(() => ({ ok: true as const })),
+  },
 });
