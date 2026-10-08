@@ -84,7 +84,15 @@ describe("revocation reaches open live views (sign-out, removal from the workspa
       headers: { authorization: `Bearer ${token}` },
     });
     expect(whoami.status).toBe(401);
-    const [row] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+    // The agent records the view as closed only after n.eko confirmed it (so a failed close keeps
+    // it for a retry): the socket can close and whoami turn 401 a moment before that write lands.
+    const row = await waitFor(
+      async () => {
+        const [current] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+        return current?.liveViewerId === null ? current : null;
+      },
+      { label: "live view recorded as closed", timeoutMs: 10_000 },
+    );
     expect(row).toMatchObject({ controller: "agent", controlUserId: null, liveViewerId: null });
     const events = (await owner.db.select().from(runEvents).where(eq(runEvents.runId, runId))).map(
       (e) => e.payload,
