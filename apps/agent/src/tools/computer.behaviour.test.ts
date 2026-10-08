@@ -532,6 +532,30 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     expect(refused).toBe(5);
   });
 
+  it("an unarmed frame that slides under the point while the press-time checks run is refused: the geometry is the last check (I2)", async () => {
+    const { s, executor } = await setup("/hung-frame.html?ms=3000");
+    await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
+    // The page-changed flush (the guard's last round trip before the geometry) slides the hung
+    // advert over Code, as a page could at that moment.
+    const worlds = await s.worlds();
+    const evaluate = worlds.evaluate.bind(worlds);
+    (worlds as { evaluate: typeof evaluate }).evaluate = (async (
+      ...args: Parameters<typeof evaluate>
+    ) => {
+      if (String(args[0]).replace(/\s/g, "") === "()=>0")
+        await s.page.evaluate(() => {
+          const ad = document.getElementById("ad")!;
+          ad.style.cssText += "; left: 40px; top: 20px; width: 200px; height: 30px";
+        });
+      return evaluate(...args);
+    }) as typeof evaluate;
+    const code = { x: 100, y: 35 };
+    expect(await executor.execute(click(code), signal, await approvedAt(s, code))).toBe(
+      TARGET_MOVED_REFUSAL,
+    );
+    expect(await s.page.evaluate(() => document.activeElement?.id)).not.toBe("code");
+  });
+
   it("a page whose frame recovered stops asking for approval: a complete arm clears the mark", async () => {
     const { s, executor } = await setup("/hung-frame.html?ms=1500");
     await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
@@ -1172,16 +1196,23 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
   /** loading-frames.html: Continue spans x 0–200, y 50–90; this point is 4 px from its right edge. */
   const edge = { x: 196, y: 70 };
   const centre = { x: 100, y: 70 };
-  /** Holds every request to the other site (the frames' documents) until the test ends. */
-  async function loadingPage(query: string) {
-    const { s, executor } = await setup();
+  /** Holds every slow page's request (`?loading`, `?held`) until the test ends. */
+  async function holdSlowPages(s: BrowserSession) {
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => (release = resolve));
-    await s.page.route("http://other.fixtures-isolated.test/**", async (route) => {
-      await Promise.race([held, new Promise((resolve) => setTimeout(resolve, 20_000))]);
-      await route.fallback().catch(() => undefined);
-    });
-    await s.goto(`${SITE}/loading-frames.html?${query}`, signal);
+    await s.page.route(
+      (url) => /[?&](loading|held)\b/.test(url.search),
+      async (route) => {
+        await Promise.race([held, new Promise((resolve) => setTimeout(resolve, 20_000))]);
+        await route.fallback().catch(() => undefined);
+      },
+    );
+    return release;
+  }
+  async function loadingPage(query: string, page = "loading-frames.html") {
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/${page}?${query}`, signal);
     await new Promise((resolve) => setTimeout(resolve, 300)); // the frames' requests are out
     expect(s.navigationPending()).toBe(true);
     return { s, executor, release };
@@ -1218,7 +1249,7 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
     async (approved) => {
       const { s, executor, release } = await loadingPage("near");
       expect(await executor.execute(click(edge), signal, await verdict(s, edge, approved))).toBe(
-        TARGET_MOVED_REFUSAL,
+        PAGE_SETTLING_REFUSAL,
       );
       expect(await clickedGo(s)).toBeUndefined();
       release();
@@ -1253,19 +1284,96 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
     "a main-frame navigation refuses the click wherever it is (approved: %s)",
     async (approved) => {
       const { s, executor } = await setup();
-      let release: () => void = () => undefined;
-      const held = new Promise<void>((resolve) => (release = resolve));
-      await s.page.route(`${SITE}/interactive.html?held`, async (route) => {
-        await Promise.race([held, new Promise((resolve) => setTimeout(resolve, 20_000))]);
-        await route.fallback().catch(() => undefined);
-      });
+      const release = await holdSlowPages(s);
       await s.goto(`${SITE}/loading-frames.html?leave`, signal);
       await s.page.mouse.move(600, 200); // off Continue, so the executor's move enters it
       expect(
         await executor.execute(click(centre), signal, await verdict(s, centre, approved)),
-      ).toBe(TARGET_MOVED_REFUSAL);
+      ).toBe(PAGE_SETTLING_REFUSAL);
       expect(await clickedGo(s)).toBeUndefined();
       release();
     },
   );
+
+  /** The arm's round trips take `ms` each (well within the budget): checks before the press run late. */
+  async function slowArm(s: BrowserSession, ms: number) {
+    const cdp = (await s.worlds()).cdp;
+    const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
+    (cdp as { send: typeof send }).send = async (method, params) => {
+      if (method === "Page.addScriptToEvaluateOnNewDocument" || method === "Target.setAutoAttach")
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      return send(method, params);
+    };
+  }
+
+  it("a main-frame navigation that starts after the settle wait is still caught at the press (T1)", async () => {
+    // 50 ms after the pointer enters Continue (after the settle wait, during the slowed arm) the
+    // page navigates itself, held: only the press-time check can see it.
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/loading-frames.html?leave=50`, signal);
+    await slowArm(s, 60);
+    await s.page.mouse.move(600, 200);
+    expect(await executor.execute(click(centre), signal, await verdict(s, centre, false))).toBe(
+      TARGET_MOVED_REFUSAL,
+    );
+    expect(await clickedGo(s)).toBeUndefined();
+    release();
+  });
+
+  it.each([
+    ["near", PAGE_SETTLING_REFUSAL],
+    ["far", null],
+  ] as const)(
+    "a frame nested in a bordered cross-site frame, navigating since load (%s): T2",
+    async (at, expected) => {
+      // The cross-site frame has a 300 px top border, so its content (where the nested frame
+      // is) lies 300 px below its border box's top left.
+      const { s, executor, release } = await loadingPage(
+        `at=${at}&border=300&inner=child`,
+        "nested-frames.html",
+      );
+      expect(await executor.execute(click(edge), signal, await verdict(s, edge, false))).toBe(
+        expected,
+      );
+      expect(await clickedGo(s)).toBe(expected === null ? "go" : undefined);
+      release();
+    },
+  );
+
+  it.each([
+    ["near", PAGE_SETTLING_REFUSAL],
+    ["far", null],
+  ] as const)("a navigation inside an existing cross-site frame (%s): T3", async (at, expected) => {
+    const { s, executor, release } = await loadingPage(
+      `at=${at}&inner=leave`,
+      "nested-frames.html",
+    );
+    expect(await executor.execute(click(edge), signal, await verdict(s, edge, true))).toBe(
+      expected,
+    );
+    expect(await clickedGo(s)).toBe(expected === null ? "go" : undefined);
+    release();
+  });
+
+  it("a navigating frame whose box cannot be read in time fails closed, within the bounded wait (T4)", async () => {
+    // A loading frame far from the point, but reading any frame box takes 300 ms (over the 250 ms
+    // check budget): it counts as near, and the click is refused once the settle wait is over.
+    const { s, executor, release } = await loadingPage("ads=1");
+    const cdp = (await s.worlds()).cdp;
+    const send = cdp.send.bind(cdp) as (method: string, params?: object) => Promise<unknown>;
+    (cdp as { send: typeof send }).send = async (method, params) => {
+      if (method === "DOM.getBoxModel") await new Promise((resolve) => setTimeout(resolve, 300));
+      return send(method, params);
+    };
+    const started = Date.now();
+    expect(await executor.execute(click(centre), signal, await verdict(s, centre, false))).toBe(
+      PAGE_SETTLING_REFUSAL,
+    );
+    const waited = Date.now() - started;
+    console.info(JSON.stringify({ metric: "unreadable_box_refusal_ms", waited }));
+    expect(waited).toBeLessThan(1_500);
+    expect(await clickedGo(s)).toBeUndefined();
+    release();
+  });
 });

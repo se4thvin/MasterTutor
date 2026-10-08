@@ -233,13 +233,14 @@ export class ComputerExecutor {
     const mouse = this.#session.page.mouse;
     this.#session.guard.assertAgent(signal);
     await mouse.move(point.x, point.y);
-    // A frame mid-navigation refuses the click (its next document is not guarded): give a page
-    // whose frames load all the time a moment to settle, then check what is under the pointer.
-    for (
-      let waited = 0;
-      waited < NAVIGATION_SETTLE_MS && (await this.#session.navigationNear(point));
-    )
-      waited += await pause(25, signal).then(() => 25);
+    // A frame mid-navigation near the point refuses the click (its next document is not
+    // guarded): give a page whose frames load all the time a moment to settle (a bounded wait,
+    // each check bounded too), then check what is under the pointer.
+    const navigationSettleBy = Date.now() + NAVIGATION_SETTLE_MS;
+    while (await this.#session.navigationNear(point)) {
+      if (Date.now() >= navigationSettleBy) return this.#refuse(PAGE_SETTLING_REFUSAL);
+      await pause(25, signal);
+    }
     const hit = await hitTest(this.#session, point);
     // The page may have changed since the gate classified this click (TOCTOU): if anything
     // differs, nothing is pressed and the model's next click is gated again.
@@ -288,10 +289,10 @@ export class ComputerExecutor {
       } as const;
       for (let clickCount = 1; clickCount <= (double ? 2 : 1); clickCount++) {
         // A document added or replaced since arming is not guarded, and an unarmed frame may
-        // have moved under the point: press nothing.
+        // have moved under the point: press nothing. The geometry is the last check.
+        if (guard && (await guard.changedNow(pressAt))) return this.#refuse(TARGET_MOVED_REFUSAL);
         if (unarmed() && (await guard!.unguardedAt(pressAt)))
           return this.#refuse(TARGET_MOVED_REFUSAL);
-        if (guard && (await guard.changedNow(pressAt))) return this.#refuse(TARGET_MOVED_REFUSAL);
         await mouse.down({ ...options, clickCount });
         await mouse.up({ ...options, clickCount });
       }

@@ -10,7 +10,8 @@ import {
 import { abortable } from "../runtime/abortable.ts";
 import type { Log } from "../runtime/types.ts";
 import { DownloadGate, type DownloadFolder } from "./download-gate.ts";
-import { NEAR_FRAME_MARGIN_PX, boxNear, ownerBoxCovers } from "./frame-owner-box.ts";
+import { NEAR_FRAME_MARGIN_PX, ownerBoxCovers } from "./frame-owner-box.ts";
+import { sessionChannel, watchFrameTargets } from "./frame-watch.ts";
 import { PendingNavigations } from "./pending-navigations.ts";
 import { ControlGuard } from "./guard.ts";
 import { IsolatedWorlds, type WorldOptions } from "./isolated-world.ts";
@@ -97,6 +98,10 @@ export class BrowserSession {
   /** Resolves once the slot's browser is gone (closed or the connection dropped). */
   readonly disconnected: Promise<void>;
   readonly #pendingNavigations = new PendingNavigations();
+  /** The current page's out-of-process frames (CDP ids), each with the one it lies in (null: none). */
+  #frameParents = new Map<string, string | null>();
+  /** Resolves once the current page's frames are followed (a navigation after it is observed). */
+  #framesWatched: Promise<void> = Promise.resolve();
   readonly #testMode: boolean;
   readonly #responseLog: ((url: URL) => boolean) | null;
   readonly #redactUrl: (url: string) => string;
@@ -191,44 +196,64 @@ export class BrowserSession {
   }
 
   async #navigationNear(point: { x: number; y: number }): Promise<boolean> {
-    const { frames, frameIds } = this.#pendingNavigations.inFlight(this.#page);
-    if (frames.length === 0 && frameIds.length === 0) return false;
-    const main = this.#page.mainFrame();
-    const near = async (frame: Frame | undefined): Promise<boolean> => {
-      if (!frame || frame === main) return true;
-      const owner = await frame.frameElement();
-      try {
-        const box = await owner.boundingBox();
-        return box === null || boxNear(box, point, NEAR_FRAME_MARGIN_PX);
-      } finally {
-        void owner.dispose().catch(() => undefined);
-      }
-    };
+    const { mainFrame, frames, unknown } = this.#pendingNavigations.inFlight(this.#page);
+    if (mainFrame || unknown.includes(null)) return true;
+    // A frame inside an out-of-process frame lies within that frame's box.
+    const near = await Promise.all([
+      ...frames.map(({ frameId, root }) => this.frameNear(root ?? frameId, point)),
+      ...unknown.map((root) => this.frameNear(root!, point)),
+    ]);
+    return near.includes(true);
+  }
+
+  /**
+   * Whether frame `frameId` (CDP id) could be under `point` (top viewport CSS px): the main frame
+   * always; another when the box of its owner, 8 px around, holds the point. The box is read in
+   * the page's own session; a frame nested in an out-of-process frame counts as that frame's box
+   * (which bounds it). A box that cannot be read counts as near (fail closed).
+   */
+  async frameNear(frameId: string, point: { x: number; y: number }): Promise<boolean> {
     const top = await this.worlds();
-    const mainId = await top.mainFrameId();
-    const outOfProcess = new Map<string, Frame>();
-    for (const [frame, entry] of this.#outOfProcess) {
-      const found = await entry;
-      if (found) outOfProcess.set(found.id, frame);
-    }
-    const checks = [
-      ...frames.map((frame) => near(frame).catch(() => true)),
-      ...frameIds.map(({ frameId, root }) =>
-        root !== null
-          ? near(outOfProcess.get(root)).catch(() => true)
-          : frameId === mainId
-            ? Promise.resolve(true)
-            : ownerBoxCovers(top.cdp, frameId, point, NEAR_FRAME_MARGIN_PX),
-      ),
-    ];
-    return (await Promise.all(checks)).includes(true);
+    if (frameId === (await top.mainFrameId())) return true;
+    const parent = this.#frameParents.get(frameId);
+    if (parent) return this.frameNear(parent, point);
+    return ownerBoxCovers(top.cdp, frameId, point, NEAR_FRAME_MARGIN_PX);
+  }
+
+  /**
+   * Follows the page's frames for its lifetime (frame-watch.ts): every out-of-process frame is held
+   * until its navigations are tracked, so none starts unobserved. The page's own frames are
+   * tracked from adoption (late: what was already loading counts as navigating, see
+   * PendingNavigations.watchFrames).
+   */
+  async #watchFrames(page: Page, parents: Map<string, string | null>): Promise<void> {
+    const cdp = await this.#context.newCDPSession(page).catch(() => null);
+    if (!cdp) return;
+    const root = sessionChannel(cdp);
+    const unwatchTop = this.#pendingNavigations.watchFrames(page, root, null, true);
+    const unwatch = new Map<string, () => void>();
+    cdp.once("close", () => {
+      unwatchTop();
+      for (const stop of unwatch.values()) stop();
+    });
+    await root.send("Page.enable").catch(() => undefined);
+    await watchFrameTargets(root, {
+      attached: (channel, targetId, parent, late) => {
+        parents.set(targetId, parent);
+        unwatch.get(targetId)?.();
+        unwatch.set(targetId, this.#pendingNavigations.watchFrames(page, channel, targetId, late));
+      },
+      detached: (targetId) => {
+        unwatch.get(targetId)?.();
+        unwatch.delete(targetId);
+        parents.delete(targetId);
+      },
+    });
   }
 
   cdp(): Promise<CDPSession> {
     if (this.#cdp === null) {
-      const tab = this.#page;
-      const attempt = this.#context.newCDPSession(tab).then(async (cdp) => {
-        this.#pendingNavigations.watchFrames(tab, cdp, null);
+      const attempt = this.#context.newCDPSession(this.#page).then(async (cdp) => {
         await cdp.send("DOM.enable");
         // Frame events (Page.frameAttached/frameNavigated) for the typing guard.
         await cdp.send("Page.enable");
@@ -322,7 +347,6 @@ export class BrowserSession {
       await cdp.detach().catch(() => undefined);
       return null;
     }
-    this.#pendingNavigations.watchFrames(frame.page(), cdp, info.targetInfo.targetId);
     void cdp.send("Page.enable").catch(() => undefined);
     return { id: info.targetInfo.targetId, worlds: new IsolatedWorlds(cdp) };
   }
@@ -498,6 +522,8 @@ export class BrowserSession {
     if (!isAllowedNavigationScheme(url)) return false;
     const hitsBefore = this.#privateHits.length;
     try {
+      // The new document's frames are followed from its commit on (their navigations observed).
+      await abortable(this.#framesWatched, signal);
       await abortable(
         this.#page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }),
         signal,
@@ -537,6 +563,8 @@ export class BrowserSession {
 
   #adopt(page: Page): void {
     this.#page = page;
+    this.#frameParents = new Map();
+    this.#framesWatched = this.#watchFrames(page, this.#frameParents).catch(() => undefined);
     this.#cdp = null;
     this.#worlds = null;
     for (const entry of this.#outOfProcess.values())

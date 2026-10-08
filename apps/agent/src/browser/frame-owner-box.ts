@@ -31,6 +31,19 @@ export async function ownerBoxCovers(
   try {
     const { backendNodeId } = await cdp.send("DOM.getFrameOwner", { frameId });
     const { model } = await cdp.send("DOM.getBoxModel", { backendNodeId });
+    // Only an affine owner (its quad a parallelogram) is bounded by its quad; under a perspective
+    // transform the painted area may lie outside it.
+    const [x0, y0, x1, y1, x2, y2, x3, y3] = model.border as [
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ];
+    if (Math.abs(x0 + x2 - x1 - x3) > 0.5 || Math.abs(y0 + y2 - y1 - y3) > 0.5) return true;
     const xs = model.border.filter((_, index) => index % 2 === 0);
     const ys = model.border.filter((_, index) => index % 2 === 1);
     const [x, y] = [Math.min(...xs), Math.min(...ys)];
