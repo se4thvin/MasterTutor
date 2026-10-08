@@ -82,6 +82,7 @@ async function connect(runId: string): Promise<{ browser: LoopBrowser; close(): 
     id: runId,
     workspaceId: env.workspaceId,
     allowedOrigins: fx.origins,
+    toolProfile: "browser_use",
   } as RunSnapshot;
   return connector({ slotName: "browser-1", run: () => snapshot, guard: new ControlGuard() });
 }
