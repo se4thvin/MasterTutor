@@ -28,7 +28,7 @@ services:
     image: mastertutor/web:${MT_CI_RUN_ID}
     labels: *ci-labels
   agent:
-    image: mastertutor/agent:${MT_CI_RUN_ID}
+    image: mastertutor/node-runtime:${MT_CI_RUN_ID}
     labels: *ci-labels
   traefik:
     volumes: !override
@@ -53,6 +53,9 @@ services:
     labels: *ci-labels
   pdf-worker:
     image: mastertutor/node-runtime:${MT_CI_RUN_ID}
+    labels: *ci-labels
+  audio-capture:
+    image: mastertutor/audio-capture:${MT_CI_RUN_ID}
     labels: *ci-labels
   browser-1:
     image: mastertutor/browser-slot:${MT_CI_RUN_ID}

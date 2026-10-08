@@ -84,7 +84,10 @@ export async function pageVideoSeek(t: number): Promise<boolean> {
   return true;
 }
 
-/** Plays at 1× with sound (transcription records the slot's audio output). */
+/**
+ * Plays at 1× with sound (transcription records the slot's audio output). False when the video
+ * will not play within 10 s: play() stays pending on a stalled stream (B4 review I3).
+ */
 export async function pageVideoPlay(): Promise<boolean> {
   const video = [...document.querySelectorAll("video")].sort(
     (a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
@@ -93,11 +96,18 @@ export async function pageVideoPlay(): Promise<boolean> {
   video.playbackRate = 1;
   video.muted = false;
   if (video.volume === 0) video.volume = 1;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await video.play();
-    return true;
+    return await Promise.race([
+      video.play().then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), 10_000);
+      }),
+    ]);
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

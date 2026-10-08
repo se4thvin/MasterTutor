@@ -48,5 +48,21 @@ export function prodModeProblems(config: ComposeConfig): string[] {
       problems.push(`${name}.SLOT_EGRESS_ALLOW_CIDRS: must be empty`);
     }
   }
+  // B4 review I7: slot audio is recorded only by audio-capture, which holds no secrets.
+  const capture = config.services["audio-capture"];
+  if (capture && Object.keys(capture.environment ?? {}).length > 0) {
+    problems.push("audio-capture.environment: must be empty (no secrets, B4 I7)");
+  }
+  if (capture && capture.read_only !== true) {
+    problems.push("audio-capture.read_only: must be true (B4 I7)");
+  }
+  const captureAddress = capture?.networks?.cdp?.ipv4_address;
+  for (const [name, service] of Object.entries(config.services)) {
+    if (!SLOT.test(name)) continue;
+    const pulse = service.environment?.PULSE_ALLOWED_IP;
+    if (!captureAddress || pulse !== captureAddress) {
+      problems.push(`${name}.PULSE_ALLOWED_IP: must be audio-capture's cdp address only (B4 I7)`);
+    }
+  }
   return problems;
 }

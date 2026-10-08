@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createLibraryServices, libraryHooks } from "../../apps/agent/src/library.ts";
 import { policyProblems } from "../llm-mock/src/policy.ts";
 import type { MockTurn } from "../llm-mock/src/scenario.ts";
-import { SITE } from "./constants.ts";
+import { AUDIO_CAPTURE_URL, SITE } from "./constants.ts";
 import { createRun, startBehaviourAgent, waitForRun, type BehaviourAgent } from "./harness.ts";
 
 let agent: BehaviourAgent;
@@ -12,7 +12,13 @@ beforeAll(async () => {
   // No PDF is captured here: the pdf-worker address only has to be well formed.
   agent = await startBehaviourAgent({
     hooks: (deps) =>
-      libraryHooks(createLibraryServices({ ...deps, pdfWorkerUrl: "http://127.0.0.1:9" })),
+      libraryHooks(
+        createLibraryServices({
+          ...deps,
+          pdfWorkerUrl: "http://127.0.0.1:9",
+          audioCaptureUrl: AUDIO_CAPTURE_URL,
+        }),
+      ),
   });
 });
 afterAll(async () => {

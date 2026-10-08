@@ -39,6 +39,7 @@ describe("compose.yml", () => {
     expect(Object.keys(base.services).sort()).toEqual(
       [
         "agent",
+        "audio-capture",
         "garage",
         "garage-init",
         "migrate",
@@ -137,6 +138,30 @@ describe("compose.yml", () => {
     expect(Number(worker.cpus)).toBeGreaterThan(0);
     expect(Number(worker.pids_limit)).toBeGreaterThan(0);
     expect(env(base.services.agent!).PDF_WORKER_URL).toBe("http://pdf-worker:5002");
+  });
+
+  it("records slot audio only in audio-capture: no secrets, read-only, non-root, bounded, the slots' only Pulse peer (B4 I7)", () => {
+    const capture = base.services["audio-capture"]!;
+    expect(nets(capture)).toEqual(["cdp"]);
+    expect(capture.networks!.cdp!.ipv4_address).toBe("172.30.231.13");
+    expect(capture.environment ?? {}).toEqual({});
+    expect(capture.read_only).toBe(true);
+    expect(capture.user).toBe("1000:1000");
+    expect(capture.cap_drop).toEqual(["ALL"]);
+    expect(capture.security_opt).toContain("no-new-privileges:true");
+    expect(capture.tmpfs?.some((mount) => mount.startsWith("/tmp"))).toBe(true);
+    expect(capture.ports ?? []).toEqual([]);
+    expect(capture.volumes ?? []).toEqual([]);
+    expect(Number(capture.mem_limit)).toBeGreaterThan(0);
+    expect(Number(capture.cpus)).toBeGreaterThan(0);
+    expect(Number(capture.pids_limit)).toBeGreaterThan(0);
+    for (const slot of slots) {
+      expect(env(base.services[slot]!).PULSE_ALLOWED_IP, slot).toBe("172.30.231.13");
+      expect(env(base.services[slot]!).CDP_ALLOWED_IP, slot).toBe("172.30.231.10");
+    }
+    // The agent no longer carries an audio recorder: it runs the shared node-runtime image.
+    expect(base.services.agent!.image).toBe("mastertutor/node-runtime:local");
+    expect(env(base.services.agent!).AUDIO_CAPTURE_URL).toBe("http://audio-capture:5003");
   });
 
   it("fits two PDFs at once in pdf-worker's memory and restarts it when it dies (re-review N-2, N-3)", () => {

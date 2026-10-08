@@ -6,7 +6,14 @@ const prodLike = (): ComposeConfig => ({
   services: {
     web: { environment: { OPENAI_API_KEY: "sk-value-never-printed", OPENAI_BASE_URL: "" } },
     agent: { environment: { AGENT_TEST_MODE: "0", OPENAI_BASE_URL: "" } },
-    "browser-1": { environment: { SLOT_EGRESS_ALLOW_CIDRS: "" } },
+    "browser-1": {
+      environment: { SLOT_EGRESS_ALLOW_CIDRS: "", PULSE_ALLOWED_IP: "172.30.231.13" },
+    },
+    "audio-capture": {
+      read_only: true,
+      cap_drop: ["ALL"],
+      networks: { cdp: { ipv4_address: "172.30.231.13" } },
+    },
   },
   networks: {},
 });
@@ -39,6 +46,24 @@ describe("prodModeProblems (D47)", () => {
     for (const value of ["sk-value-never-printed", "http://llm-mock:8080/v1", "10.0.0.0/8"]) {
       expect(text).not.toContain(value);
     }
+  });
+
+  it("lets only a secret-free, read-only audio-capture record slot audio (B4 review I7)", () => {
+    const config = prodLike();
+    config.services["audio-capture"]!.environment = { OPENAI_API_KEY: "sk-value-never-printed" };
+    config.services["audio-capture"]!.read_only = false;
+    config.services["browser-1"]!.environment!.PULSE_ALLOWED_IP = "172.30.231.10";
+    const problems = prodModeProblems(config);
+    expect(problems).toEqual([
+      "audio-capture.environment: must be empty (no secrets, B4 I7)",
+      "audio-capture.read_only: must be true (B4 I7)",
+      "browser-1.PULSE_ALLOWED_IP: must be audio-capture's cdp address only (B4 I7)",
+    ]);
+    expect(problems.join("\n")).not.toContain("sk-value-never-printed");
+    delete config.services["audio-capture"];
+    expect(prodModeProblems(config)).toContain(
+      "browser-1.PULSE_ALLOWED_IP: must be audio-capture's cdp address only (B4 I7)",
+    );
   });
 
   it("treats a missing agent or AGENT_TEST_MODE as not production", () => {

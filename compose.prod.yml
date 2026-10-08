@@ -106,8 +106,7 @@ services:
       traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.permanent: "true"
 
   agent:
-    <<: *logging
-    image: mastertutor/agent:prod
+    <<: *node-runtime-prod
     # Run loop, screencast encoding and extractors.
     mem_limit: 4g
     cpus: 2
@@ -121,6 +120,11 @@ services:
   # Bounds and hardening are in compose.yml; production adds the image tag and log limits.
   pdf-worker:
     <<: *node-runtime-prod
+
+  # Bounds and hardening are in compose.yml; production adds the image tag and log limits.
+  audio-capture:
+    <<: *logging
+    image: mastertutor/audio-capture:prod
 
   # Bounds and hardening are in compose.yml; production adds the shared host's log limits.
   docling:
