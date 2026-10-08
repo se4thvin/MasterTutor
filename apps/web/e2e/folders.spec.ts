@@ -7,7 +7,7 @@ import { expect, expectCleanScreen, isWide, test } from "./helpers/test.ts";
  * end of hydration; every interaction after a navigation waits for it (as search.spec does).
  */
 async function gotoReady(page: Page, url: string) {
-  await gotoReady(page, url);
+  await page.goto(url);
   await page.locator("html[data-hotkeys=ready]").waitFor({ state: "attached" });
 }
 
