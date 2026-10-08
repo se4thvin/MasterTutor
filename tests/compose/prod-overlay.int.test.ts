@@ -459,7 +459,8 @@ describe("observability in production (D50)", () => {
 
   it("routes /observability to OpenObserve only through owner ForwardAuth, below /live", () => {
     const l = labels(obs.services.openobserve);
-    expect(l[`${R}.rule`]).toBe(observabilityRouterRule(DOMAIN));
+    // `docker compose config` prints a literal `$` escaped as `$$`.
+    expect(l[`${R}.rule`]!.replaceAll("$$", "$")).toBe(observabilityRouterRule(DOMAIN));
     expect(l[`${R}.priority`]).toBe("900");
     expect(l[`${R}.entrypoints`]).toBe("websecure");
     expect(l[`${R}.tls`]).toBe("true");

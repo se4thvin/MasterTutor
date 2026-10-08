@@ -94,6 +94,13 @@ networks:
     labels: *ci-labels
   audio:
     labels: *ci-labels
+  # D50: web, agent and garage join these even with the observability profile off.
+  telemetry:
+    labels: *ci-labels
+  observe:
+    labels: *ci-labels
+  observe-store:
+    labels: *ci-labels
 
 volumes:
   pgdata:
