@@ -121,6 +121,30 @@ describe("openLive against a real slot (spec §10.2.1)", () => {
     );
   });
 
+  it("gives viewers no ICE servers: never n.eko's default third-party STUN (D42, self-hosted only)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, SLOT, runId);
+    const { setCookies } = await openLive(deps, { runId, userId: member.userId });
+    const token = cookieValue(setCookies, NEKO_SESSION_COOKIE);
+    const socket = new WebSocket(
+      `${nekoBaseUrlForTests(SLOT).replace("http", "ws")}/api/ws?token=${token}`,
+    );
+    sockets.push(socket);
+    // n.eko answers a WebRTC request with signal/provide, which carries the ICE servers it hands
+    // the viewer's browser. With none configured it falls back to stun:stun.l.google.com.
+    const provided = new Promise<unknown>((resolve, reject) => {
+      socket.addEventListener("message", (message: MessageEvent<string>) => {
+        const { event, payload } = JSON.parse(message.data) as { event: string; payload: unknown };
+        if (event === "system/init")
+          socket.send(JSON.stringify({ event: "signal/request", payload: {} }));
+        if (event === "signal/provide") resolve(payload);
+      });
+      socket.addEventListener("error", () => reject(new Error("ws failed")));
+    });
+    const provide = (await provided) as { iceservers?: unknown };
+    expect(provide.iceservers ?? []).toEqual([]);
+  });
+
   it("reports unavailable when the slot does not answer", async () => {
     const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
     await leaseSlotForTest(owner.db, SLOT, runId);

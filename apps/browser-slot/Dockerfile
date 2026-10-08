@@ -24,7 +24,12 @@ COPY --chmod=0755 bin/slot-entrypoint bin/exit-on-chromium bin/slot-health bin/s
 # reaches browsers (web re-issues the token), so it need not be Secure.
 # Implicit hosting off and the user member unhosted (entrypoint): only the agent grants control.
 # Chat off: the n.eko page is served same-origin, so it must render no attacker-controlled text (S4).
+# ICE servers: none (D42; self-hosted only). With both lists empty n.eko falls back to
+# stun:stun.l.google.com for its own gathering and sends it to every viewer's browser
+# (config/webrtc.go). One server with no URLs disables that fallback and contacts nobody.
 ENV NEKO_DESKTOP_SCREEN=1280x800@30 \
+    NEKO_WEBRTC_ICESERVERS_FRONTEND='[]' \
+    NEKO_WEBRTC_ICESERVERS_BACKEND='[{"urls":[]}]' \
     NEKO_LOG_LEVEL=warn \
     NEKO_FILETRANSFER_ENABLED=false \
     NEKO_LEGACY=true \
