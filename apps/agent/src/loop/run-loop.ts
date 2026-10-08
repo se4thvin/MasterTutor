@@ -956,7 +956,12 @@ export class RunLoop {
         ? call.safetyChecks
         : [];
       return {
-        result: { kind: "computer", notes: [...run.notes, ...refusals], acknowledged },
+        result: {
+          kind: "computer",
+          notes: [...run.notes, ...refusals],
+          acknowledged,
+          effects: run.effects,
+        },
         ran: run.executed > 0,
         wait: null,
         handOver: run.handOver,
