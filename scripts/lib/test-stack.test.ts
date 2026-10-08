@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,4 +68,23 @@ describe("stack_base_url (review M7)", () => {
     expect(baseUrl({}, "TEST_HTTP_PORT=18090\n")).toBe("http://localhost:18090");
     expect(baseUrl({}, "OTHER=1\n")).toBe("http://localhost:18080");
   });
+});
+
+describe("the test stack's origin is stack_base_url, the port BETTER_AUTH_URL is set from", () => {
+  const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+
+  it("compose.test.yml derives BETTER_AUTH_URL from TEST_HTTP_PORT", () => {
+    expect(read("compose.test.yml")).toContain(
+      "BETTER_AUTH_URL: http://localhost:${TEST_HTTP_PORT:-18080}",
+    );
+  });
+
+  it.each(["scripts/compose-smoke.sh", "scripts/bench-mock.sh"])(
+    "%s never sends PUBLIC_URL as the origin (a CI slot's port differs from it)",
+    (path) => {
+      const text = read(path);
+      expect(text).not.toContain("PUBLIC_URL");
+      expect(text).toContain("stack_base_url");
+    },
+  );
 });

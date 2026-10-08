@@ -11,9 +11,8 @@ cd "$(dirname "$0")/.."
 
 # shellcheck source=lib/test-stack.sh
 source scripts/lib/test-stack.sh
+# The app's origin: compose.test.yml sets BETTER_AUTH_URL from the same TEST_HTTP_PORT.
 BASE="$(stack_base_url)"
-# The shell's value wins, as in Compose: the app's origin (PUBLIC_URL) stays the same on every run.
-ORIGIN="${PUBLIC_URL:-$(grep -E '^PUBLIC_URL=' .env.test | cut -d= -f2)}"
 
 take_stack_lock
 trap stop_stack EXIT
@@ -22,7 +21,7 @@ pass() { echo "ok - $*"; }
 psql_value() { "${DC[@]}" exec -T postgres psql -U owner -d mastertutor -tAc "$1"; }
 signup() {
   curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/sign-up/email" \
-    -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
+    -H 'Content-Type: application/json' -H "Origin: $BASE" \
     -d "{\"email\":\"$1\",\"password\":\"correct-horse-battery-staple\",\"name\":\"Smoke\"}"
 }
 
