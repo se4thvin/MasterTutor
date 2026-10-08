@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { emitHero, heroCaptureFloor } from "@/components/hero/hero-events.ts";
 import { Hero3D } from "@/components/hero/hero-3d.tsx";
+import { useFolders } from "@/components/library/use-folders.ts";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
@@ -32,7 +33,7 @@ export function NewTaskForm() {
   const goalId = useId();
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const settings = useQuery(orpc.settings.get.queryOptions({ input: {} }));
-  const folders = useQuery(orpc.folders.tree.queryOptions({ input: {} })).data?.folders ?? [];
+  const folders = useFolders();
   const [goal, setGoal] = useState("");
   const [sources, setSources] = useState<SourceChip[]>([]);
   const [adding, setAdding] = useState<SourceKind | null>(null);

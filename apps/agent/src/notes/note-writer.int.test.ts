@@ -5,6 +5,7 @@ import {
   type DbHandle,
   noteBlocks,
   notes,
+  refreshNoteQuality,
   runEvents,
   runs,
   sources,
@@ -20,7 +21,7 @@ import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { commitStep, seedRun, startTestStorage, testLogger, testWrite } from "../testing/notes.ts";
 import { createAssetStore } from "./assets.ts";
 import { createEmbedder } from "./embedder.ts";
-import { type BlockDraft, NoteWriter } from "./note-writer.ts";
+import { type BlockDraft, NoteWriter, timeAnchor } from "./note-writer.ts";
 
 let tdb: TestDatabase;
 let h: DbHandle;
@@ -174,6 +175,39 @@ describe("NoteWriter", () => {
         blocks: [block("x")],
       }),
     ).rejects.toMatchObject({ code: "unknown_block" });
+  });
+
+  it("waits for a concurrent Mark verified instead of overwriting it with stale fidelity (QA-075)", async () => {
+    const scope = await seedRun(h.db);
+    const notesWriter = writer();
+    const w1 = testWrite(scope);
+    const noteId = await notesWriter.ensureNote(w1, { title: "N", lede: null });
+    const [unverified] = await notesWriter.appendBlocks(w1, {
+      noteId,
+      sourceId: null,
+      afterBlockId: null,
+      blocks: [block("Not on the page", { verified: false })],
+    });
+    notesWriter.stageQuality(w1, noteId, 1);
+    await commitStep(h.db, scope.runId, w1.step);
+
+    const w2 = testWrite(scope);
+    notesWriter.stageQuality(w2, noteId, 1);
+    let agentCommit: Promise<void> | undefined;
+    // Web's markVerified: the note row locked first, then the block verified and fidelity refreshed.
+    await h.db.transaction(async (tx) => {
+      await tx.select({ id: notes.id }).from(notes).where(eq(notes.id, noteId)).for("update");
+      await tx.update(noteBlocks).set({ verified: true }).where(eq(noteBlocks.id, unverified!));
+      expect(await refreshNoteQuality(tx, scope.workspaceId, noteId, 1)).toBe("verified");
+      agentCommit = commitStep(h.db, scope.runId, w2.step);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    await agentCommit;
+    const [note] = await h.db
+      .select({ fidelity: notes.fidelity })
+      .from(notes)
+      .where(eq(notes.id, noteId));
+    expect(note?.fidelity).toBe("verified");
   });
 
   it("marks a note partial when a source lost media", async () => {
@@ -440,5 +474,69 @@ describe("NoteWriter", () => {
       .from(sources)
       .where(eq(sources.id, sourceId));
     expect(row?.meta).toEqual({ a: 1, b: 2, noteId });
+  });
+});
+
+describe("appendTimedBlocks", () => {
+  it("interleaves by time with headings before keyframes before text, across steps and within one", async () => {
+    const scope = await seedRun(h.db);
+    const notesWriter = writer();
+    const t = (type: BlockDraft["type"], markdown: string, at: number) => ({
+      type,
+      markdown,
+      origin: "captions" as const,
+      assetId: null,
+      verified: true,
+      anchor: timeAnchor(at, at + 1),
+    });
+    const w1 = testWrite(scope);
+    const noteId = await notesWriter.ensureNote(w1, { title: "V", lede: null });
+    const sourceId = notesWriter.stageSource(w1, {
+      ...source(noteId, "https://www.youtube.com/watch?v=a"),
+      kind: "youtube",
+    });
+    await notesWriter.appendTimedBlocks(w1, {
+      noteId,
+      sourceId,
+      blocks: [t("transcript", "t0", 0), t("transcript", "t5", 5), t("transcript", "t10", 10)],
+    });
+    await notesWriter.appendTimedBlocks(w1, {
+      noteId,
+      sourceId,
+      blocks: [t("heading", "## One", 0)],
+    });
+    await commitStep(h.db, scope.runId, w1.step);
+    const w2 = testWrite(scope);
+    await notesWriter.appendTimedBlocks(w2, {
+      noteId,
+      sourceId,
+      blocks: [t("heading", "## Two", 5), t("keyframe", "k6", 6)],
+    });
+    await commitStep(h.db, scope.runId, w2.step);
+    const w3 = testWrite(scope);
+    await notesWriter.appendBlocks(w3, {
+      noteId,
+      sourceId: null,
+      afterBlockId: null,
+      blocks: [block("after video")],
+    });
+    await commitStep(h.db, scope.runId, w3.step);
+    const w4 = testWrite(scope);
+    await notesWriter.appendTimedBlocks(w4, {
+      noteId,
+      sourceId,
+      blocks: [t("keyframe", "k12", 12)],
+    });
+    await commitStep(h.db, scope.runId, w4.step);
+    expect((await ordered(noteId)).map((r) => r.markdown)).toEqual([
+      "## One",
+      "t0",
+      "## Two",
+      "t5",
+      "k6",
+      "t10",
+      "k12",
+      "after video",
+    ]);
   });
 });

@@ -2,14 +2,14 @@ import {
   FUNCTION_TOOLS,
   FUNCTION_TOOL_NAMES,
   isToolInProfile,
+  READ_PAGE_MAX_ELEMENTS,
   type FunctionToolName,
   type ToolProfile,
 } from "@mastertutor/contracts";
 import { zodResponsesFunction, type ResponsesTool } from "./openai.ts";
 
 export const TOOL_DESCRIPTIONS: Record<FunctionToolName, string> = {
-  read_page:
-    "Read the current page. mode 'interactive' lists visible interactive elements with a ref, role, name, allowlisted attributes and a click point in screenshot pixels (null when off-screen or covered). mode 'text' returns the visible text. Pass sinceHash from a previous result to get {unchanged:true} when nothing changed.",
+  read_page: `Read the current page. mode 'interactive' lists visible interactive elements with a ref, role, name, allowlisted attributes and a click point in screenshot pixels (null when off-screen or covered). mode 'text' returns the visible text. Pass sinceHash from a previous result to get {unchanged:true} when nothing changed. Interactive results hold at most ${READ_PAGE_MAX_ELEMENTS} elements; when total is larger, call again with offset 0, ${READ_PAGE_MAX_ELEMENTS}, ${2 * READ_PAGE_MAX_ELEMENTS}, … to list them all in document order, else pass offset null. A [collapsed] element hides content until it is expanded.`,
   capture:
     "Save page content verbatim into this run's note (text comes from the DOM or PDF, never from you). scope 'page', 'selection' or 'element' (with a CSS selector).",
   fill_credential:

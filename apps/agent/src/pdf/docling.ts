@@ -104,11 +104,19 @@ const FURNITURE = new Set(["page_header", "page_footer"]);
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
+/** A fence longer than any backtick run in the code; the info string is one plain word (QA-104). */
+function codeFence(code: string, language: string): string {
+  const longest = Math.max(0, ...(code.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  const info = /^[\w+#.-]*/.exec(language.trim())?.[0] ?? "";
+  return `${fence}${info}\n${code}\n${fence}`;
+}
+
 function tableMarkdown(grid: z.infer<typeof Cell>[][]): string {
   const complex = grid.some((row) => row.some((cell) => cell.row_span > 1 || cell.col_span > 1));
   if (!complex && grid.length > 0) {
     const row = (cells: z.infer<typeof Cell>[]) =>
-      `| ${cells.map((c) => c.text.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim()).join(" | ")} |`;
+      `| ${cells.map((c) => escapeMarkdownText(c.text.replace(/\s+/g, " ").trim()).replace(/\|/g, "\\|")).join(" | ")} |`;
     return [
       row(grid[0]!),
       `| ${grid[0]!.map(() => "---").join(" | ")} |`,
@@ -219,7 +227,7 @@ export function doclingBlocks(doc: DoclingDocument): DoclingBlock[] {
         else if (text.label === "code")
           out.push({
             type: "code",
-            markdown: `\`\`\`${text.code_language ?? ""}\n${text.text}\n\`\`\``,
+            markdown: codeFence(text.text, text.code_language ?? ""),
             page,
             bbox,
             crop: false,
@@ -227,7 +235,14 @@ export function doclingBlocks(doc: DoclingDocument): DoclingBlock[] {
         else if (text.label === "formula")
           out.push(
             text.text.trim()
-              ? { type: "math", markdown: `$$\n${text.text.trim()}\n$$`, page, bbox, crop: false }
+              ? {
+                  type: "math",
+                  // A literal `$$` would close the block: in TeX `\$` is the same dollar sign.
+                  markdown: `$$\n${text.text.trim().replaceAll("$$", "\\$\\$")}\n$$`,
+                  page,
+                  bbox,
+                  crop: false,
+                }
               : { type: "math", markdown: "Formula", page, bbox, crop: true },
           );
         else if (text.text.trim())

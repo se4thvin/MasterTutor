@@ -24,6 +24,8 @@ export const SLOT_CDP: Record<string, string> = {
   "browser-1": loopback("BEHAVIOUR_CDP_PORT_1", 19223),
   "browser-2": loopback("BEHAVIOUR_CDP_PORT_2", 19224),
 };
+/** The audio-capture service of the behaviour stack (it records the slots' PulseAudio). */
+export const AUDIO_CAPTURE_URL = loopback("BEHAVIOUR_AUDIO_PORT", 19300);
 export const COMPOSE_FILE = "tests/behaviour/compose.yml";
 /**
  * The files `up` and `down` use. On the shared CI host (scripts/remote-test.sh sets

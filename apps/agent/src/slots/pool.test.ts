@@ -23,7 +23,8 @@ function fakeSlot(initialId: string | null) {
   return { control, closes, current: () => id };
 }
 
-function fakeStore() {
+/** `neverLeased` lists the slots still as seeding left them; every other slot was leased before. */
+function fakeStore(neverLeased: readonly string[] = []) {
   const idle: string[] = [];
   const store: SlotStore = {
     markIdle: async (name) => {
@@ -31,7 +32,10 @@ function fakeStore() {
       return true;
     },
     reclaimExpired: async () => [],
-    listRestarting: async (slots) => slots.filter((name) => !idle.includes(name)),
+    listRestarting: async (slots) =>
+      slots
+        .filter((name) => !idle.includes(name))
+        .map((name) => ({ name, neverLeased: neverLeased.includes(name) })),
   };
   return { store, idle };
 }
@@ -124,5 +128,65 @@ describe("SlotPool.reconcile", () => {
     });
     await pool.reconcile();
     expect(idle.sort()).toEqual(["browser-1", "browser-2"]);
+  });
+
+  it("admits a never-leased slot without restarting it: its container holds nothing yet", async () => {
+    const slot = fakeSlot("first-boot");
+    const { store, idle } = fakeStore(["browser-1"]);
+    const pool = new SlotPool({
+      store,
+      slots: ["browser-1"],
+      cdpBaseUrl: async () => "http://x",
+      control: slot.control,
+      config,
+      log,
+    });
+    await pool.reconcile();
+    expect(slot.closes).toHaveLength(0);
+    expect(slot.current()).toBe("first-boot");
+    expect(idle).toEqual(["browser-1"]);
+  });
+
+  it("still closes and replaces a slot left over from a lease (released or reclaimed)", async () => {
+    const slot = fakeSlot("crashed-run");
+    const { store, idle } = fakeStore([]);
+    const pool = new SlotPool({
+      store,
+      slots: ["browser-1"],
+      cdpBaseUrl: async () => "http://x",
+      control: slot.control,
+      config,
+      log,
+    });
+    await pool.reconcile();
+    expect(slot.closes).toHaveLength(1);
+    expect(slot.current()).toBe("fresh-1");
+    expect(idle).toEqual(["browser-1"]);
+  });
+
+  it("waits for a never-leased slot's browser to answer before marking it idle", async () => {
+    let id: string | null = null;
+    const control: BrowserControl = {
+      readBrowserId: async () => id,
+      closeBrowser: async () => {
+        throw new Error("a never-leased slot must not be closed");
+      },
+    };
+    setTimeout(() => {
+      id = "late";
+    }, 30);
+    const { store, idle } = fakeStore(["browser-1"]);
+    const pool = new SlotPool({
+      store,
+      slots: ["browser-1"],
+      cdpBaseUrl: async () => "http://x",
+      control,
+      config,
+      log,
+    });
+    const started = Date.now();
+    await pool.reconcile();
+    expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+    expect(idle).toEqual(["browser-1"]);
   });
 });

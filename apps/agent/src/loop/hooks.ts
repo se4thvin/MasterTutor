@@ -44,11 +44,15 @@ export interface ReleasedSlot {
 
 /** Extension points later phases implement; B1 ships safe defaults. */
 export interface RunHooks {
-  /** Runs before `completed` commits; its step writes join that commit. `{ok:false}` keeps running. */
+  /**
+   * Runs before `completed` commits; its step writes join that commit. `{ok:false}` keeps running.
+   * `signal` is the step's: a kill interrupts the hook's model and embedding calls.
+   */
   onComplete(context: {
     run: RunSnapshot;
     log: Log;
     step: StepWriter;
+    signal: AbortSignal;
   }): Promise<{ ok: true } | { ok: false; reason: string }>;
   /** Main-frame responses the browser session keeps for a later body read (B4 caption tracks). */
   responseLog: ((url: URL) => boolean) | null;

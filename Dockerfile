@@ -25,6 +25,12 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 # fakes) and testing.ts entries. scripts/check-agent-image.sh proves it.
 RUN find apps/agent packages -path '*/node_modules' -prune -o \
       \( -name '*.test.ts' -o -name testing -o -name testing.ts \) -print0 | xargs -0 rm -rf
+# OCR assets Node never loads (QA-093, ~35 MB): in Node, tesseract.js-core reads each core as
+# .js + .wasm (the .wasm.js copies inline the wasm for browsers), and the model is the
+# 4.0.0_best_int one (4.0.0 is the legacy model). scripts/check-agent-image.sh proves it.
+RUN find node_modules/.pnpm -path '*/node_modules/tesseract.js-core/*.wasm.js' -delete \
+ && find node_modules/.pnpm -path '*/node_modules/@tesseract.js-data/eng/4.0.0' -prune \
+      -exec rm -rf {} +
 
 # Workspace packages stay symlinked outside node_modules, which Node type stripping requires.
 FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS node-runtime
@@ -45,3 +51,15 @@ COPY --from=web-build --chown=node:node /repo/apps/web/.next/static ./apps/web/.
 USER node
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]
+
+# audio-capture: node-runtime + parec, which records a slot's PulseAudio over TCP (spec §8
+# transcribe; B4 review I7). pulseaudio-utils adds ~13 MB; Debian's ffmpeg would add ~570 MB.
+FROM node-runtime AS audio-capture
+USER root
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends pulseaudio-utils; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+USER node
+CMD ["node", "apps/agent/src/audio/server.ts"]

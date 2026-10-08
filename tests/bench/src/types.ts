@@ -42,7 +42,36 @@ export type Criterion =
       requireInteraction: boolean;
     }
   /** Graded on the MAIN run's trace (P10b-5): the agent itself signed in, from a forgotten session. */
-  | { kind: "signed_in"; origin: string; signInPath: string };
+  | { kind: "signed_in"; origin: string; signInPath: string }
+  /**
+   * The grading run finds the readings and their sections itself (run 1, "full task once"). From
+   * read_page output only: an element whose name matches `readingPattern` (group 1 = the reading
+   * number) starts that reading; links matching `sectionUrlPattern` after it on the same page, or on
+   * the reading's own page (its href), are its sections. A listing counts only when it is provably
+   * complete: not truncated (or paged through) and no group matching `groupPattern` still collapsed.
+   * Each section's text splits into activity blocks: `activityPattern` (group 1 = its id) starts a
+   * participation activity, `otherActivityPattern` (challenge activities) ends one and is never
+   * counted. A block is complete when it holds `completedPattern`; its questions are `questionPattern`
+   * at line starts and its animation steps `stepPattern` (group 1 = number). With
+   * `requireInteraction`, the main run must have answered every question and played every step of
+   * every activity: its inputs are tied to activities and questions by the recorded enclosing text,
+   * and a step is played by a control whose label matches `stepControlPattern`. Patterns are suite
+   * config, never product code.
+   */
+  | {
+      kind: "discovered_readings";
+      readings: readonly number[];
+      readingPattern: string;
+      sectionUrlPattern: string;
+      groupPattern: string;
+      activityPattern: string;
+      otherActivityPattern: string;
+      completedPattern: string;
+      questionPattern: string;
+      stepPattern: string;
+      stepControlPattern: string;
+      requireInteraction: boolean;
+    };
 
 export interface VerifySpec {
   task: string;

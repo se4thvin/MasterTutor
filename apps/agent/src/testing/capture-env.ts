@@ -26,9 +26,11 @@ export interface CaptureEnv {
 }
 
 /** Behaviour DB + slot browser-1 + memory storage + fake models, shared by capture, video and PDF tests. */
-export async function startCaptureEnv(): Promise<CaptureEnv> {
+export async function startCaptureEnv(
+  options: { responseLog?: (url: URL) => boolean } = {},
+): Promise<CaptureEnv> {
   const db = createDb(behaviourEnv().agentUrl);
-  const session = await openTestSession();
+  const session = await openTestSession(options);
   const services = fakeLibraryServices(db.db);
   return {
     db,

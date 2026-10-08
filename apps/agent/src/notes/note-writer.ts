@@ -1,17 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
   Anchor,
-  CAPTURED_ORIGINS,
   MAX_BLOCK_CHARS,
-  noteFidelity,
   toOrigin,
   unescapeMarkdown,
   type BlockOrigin,
   type BlockType,
   type SourceKind,
 } from "@mastertutor/contracts";
-import { type DbLike, noteBlocks, notes, runs, sources } from "@mastertutor/db";
-import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { type DbLike, noteBlocks, notes, refreshNoteQuality, runs, sources } from "@mastertutor/db";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { containsSecret, type MaskSources } from "../browser/masking.ts";
 import type { StepWriter, ToolContext } from "../tools/types.ts";
 import type { Embedder } from "./embedder.ts";
@@ -114,6 +112,25 @@ export function screenValue(secrets: MaskSources, value: unknown): void {
       screenValue(secrets, item);
     }
 }
+
+/** A video block: its anchor carries the time it starts at (spec §8). */
+export type TimedBlockDraft = BlockDraft & { anchor: Anchor & { tStart: number } };
+
+export function timeAnchor(tStart: number, tEnd: number): Anchor & { tStart: number } {
+  return {
+    selector: null,
+    xpath: null,
+    start: null,
+    end: null,
+    textFragment: null,
+    tStart,
+    tEnd: Math.max(tEnd, tStart),
+  };
+}
+
+/** At one time, a chapter heading comes before its keyframe, and both before transcript text. */
+const TYPE_RANK: Partial<Record<BlockType, number>> = { heading: 0, keyframe: 1 };
+const timedKey = (t: number, type: BlockType) => t * 10 + (TYPE_RANK[type] ?? 2) / 10;
 
 /** A block's place in its note, committed or staged in this step. */
 export interface PlacedBlock {
@@ -292,6 +309,49 @@ export class NoteWriter {
     );
   }
 
+  /** Video layout (spec §8): one source's blocks ordered by (tStart, heading < keyframe < text). */
+  async appendTimedBlocks(
+    w: WriteContext,
+    options: { noteId: string; sourceId: string; blocks: readonly TimedBlockDraft[] },
+  ): Promise<string[]> {
+    const ordered = await this.placed(w, options.noteId);
+    const mine = ordered
+      .map((row, index) => ({ ...row, index }))
+      .filter((row) => row.sourceId === options.sourceId && typeof row.anchor?.tStart === "number")
+      .map((row) => ({ ...row, key: timedKey(row.anchor?.tStart ?? 0, row.type) }));
+    const incoming = options.blocks
+      .map((draft) => ({ draft, key: timedKey(draft.anchor.tStart, draft.type) }))
+      .sort((a, b) => a.key - b.key);
+    // The gap is how many of the source's blocks sort at or before the key; a run of incoming
+    // blocks that share a gap is placed together between that gap's neighbours.
+    const gapOf = (key: number) => mine.filter((row) => row.key <= key).length;
+    const bounds = (gap: number): [string | null, string | null] => {
+      const first = mine[0];
+      const last = mine.at(-1);
+      if (!first || !last) return [ordered.at(-1)?.position ?? null, null];
+      const before =
+        gap > 0 ? (mine[gap - 1]?.position ?? null) : (ordered[first.index - 1]?.position ?? null);
+      const after =
+        gap < mine.length
+          ? (mine[gap]?.position ?? null)
+          : (ordered[last.index + 1]?.position ?? null);
+      return [before, after];
+    };
+    const items: { draft: BlockDraft; position: string }[] = [];
+    for (let i = 0; i < incoming.length;) {
+      const gap = gapOf(incoming[i]?.key ?? 0);
+      let j = i;
+      while (j < incoming.length && gapOf(incoming[j]?.key ?? 0) === gap) j++;
+      const [before, after] = bounds(gap);
+      const keys = keysBetween(before, after, j - i);
+      incoming
+        .slice(i, j)
+        .forEach((item, k) => items.push({ draft: item.draft, position: keys[k] ?? "" }));
+      i = j;
+    }
+    return this.stageBlockRows(w, options.noteId, options.sourceId, items);
+  }
+
   /** Screens, embeds, then stages the inserts and one block_added event per block. */
   protected async stageBlockRows(
     w: WriteContext,
@@ -364,51 +424,21 @@ export class NoteWriter {
     return list;
   }
 
-  /** Coverage = min over captures; fidelity from the shared rule. Runs after the block inserts. */
+  /**
+   * Coverage = min over captures; fidelity from the shared rule (refreshNoteQuality). Runs after the
+   * block inserts. The note row is locked first, as web's "Mark verified" does, so neither write
+   * recomputes fidelity from the other's stale state.
+   */
   stageQuality(w: WriteContext, noteId: string, coverage: number | null): void {
     w.step.defer(async (tx) => {
       const [note] = await tx
         .select({ coverage: notes.coverage })
         .from(notes)
-        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)));
+        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)))
+        .for("update");
       if (!note) return;
-      const merged =
-        coverage === null ? (note?.coverage ?? null) : Math.min(note?.coverage ?? 1, coverage);
-      const [unverified] = await tx
-        .select({ n: count() })
-        .from(noteBlocks)
-        .where(
-          and(
-            eq(noteBlocks.noteId, noteId),
-            inArray(noteBlocks.origin, [...CAPTURED_ORIGINS]),
-            eq(noteBlocks.verified, false),
-          ),
-        );
-      // A non-numeric mediaLost counts as none rather than aborting the step transaction.
-      const mediaLost = sql`${sources.meta}->>'mediaLost'`;
-      const [lost] = await tx
-        .select({
-          n: sql<number>`coalesce(sum(case when ${mediaLost} ~ '^[0-9]{1,9}$' then (${mediaLost})::int else 0 end), 0)::int`,
-        })
-        .from(sources)
-        .where(
-          and(
-            eq(sources.workspaceId, w.scope.workspaceId),
-            sql`${sources.meta}->>'noteId' = ${noteId}`,
-          ),
-        );
-      await tx
-        .update(notes)
-        .set({
-          coverage: merged,
-          fidelity: noteFidelity({
-            coverage: merged,
-            unverifiedCaptured: unverified?.n ?? 0,
-            missingMedia: lost?.n ?? 0,
-          }),
-          updatedAt: new Date(),
-        })
-        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)));
+      const merged = coverage === null ? note.coverage : Math.min(note.coverage ?? 1, coverage);
+      await refreshNoteQuality(tx, w.scope.workspaceId, noteId, merged);
     });
   }
 

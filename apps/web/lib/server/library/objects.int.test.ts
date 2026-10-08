@@ -1,6 +1,7 @@
 import { assets, createDb, sources, type DbHandle } from "@mastertutor/db";
 import { seedMember, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ObjectNotFound } from "@mastertutor/storage";
 import { assetResponse, assetUrl, snapshotResponse, type ObjectDeps } from "./objects.ts";
 
 let tdb: TestDatabase;
@@ -83,6 +84,37 @@ describe("object proxy", () => {
       svgId,
     );
     expect(revalidated.status).toBe(304);
+  });
+  it("revalidates If-None-Match lists, weak tags and * (QA-087)", async () => {
+    for (const header of [`"x", "${sha}"`, `W/"${sha}"`, "*"])
+      expect(
+        (await assetResponse(deps(mine.userId), get({ "if-none-match": header }), svgId)).status,
+        header,
+      ).toBe(304);
+    expect(
+      (await assetResponse(deps(mine.userId), get({ "if-none-match": `"other"` }), svgId)).status,
+    ).toBe(200);
+  });
+  it("answers a missing object 404 and a failing store 502, both with the object headers (QA-086)", async () => {
+    const failing = (error: Error): ObjectDeps => ({
+      ...deps(mine.userId),
+      storage: { getStream: async () => Promise.reject(error) },
+    });
+    const cases = [
+      [new ObjectNotFound(), 404],
+      [new Error("connect ECONNREFUSED"), 502],
+    ] as const;
+    for (const [error, code] of cases) {
+      const responses = [
+        await assetResponse(failing(error), get(), svgId),
+        await snapshotResponse(failing(error), get(), sourceId, "page.png"),
+      ];
+      for (const res of responses) {
+        expect(res.status, error.name).toBe(code);
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(res.headers.get("content-security-policy")).toMatch(/sandbox/);
+      }
+    }
   });
   it("never serves a stored type outside the allow-list inline", async () => {
     const res = await assetResponse(deps(mine.userId), get(), htmlId);
