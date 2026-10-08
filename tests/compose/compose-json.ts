@@ -32,6 +32,7 @@ export interface ComposeService {
   cap_drop?: string[];
   security_opt?: string[];
   tmpfs?: string[];
+  read_only?: boolean;
   restart?: string;
   sysctls?: Record<string, string>;
   volumes?: ComposeVolumeMount[];

@@ -37,6 +37,7 @@ const library = createLibraryServices({
   db: database.db,
   storage,
   openai,
+  doclingUrl: env.DOCLING_URL ?? null,
   log: log.child({ module: "library" }),
 });
 const vault = createVault({

@@ -171,6 +171,8 @@ services:
       DATABASE_URL: postgres://agent_role:${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD}@postgres:5432/mastertutor
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # Set only when COMPOSE_PROFILES includes "pdf"; compose.prod.yml pins it.
+      DOCLING_URL: ${DOCLING_URL:-}
       VAULT_PRIVATE_KEY: ${VAULT_PRIVATE_KEY:?set VAULT_PRIVATE_KEY}
       NEKO_ADMIN_SECRET: ${NEKO_ADMIN_SECRET:?set NEKO_ADMIN_SECRET}
       S3_ENDPOINT: http://garage:3900
@@ -198,10 +200,50 @@ services:
         condition: service_completed_successfully
       garage-init:
         condition: service_completed_successfully
+      docling:
+        condition: service_healthy
+        required: false
     networks:
       backend: {}
       cdp:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.10
+      pdf: {}
+
+  # High-fidelity PDF path (spec §7.6), profile `pdf`. Only the agent can reach it: it has no route
+  # to Postgres, Garage or the internet (B5 decision 17, preflight S4), so its models are baked in.
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu:v1.36.0
+    profiles: ["pdf"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 6g
+    cpus: 2
+    pids_limit: 512
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "false"
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "false"
+      DOCLING_SERVE_MAX_FILE_SIZE: "104857600"
+      DOCLING_SERVE_MAX_NUM_PAGES: "500"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    networks:
+      - pdf
 
   browser-1:
     <<: *browser-slot
@@ -267,6 +309,9 @@ networks:
       config:
         - subnet: ${CDP_SUBNET_PREFIX:-172.30.231}.0/24
           ip_range: ${CDP_SUBNET_PREFIX:-172.30.231}.128/25
+  # agent ↔ docling only (profile pdf).
+  pdf:
+    internal: true
 
 volumes:
   pgdata: {}
