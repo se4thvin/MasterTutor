@@ -122,7 +122,7 @@ export function sharedLocalOcr(): LocalOcr {
  * cancels the wait at once (the kill switch never waits for a long read).
  */
 /** True while the run has anything the pixel screens look for: secrets, or filled one-time codes. */
-const screens = (secrets: MaskSources) =>
+export const screensPixels = (secrets: MaskSources) =>
   secrets.hasSecrets() || (secrets.hasOneTimeCodes?.() ?? false);
 
 /** A filled one-time code shows as an exact whole token (edge punctuation aside). */
@@ -135,7 +135,7 @@ export async function pixelsAreClean(
   png: Uint8Array,
   signal: AbortSignal,
 ): Promise<boolean> {
-  if (!screens(secrets)) return true;
+  if (!screensPixels(secrets)) return true;
   let text: string;
   try {
     text = await abortable(ocr.text(png), signal);
@@ -143,7 +143,11 @@ export async function pixelsAreClean(
     signal.throwIfAborted();
     return false;
   }
-  return !containsSecret(secrets, text) && !text.split(/\s+/).some((word) => isCode(secrets, word));
+  return (
+    !containsSecret(secrets, text) &&
+    !(secrets.inOcrText?.(text) ?? false) &&
+    !text.split(/\s+/).some((word) => isCode(secrets, word))
+  );
 }
 
 export type PixelScreen = { kind: "clean" } | { kind: "hit"; boxes: Box[] } | { kind: "failed" };
@@ -163,7 +167,7 @@ export async function screenPixels(
   png: Uint8Array,
   signal: AbortSignal,
 ): Promise<PixelScreen> {
-  if (!screens(secrets)) return { kind: "clean" };
+  if (!screensPixels(secrets)) return { kind: "clean" };
   let lines: OcrLine[];
   try {
     lines = await abortable(ocr.words(png), signal);
@@ -172,10 +176,17 @@ export async function screenPixels(
     return { kind: "failed" };
   }
   const boxes: Box[] = [];
-  const holds = (words: OcrLine["words"]) =>
+  const exact = (words: OcrLine["words"]) =>
     containsSecret(secrets, words.map((word) => word.text).join(" ")) ||
     containsSecret(secrets, words.map((word) => word.text).join(""));
+  // A misread secret (O for 0, l for 1…) matches only through the vault's folded form (QA-099).
+  const folded = (words: OcrLine["words"]) =>
+    secrets.inOcrText?.(words.map((word) => word.text).join(" ")) ?? false;
+  const holds = (words: OcrLine["words"]) => exact(words) || folded(words);
   for (const { words } of lines) {
+    // Folded matching scans the whole text: only lines that hold a folded secret pay for windows.
+    const lineFolded = folded(words);
+    const inLine = (window: OcrLine["words"]) => exact(window) || (lineFolded && folded(window));
     for (const word of words) if (isCode(secrets, word.text)) boxes.push(word.box);
     // The shortest window ending at each word: growing backwards from `end` finds the words
     // that hold the secret and no neighbours ("pw" before a password stays readable).
@@ -183,7 +194,7 @@ export async function screenPixels(
     for (let end = 0; end < words.length; end++) {
       for (let start = end; start >= Math.max(from, end - MAX_WORDS + 1); start--) {
         const window = words.slice(start, end + 1);
-        if (!holds(window)) continue;
+        if (!inLine(window)) continue;
         boxes.push(...window.map((word) => word.box));
         from = end + 1;
         break;

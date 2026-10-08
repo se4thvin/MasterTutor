@@ -34,6 +34,12 @@ export interface MaskSources {
    */
   hasOneTimeCodes?(): boolean;
   isOneTimeCode?(token: string): boolean;
+  /**
+   * True when OCR'd text shows a registered secret up to the characters OCR confuses (O/0, l/1,
+   * B/8…), separators ignored (QA-099). For the local pixel screens only: `redact` stays exact.
+   * Optional: no secrets registered.
+   */
+  inOcrText?(text: string): boolean;
 }
 
 /** A frame's document the vault filled into: CDP frame id plus that document's loaderId. */
