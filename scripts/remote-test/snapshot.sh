@@ -1,5 +1,5 @@
-# Per-run snapshots of a synced worktree on the shared CI host. Sourced by run-on-host.sh and by
-# scripts/remote-test.test.ts.
+# Per-run snapshots of a synced worktree on the shared CI host. Sourced by run-on-host.sh, by
+# remote-test.sh (for sync_excludes) and by scripts/remote-test.test.ts.
 #
 # remote-test.sh rsyncs a worktree into ~/mt-ci/<worktree>/ while holding that worktree's sync
 # lock (~/mt-ci/.sync/<worktree>.lock), so syncs from concurrent runs never interleave. A later
@@ -10,6 +10,15 @@
 
 # Folders a suite writes results to, which remote-test.sh fetches from ~/mt-ci/<worktree>/.
 SNAPSHOT_RESULTS="apps/web/playwright-report apps/web/test-results apps/web/e2e/.out tests/bench/.out"
+
+# sync_excludes: rsync args that keep remote-test.sh's sync away from the result folders. Without
+# them a sync's --delete wipes a run's published results before they are fetched: macOS's
+# openrsync does not protect git-ignored receiver files the way rsync's `:- .gitignore` does.
+# Baselines (SNAPSHOT_BASELINES) are tracked sources: synced and snapshotted, never excluded.
+sync_excludes() {
+  local path
+  for path in $SNAPSHOT_RESULTS; do echo "--exclude=/$path"; done
+}
 
 # take_snapshot <synced dir> <snapshot dir> <sync lock>: the snapshot becomes an exact copy of
 # the synced sources, as of one moment between syncs.
