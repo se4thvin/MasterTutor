@@ -15,6 +15,8 @@ async function openReplay(page: Page) {
   await page.getByRole("button", { name: "Replay step: Clicked “Log in”" }).click();
   if (isCompact(page)) {
     await page.keyboard.press("Escape");
+    // Wait for the sheet to unmount: until then its scroll lock hides #main's scrollbar.
+    await page.getByRole("dialog", { name: "Steps" }).waitFor({ state: "detached" });
     // Closing the sheet returns focus to the Steps button below the frame, which scrolls the page;
     // check the frame where a viewer sees it, not under the sticky toolbar.
     await page.locator("#main").evaluate((main) => main.scrollTo({ top: 0 }));
