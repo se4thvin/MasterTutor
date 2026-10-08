@@ -1,5 +1,11 @@
 import { AgentEnv, GarageInitEnv, MigrateEnv, WebEnv, parseEnv } from "@mastertutor/contracts";
+import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
+import {
+  PDF_MEMORY_BUDGET_BYTES,
+  PDF_WORKER_BASE_BYTES,
+  PDF_WORKER_CONCURRENCY,
+} from "../../apps/agent/src/pdf/worker/server.ts";
 import { composeConfig, type ComposeConfig, type ComposeService } from "./compose-json.ts";
 
 const load = (files: string[], profiles: string[] = []): ComposeConfig =>
@@ -131,6 +137,28 @@ describe("compose.yml", () => {
     expect(Number(worker.cpus)).toBeGreaterThan(0);
     expect(Number(worker.pids_limit)).toBeGreaterThan(0);
     expect(env(base.services.agent!).PDF_WORKER_URL).toBe("http://pdf-worker:5002");
+  });
+
+  it("fits two PDFs at once in pdf-worker's memory and restarts it when it dies (re-review N-2, N-3)", () => {
+    const worker = base.services["pdf-worker"]!;
+    expect(
+      PDF_WORKER_CONCURRENCY * PDF_MEMORY_BUDGET_BYTES + PDF_WORKER_BASE_BYTES,
+    ).toBeLessThanOrEqual(Number(worker.mem_limit));
+    expect(PDF_WORKER_CONCURRENCY).toBe(2);
+    expect(worker.restart).toBe("unless-stopped");
+    expect(load(["compose.yml"], ["pdf"]).services.docling!.restart).toBe("unless-stopped");
+  });
+
+  it("pins docling and the Node base image by digest (re-review N-5)", () => {
+    const docling = load(["compose.yml"], ["pdf"]).services.docling!.image!;
+    expect(docling).toMatch(
+      /^quay\.io\/docling-project\/docling-serve-cpu:v[\d.]+@sha256:[0-9a-f]{64}$/,
+    );
+    const bases = [...readFileSync("Dockerfile", "utf8").matchAll(/^FROM (node:\S+)/gm)].map(
+      (m) => m[1]!,
+    );
+    expect(bases.length).toBeGreaterThan(0);
+    for (const image of bases) expect(image).toMatch(/^node:24-slim@sha256:[0-9a-f]{64}$/);
   });
 
   it("isolates docling on its own internal network (S4)", () => {

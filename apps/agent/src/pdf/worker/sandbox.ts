@@ -4,19 +4,26 @@ import { createRequire } from "node:module";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  MAX_DOCUMENT_ITEMS,
   MAX_IMAGE_PIXELS,
   MAX_PAGE_ITEMS,
   MAX_PDF_PAGES,
   MAX_PDF_RENDERS,
+  MAX_RENDER_BYTES,
   MAX_RENDER_PIXELS,
   MAX_TEXT_CHARS,
   WORKER_TIMEOUT_MS,
   type AnalyzeOptions,
 } from "../protocol.ts";
-import { ChildResult, encodeChildRequest } from "./protocol.ts";
+import { ChildResult, childRequestHeader } from "./protocol.ts";
 
-/** The child's stdout: items and renders before layout (bounded by the item and render caps). */
-const MAX_CHILD_OUTPUT_BYTES = 256 * 1024 * 1024;
+/**
+ * The child's stdout: items and renders before layout. Renders are at most MAX_RENDER_BYTES (base64
+ * adds a third), items at most MAX_DOCUMENT_ITEMS of about 120 bytes of JSON each.
+ */
+export const MAX_CHILD_OUTPUT_BYTES = 160 * 1024 * 1024;
+/** The child's V8 heap; its native memory (canvas, decoded images) is bounded by the pixel caps. */
+export const CHILD_HEAP_MB = 512;
 
 const require = createRequire(import.meta.url);
 const WORKER = fileURLToPath(new URL("./main.ts", import.meta.url));
@@ -66,7 +73,7 @@ export function workerFlags(): string[] {
     ...[...roots].map((root) => `--allow-fs-read=${root}`),
     "--allow-addons",
     "--disallow-code-generation-from-strings",
-    "--max-old-space-size=512",
+    `--max-old-space-size=${CHILD_HEAP_MB}`,
   ];
 }
 
@@ -97,6 +104,8 @@ export async function runInSandbox(
     maxPixels: MAX_RENDER_PIXELS,
     maxImagePixels: MAX_IMAGE_PIXELS,
     maxPageItems: MAX_PAGE_ITEMS,
+    maxDocumentItems: MAX_DOCUMENT_ITEMS,
+    maxRenderBytes: MAX_RENDER_BYTES,
     maxTextChars: MAX_TEXT_CHARS,
   };
   const child = spawn(process.execPath, [...workerFlags(), WORKER], {
@@ -109,7 +118,8 @@ export async function runInSandbox(
   deadline.addEventListener("abort", kill, { once: true });
   child.stdin.on("error", () => undefined);
   try {
-    child.stdin.end(encodeChildRequest(request, pdf));
+    child.stdin.write(childRequestHeader(request));
+    child.stdin.end(pdf);
     const chunks: Buffer[] = [];
     let total = 0;
     for await (const chunk of child.stdout) {

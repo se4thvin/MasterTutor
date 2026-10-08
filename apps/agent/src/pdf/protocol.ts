@@ -13,13 +13,18 @@ export const MAX_PDF_RENDERS = 40;
 export const MAX_RENDER_PIXELS = 4_000_000;
 /** pdf.js decodes no image larger than this (I-2: a 50k×50k XObject is refused, not allocated). */
 export const MAX_IMAGE_PIXELS = 16_000_000;
-/** Text items per page and characters per document (I-3: bounds the layout work and the answer). */
+/** Text items per page and per document, characters per document (I-3: bound layout and the answer). */
 export const MAX_PAGE_ITEMS = 100_000;
-export const MAX_TEXT_CHARS = 20_000_000;
+export const MAX_DOCUMENT_ITEMS = 500_000;
+export const MAX_TEXT_CHARS = 10_000_000;
+/** Blocks per document, as for docling (re-review N-1); past it the note is partial and says so. */
+export const MAX_PDF_BLOCKS = 20_000;
+/** Page renders per document, in PNG bytes: past it pages go without a render (counted missing). */
+export const MAX_RENDER_BYTES = 64 * 1024 * 1024;
 /** One PDF's parse and renders; the worker is killed at this point. */
 export const WORKER_TIMEOUT_MS = 120_000;
 /** The answer's size, checked by the service and again by the agent while reading. */
-export const MAX_RESULT_BYTES = 192 * 1024 * 1024;
+export const MAX_RESULT_BYTES = 128 * 1024 * 1024;
 
 export interface AnalyzeOptions {
   /** "auto": page 1 at scale 1 (the snapshot) plus every page with images or without text at `scale`. */
@@ -52,7 +57,8 @@ export function decodeRequest(buffer: Buffer): { options: AnalyzeOptions; pdf: U
   }
   const options = AnalyzeOptionsSchema.safeParse(header);
   if (!options.success) return null;
-  return { options: options.data, pdf: new Uint8Array(buffer.subarray(4 + length)) };
+  // A view, not a copy (re-review N-2): the body is held once.
+  return { options: options.data, pdf: buffer.subarray(4 + length) };
 }
 
 /** One pdf.js text item, in PDF points with a top-left origin. */
@@ -96,7 +102,9 @@ export const PdfAnswer = z.discriminatedUnion("ok", [
       )
       .max(MAX_PDF_PAGES),
     /** Every pdf.js text item, in order: the verification reference (spec §7.6). */
-    reference: z.string().max(MAX_TEXT_CHARS * 2),
+    reference: z.string().max(MAX_TEXT_CHARS + MAX_DOCUMENT_ITEMS + MAX_PDF_PAGES),
+    /** The layout gave more than MAX_PDF_BLOCKS blocks; only the first ones are here. */
+    truncated: z.boolean(),
     blocks: z
       .array(
         z.object({
@@ -106,7 +114,7 @@ export const PdfAnswer = z.discriminatedUnion("ok", [
           bbox: Box,
         }),
       )
-      .max(MAX_PAGE_ITEMS * 4),
+      .max(MAX_PDF_BLOCKS),
     renders: z
       .array(
         z.object({
