@@ -46,7 +46,7 @@ async function setup(path = "/interactive.html") {
 }
 
 async function point(s: BrowserSession, name: string): Promise<{ x: number; y: number }> {
-  const result = await readPage(s, { mode: "interactive", sinceHash: null });
+  const result = await readPage(s, { mode: "interactive", sinceHash: null, offset: null });
   if (!("elements" in result)) throw new Error("expected elements");
   const element = result.elements.find(
     (candidate: ReadPageElement) => candidate.tag !== "label" && candidate.name.startsWith(name),
@@ -909,6 +909,7 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
       executed: 1,
       notes: [],
       effects: ["input"],
+      targets: [{ label: expect.any(String), ancestors: expect.any(Array) }],
       handOver: null,
     });
     expect(await text(s, "#count")).toBe("1");
@@ -925,7 +926,13 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     const box = (await embed.locator("#cancel").boundingBox())!;
     const cancel = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
     const run = await executor.run([click(cancel)], signal, gated);
-    expect(run).toEqual({ executed: 1, notes: [], effects: ["input"], handOver: null });
+    expect(run).toEqual({
+      executed: 1,
+      notes: [],
+      effects: ["input"],
+      targets: [{ label: expect.any(String), ancestors: expect.any(Array) }],
+      handOver: null,
+    });
     expect(
       await embed.locator("#cancel").evaluate(() => (window as { __clicked?: string }).__clicked),
     ).toBe("cancel");
@@ -956,7 +963,13 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
         target: (await hitTest(s, at)).target,
         personApproved: false,
       }));
-      expect(run).toEqual({ executed: 1, notes: [], effects: ["input"], handOver: null });
+      expect(run).toEqual({
+        executed: 1,
+        notes: [],
+        effects: ["input"],
+        targets: [{ label: expect.any(String), ancestors: expect.any(Array) }],
+        handOver: null,
+      });
     };
     // interactive.html (one frame): a button, a form's submit button, the frame's button, a link.
     await gatedClick(s.page.locator("#inc"));
@@ -987,5 +1000,25 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
           .evaluate(() => (window as { __deleted?: boolean }).__deleted),
       ).toBe(true);
     }
+  });
+});
+
+describe("what a click records for grading (bench I1, I3)", () => {
+  it("records expanding a disclosure as disclosure, not page input", async () => {
+    const { s, executor } = await setup("/long-toc.html");
+    const run = await executor.run([click(await point(s, "Chapter 9"))], signal);
+    expect(run.effects).toEqual(["disclosure"]);
+    expect(await s.page.locator("#ch9").getAttribute("open")).not.toBeNull();
+  });
+  it("records each input's label and the opening text of its enclosing elements, innermost first", async () => {
+    const { s, executor } = await setup("/activity.html");
+    const run = await executor.run([click(await point(s, "False"))], signal);
+    expect(run.effects).toEqual(["input"]);
+    const target = run.targets[0]!;
+    expect(target.label).toBe("False");
+    expect(target.ancestors[0]).toMatch(/^2\) Is grass red\? True False/);
+    expect(
+      target.ancestors.some((a) => a.startsWith("PARTICIPATION ACTIVITY 1.1.1: Warm-up")),
+    ).toBe(true);
   });
 });
