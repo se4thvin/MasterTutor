@@ -27,6 +27,8 @@ stack_lock="$runs_dir/stack.lock"
 cpus=32 # a share of the host's 88 cores; the rest belong to production apps
 # shellcheck source=slots.sh
 source "$root/scripts/remote-test/slots.sh"
+# shellcheck source=snapshot.sh
+source "$root/scripts/remote-test/snapshot.sh"
 
 die() { echo "remote-test: $*" >&2; exit 2; }
 
@@ -102,9 +104,21 @@ dockerfile=scripts/remote-test/runner.Dockerfile
 image_hash="$(cat "$dockerfile" <(echo "$pnpm_version $playwright_version") | sha256sum | cut -c1-12)"
 image="mt-ci-runner:$image_hash"
 
-# qa's stack outlives this script; everything else is removed when it exits.
-if [[ "$suite" != qa ]]; then trap 'cleanup_run "$project"' EXIT; fi
+# The run executes from its own copy of the synced worktree (snapshot.sh), so a later sync from
+# the same worktree never changes files under it. Results go back to the synced folder on exit.
+base="$root"
+run_dir="$runs_dir/$project"
+sync_lock="$HOME/mt-ci/.sync/$(basename "$base").lock"
+on_exit() {
+  publish_results "$run_dir/src" "$base" "$sync_lock" || true
+  # qa's stack (and its snapshot) outlives this script; everything else is removed when it exits.
+  if [[ "$suite" != qa ]]; then cleanup_run "$project"; fi
+}
+trap on_exit EXIT
 trap 'exit 130' INT TERM HUP
+take_snapshot "$base" "$run_dir/src" "$sync_lock"
+root="$run_dir/src"
+cd "$root"
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   echo "remote-test: building runner image $image (first run only)" >&2
@@ -112,8 +126,10 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
     --build-arg "PNPM_VERSION=$pnpm_version" --build-arg "PLAYWRIGHT_VERSION=$playwright_version" \
     -t "$image" -f "$dockerfile" scripts/remote-test >/dev/null
 fi
-docker volume inspect mt-pnpm-store >/dev/null 2>&1 ||
-  docker volume create --label mastertutor.ci=1 mt-pnpm-store >/dev/null
+# The pnpm store lives beside the runs' snapshots in one mount, so each run's install hardlinks
+# from it instead of copying every package (seconds, not most of a minute).
+pnpm_store="$runs_dir/.pnpm-store"
+mkdir -p "$pnpm_store"
 
 case "$suite" in
   behaviour | e2e | smoke | qa | bench-mock)
@@ -125,8 +141,7 @@ case "$suite" in
     fi ;;
 esac
 
-# One install at a time per synced worktree: concurrent suites from one worktree share node_modules.
-install="flock $root/.mt-install.lock pnpm install --frozen-lockfile --prefer-offline --reporter=append-only"
+install="pnpm install --frozen-lockfile --prefer-offline --reporter=append-only"
 preload="--import=$root/scripts/remote-test/testcontainers-ci.ts"
 case "$suite" in
   unit | integration | security)
@@ -151,8 +166,6 @@ case "$suite" in
     command="$install && exec bash scripts/bench-mock.sh" ;;
 esac
 
-run_dir="$runs_dir/$project"
-mkdir -p "$run_dir"
 # Stack suites: a slot's subnets and ports (qa: the reserved block, legacy ports, legacy lock).
 slot_env=()
 case "$suite" in
@@ -170,23 +183,14 @@ case "$suite" in
     prefix="$(slot_networks "${SLOT:-$SLOT_QA}" | sed -n 's/^CDP_SUBNET_PREFIX=//p')"
     sed "s/172\.30\.231\./$prefix./g" infra/traefik/test-dynamic.yml >"$run_dir/traefik-dynamic.yml" ;;
 esac
-# web-build and ui each build apps/web/.next (production vs fixture): a per-run folder keeps
-# concurrent builds from one worktree apart.
-next_mount=()
-case "$suite" in
-  web-build | ui)
-    mkdir -p "$run_dir/next" apps/web/.next
-    next_mount=(-v "$run_dir/next:$root/apps/web/.next") ;;
-esac
-
 set +e
 docker run --rm --init --name "$project-runner" \
   --label mastertutor.ci=1 --label "mastertutor.ci.run=$project" \
   --network host --cpus "$cpus" --memory 64g \
   --user "$(id -u):$(id -g)" --group-add "$(stat -c %g /var/run/docker.sock)" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$root:$root" -v "$run_dir:$run_dir" "${next_mount[@]}" -w "$root" \
-  -v mt-pnpm-store:/pnpm-store -e npm_config_store_dir=/pnpm-store \
+  -v "$runs_dir:$runs_dir" -w "$root" \
+  -e npm_config_store_dir="$pnpm_store" \
   -e HOME=/tmp -e CI=1 \
   -e MT_CI_RUN_ID="$project" -e MT_CI_RUN_DIR="$run_dir" -e COMPOSE_PROJECT_NAME="$project" \
   -e TESTCONTAINERS_RYUK_DISABLED=true -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \

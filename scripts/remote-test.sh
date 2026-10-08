@@ -59,13 +59,14 @@ if [[ "$suite" == qa && "${1:-}" == "--down" ]]; then
 fi
 
 echo "remote-test: syncing $name to $host:~/$remote_dir" >&2
-# .mt-install.lock is the host's per-worktree install lock (run-on-host.sh); --delete leaves it.
+# The worktree's sync lock on the host keeps concurrent syncs (and the snapshots runs take,
+# remote-test/snapshot.sh) from interleaving.
 rsync -az --delete \
   --filter=':- .gitignore' \
   --include=/.env.test --include=/.env.example --exclude='.env*' \
   --exclude=/.git --exclude=node_modules --exclude=.superpowers --exclude=orchestration \
-  --exclude=.next --exclude=/.worktrees --exclude=/.mt-install.lock \
-  --rsync-path="mkdir -p $remote_dir && rsync" \
+  --exclude=.next --exclude=/.worktrees \
+  --rsync-path="mkdir -p $remote_dir mt-ci/.sync && flock mt-ci/.sync/$name.lock rsync" \
   "$root/" "$host:$remote_dir/"
 
 # Result folders are git-ignored or excluded from the sync, so --delete never touches them.
