@@ -75,10 +75,16 @@ export class PendingNavigations {
    * (a move to another process included, at its commit) or stopped loading (a 204, a download).
    * `root`: the out-of-process frame the channel belongs to (null: the page's own process).
    * `late`: the channel was found after its frames could run, so a navigation it never saw may be
-   * under way: until its own frame next commits or stops (or no subframe request is in flight), it
-   * counts as navigating. Returns a function that stops tracking it (the channel is gone).
+   * under way: until its own frame next commits or stops, it
+   * counts as navigating, unless `loaded()` says its document had finished loading by then. Returns
+   * `stop` (the channel is gone) and `loaded`.
    */
-  watchFrames(page: Page, events: FrameEvents, root: string | null, late: boolean): () => void {
+  watchFrames(
+    page: Page,
+    events: FrameEvents,
+    root: string | null,
+    late: boolean,
+  ): { stop(): void; loaded(): void } {
     let sessions = this.#sessions.get(page);
     if (!sessions) this.#sessions.set(page, (sessions = new Map()));
     const entry = { root, navigating: new Set<string>(), unknown: late };
@@ -96,8 +102,13 @@ export class PendingNavigations {
       entry.navigating.delete(frameId)) as (params: never) => void);
     events.on("Page.frameStoppedLoading", (({ frameId }: { frameId: string }) =>
       ends(frameId, false)) as (params: never) => void);
-    return () => {
-      if (sessions.get(events) === entry) sessions.delete(events);
+    return {
+      stop: () => {
+        if (sessions.get(events) === entry) sessions.delete(events);
+      },
+      loaded: () => {
+        entry.unknown = false;
+      },
     };
   }
 
@@ -120,10 +131,6 @@ export class PendingNavigations {
     const requested = [...(this.#pages.get(page)?.values() ?? [])];
     const mainFrame = requested.includes(page.mainFrame());
     const entries = [...(this.#sessions.get(page)?.values() ?? [])];
-    // Playwright sees every frame's navigation request: with none in flight in a subframe, a late
-    // channel's frames are not navigating.
-    if (!requested.some((frame) => frame !== page.mainFrame()))
-      for (const entry of entries) entry.unknown = false;
     const frames = entries.flatMap(({ root, navigating }) =>
       [...navigating].map((frameId) => ({ frameId, root })),
     );

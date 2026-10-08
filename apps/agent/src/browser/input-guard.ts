@@ -64,11 +64,12 @@ const incomplete = new WeakSet<BrowserSession>();
 export async function markStillUnguarded(
   session: BrowserSession,
   target: TargetDescription | null,
+  signal: AbortSignal,
 ): Promise<TargetDescription | null> {
   if (target && incomplete.has(session)) {
     // A click-mode arm (frame holds and new-document scripts included), as a click would need;
-    // its key keeps nothing, and it is disarmed at once.
-    const guard = await armGuard(session, new AbortController().signal, "");
+    // its key keeps nothing, and it is disarmed at once. The run's signal ends it (takeover).
+    const guard = await armGuard(session, signal, "");
     await guard.disarm();
   }
   return markUnguarded(session, target);

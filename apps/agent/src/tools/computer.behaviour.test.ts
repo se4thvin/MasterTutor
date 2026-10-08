@@ -579,10 +579,10 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
     const target = (await hitTest(s, code)).target;
     expect(markUnguarded(s, target)?.opaqueFrame).toBe(true);
     // While it still hangs, the loop's classification keeps asking a person...
-    expect((await markStillUnguarded(s, target))?.opaqueFrame).toBe(true);
+    expect((await markStillUnguarded(s, target, signal))?.opaqueFrame).toBe(true);
     await advertAnswers(s);
     // ...and once every document arms again, it no longer does: the click runs unapproved.
-    const fresh = await markStillUnguarded(s, (await hitTest(s, code)).target);
+    const fresh = await markStillUnguarded(s, (await hitTest(s, code)).target, signal);
     expect(fresh?.opaqueFrame).toBeFalsy();
     expect(
       await executor.execute(click(code), signal, { target: fresh, personApproved: false }),
@@ -1425,6 +1425,27 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
     expect(Date.now() - started).toBeLessThan(2_000);
     release();
   });
+
+  it.each(["takeover", "kill"] as const)(
+    "a %s ends a click held up by the page's own navigation that never answers, at once",
+    async (reason) => {
+      const { s, executor } = await setup();
+      const release = await holdSlowPages(s);
+      await s.goto(`${SITE}/loading-frames.html`, signal);
+      await leaveForHeldPage(s);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const controller = new AbortController();
+      const clicking = executor.execute(click(centre), controller.signal);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const abortedAt = Date.now();
+      controller.abort(new Interrupted(reason));
+      await expect(clicking).rejects.toBeInstanceOf(Interrupted);
+      const latency = Date.now() - abortedAt;
+      console.info(JSON.stringify({ metric: "held_navigation_click_abort_ms", reason, latency }));
+      expect(latency).toBeLessThan(300);
+      release();
+    },
+  );
 
   it("a navigation that never answers does not stall the agent: settling stops it, and the page answers and clicks again", async () => {
     const { s, executor } = await setup();
