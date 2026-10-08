@@ -1,5 +1,12 @@
 import { oc } from "@orpc/contract";
 import { z } from "zod";
+import {
+  AlertRef,
+  AlertView,
+  PushConfig,
+  PushEndpointRef,
+  PushSubscriptionInput,
+} from "../alerts.ts";
 import { ApprovalDecisionInput } from "../approval.ts";
 import { OpenLiveResult } from "../live.ts";
 import {
@@ -115,6 +122,15 @@ export const apiContract = {
     start: oc.input(BenchmarkRef).output(StartBenchmarkResult),
     runs: oc.input(ListBenchmarkRunsInput).output(z.object({ items: z.array(BenchmarkRunView) })),
     grade: oc.input(GradeBenchmarkRunInput).output(BenchmarkRunView),
+  },
+  /** Owner only (D50, spec §13.3, §13.4). */
+  alerts: {
+    list: oc.input(PageInput).output(Page(AlertView)),
+    active: oc.input(Empty).output(z.object({ items: z.array(AlertView) })),
+    acknowledge: oc.input(AlertRef).output(Ok),
+    pushConfig: oc.input(Empty).output(PushConfig),
+    subscribe: oc.input(PushSubscriptionInput).output(Ok),
+    unsubscribe: oc.input(PushEndpointRef).output(Ok),
   },
 };
 export type ApiContract = typeof apiContract;
