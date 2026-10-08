@@ -70,10 +70,21 @@ function player(
     },
   } as never;
 }
+/** Local OCR stand-in: every frame reads `textAt(now)`; null throws (a failed read). */
+let textAt: (t: number) => string | null = () => "";
+const ocrCalls: number[] = [];
 const ctx = () => ({
   session: { guard: new ControlGuard() } as never,
   mask: NO_MASK_SOURCES,
   signal: new AbortController().signal,
+  ocr: {
+    text: async () => {
+      ocrCalls.push(now);
+      const text = textAt(now);
+      if (text === null) throw new Error("tesseract failed");
+      return text;
+    },
+  },
 });
 const slideAt = (t: number) => slides[Math.min(3, Math.floor(t / 5))]!;
 
@@ -112,5 +123,24 @@ describe("sampleKeyframes counts what it could not capture (B4 review I1, I2)", 
       frames: [],
       sampled: 11,
     });
+  });
+
+  it("keeps same-layout slides whose text differs, and merges only matching text (final I5)", async () => {
+    // One template for the whole range: the hash says "same" everywhere.
+    frameAt = () => new Uint8Array(slides[0]!); // each capture is a fresh buffer
+    textAt = (t) =>
+      t < 10 ? "The Calvin cycle • Uses ATP and NADPH" : "The Calvin cycle * Needs ATP and NADH";
+    const result = await sampleKeyframes(ctx(), player(), { start: 0, end: 20 });
+    expect(result.frames.map((f) => f.segmentStart)).toEqual([0, 10]);
+    // Bullet glyphs and spacing are OCR noise, not content.
+    textAt = (t) => (t % 4 === 0 ? "Uses  ATP • and NADPH" : "uses ATP + and NADPH");
+    expect((await sampleKeyframes(ctx(), player(), { start: 0, end: 20 })).frames).toHaveLength(1);
+  });
+
+  it("keeps a frame whose text cannot be read (fidelity over dedupe)", async () => {
+    frameAt = () => new Uint8Array(slides[0]!); // each capture is a fresh buffer
+    textAt = (t) => (t === 8 ? null : "same");
+    const result = await sampleKeyframes(ctx(), player(), { start: 0, end: 20 });
+    expect(result.frames.length).toBeGreaterThan(1);
   });
 });

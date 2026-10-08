@@ -94,19 +94,51 @@ export function chaptersFromDescription(text: string): Chapter[] {
   return chapters.length >= 3 && chapters[0]?.start === 0 && increasing ? normalize(chapters) : [];
 }
 
-/** spec §8: ytInitialData first, description timestamps as the fallback. */
-export async function readChapters(worlds: Pick<IsolatedWorlds, "call">): Promise<Chapter[]> {
-  const data = await worlds.call(pageYoutubeData, []);
-  const fromData = data.initialDataScript
-    ? chaptersFromInitialData(extractInitialData(data.initialDataScript))
-    : [];
-  return fromData.length > 0 ? fromData : chaptersFromDescription(data.description ?? "");
+/** The video ytInitialData describes; after in-page (SPA) navigation, not the one on screen. */
+export function initialDataVideoId(data: unknown): string | null {
+  const endpoint = (data as { currentVideoEndpoint?: { watchEndpoint?: { videoId?: unknown } } })
+    ?.currentVideoEndpoint?.watchEndpoint?.videoId;
+  return typeof endpoint === "string" ? endpoint : null;
+}
+
+export interface ChapterList {
+  chapters: Chapter[];
+  /** From a source bound to the video on screen; unbound chapters are never verified headings. */
+  bound: boolean;
+}
+
+/**
+ * spec §8: ytInitialData first, but only when its videoId is the URL's `v=` (the inline script
+ * stays the first video's after SPA navigation); then the rendered description's timestamps; then,
+ * unbound, whatever ytInitialData has (final review I3).
+ */
+export function chaptersFor(
+  data: { initialDataScript: string | null; description: string | null },
+  pageUrl: string,
+): ChapterList {
+  const initial = data.initialDataScript ? extractInitialData(data.initialDataScript) : null;
+  const fromData = initial ? chaptersFromInitialData(initial) : [];
+  const onScreen = new URL(pageUrl).searchParams.get("v");
+  const id = initialDataVideoId(initial);
+  if (fromData.length > 0 && id !== null && id === onScreen)
+    return { chapters: fromData, bound: true };
+  const fromDescription = chaptersFromDescription(data.description ?? "");
+  if (fromDescription.length > 0) return { chapters: fromDescription, bound: true };
+  return { chapters: fromData, bound: false };
+}
+
+export async function readChapters(
+  worlds: Pick<IsolatedWorlds, "call">,
+  pageUrl: string,
+): Promise<ChapterList> {
+  return chaptersFor(await worlds.call(pageYoutubeData, []), pageUrl);
 }
 
 /** `## title` headings for the chapters the note does not have yet. */
 export function chapterBlocks(
   chapters: readonly Chapter[],
   existingStarts: ReadonlySet<number>,
+  verified: boolean,
 ): TimedBlockDraft[] {
   return chapters
     .filter((c) => !existingStarts.has(c.start))
@@ -115,7 +147,7 @@ export function chapterBlocks(
       markdown: `## ${escapeMarkdownText(c.title)}`,
       origin: "dom",
       assetId: null,
-      verified: true,
+      verified,
       anchor: timeAnchor(c.start, all[i + 1]?.start ?? c.start),
     }));
 }

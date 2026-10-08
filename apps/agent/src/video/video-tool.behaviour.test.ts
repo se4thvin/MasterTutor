@@ -56,7 +56,7 @@ async function noteOf(runId: string) {
 
 describe("video tool (B4 done-when: the YouTube fixture produces a chaptered note)", () => {
   it("lays out chapters with interleaved transcript and keyframes", async () => {
-    const scope = await open("watch.html");
+    const scope = await open("watch.html?v=fakevid0001");
     expect(createVideoTool(env.services).untrusted).toBe(true);
     expect(await op(scope, { op: "chapters", range: null })).toEqual({
       op: "chapters",
@@ -117,6 +117,18 @@ describe("video tool (B4 done-when: the YouTube fixture produces a chaptered not
     expect(note?.fidelity).toBe("verified");
   }, 180_000);
 
+  it("never writes another video's chapters as verified headings (SPA navigation, final I3)", async () => {
+    // The URL is fakevid0012; the page's inline ytInitialData still describes fakevid0001.
+    const scope = await open("watch-spa.html?v=fakevid0012");
+    const result = await op(scope, { op: "chapters", range: null });
+    expect(result).toMatchObject({ op: "chapters" });
+    const noteId = await noteOf(scope.runId);
+    const headings = await env.db.db.select().from(noteBlocks).where(eq(noteBlocks.noteId, noteId));
+    expect(headings.length).toBeGreaterThan(0);
+    expect(headings.every((b) => b.type === "heading" && !b.verified)).toBe(true);
+    expect(await fidelityOf(scope.runId)).toBe("needs_review");
+  }, 60_000);
+
   it("stores auto-generated captions as ASR that needs review (Q4)", async () => {
     const scope = await open("watch-asr.html");
     await op(scope, { op: "captions", range: null });
@@ -130,6 +142,26 @@ describe("video tool (B4 done-when: the YouTube fixture produces a chaptered not
       .where(eq(notes.id, noteId));
     expect(note?.fidelity).toBe("needs_review");
   }, 60_000);
+
+  it("records a caption track it cannot read as lost, and never transcribes that video (final I4, D4)", async () => {
+    let transcribed = 0;
+    const tool = createVideoTool({
+      ...env.services,
+      transcriber: { transcribe: async () => ((transcribed += 1), []) },
+    });
+    const scope = await open("watch-badtrack.html");
+    expect(await op(scope, { op: "captions", range: null }, tool)).toMatchObject({ segments: 0 });
+    expect(await fidelityOf(scope.runId)).toBe("partial");
+    await expect(op(scope, { op: "transcribe", range: null }, tool)).rejects.toMatchObject({
+      code: "captions_available",
+    });
+    // Before any captions op too: the probe sees the player's track.
+    const fresh = await open("watch-badtrack.html");
+    await expect(op(fresh, { op: "transcribe", range: null }, tool)).rejects.toMatchObject({
+      code: "captions_available",
+    });
+    expect(transcribed).toBe(0);
+  }, 120_000);
 
   it("refuses transcribe whenever captions exist, even before a captions op (D4)", async () => {
     let transcribed = 0;

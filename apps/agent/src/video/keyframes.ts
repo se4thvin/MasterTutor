@@ -8,7 +8,9 @@ import {
   type PerceptualHash,
 } from "../browser/phash.ts";
 import { captureMaskedRegion } from "../browser/region-capture.ts";
+import type { LocalOcr } from "../browser/local-ocr.ts";
 import type { BrowserSession } from "../browser/session.ts";
+import { abortable } from "../runtime/abortable.ts";
 import {
   pageCaptionsClick,
   pageCaptionsState,
@@ -32,10 +34,14 @@ export interface Keyframe {
   png: Uint8Array;
 }
 
-/** spec §8: drop frames within the threshold of the segment's reference; keep the last frame before a change. */
+/**
+ * spec §8: drop frames that show what the segment's first frame shows; keep the last frame before
+ * a change. The hash proposes a duplicate; the caller may confirm it (final review I5: same-layout
+ * slides differ only in their text, so the hash alone would merge them).
+ */
 export class KeyframeSampler {
   readonly #threshold: number;
-  #reference: PerceptualHash | null = null;
+  #reference: { hash: PerceptualHash; png: Uint8Array } | null = null;
   #segmentStart = 0;
   #last: { t: number; png: Uint8Array } | null = null;
   readonly #kept: Keyframe[] = [];
@@ -45,18 +51,27 @@ export class KeyframeSampler {
     this.#threshold = threshold;
   }
 
-  push(frame: { t: number; hash: PerceptualHash; png: Uint8Array }): void {
-    if (
-      this.#reference !== null &&
-      perceptualDistance(this.#reference, frame.hash) <= this.#threshold
-    ) {
+  /** The segment's first frame when `hash` is within the threshold of it, else null. */
+  candidate(hash: PerceptualHash): Uint8Array | null {
+    return this.#reference !== null &&
+      perceptualDistance(this.#reference.hash, hash) <= this.#threshold
+      ? this.#reference.png
+      : null;
+  }
+
+  /** `duplicate` defaults to the hash's verdict; the caller passes its own second check. */
+  push(
+    frame: { t: number; hash: PerceptualHash; png: Uint8Array },
+    duplicate: boolean = this.candidate(frame.hash) !== null,
+  ): void {
+    if (duplicate) {
       this.dropped++;
       this.#last = { t: frame.t, png: frame.png };
       return;
     }
     if (this.#last)
       this.#kept.push({ t: this.#last.t, segmentStart: this.#segmentStart, png: this.#last.png });
-    this.#reference = frame.hash;
+    this.#reference = { hash: frame.hash, png: frame.png };
     this.#segmentStart = frame.t;
     this.#last = { t: frame.t, png: frame.png };
   }
@@ -89,8 +104,22 @@ export interface KeyframeResult {
  * afterwards. Nothing is dropped silently: a point without a frame counts as missed or withheld,
  * and a dark stretch is kept unless every frame is dark (B4 review I1, I2).
  */
+/** OCR text as content: case, spacing, bullets and punctuation are reading noise. */
+export function slideText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
 export async function sampleKeyframes(
-  ctx: { session: BrowserSession; mask: MaskSources; signal: AbortSignal },
+  ctx: {
+    session: BrowserSession;
+    mask: MaskSources;
+    signal: AbortSignal;
+    /** Local OCR (never OpenAI): a duplicate must read the same as its segment's first frame. */
+    ocr: Pick<LocalOcr, "text">;
+  },
   worlds: Pick<IsolatedWorlds, "call">,
   range: { start: number; end: number },
 ): Promise<KeyframeResult> {
@@ -105,6 +134,20 @@ export async function sampleKeyframes(
   await worlds.call(pageVideoPause, []);
   const end = before.duration > 0 ? Math.min(range.end, before.duration) : range.end;
   const sampler = new KeyframeSampler();
+  // Each frame is read at most once; a failed read never matches anything.
+  const texts = new Map<Uint8Array, Promise<string | null>>();
+  const textOf = (png: Uint8Array) => {
+    let text = texts.get(png);
+    if (!text) {
+      text = abortable(ctx.ocr.text(png), ctx.signal).then(slideText, (error: unknown) => {
+        ctx.signal.throwIfAborted();
+        void error;
+        return null;
+      });
+      texts.set(png, text);
+    }
+    return text;
+  };
   let seeked = 0;
   let sampled = 0;
   let dark = 0;
@@ -136,7 +179,15 @@ export async function sampleKeyframes(
       }
       sampled++;
       if ((await meanLuminance(png)) < DRM_LUMINANCE) dark++;
-      sampler.push({ t: target, hash: await perceptualHash(png), png });
+      const hash = await perceptualHash(png);
+      const reference = sampler.candidate(hash);
+      // Fidelity over dedupe (final review I5): the hash proposes, the text must agree.
+      const duplicate =
+        reference !== null &&
+        (await Promise.all([textOf(reference), textOf(png)]).then(
+          ([a, b]) => a !== null && a === b,
+        ));
+      sampler.push({ t: target, hash, png }, duplicate);
     }
     const counts = { withheld, missed, sampled };
     if (seeked === 0) return { ...none, ...counts };

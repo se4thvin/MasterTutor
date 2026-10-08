@@ -1,8 +1,13 @@
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
-import type { BrowserSession, LoggedResponse } from "../browser/session.ts";
+import {
+  type BrowserSession,
+  type LoggedResponse,
+  RESPONSE_LOG_BUFFERS,
+} from "../browser/session.ts";
 import { pageCaptionsClick, pageCaptionsState } from "./page/player.ts";
 
-export const MAX_TIMEDTEXT_BYTES = 5 * 1024 * 1024;
+/** Chromium keeps at most this much of one body for Network.getResponseBody: the real cap (I4). */
+export const MAX_TIMEDTEXT_BYTES = RESPONSE_LOG_BUFFERS.maxResourceBufferSize;
 const TIMEDTEXT_PATH = /\/api\/timedtext(\/|$)/;
 const YOUTUBE_HOST = /(^|\.)(youtube\.com|youtube-nocookie\.com)$/i;
 
@@ -58,6 +63,14 @@ export function trackInfo(
   };
 }
 
+/**
+ * What the player offers: no caption track at all, the track itself, or a track that exists but
+ * could not be read (over the cap, gone from Chromium's buffer, never arrived). An unreadable track
+ * is lost captions, never "no captions" (final review I4, D4).
+ */
+export type CaptionCapture =
+  { kind: "none" } | { kind: "track"; track: CaptionTrack } | { kind: "unreadable" };
+
 async function read(session: BrowserSession, entry: LoggedResponse): Promise<CaptionTrack | null> {
   if (entry.status !== 200 || (entry.bytes !== null && entry.bytes > MAX_TIMEDTEXT_BYTES))
     return null;
@@ -65,7 +78,7 @@ async function read(session: BrowserSession, entry: LoggedResponse): Promise<Cap
     await session.cdp()
   ).send("Network.getResponseBody", { requestId: entry.requestId });
   const text = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
-  if (text.length > MAX_TIMEDTEXT_BYTES) return null;
+  if (Buffer.byteLength(text, "utf8") > MAX_TIMEDTEXT_BYTES) return null;
   return { body: text, url: entry.url, ...trackInfo(entry.url) };
 }
 
@@ -79,7 +92,7 @@ export async function captureTimedtext(
   session: BrowserSession,
   worlds: Pick<IsolatedWorlds, "call">,
   options: { timeoutMs?: number; signal: AbortSignal },
-): Promise<CaptionTrack | null> {
+): Promise<CaptionCapture> {
   const pageUrl = session.page.url();
   const trusted = (entry: LoggedResponse) =>
     entry.status === 200 && trustedTrack(entry.url, pageUrl);
@@ -88,10 +101,11 @@ export async function captureTimedtext(
     .find((entry) => trusted(entry) && entry.bytes !== null);
   if (cached) {
     const track = await read(session, cached).catch(() => null);
-    if (track) return track;
+    // The player fetched its track and we cannot read it: a refetch is not to be expected (Q5).
+    return track ? { kind: "track", track } : { kind: "unreadable" };
   }
   const state = await worlds.call(pageCaptionsState, []);
-  if (!state.present || state.disabled) return null;
+  if (!state.present || state.disabled) return { kind: "none" };
   // Read the log and start waiting in one turn, so no response can finish in between.
   const logged = session.recentResponses();
   const loading = logged.some((entry) => trusted(entry) && entry.bytes === null);
@@ -112,5 +126,7 @@ export async function captureTimedtext(
     await worlds.call(pageCaptionsClick, []);
   }
   const hit = await next;
-  return hit ? read(session, hit).catch(() => null) : null;
+  const track = hit ? await read(session, hit).catch(() => null) : null;
+  // The player shows a CC track: one that never arrived or cannot be read is lost, not absent.
+  return track ? { kind: "track", track } : { kind: "unreadable" };
 }
