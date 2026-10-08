@@ -1,6 +1,11 @@
 import { createLogger } from "@mastertutor/contracts/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { OTHER, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts";
+import {
+  BEHAVIOUR_SUBNET_PREFIX,
+  OTHER,
+  SITE,
+  SLOT_CDP,
+} from "../../../../tests/behaviour/constants.ts";
 import { ControlHeld } from "../runtime/errors.ts";
 import { BrowserSession } from "./session.ts";
 import { settle } from "./settle.ts";
@@ -106,7 +111,7 @@ describe("BrowserSession", () => {
     const hits = s.drainPrivateConnections();
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]?.topLevel).toBe(true);
-    expect(hits[0]?.ip.startsWith("172.30.240.")).toBe(true);
+    expect(hits[0]?.ip.startsWith(`${BEHAVIOUR_SUBNET_PREFIX}.`)).toBe(true);
     await expect.poll(() => s.page.url()).toBe("about:blank");
   });
 

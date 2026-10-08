@@ -4,10 +4,13 @@
 # The slot entrypoint passes CDP_ALLOWED_IP to iptables unvalidated, so a CIDR must stay accepted.
 # n.eko (8080) and the idle probe (9224) are published on 127.0.0.1 too, for the B6 live-view tests (F9);
 # the same allow-all rule as CDP applies (F12).
+# The defaults are the laptop's fixed ports, subnet and image. On the shared CI host each run gets its
+# own (scripts/remote-test/slots.sh), so several behaviour stacks run at once; constants.ts reads the
+# same variables.
 name: mastertutor-behaviour
 
 x-slot: &slot
-  image: mastertutor/browser-slot:local
+  image: ${BEHAVIOUR_SLOT_IMAGE:-mastertutor/browser-slot:local}
   restart: always
   shm_size: 1gb
   cap_add: [NET_ADMIN]
@@ -28,7 +31,7 @@ x-slot-env: &slot-env
   NEKO_MEMBER_SECRET: behaviour-member-secret-0123456789abcde
   CDP_ALLOWED_IP: 0.0.0.0/0
   NEKO_ALLOWED_IPS: 0.0.0.0/0
-  SLOT_EGRESS_ALLOW_CIDRS: 172.30.240.0/24
+  SLOT_EGRESS_ALLOW_CIDRS: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.0/24
 
 services:
   fixtures:
@@ -51,17 +54,23 @@ services:
     environment:
       <<: *slot-env
       SLOT_NAME: browser-1
-    ports: ["127.0.0.1:19223:9223", "127.0.0.1:18091:8080", "127.0.0.1:18191:9224"]
+    ports:
+      - 127.0.0.1:${BEHAVIOUR_CDP_PORT_1:-19223}:9223
+      - 127.0.0.1:${BEHAVIOUR_NEKO_PORT_1:-18091}:8080
+      - 127.0.0.1:${BEHAVIOUR_IDLE_PORT_1:-18191}:9224
 
   browser-2:
     <<: *slot
     environment:
       <<: *slot-env
       SLOT_NAME: browser-2
-    ports: ["127.0.0.1:19224:9223", "127.0.0.1:18092:8080", "127.0.0.1:18192:9224"]
+    ports:
+      - 127.0.0.1:${BEHAVIOUR_CDP_PORT_2:-19224}:9223
+      - 127.0.0.1:${BEHAVIOUR_NEKO_PORT_2:-18092}:8080
+      - 127.0.0.1:${BEHAVIOUR_IDLE_PORT_2:-18192}:9224
 
 networks:
   behaviour:
     ipam:
       config:
-        - subnet: 172.30.240.0/24
+        - subnet: ${BEHAVIOUR_SUBNET_PREFIX:-172.30.240}.0/24
