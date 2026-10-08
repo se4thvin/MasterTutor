@@ -46,5 +46,18 @@ export default defineConfig({
         storageState: AUTH_STATE,
       },
     },
+    // Phase 8 real-stack wiring smoke (P8-12): the widest and narrowest QA widths, from
+    // QA_VIEWPORTS only (P8-16). Group filter: --grep "G3 ".
+    ...QA_VIEWPORTS.filter((vp) => vp.name === "w1440" || vp.name === "w390").map((vp) => ({
+      name: `qa-${vp.name}`,
+      testMatch: /qa\/wiring\.spec\.ts$/,
+      dependencies: ["setup"],
+      use: {
+        browserName: "chromium" as const,
+        viewport: { width: vp.width, height: vp.height },
+        hasTouch: vp.width <= 820,
+        storageState: AUTH_STATE,
+      },
+    })),
   ],
 });

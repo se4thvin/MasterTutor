@@ -72,7 +72,9 @@ wait "$ssh_pid" || status=$?
 # Both result folders are git-ignored or excluded from the sync, so --delete never touches them.
 fetch() { rsync -az "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
 case "$suite" in
-  e2e | qa) fetch apps/web/e2e/.out ;;
+  e2e) fetch apps/web/e2e/.out ;;
+  # qa ui (fixture mode, Task 8) writes baselines and its report beside the fixture suite.
+  qa) fetch apps/web/e2e/.out; fetch apps/web/e2e/visual.spec.ts-snapshots; fetch apps/web/test-results; fetch apps/web/playwright-report ;;
   bench-mock) fetch tests/bench/.out ;;
 esac
 echo "remote-test: $suite exited $status after $((SECONDS - start))s" >&2
