@@ -10,7 +10,8 @@ import {
   type Box,
   type MaskSources,
 } from "./masking.ts";
-import { screenPixels, sharedLocalOcr, type CachedScreen, type LocalOcr } from "./local-ocr.ts";
+import { sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
+import { screenPixels, type BandRead } from "./pixel-screen.ts";
 import type { ScreenCache } from "./screen-cache.ts";
 import type { BrowserSession, Layout } from "./session.ts";
 
@@ -109,7 +110,7 @@ async function screened(
   sources: MaskSources,
   ocr: LocalOcr,
   signal: AbortSignal,
-  cache: ScreenCache<CachedScreen> | undefined,
+  cache: ScreenCache<BandRead> | undefined,
 ): Promise<ModelScreenshot | null> {
   const first = await screenPixels(ocr, sources, shot.png, signal, { urgent: true, cache });
   if (first.kind === "clean") return shot;
@@ -142,7 +143,7 @@ export async function captureModelScreenshot(
   signal: AbortSignal,
   ocr: LocalOcr = sharedLocalOcr(),
   /** The run's screen cache (session-browser): unchanged regions are not read again. */
-  cache?: ScreenCache<CachedScreen>,
+  cache?: ScreenCache<BandRead>,
 ): Promise<ModelScreenshot> {
   let layout = await session.layout();
   const drop = async (reason: string = WITHHELD.moved) => {

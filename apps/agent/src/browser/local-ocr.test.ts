@@ -1,13 +1,8 @@
 import sharp from "sharp";
 import { afterAll, describe, expect, it } from "vitest";
 import type { MaskSources } from "../browser/masking.ts";
-import {
-  closerLookBands,
-  createLocalOcr,
-  pixelsAreClean,
-  screenPixels,
-  tallPixelsAreClean,
-} from "./local-ocr.ts";
+import { createLocalOcr, pixelsAreClean, tallPixelsAreClean } from "./local-ocr.ts";
+import { closerLookBands, screenPixels } from "./pixel-screen.ts";
 
 const ocr = createLocalOcr();
 afterAll(() => ocr.close());
