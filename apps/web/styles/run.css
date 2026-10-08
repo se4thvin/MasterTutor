@@ -618,6 +618,8 @@
     overflow: hidden;
   }
   .run-caption-line {
+    /* Animated by a spring on the main thread (D28): its own layer keeps each frame off layout and paint. */
+    will-change: transform, opacity;
     position: absolute;
     inset: 0;
     overflow: hidden;
@@ -1260,6 +1262,8 @@
       inset: 0;
       background: var(--label);
       transform-origin: left;
+      /* A persistent layer: the scaleX transition never promotes and drops one (a repaint each). */
+      will-change: transform;
       transition-property: transform;
       transition-duration: var(--motion-dur-panel);
       transition-timing-function: var(--motion-ease-out);
@@ -1510,6 +1514,8 @@
     }
   }
   .run-pip-screen {
+    /* Animated by a spring on the main thread (D28): its own layer keeps each frame off layout and paint. */
+    will-change: transform;
     position: relative;
     width: 35rem;
     aspect-ratio: 16 / 10;
