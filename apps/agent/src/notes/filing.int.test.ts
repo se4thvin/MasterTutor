@@ -83,6 +83,33 @@ describe("fileRunNote", () => {
     expect(step.usage.usd).toBeGreaterThan(0);
   });
 
+  it("reuses a case-variant sibling created meanwhile instead of adding a near-duplicate (QA-083)", async () => {
+    const { scope, noteId } = await runNote();
+    const bio = await createFolder(h.db, scope.workspaceId, { name: "Biology", parentId: null });
+    const step = new StepCollector();
+    const plan = await fileRunNote(
+      services({ decide: async () => ({ path: ["Biology", "plants"], createLeaf: true }) }),
+      scope,
+      step,
+    );
+    expect(plan?.kind).toBe("create");
+    const plants = await createFolder(h.db, scope.workspaceId, {
+      name: "Plants",
+      parentId: bio.id,
+    });
+    await commitStep(h.db, scope.runId, step);
+    const [note] = await h.db
+      .select({ folderId: notes.folderId })
+      .from(notes)
+      .where(eq(notes.id, noteId));
+    expect(note?.folderId).toBe(plants.id);
+    const children = await h.db
+      .select({ name: folders.name })
+      .from(folders)
+      .where(eq(folders.parentId, bio.id));
+    expect(children.map((c) => c.name)).toEqual(["Plants"]);
+  });
+
   it("uses the task's target folder without asking the model", async () => {
     const seedScope = await seedRun(h.db);
     const target = await createFolder(h.db, seedScope.workspaceId, {
