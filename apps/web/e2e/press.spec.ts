@@ -6,9 +6,11 @@ async function pressed(page: Page, target: Locator): Promise<{ scale: string; op
   // hover() scrolls the target into view and puts the pointer on it.
   await target.hover();
   await page.mouse.down();
-  // Past the 90ms press transition.
-  await page.waitForTimeout(150);
-  const style = await target.evaluate((el) => {
+  // Read the pressed state once the press transition has finished, by its own end, not a fixed
+  // wait: on a busy host a 90ms transition can still be running after 150ms (0.920004).
+  const style = await target.evaluate(async (el) => {
+    await new Promise(requestAnimationFrame); // :active applies, and starts the transition
+    await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined)));
     const s = getComputedStyle(el);
     return { scale: s.scale, opacity: s.opacity };
   });
