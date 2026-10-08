@@ -19,7 +19,10 @@ export interface FilledNodes {
 
 export interface SecretFingerprints {
   /** Records filled elements to mask; `secret` is null for usernames and one-time codes (deviation 7). */
-  remember(runId: string, entry: { filled: FilledNodes; secret: string | null }): void;
+  remember(
+    runId: string,
+    entry: { filled: FilledNodes; secret: string | null; code?: string | null },
+  ): void;
   /** B1's mask source for one run (RunHooks.maskSources). */
   forRun(runId: string): MaskSources;
   forgetRun(runId: string): void;
@@ -74,6 +77,8 @@ interface RunEntry {
    * tokens (review 14: "!! ##" matches across any spacing).
    */
   bareWindows: Map<number, Set<number>>;
+  /** Keyed digests of one-time codes filled this run, for the local pixel screen (ruling). */
+  codes: Set<string>;
   unwatch: Map<CDPSession, () => void>;
 }
 
@@ -105,6 +110,7 @@ export function createSecretFingerprints(): SecretFingerprints {
         digests: new Set(),
         windows: new Map(),
         bareWindows: new Map(),
+        codes: new Set(),
         unwatch: new Map(),
       };
       runs.set(runId, found);
@@ -199,7 +205,7 @@ export function createSecretFingerprints(): SecretFingerprints {
   };
 
   return {
-    remember(runId, { filled, secret }) {
+    remember(runId, { filled, secret, code }) {
       const run = entry(runId);
       for (const backendNodeId of filled.backendNodeIds)
         run.nodes.push({
@@ -212,6 +218,7 @@ export function createSecretFingerprints(): SecretFingerprints {
         run.nodes.splice(0, run.nodes.length - MAX_NODES_PER_RUN);
       watch(run, filled.cdp);
       if (secret !== null && isScannableSecret(secret)) register(run, secret);
+      if (code) run.codes.add(digest(code));
     },
     forRun: (runId) => ({
       // N2: keyed by frame id too, so a fill survives its frame's CDP session being replaced.
@@ -226,6 +233,8 @@ export function createSecretFingerprints(): SecretFingerprints {
           .filter((node) => node.cdp === cdp)
           .map((node) => node.backendNodeId),
       hasSecrets: () => (runs.get(runId)?.digests.size ?? 0) > 0,
+      hasOneTimeCodes: () => (runs.get(runId)?.codes.size ?? 0) > 0,
+      isOneTimeCode: (token) => runs.get(runId)?.codes.has(digest(token)) ?? false,
       redact: (text) => {
         const run = runs.get(runId);
         return run && run.digests.size > 0 ? redact(run, text) : text;

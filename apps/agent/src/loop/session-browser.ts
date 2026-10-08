@@ -12,7 +12,7 @@ import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import type { MaskSources } from "../browser/masking.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash } from "../browser/phash.ts";
-import { captureModelScreenshot, withheldScreenshot } from "../browser/screenshot.ts";
+import { captureModelScreenshot, WITHHELD, withheldScreenshot } from "../browser/screenshot.ts";
 import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
@@ -33,7 +33,7 @@ import { matchAccelerator } from "../tools/accelerators.ts";
 import { ComputerExecutor, type ActionGate } from "../tools/computer.ts";
 import { readPage, readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry, profileTools } from "../tools/registry.ts";
-import { register, type CallApproval } from "../tools/types.ts";
+import { register, type CallApproval, type StepWriter } from "../tools/types.ts";
 import type { RunHooks } from "./hooks.ts";
 import type { ConnectBrowser, LoopBrowser, Observation } from "./loop-browser.ts";
 import type { RunSnapshot } from "./run-state.ts";
@@ -119,7 +119,7 @@ export async function observeOnOnePage(
         origin: toOrigin(now),
         title: "",
         domHash: "",
-        screenshot: await withheldScreenshot(observation.screenshot),
+        screenshot: await withheldScreenshot(observation.screenshot, WITHHELD.navigating),
         // A black frame says nothing about the page: a random hash keeps loop detection from
         // treating consecutive withheld frames as the same screen (M8).
         phash: randomBytes(8).readBigUInt64BE(),
@@ -136,6 +136,7 @@ export class SessionLoopBrowser implements LoopBrowser {
   readonly #mask: MaskSources;
   readonly #run: () => RunSnapshot;
   readonly #log: Log;
+  readonly #slotName: string;
 
   constructor(options: {
     session: BrowserSession;
@@ -144,7 +145,10 @@ export class SessionLoopBrowser implements LoopBrowser {
     mask: MaskSources;
     run: () => RunSnapshot;
     log: Log;
+    /** The leased slot ("browser-N"), handed to tools for slot-local services. */
+    slotName: string;
   }) {
+    this.#slotName = options.slotName;
     this.#session = options.session;
     this.#executor = options.executor;
     this.#registry = options.registry;
@@ -236,6 +240,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     args: unknown,
     signal: AbortSignal,
     approval: CallApproval | null,
+    step: StepWriter,
   ) {
     const run = this.#run();
     return this.#registry.run(name, args, {
@@ -245,6 +250,9 @@ export class SessionLoopBrowser implements LoopBrowser {
       signal,
       log: this.#log,
       approval,
+      step,
+      mask: this.#mask,
+      slotName: this.#slotName,
     });
   }
 
@@ -316,12 +324,16 @@ export function slotBrowserConnector(options: {
 }): ConnectBrowser {
   return async ({ slotName, run, guard }) => {
     const baseUrl = await options.cdpBaseUrl(slotName);
+    const mask = options.hooks.maskSources(run().id);
     const session = await BrowserSession.connect({
       cdpBaseUrl: baseUrl,
       allowedOrigins: () => run().allowedOrigins,
       testMode: options.testMode,
       log: options.log,
       guard,
+      ...(options.hooks.responseLog
+        ? { responseLog: options.hooks.responseLog, redactUrl: (url: string) => mask.redact(url) }
+        : {}),
       downloads: {
         slotPath: slotDownloadPath(run().id),
         localPath: join(options.config.downloadsDir, Uuid.parse(run().id)),
@@ -333,7 +345,6 @@ export function slotBrowserConnector(options: {
         clock: options.clock,
         waitActionMs: options.config.waitActionMs,
       });
-      const mask = options.hooks.maskSources(run().id);
       const registry = new ToolRegistry(
         profileTools(run().toolProfile, [register(readPageTool), ...options.hooks.functionTools]),
         options.log,
@@ -346,6 +357,7 @@ export function slotBrowserConnector(options: {
         mask,
         run,
         log: options.log,
+        slotName,
       });
       return {
         browser,

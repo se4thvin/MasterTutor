@@ -1,5 +1,7 @@
-import type { ApprovalRequest, FunctionToolName } from "@mastertutor/contracts";
+import type { ApprovalRequest, FunctionToolName, RunEvent, Usage } from "@mastertutor/contracts";
+import type { DbTx } from "@mastertutor/db";
 import type { z } from "zod";
+import type { MaskSources } from "../browser/masking.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import type { Log } from "../runtime/types.ts";
 
@@ -27,6 +29,20 @@ export interface ApprovalContext {
   log: Log;
 }
 
+/**
+ * What a tool stages for its step's single commit (spec §5.3). Writes run inside the commit
+ * transaction in call order, then events; after-commit tasks run once it resolved. Objects a tool
+ * uploads are owned by the step: a failed or discarded step deletes them (preflight F17).
+ */
+export interface StepWriter {
+  defer(write: (tx: DbTx) => Promise<void>): void;
+  emit(event: RunEvent): void;
+  afterCommit(task: () => Promise<void>): void;
+  ownObject(key: string): void;
+  /** OCR, filing, embedding and transcription spend (preflight F16). */
+  addUsage(delta: Usage): void;
+}
+
 export interface ToolContext {
   runId: string;
   workspaceId: string;
@@ -42,6 +58,26 @@ export interface ToolContext {
    * the run waits for a takeover and the rest of the turn does not run.
    */
   requestHandOver(reason: string): void;
+  /** This act's staged writes, committed with it (B2 seam F2). */
+  step: StepWriter;
+  /** The run's vault mask sources (B3): stored screenshots are masked, secrets never persisted. */
+  mask: MaskSources;
+  /** The leased slot ("browser-N"), for slot-local services such as Pulse audio. */
+  slotName: string;
+}
+
+/**
+ * A typed tool failure. `code` and the tool-written `message` reach the model; nothing page-derived
+ * ever does (spec §6). The step's staged writes are discarded.
+ */
+export class ToolError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    if (!/^[a-z][a-z_]{0,39}$/.test(code)) throw new TypeError(`invalid tool error code ${code}`);
+    super(message.slice(0, 200));
+    this.name = "ToolError";
+    this.code = code;
+  }
 }
 
 /** Spec §3.3 `tools`: one function tool. `untrusted` results carry page-derived text. */

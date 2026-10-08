@@ -8,7 +8,7 @@ const capture = (url: string, png = TINY_PNG): Observation => ({
   title: `Title of ${url}`,
   origin: new URL(url).origin,
   domHash: `hash-${url}`,
-  screenshot: { png, width: 1, height: 1, scale: 1, masked: 0, dropped: false },
+  screenshot: { png, width: 1, height: 1, scale: 1, masked: 0, dropped: false, withheld: null },
   phash: 7n,
   captcha: false,
   scroll: { x: 0, y: 0 },

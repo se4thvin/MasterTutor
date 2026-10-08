@@ -134,7 +134,7 @@ case "$suite" in
   behaviour)
     command="$install && docker build --quiet --label mastertutor.ci=1 -t \"\$BEHAVIOUR_SLOT_IMAGE\" apps/browser-slot >/dev/null && NODE_OPTIONS=$preload exec pnpm exec vitest run \"\$@\"" ;;
   web-build)
-    command="$install && pnpm --filter @mastertutor/web build && exec pnpm --filter @mastertutor/web check:bundle" ;;
+    command="$install && pnpm --filter @mastertutor/web build && pnpm --filter @mastertutor/web check:bundle && exec pnpm --filter @mastertutor/web check:first-load" ;;
   ui)
     command="$install && exec pnpm --filter @mastertutor/web test:ui \"\$@\"" ;;
   agent-image)
