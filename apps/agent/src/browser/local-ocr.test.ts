@@ -1,7 +1,13 @@
 import sharp from "sharp";
 import { afterAll, describe, expect, it } from "vitest";
 import type { MaskSources } from "../browser/masking.ts";
-import { createLocalOcr, pixelsAreClean, screenPixels, tallPixelsAreClean } from "./local-ocr.ts";
+import {
+  closerLookBands,
+  createLocalOcr,
+  pixelsAreClean,
+  screenPixels,
+  tallPixelsAreClean,
+} from "./local-ocr.ts";
 
 const ocr = createLocalOcr();
 afterAll(() => ocr.close());
@@ -133,16 +139,34 @@ describe("confusable OCR reads (QA-099)", () => {
   it("withholds and masks a secret OCR misread as confusable characters", async () => {
     const misread = read(["Password", "hunter2011", "user", "alice"]);
     expect(await pixelsAreClean(misread, folding, new Uint8Array([1]), signal)).toBe(false);
-    const hit = await screenPixels(misread, folding, new Uint8Array([1]), signal);
-    expect(hit).toEqual({ kind: "hit", boxes: [box(50)] });
+    const blank = new Uint8Array(
+      await sharp({ create: { width: 400, height: 40, channels: 3, background: "#fff" } })
+        .png()
+        .toBuffer(),
+    );
+    const hit = await screenPixels(misread, folding, blank, signal);
+    expect(hit.kind).toBe("hit");
+    expect(hit.kind === "hit" && hit.boxes).toContainEqual(box(50));
     const clean = read(["Password", "hidden", "user", "alice"]);
-    expect(await screenPixels(clean, folding, new Uint8Array([1]), signal)).toEqual({
-      kind: "clean",
-    });
+    expect(await screenPixels(clean, folding, blank, signal)).toEqual({ kind: "clean" });
   });
 });
 
 describe("a long page.png read never holds up a loop screen (QA-092)", () => {
+  it("takes an urgent loop read before every capture read already queued (review M1)", async () => {
+    const png = await image("Quarterly results");
+    const done: string[] = [];
+    const track = (name: string, read: Promise<unknown>) => read.then(() => done.push(name));
+    // Three capture reads queued at once: the first starts, two wait; then the loop asks.
+    const reads = [
+      track("capture-1", ocr.text(png)),
+      track("capture-2", ocr.text(png)),
+      track("capture-3", ocr.text(png)),
+      track("loop", ocr.words(png, { urgent: true })),
+    ];
+    await Promise.all(reads);
+    expect(done).toEqual(["capture-1", "loop", "capture-2", "capture-3"]);
+  }, 60_000);
   it("runs the loop's screen between page.png tiles, not after the whole page", async () => {
     const lines = Array.from(
       { length: 240 },
@@ -174,4 +198,47 @@ describe("a long page.png read never holds up a loop screen (QA-092)", () => {
     // At most one tile ahead of it: far less than the whole page's read.
     expect(screened - asked).toBeLessThan((pageDone - started) / 2);
   }, 180_000);
+});
+
+describe("closerLookBands (QA-098: 2x only where the 1x read was small or unsure)", () => {
+  const word = (y: number, height: number, confidence: number) => ({
+    text: "w",
+    confidence,
+    box: { x: 10, y, width: 30, height },
+  });
+  const size = { width: 800, height: 600 };
+  it("asks nothing more of large, confidently read text", () => {
+    expect(closerLookBands([{ words: [word(100, 20, 95), word(100, 9, 96)] }], size)).toEqual([]);
+  });
+  it("judges size by the median word, so a 14 px line of descenders is still small (review I1)", () => {
+    // g, p and y reach below the baseline: their boxes are ~14 px at 14 px CSS, the line's median too.
+    const line = { words: [word(200, 14, 95), word(200, 10, 95), word(200, 14, 95)] };
+    expect(closerLookBands([line], size)).toEqual([{ x: 0, y: 194, width: 800, height: 26 }]);
+  });
+  it("re-reads ink the 1x read found no word in (review I1)", () => {
+    const ink = Array.from(
+      { length: 600 },
+      (_, y) => (y >= 300 && y < 311) || (y >= 100 && y < 120),
+    );
+    // Rows 100–119 are a read line (large, sure); rows 300–310 hold ink and no word.
+    expect(closerLookBands([{ words: [word(100, 20, 95)] }], size, ink)).toEqual([
+      { x: 0, y: 294, width: 800, height: 23 },
+    ]);
+  });
+  it("bands small or unsure lines across the width, merging close ones", () => {
+    expect(
+      closerLookBands(
+        [
+          { words: [word(100, 9, 95)] },
+          { words: [word(120, 20, 40)] },
+          { words: [word(400, 20, 95)] },
+          { words: [word(500, 10, 90)] },
+        ],
+        size,
+      ),
+    ).toEqual([
+      { x: 0, y: 94, width: 800, height: 52 },
+      { x: 0, y: 494, width: 800, height: 22 },
+    ]);
+  });
 });
