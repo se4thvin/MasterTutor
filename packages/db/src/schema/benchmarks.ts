@@ -11,7 +11,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { createdAt, id, jsonbDefault, tstz, updatedAt } from "./columns.ts";
-import { approvalModeEnum, benchmarkOutcomeEnum } from "./enums.ts";
+import { approvalModeEnum, benchmarkOutcomeEnum, toolProfileEnum } from "./enums.ts";
 import { runs } from "./runs.ts";
 import { workspaces } from "./workspace.ts";
 
@@ -27,6 +27,7 @@ export const benchmarks = pgTable(
     task: text("task").notNull(),
     allowedOrigins: text("allowed_origins").array().notNull(),
     approvalMode: approvalModeEnum("approval_mode").notNull().default("auto_within_allowlist"),
+    toolProfile: toolProfileEnum("tool_profile").notNull().default("browser_use"),
     budget: jsonb("budget").$type<Budget>().notNull().default(jsonbDefault(DEFAULT_BUDGET)),
     successCriteria: text("success_criteria").notNull(),
     createdAt: createdAt(),
@@ -51,6 +52,7 @@ export const benchmarkRuns = pgTable(
     usd: doublePrecision("usd").notNull().default(0),
     inputTokens: integer("input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
+    takeovers: integer("takeovers").notNull().default(0),
     durationMs: bigint("duration_ms", { mode: "number" }),
     failureNotes: text("failure_notes"),
     gradedBy: text("graded_by"),
