@@ -3,6 +3,7 @@ import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EXPORT_LIMITS } from "@mastertutor/contracts/export";
+import { ObjectNotFound } from "@mastertutor/storage";
 import { buildNoteExport, exportNote } from "./export.ts";
 
 let tdb: TestDatabase;
@@ -70,6 +71,17 @@ describe("buildNoteExport", () => {
       /First[\s\S]*!\[Leaf\]\(assets\/b{64}\.svg\)/,
     );
     expect(await buildNoteExport({ db: h.db, storage }, crypto.randomUUID(), noteId)).toBeNull();
+  });
+
+  it("exports the note without an asset whose object is missing; other store errors still fail (QA-097)", async () => {
+    const missing = { getStream: async () => Promise.reject(new ObjectNotFound()) };
+    const out = await buildNoteExport({ db: h.db, storage: missing }, ws, noteId);
+    const files = unzipSync(new Uint8Array(await new Response(out!.body).arrayBuffer()));
+    expect(Object.keys(files)).toEqual(["Leaves light.md"]);
+    expect(new TextDecoder().decode(files["Leaves light.md"]!)).not.toContain("b".repeat(64));
+    const down = { getStream: async () => Promise.reject(new Error("ECONNREFUSED")) };
+    const failing = await buildNoteExport({ db: h.db, storage: down }, ws, noteId);
+    await expect(new Response(failing!.body).arrayBuffer()).rejects.toThrow();
   });
 
   it("refuses an export over the size cap before reading anything (13-14 review)", async () => {
