@@ -310,6 +310,22 @@ export default defineConfig(
     },
   },
   {
+    // Server-side web tests and the instrumentation hook are server code: they may use the
+    // Node-only contracts and telemetry (D50) like the code they test or start.
+    files: [
+      "apps/web/lib/server/**/*.test.{ts,tsx}",
+      "apps/web/app/api/**/*.test.{ts,tsx}",
+      "apps/web/instrumentation.ts",
+      "apps/web/instrumentation.test.ts",
+    ],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
+        server: true,
+        fixtures: false,
+      }),
+    },
+  },
+  {
     // The one static home of domMax; layout-motion.tsx reaches it only through import().
     files: ["apps/web/components/motion/layout-features.ts"],
     rules: {

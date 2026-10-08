@@ -59,6 +59,34 @@ describe("StepStore telemetry (seam 5)", () => {
     expect(telemetry.spans().filter((s) => s.name === "mt.step.commit")).toHaveLength(2);
   });
 
+  it("counts nothing for a commit that rolls back, then the full change once one commits", async () => {
+    const spend = async () => (await telemetry.metric(METRIC.spendUsd.name))[0]?.value ?? 0;
+    const failures = async () =>
+      (await telemetry.metric(METRIC.runFailures.name)).find(
+        (p) => p.attributes["mt.error.code"] === "rolled_back_canary",
+      )?.value ?? 0;
+    const { store, row } = await openStore(0);
+    const before = await spend();
+    await owner.db.update(runs).set({ leaseOwner: "someone-else" }).where(eq(runs.id, row.id));
+    await expect(
+      store.commit({
+        run: { usage: { ...EMPTY_USAGE, usd: 2 } },
+        transition: {
+          from: ["running"],
+          to: "failed",
+          waitReason: null,
+          reason: "x",
+          error: { code: "rolled_back_canary", message: "never committed" },
+        },
+      }),
+    ).rejects.toMatchObject({ name: "LeaseLost" });
+    expect(await spend()).toBeCloseTo(before);
+    expect(await failures()).toBe(0);
+    await owner.db.update(runs).set({ leaseOwner: OWNER }).where(eq(runs.id, row.id));
+    await store.commit({ run: { usage: { ...EMPTY_USAGE, usd: 2.5 } } });
+    expect((await spend()) - before).toBeCloseTo(2.5);
+  });
+
   it("counts a failed run by its error code", async () => {
     const { store } = await openStore(0);
     await store.commit({
