@@ -19,6 +19,7 @@
     "@mastertutor/db": "workspace:*",
     "@mastertutor/sealing": "workspace:*",
     "@mastertutor/storage": "workspace:*",
+    "@mastertutor/telemetry": "workspace:*",
     "@orpc/client": "1.15.4",
     "@orpc/contract": "1.15.4",
     "@orpc/server": "1.15.4",

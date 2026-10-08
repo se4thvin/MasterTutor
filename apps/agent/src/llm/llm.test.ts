@@ -1,6 +1,7 @@
 import { EMPTY_USAGE, MODELS, TOOL_NAMES } from "@mastertutor/contracts";
 import { APIError, statelessParams } from "./openai.ts";
-import { afterEach, describe, expect, it } from "vitest";
+import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { ContextOverflow, ModelUnavailable } from "../runtime/errors.ts";
@@ -460,5 +461,76 @@ describe("tool profiles (Phase 10)", () => {
       expect(text).toContain("<untrusted_page_content>");
       expect(text).not.toMatch(/zybook|osano/i);
     }
+  });
+});
+
+describe("ModelCaller telemetry (seam 4)", () => {
+  let telemetry: TestTelemetry;
+  beforeEach(() => {
+    telemetry = installTestTelemetry();
+  });
+  afterEach(async () => {
+    await telemetry.shutdown();
+  });
+  const request = {
+    model: MODELS.agentPrimary,
+    instructions: "i",
+    input: [],
+    format: "agent_turn" as const,
+    toolProfile: "browser_use" as const,
+  };
+
+  it("records model, attempts, tokens and cost", async () => {
+    let calls = 0;
+    const caller = new ModelCaller(
+      {
+        create: async () => {
+          calls += 1;
+          if (calls === 1)
+            throw APIError.generate(429, { error: { message: "slow down" } }, "x", new Headers());
+          return {
+            id: "r",
+            model: MODELS.agentPrimary,
+            output: [],
+            usage: { input: 1_000, cached: 200, cacheWrite: 0, output: 50 },
+          };
+        },
+      },
+      { clock: instantClock(), fallbackAfter5xx: 3 },
+    );
+    await caller.call(request, new AbortController().signal);
+    const [span] = telemetry.spans().filter((s) => s.name === "mt.model.request");
+    expect(span!.attributes).toMatchObject({
+      "mt.model.name": MODELS.agentPrimary,
+      "mt.model.fallback": false,
+      "mt.model.attempts": 2,
+      "mt.model.tokens.input": 1_000,
+      "mt.model.tokens.cached": 200,
+      "mt.model.tokens.output": 50,
+    });
+    expect(span!.attributes["mt.model.cost_usd"]).toBeGreaterThan(0);
+    expect(await telemetry.metric("mt.model.tokens")).toHaveLength(3);
+  });
+
+  it("records a rejection by its code, never the API's message", async () => {
+    const caller = new ModelCaller(
+      {
+        create: async () => {
+          throw APIError.generate(
+            400,
+            { error: { message: "bad request quoting page-canary" } },
+            "bad request quoting page-canary",
+            new Headers(),
+          );
+        },
+      },
+      { clock: instantClock(), fallbackAfter5xx: 3 },
+    );
+    await expect(caller.call(request, new AbortController().signal)).rejects.toMatchObject({
+      code: "model_request_rejected",
+    });
+    const [span] = telemetry.spans();
+    expect(span!.attributes["mt.error.code"]).toBe("model_request_rejected");
+    expect(await telemetry.exported()).not.toContain("page-canary");
   });
 });

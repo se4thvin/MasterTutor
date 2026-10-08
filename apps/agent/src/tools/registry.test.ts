@@ -5,7 +5,8 @@ import {
   ReadPageResult,
 } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
-import { describe, expect, it } from "vitest";
+import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BrowserSession } from "../browser/session.ts";
 import { Interrupted, StaleRef } from "../runtime/errors.ts";
 import { NO_MASK_SOURCES, SECRET_REDACTION, type MaskSources } from "../browser/masking.ts";
@@ -225,5 +226,98 @@ describe("profileTools (Phase 10)", () => {
       "read_page",
       "fill_credential",
     ]);
+  });
+});
+
+describe("ToolRegistry telemetry (seam 3)", () => {
+  let telemetry: TestTelemetry;
+  beforeEach(() => {
+    telemetry = installTestTelemetry();
+  });
+  afterEach(async () => {
+    await telemetry.shutdown();
+  });
+
+  it("records one mt.tool span per call with its outcome", async () => {
+    const registry = new ToolRegistry(
+      [
+        fakeReadPage(async () => {
+          throw new ToolError("selector_not_found", "No element matches canary-selector");
+        }),
+      ],
+      log,
+    );
+    await registry.run("read_page", readArgs, ctx());
+    await registry.run("capture", {}, ctx());
+    const spans = telemetry.spans().filter((s) => s.name === "mt.tool");
+    expect(
+      spans.map((s) => [
+        s.attributes["mt.tool.name"],
+        s.attributes["mt.tool.outcome"],
+        s.attributes["mt.error.code"],
+      ]),
+    ).toEqual([
+      ["read_page", "tool_error", "selector_not_found"],
+      ["capture", "unavailable", undefined],
+    ]);
+    expect(spans[0]!.attributes["mt.run.id"]).toBe(ctx().runId);
+    expect(await telemetry.exported()).not.toContain("canary-selector");
+  });
+
+  it("adds only the attributes a tool declares, from its typed result", async () => {
+    const vault = register({
+      name: "fill_credential",
+      args: FillCredentialArgs,
+      result: FillCredentialResult,
+      untrusted: false,
+      run: async () => ({ error: "origin_mismatch" }) as FillCredentialResult,
+      telemetry: (args, result) => ({
+        "mt.vault.alias": args.alias,
+        ...("error" in result ? { "mt.error.code": result.error } : {}),
+      }),
+    });
+    const registry = new ToolRegistry([vault], log);
+    await registry.run(
+      "fill_credential",
+      { alias: "zybooks", field: "password", target: "e1" },
+      ctx(),
+    );
+    const [span] = telemetry.spans();
+    expect(span!.attributes).toMatchObject({
+      "mt.tool.name": "fill_credential",
+      "mt.vault.alias": "zybooks",
+      "mt.tool.outcome": "tool_error",
+      "mt.error.code": "origin_mismatch",
+    });
+  });
+
+  it("a tool's telemetry that throws never fails the call", async () => {
+    const tool = register({
+      name: "read_page",
+      args: ReadPageArgs,
+      result: ReadPageResult,
+      untrusted: true,
+      run: async () => ({ unchanged: true }) as const,
+      telemetry: () => {
+        throw new Error("bad telemetry");
+      },
+    });
+    const run = await new ToolRegistry([tool], log).run("read_page", readArgs, ctx());
+    expect(run.failed).toBe(false);
+    expect(telemetry.spans()[0]!.attributes["mt.tool.outcome"]).toBe("ok");
+  });
+
+  it("an interruption is not a tool failure", async () => {
+    const registry = new ToolRegistry(
+      [
+        fakeReadPage(async () => {
+          throw new Interrupted("takeover");
+        }),
+      ],
+      log,
+    );
+    await expect(registry.run("read_page", readArgs, ctx())).rejects.toThrow(Interrupted);
+    expect(telemetry.spans()[0]!.attributes["mt.interruption"]).toBe("takeover");
+    expect(telemetry.spans()[0]!.status.code).toBe(0);
   });
 });

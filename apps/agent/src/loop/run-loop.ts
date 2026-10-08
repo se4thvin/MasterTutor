@@ -16,7 +16,9 @@ import {
   wrapUntrusted,
   type CallResult,
 } from "@mastertutor/contracts";
+import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
 import { emitRunEvent, returnControlToAgent, type Database } from "@mastertutor/db";
+import { instrument } from "@mastertutor/telemetry/instrument";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
@@ -284,8 +286,24 @@ export class RunLoop {
     this.#lastTick = null;
   }
 
-  async step(signal: AbortSignal): Promise<StepOutcome> {
-    switch (this.#next) {
+  /** Seam 1 (spec §7.3): each phase is one mt.step span, the root of its trace (spec §7.2). */
+  step(signal: AbortSignal): Promise<StepOutcome> {
+    const phase = this.#next;
+    return instrument(
+      SPAN.step,
+      { [ATTR.runId]: this.#run.id, [ATTR.stepPhase]: phase },
+      async (span) => {
+        const outcome = await this.#phase(phase, signal);
+        span.set({ [ATTR.stepOutcome]: outcome.kind });
+        if (outcome.kind === "failed") span.fail(outcome.error.code);
+        return outcome;
+      },
+      { expected: interruptionOf },
+    );
+  }
+
+  #phase(phase: Phase, signal: AbortSignal): Promise<StepOutcome> {
+    switch (phase) {
       case "observe":
         return this.#observe(signal);
       case "decide":
@@ -890,7 +908,26 @@ export class RunLoop {
    * Runs one call. Every action of a batch is re-gated at execution time except the ones the user
    * (or policy) explicitly approved; a refused one stops the batch (Review Focus 3).
    */
-  async #execute(call: PendingCall, signal: AbortSignal, step: StepCollector): Promise<Executed> {
+  /** Seam 2: computer calls get the same mt.tool span function tools get in the registry. */
+  #execute(call: PendingCall, signal: AbortSignal, step: StepCollector): Promise<Executed> {
+    if (call.kind !== "computer") return this.#perform(call, signal, step);
+    return instrument(
+      SPAN.tool,
+      {
+        [ATTR.runId]: this.#run.id,
+        [ATTR.toolName]: "computer",
+        [ATTR.actionTypes]: call.actions.map((action) => action.type),
+      },
+      async (span) => {
+        const executed = await this.#perform(call, signal, step);
+        span.set({ [ATTR.toolOutcome]: executed.ran ? "ok" : "refused" });
+        return executed;
+      },
+      { expected: interruptionOf },
+    );
+  }
+
+  async #perform(call: PendingCall, signal: AbortSignal, step: StepCollector): Promise<Executed> {
     if (call.kind === "computer") {
       const refusals: string[] = [];
       const clicked: Array<{ index: number; label: string }> = [];
