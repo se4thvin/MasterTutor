@@ -310,6 +310,17 @@ export default defineConfig(
     },
   },
   {
+    // D50: the alert seam tests assert their spans and metrics through the in-memory harness
+    // (@mastertutor/telemetry/testing). They test server code; client code stays banned.
+    files: ["apps/web/lib/server/alerts/*.test.ts"],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
+        server: true,
+        fixtures: false,
+      }),
+    },
+  },
+  {
     // The one static home of domMax; layout-motion.tsx reaches it only through import().
     files: ["apps/web/components/motion/layout-features.ts"],
     rules: {

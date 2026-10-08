@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { METRIC } from "@mastertutor/contracts/telemetry";
+import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { handleAlertWebhook, type WebhookDeps } from "./webhook.ts";
 
 const SECRET = "s".repeat(40);
@@ -26,6 +28,14 @@ function deps({ secret = SECRET as string | undefined, created = true } = {}) {
   };
   return { recorded, delivered, deps: value };
 }
+
+let telemetry: TestTelemetry;
+beforeEach(() => {
+  telemetry = installTestTelemetry();
+});
+afterEach(async () => {
+  await telemetry.shutdown();
+});
 
 describe("POST /api/alerts/webhook (spec §13.2)", () => {
   it("does not exist without a secret", async () => {
@@ -67,6 +77,10 @@ describe("POST /api/alerts/webhook (spec §13.2)", () => {
     const repeat = deps({ created: false });
     expect((await handleAlertWebhook(repeat.deps, post('{"rule":"run_failed"}'))).status).toBe(202);
     expect([repeat.recorded, repeat.delivered]).toEqual([["run_failed"], []]);
+    // Every accepted delivery is counted, repeats included; refusals are not.
+    expect(await telemetry.metric(METRIC.alertsReceived.name)).toEqual([
+      { value: 2, attributes: { "mt.alert.rule": "run_failed" } },
+    ]);
   });
 
   it("answers 409 when there is no workspace to hold the alert yet", async () => {

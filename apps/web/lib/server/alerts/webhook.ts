@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { AlertWebhookBody, MAX_ALERT_WEBHOOK_BYTES, type AlertRule } from "@mastertutor/contracts";
+import { recordAlertReceived } from "@mastertutor/telemetry/record";
 import { readCapped } from "./read-capped.ts";
 
 export interface WebhookDeps {
@@ -42,6 +43,7 @@ export async function handleAlertWebhook(deps: WebhookDeps, request: Request): P
   if (!body.success) return status(400);
   const alert = await deps.record(body.data.rule);
   if (!alert) return status(409);
+  recordAlertReceived(body.data.rule);
   if (alert.created)
     deps.onRecorded({ id: alert.id, rule: body.data.rule, workspaceId: alert.workspaceId });
   return status(202);
