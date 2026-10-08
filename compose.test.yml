@@ -46,7 +46,7 @@ services:
   browser-1:
     environment:
       NEKO_WEBRTC_NAT1TO1: ${CDP_SUBNET_PREFIX:-172.30.231}.21
-      SLOT_EGRESS_ALLOW_CIDRS: 172.30.241.0/24
+      SLOT_EGRESS_ALLOW_CIDRS: ${FIXTURES_SUBNET_PREFIX:-172.30.241}.0/24
     networks:
       cdp:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.21
@@ -54,7 +54,7 @@ services:
   browser-2:
     environment:
       NEKO_WEBRTC_NAT1TO1: ${CDP_SUBNET_PREFIX:-172.30.231}.22
-      SLOT_EGRESS_ALLOW_CIDRS: 172.30.241.0/24
+      SLOT_EGRESS_ALLOW_CIDRS: ${FIXTURES_SUBNET_PREFIX:-172.30.241}.0/24
     networks:
       cdp:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.22
@@ -214,9 +214,10 @@ services:
 
 networks:
   # Fixture sites only. Internal: the slots, nginx and the vault fixture; SLOT_EGRESS_ALLOW_CIDRS
-  # opens exactly this subnet in the slots' egress firewall (the behaviour stack uses .240).
+  # opens exactly this subnet in the slots' egress firewall (the behaviour stack uses .240). The CI
+  # host gives each concurrent run its own prefix (scripts/remote-test/slots.sh).
   fixtures:
     internal: true
     ipam:
       config:
-        - subnet: 172.30.241.0/24
+        - subnet: ${FIXTURES_SUBNET_PREFIX:-172.30.241}.0/24
