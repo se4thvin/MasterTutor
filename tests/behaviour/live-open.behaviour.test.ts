@@ -11,6 +11,7 @@ import {
 } from "../../apps/web/lib/server/live/open-live.ts";
 import { BEHAVIOUR_NEKO_MEMBER_SECRET, nekoBaseUrlForTests } from "./constants.ts";
 import { behaviourEnv } from "./env.ts";
+import { endNekoViewer } from "./slot-tools.ts";
 
 const SLOT = "browser-2";
 const now = 1_700_000_000;
@@ -37,6 +38,7 @@ beforeAll(async () => {
 });
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.close();
+  await endNekoViewer(SLOT);
   await releaseSlotForTest(owner.db, SLOT);
 });
 afterAll(async () => {

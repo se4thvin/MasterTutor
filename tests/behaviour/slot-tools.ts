@@ -1,7 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createNekoAdmin } from "../../apps/agent/src/live/neko-admin.ts";
 import { waitFor } from "../../apps/agent/src/testing/wait.ts";
-import { COMPOSE_FILE, SLOT_CDP, nekoBaseUrlForTests } from "./constants.ts";
+import {
+  BEHAVIOUR_NEKO_ADMIN_SECRET,
+  COMPOSE_FILE,
+  SLOT_CDP,
+  nekoBaseUrlForTests,
+} from "./constants.ts";
 
 const run = promisify(execFile);
 const compose = async (...args: string[]) =>
@@ -43,4 +49,23 @@ export async function containerTimes(
   ]);
   const [finished, started] = out.stdout.trim().split(" ");
   return { finishedAt: Date.parse(finished!), startedAt: Date.parse(started!) };
+}
+
+const nekoAdmin = createNekoAdmin({
+  adminSecret: BEHAVIOUR_NEKO_ADMIN_SECRET,
+  baseUrl: nekoBaseUrlForTests,
+});
+
+/**
+ * Ends the slot's connected n.eko viewer (`user`) session, the way revocation does. A test that
+ * opened a viewer socket on a slot it does not restart calls it: n.eko notices a closed socket
+ * only later, and until then the next file's viewer login answers 422.
+ */
+export async function endNekoViewer(slotName: string): Promise<void> {
+  const sessions = (await nekoAdmin.request(slotName, "GET", "/api/sessions")) as Array<{
+    id: string;
+    state?: { is_connected?: boolean };
+  }>;
+  if (sessions.some((session) => session.id === "user" && session.state?.is_connected))
+    await nekoAdmin.request(slotName, "POST", "/api/sessions/user/disconnect");
 }
