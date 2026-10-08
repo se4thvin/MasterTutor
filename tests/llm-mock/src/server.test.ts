@@ -289,6 +289,39 @@ describe("llm-mock", () => {
     expect(ok.status).toBe(200);
   });
 
+  it("refuses more than one message image when the computer tool is declared, like the real API", async () => {
+    mock = await startLlmMock({
+      scenarios: [
+        { name: "images", turns: [{ outputs: [{ type: "turn", status: "done", reason: "ok" }] }] },
+      ],
+    });
+    const image = {
+      type: "input_image",
+      image_url: "data:image/png;base64,AA==",
+      detail: "original",
+    };
+    const withImage = (text: string) => ({
+      role: "user",
+      content: [{ type: "input_text", text }, image],
+    });
+    const computer = [{ type: "computer" }];
+    const two = await post({
+      tools: computer,
+      input: [withImage("[scenario:images] a"), withImage("b")],
+    });
+    expect(two.status).toBe(400);
+    expect(two.body.error).toMatchObject({
+      message: "Computer tool cannot use multiple image inputs.",
+      param: "input",
+    });
+    expect(mock.failures).toHaveLength(1);
+    const one = await post({
+      tools: computer,
+      input: [...userInput("[scenario:images] a"), withImage("b")],
+    });
+    expect(one.status).toBe(200);
+  });
+
   it("emits the single-action computer_call shape and reasoning items", async () => {
     mock = await startLlmMock({ scenarios: SCENARIOS.filter((s) => s.name === "wire-shapes") });
     const first = await post({ input: userInput("[scenario:wire-shapes]") });

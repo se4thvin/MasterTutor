@@ -17,6 +17,33 @@ export function classifyModelError(error: unknown): ModelErrorKind {
   return "server";
 }
 
+export const MODEL_ERROR_MESSAGE_MAX = 300;
+
+/**
+ * Log fields that say why OpenAI refused a request: status, error type, code and param, and its
+ * message with `redact` applied before truncation (a cut never shows part of a secret). Never the
+ * request body. Field names avoid the logger's redacted keys (`code`), so they survive.
+ */
+export function modelErrorLog(
+  error: unknown,
+  redact: (text: string) => string,
+): Record<string, string | number | null> {
+  if (!(error instanceof APIError)) return {};
+  const body = (error.error ?? {}) as Record<string, unknown>;
+  const field = (value: unknown) => (typeof value === "string" ? value.slice(0, 100) : null);
+  const message = typeof body.message === "string" ? body.message : "";
+  return {
+    modelStatus: error.status ?? null,
+    modelErrorType: field(body.type),
+    modelErrorCode: field(body.code),
+    modelErrorParam: field(body.param),
+    modelErrorMessage: redact(message.replace(/sk-[\w-]{6,}/g, "sk-[redacted]")).slice(
+      0,
+      MODEL_ERROR_MESSAGE_MAX,
+    ),
+  };
+}
+
 export interface CallResult {
   reply: ModelReply;
   model: string;
@@ -69,12 +96,16 @@ export class ModelCaller {
         const kind = classifyModelError(error);
         if (kind === "context_overflow") throw new ContextOverflow();
         if (kind === "fatal")
-          throw new ModelUnavailable("model_request_rejected", "The model rejected the request.");
+          throw new ModelUnavailable(
+            "model_request_rejected",
+            "The model rejected the request.",
+            error,
+          );
         if (kind === "server") {
           consecutive5xx += 1;
           if (consecutive5xx >= this.#fallbackAfter5xx) {
             if (model !== MODELS.agentPrimary)
-              throw new ModelUnavailable("model_unavailable", "The model is unavailable.");
+              throw new ModelUnavailable("model_unavailable", "The model is unavailable.", error);
             fallback = { from: model, to: MODELS.agentFallback };
             model = MODELS.agentFallback;
             consecutive5xx = 0;
@@ -84,7 +115,7 @@ export class ModelCaller {
           consecutive5xx = 0;
         }
         if (attempt >= this.#maxAttempts)
-          throw new ModelUnavailable("model_rate_limited", "The model kept rate-limiting.");
+          throw new ModelUnavailable("model_rate_limited", "The model kept rate-limiting.", error);
         await this.#clock.sleep(backoffMs(attempt, retryAfterMs(error)), signal);
       }
     }
