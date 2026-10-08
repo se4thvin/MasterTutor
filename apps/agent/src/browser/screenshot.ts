@@ -115,25 +115,25 @@ async function screened(
   ocr: LocalOcr,
   signal: AbortSignal,
 ): Promise<ModelScreenshot | null> {
-  const first = await screenUpscaled(ocr, sources, shot, shot.png, signal);
+  const first = await screenBothScales(ocr, sources, shot, shot.png, signal);
   if (first.kind === "clean") return shot;
   if (first.kind === "failed") return null;
   const png = await drawMasks(shot.png, first.boxes.map(pad), {
     width: shot.width,
     height: shot.height,
   });
-  const again = await screenUpscaled(ocr, sources, shot, png, signal);
+  const again = await screenBothScales(ocr, sources, shot, png, signal);
   if (again.kind !== "clean") return null;
   return { ...shot, png, masked: shot.masked + first.boxes.length };
 }
 
 /**
- * UI text is 11–14 px, where tesseract misses most of what it reads at 2× (QA-098): the screen
- * reads a 2× copy and maps its boxes back to the image.
+ * Tesseract misses most UI-size text (11–14 px) at 1× and finds it at 2×, while large text reads
+ * better at 1× (QA-098, measured): the screen reads both and joins their hits, 2× boxes mapped back.
  */
 const OCR_UPSCALE = 2;
 
-async function screenUpscaled(
+async function screenBothScales(
   ocr: LocalOcr,
   sources: MaskSources,
   size: { width: number; height: number },
@@ -145,17 +145,24 @@ async function screenUpscaled(
     .resize(size.width * OCR_UPSCALE, size.height * OCR_UPSCALE, { kernel: "lanczos3" })
     .png()
     .toBuffer();
-  const read = await screenPixels(ocr, sources, large, signal);
-  if (read.kind !== "hit") return read;
-  return {
-    kind: "hit",
-    boxes: read.boxes.map((box) => ({
-      x: box.x / OCR_UPSCALE,
-      y: box.y / OCR_UPSCALE,
-      width: box.width / OCR_UPSCALE,
-      height: box.height / OCR_UPSCALE,
-    })),
-  };
+  const reads = [
+    await screenPixels(ocr, sources, png, signal),
+    await screenPixels(ocr, sources, large, signal),
+  ];
+  if (reads.some((read) => read.kind === "failed")) return { kind: "failed" };
+  const [native, upscaled] = reads;
+  const boxes = [
+    ...(native?.kind === "hit" ? native.boxes : []),
+    ...(upscaled?.kind === "hit"
+      ? upscaled.boxes.map((box) => ({
+          x: box.x / OCR_UPSCALE,
+          y: box.y / OCR_UPSCALE,
+          width: box.width / OCR_UPSCALE,
+          height: box.height / OCR_UPSCALE,
+        }))
+      : []),
+  ];
+  return boxes.length > 0 ? { kind: "hit", boxes } : { kind: "clean" };
 }
 
 /** OCR boxes hug the glyphs: a little margin so no antialiased edge stays readable. */

@@ -1,8 +1,11 @@
+import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FIXTURES, openTestSession } from "../testing/browser-harness.ts";
 import { createLocalOcr, sharedLocalOcr, type LocalOcr } from "./local-ocr.ts";
 import type { MaskSources } from "./masking.ts";
 import { captureModelScreenshot } from "./screenshot.ts";
+import { createSecretFingerprints } from "../vault/fingerprints.ts";
+import { ocrContains } from "../vault/testing/ocr.ts";
 import type { BrowserSession } from "./session.ts";
 
 const SECRET = "MARMOT4CANARY8VELVET";
@@ -31,10 +34,13 @@ afterAll(async () => {
 async function canvasPage(lines: string[], px = 44) {
   await session.page.setContent(`<canvas id="c" width="1000" height="300"></canvas>
     <script>
-      const ctx = document.getElementById("c").getContext("2d");
-      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, 300);
-      ctx.fillStyle = "#000"; ctx.font = "${px}px sans-serif";
-      ${JSON.stringify(lines)}.forEach((line, i) => ctx.fillText(line, 30, 80 + i * 90));
+      {
+        // A block: setContent keeps the realm, so a second top-level const would not draw.
+        const ctx = document.getElementById("c").getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, 300);
+        ctx.fillStyle = "#000"; ctx.font = "${px}px sans-serif";
+        ${JSON.stringify(lines)}.forEach((line, i) => ctx.fillText(line, 30, 80 + i * 90));
+      }
     </script>`);
 }
 
@@ -49,13 +55,34 @@ describe("agent-loop screenshots on a secret-holding run (I-1)", () => {
     expect(seen).toMatch(/Password/);
   }, 120_000);
 
-  it("finds a secret drawn at UI text size, 14 px (QA-098)", async () => {
-    // Read at 1× this misreads ("Xke#mQa2svL"); the screen reads a 2× copy.
-    const small = "Xk9#mQ2$vL";
-    const sources: MaskSources = { ...vault, redact: (text) => text.replaceAll(small, "[secret]") };
-    await canvasPage([`Password ${small}`, `Signed in as ${USER}`], 14);
-    const shot = await captureModelScreenshot(session, sources, signal, sharedLocalOcr());
-    expect(shot.masked > 0 || shot.dropped).toBe(true);
+  it("finds secrets drawn at UI text sizes, 12 and 14 px, with the vault's matcher (QA-098, QA-099)", async () => {
+    // The real fingerprints: exact digests plus the confusable-folded ones the pixel screens use.
+    const prints = createSecretFingerprints();
+    const cdp = await session.cdp();
+    const secrets = ["Xk9#mQ2$vL", "Tr0ub4dor&3"];
+    for (const secret of secrets)
+      prints.remember("qa-098", {
+        filled: { cdp, frameId: "main", loaderId: "doc", backendNodeIds: [] },
+        secret,
+      });
+    const sources = prints.forRun("qa-098");
+    for (const px of [12, 14]) {
+      await canvasPage(
+        [`Password ${secrets[0]}`, `PIN code ${secrets[1]}`, `Signed in as ${USER}`],
+        px,
+      );
+      const shot = await captureModelScreenshot(session, sources, signal, sharedLocalOcr());
+      // Each secret is filled (two hits at least), or the frame is withheld; never sent readable.
+      const large = await sharp(shot.png)
+        .resize({ width: shot.width * 2 })
+        .png()
+        .toBuffer();
+      const seen = `${await reader.text(shot.png)}\n${await reader.text(large)}`;
+      expect(shot.dropped || shot.masked >= 2, `${px}px: ${seen}`).toBe(true);
+      for (const secret of secrets)
+        expect(ocrContains(seen, secret), `${px}px: ${seen}`).toBe(false);
+    }
+    prints.forgetRun("qa-098");
   }, 120_000);
 
   it("withholds the screenshot when local OCR fails, and says why", async () => {
