@@ -89,11 +89,15 @@ export async function transcribeVideo(
     throw new ToolError("audio_unavailable", "The browser's audio could not be recorded");
   }
   let lag = 0;
+  // Ends the chunk loop once the call has failed or been aborted: no chunk is sent after that (N1).
+  const halt = new AbortController();
+  const loopSignal = AbortSignal.any([ctx.signal, halt.signal]);
   const transcribeAll = async (): Promise<CaptionSegment[]> => {
     const segments: CaptionSegment[] = [];
     for (;;) {
-      const chunk = await recording.next(ctx.signal);
+      const chunk = await recording.next(loopSignal);
       if (!chunk) return segments;
+      loopSignal.throwIfAborted();
       if (chunk.index >= maxChunks)
         throw new ToolError("playback_overrun", "The recording ran past the video's length");
       // Checked before the audio is sent: the loop checks the budget only between steps.
@@ -112,8 +116,8 @@ export async function transcribeVideo(
         });
     }
   };
+  let transcribing: Promise<CaptionSegment[]> | null = null;
   try {
-    let transcribing: Promise<CaptionSegment[]>;
     try {
       ctx.session.guard.assertAgent(ctx.signal);
       if (!(await abortable(worlds.call(pageVideoPlay, []), ctx.signal)))
@@ -123,6 +127,7 @@ export async function transcribeVideo(
       transcribing.catch(() => undefined);
       // A transcription failure (budget, overrun) ends playback at once.
       const failed = transcribing.then(() => new Promise<never>(() => undefined));
+      failed.catch(() => undefined);
       await waitForPlayback(ctx, worlds, range.end, Date.now() + deadlineMs, failed);
     } finally {
       if (!ctx.session.guard.held)
@@ -132,6 +137,9 @@ export async function transcribeVideo(
     const segments = (await transcribing).filter((s) => s.start < range.end);
     return { segments, seconds: range.end - range.start };
   } catch (error) {
+    // No further chunk is sent; one already sent finishes, so its spend joins this step (N1).
+    halt.abort();
+    await transcribing?.catch(() => undefined);
     if (error instanceof AudioCaptureError)
       throw new ToolError("audio_unavailable", "The browser's audio recording failed");
     throw error;

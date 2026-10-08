@@ -1,3 +1,4 @@
+import { EMPTY_USAGE } from "@mastertutor/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { wavHeader } from "../audio/protocol.ts";
 import { ControlGuard } from "../browser/guard.ts";
@@ -20,7 +21,15 @@ const chunkOf = (index: number, seconds: number): AudioChunk => {
 };
 
 /** An in-memory audio-capture service: hands out `chunks`, then null once stopped. */
-function fakeCapture(chunks: AudioChunk[], options: { bufferedMs?: number; fails?: boolean } = {}) {
+function fakeCapture(
+  chunks: AudioChunk[],
+  options: {
+    bufferedMs?: number;
+    fails?: boolean;
+    rejectAfterDiscard?: boolean;
+    delayMs?: number;
+  } = {},
+) {
   const calls = { started: 0, stopped: 0, discarded: 0, served: 0 };
   let stopped = false;
   let wake: () => void = () => undefined;
@@ -32,15 +41,22 @@ function fakeCapture(chunks: AudioChunk[], options: { bufferedMs?: number; fails
       return {
         readyAt: Date.now(),
         bufferedMs: options.bufferedMs ?? 0,
-        async next() {
+        async next(signal: AbortSignal) {
+          if (options.delayMs) await new Promise((r) => setTimeout(r, options.delayMs));
           for (;;) {
+            signal.throwIfAborted();
+            if (options.rejectAfterDiscard && calls.discarded > 0) throw new Error("session gone");
             const chunk = queue.shift();
             if (chunk) {
               calls.served++;
               return chunk;
             }
             if (stopped) return null;
-            await new Promise<void>((resolve) => (wake = resolve));
+            // Like the real client's fetch: an abort ends the wait.
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
           }
         },
         async stop() {
@@ -163,6 +179,69 @@ describe("transcribeVideo (spec §8 transcribe)", () => {
     await expect(run).rejects.toThrow("cancelled");
     expect(Date.now() - began).toBeLessThan(1_000);
     expect(calls.discarded).toBe(1);
+  });
+});
+
+describe("transcribeVideo after a failure (B4 re-review N1)", () => {
+  it("a takeover right after play() leaves no unhandled rejection and sends no chunk", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const guard = new ControlGuard();
+      let sent = 0;
+      const world = {
+        call: async (fn: unknown) => {
+          if (fn === pageVideoPlay) {
+            guard.hold(); // a person takes the browser while play() resolves
+            return true;
+          }
+          return true;
+        },
+      } as never;
+      await expect(
+        transcribeVideo(
+          {
+            capture: fakeCapture([chunkOf(0, 1)], { rejectAfterDiscard: true, delayMs: 20 })
+              .capture,
+            chunkSeconds: 1,
+            transcriber: { transcribe: async () => ((sent += 1), []) },
+          },
+          { ...context(), session: { guard } as never },
+          world,
+          { start: 0, end: 3 },
+        ),
+      ).rejects.toThrow();
+      await new Promise((r) => setTimeout(r, 100));
+      expect(unhandled).toEqual([]);
+      expect(sent).toBe(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("bills a chunk that was already sent before the tool returns", async () => {
+    const step = new StepCollector();
+    let release: () => void = () => undefined;
+    const run = transcribeVideo(
+      {
+        capture: fakeCapture([chunkOf(0, 1)]).capture,
+        chunkSeconds: 1,
+        transcriber: {
+          transcribe: async (_chunk, { step: s }) => {
+            await new Promise<void>((resolve) => (release = resolve));
+            s.addUsage({ ...EMPTY_USAGE, usd: 0.25 });
+            return [];
+          },
+        },
+      },
+      context(step),
+      player({ times: [2, 4, 0.5], endsAt: 60 }), // a rewind fails the call mid-transcription
+      { start: 0, end: 10 },
+    );
+    setTimeout(() => release(), 2_500); // the rewind is seen at ~2 s, while this chunk is in flight
+    await expect(run).rejects.toMatchObject({ code: "playback_overrun" });
+    expect(step.usage.usd).toBeCloseTo(0.25, 9);
   });
 });
 
