@@ -4,7 +4,7 @@ import type { PushTarget } from "@mastertutor/db";
 import type { VapidKeys } from "../push/config.ts";
 import { sendPush, type SendPush } from "../push/send.ts";
 
-export interface DeliverDeps {
+interface DeliverDeps {
   /** Null without VAPID keys or HTTPS: alerts stay in-app (spec §13.4). */
   vapid: VapidKeys | null;
   targets(): Promise<PushTarget[]>;

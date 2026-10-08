@@ -6,7 +6,7 @@ import type { VapidKeys } from "./config.ts";
 /** An alert is stale after an hour; a phone that was off for longer just sees the Alerts page. */
 const TTL_SECONDS = 3_600;
 
-export interface PushRequest {
+interface PushRequest {
   body: Buffer;
   /** Lower-case, string-valued, without Content-Length (fetch sets it). */
   headers: Record<string, string>;

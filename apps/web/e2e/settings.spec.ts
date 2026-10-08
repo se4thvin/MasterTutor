@@ -3,7 +3,14 @@ import { expect, expectCleanScreen, test } from "./helpers/test.ts";
 test("settings groups are clean at every width", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { level: 1, name: /Settings/ })).toBeVisible();
-  for (const name of ["Safety", "Defaults for new tasks", "Agent", "Activity", "Account"]) {
+  for (const name of [
+    "Safety",
+    "Notifications",
+    "Defaults for new tasks",
+    "Agent",
+    "Activity",
+    "Account",
+  ]) {
     await expect(page.getByRole("heading", { name })).toBeVisible();
   }
   await expect(page.getByText("6 browsers at once")).toBeVisible();
