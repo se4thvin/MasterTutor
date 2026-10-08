@@ -20,7 +20,6 @@ import {
 
 export const KEYFRAME_INTERVAL_S = 2;
 export const DRM_LUMINANCE = 0.03;
-export const DRM_PROBE_FRAMES = 5;
 
 export async function meanLuminance(png: Uint8Array): Promise<number> {
   const stats = await sharp(png).greyscale().stats();
@@ -73,14 +72,23 @@ export class KeyframeSampler {
 export interface KeyframeResult {
   frames: Keyframe[];
   dropped: number;
-  /** Black frames (DRM) or a video the slot cannot seek: the note continues with the transcript only. */
+  /** Every sampled frame was dark (DRM in the slot): no frames are kept. */
   drm: boolean;
+  /** No seek landed: the slot cannot play this video. */
   unplayable: boolean;
   /** Frames the masker withheld. */
   withheld: number;
+  /** Sample points with no frame: a seek that did not land, or a player with no box (I1). */
+  missed: number;
+  /** Frames captured (dark ones included). */
+  sampled: number;
 }
 
-/** Seeks every 2 s, captures the clipped, masked video region, and restores CC and position afterwards. */
+/**
+ * Seeks every 2 s, captures the clipped, masked video region, and restores CC and position
+ * afterwards. Nothing is dropped silently: a point without a frame counts as missed or withheld,
+ * and a dark stretch is kept unless every frame is dark (B4 review I1, I2).
+ */
 export async function sampleKeyframes(
   ctx: { session: BrowserSession; mask: MaskSources; signal: AbortSignal },
   worlds: Pick<IsolatedWorlds, "call">,
@@ -88,26 +96,34 @@ export async function sampleKeyframes(
 ): Promise<KeyframeResult> {
   const mutate = () => ctx.session.guard.assertAgent(ctx.signal);
   const before = await worlds.call(pageVideoState, []);
-  if (!before.found) return { frames: [], dropped: 0, drm: true, unplayable: true, withheld: 0 };
+  const none = { frames: [], dropped: 0, drm: true, unplayable: true, withheld: 0, sampled: 0 };
+  if (!before.found) return { ...none, missed: 1 };
   const captions = await worlds.call(pageCaptionsState, []);
   // Captions would sit on every frame: off while sampling, back on afterwards.
   mutate();
   if (captions.pressed) await worlds.call(pageCaptionsClick, []);
   await worlds.call(pageVideoPause, []);
-  const end = Math.min(range.end, before.duration);
+  const end = before.duration > 0 ? Math.min(range.end, before.duration) : range.end;
   const sampler = new KeyframeSampler();
   let seeked = 0;
   let sampled = 0;
   let dark = 0;
   let withheld = 0;
+  let missed = 0;
   try {
     for (let t = range.start; t <= end + 1e-6; t += KEYFRAME_INTERVAL_S) {
       mutate();
       const target = Math.min(t, Math.max(range.start, end - 0.05));
-      if (!(await worlds.call(pageVideoSeek, [target]))) continue;
+      if (!(await worlds.call(pageVideoSeek, [target]))) {
+        missed++;
+        continue;
+      }
       seeked++;
       const rect = (await worlds.call(pageVideoState, [])).rect;
-      if (!rect) break;
+      if (!rect) {
+        missed++;
+        continue;
+      }
       const png = await captureMaskedRegion(
         ctx.session,
         ctx.mask,
@@ -119,20 +135,19 @@ export async function sampleKeyframes(
         continue;
       }
       sampled++;
-      if (sampled <= DRM_PROBE_FRAMES && (await meanLuminance(png)) < DRM_LUMINANCE) dark++;
-      if (dark === DRM_PROBE_FRAMES)
-        return { frames: [], dropped: 0, drm: true, unplayable: false, withheld };
+      if ((await meanLuminance(png)) < DRM_LUMINANCE) dark++;
       sampler.push({ t: target, hash: await perceptualHash(png), png });
     }
-    if (seeked === 0) return { frames: [], dropped: 0, drm: true, unplayable: true, withheld };
+    const counts = { withheld, missed, sampled };
+    if (seeked === 0) return { ...none, ...counts };
     if (sampled > 0 && dark === sampled)
-      return { frames: [], dropped: 0, drm: true, unplayable: false, withheld };
+      return { frames: [], dropped: 0, drm: true, unplayable: false, ...counts };
     return {
       frames: sampler.finish(),
       dropped: sampler.dropped,
       drm: false,
       unplayable: false,
-      withheld,
+      ...counts,
     };
   } finally {
     // Put the player back only while the agent still has the page (a takeover must not be undone).

@@ -9,6 +9,8 @@ export interface VideoState {
   paused: boolean;
   muted: boolean;
   ended: boolean;
+  /** YouTube is showing an ad in the player (its duration is the ad's, not the content's). */
+  ad: boolean;
   /** The largest visible video, in document coordinates (CSS px); it feeds captureMaskedRegion. */
   rect: { x: number; y: number; width: number; height: number } | null;
 }
@@ -28,6 +30,7 @@ export function pageVideoState(): VideoState {
       paused: true,
       muted: false,
       ended: false,
+      ad: false,
       rect: null,
     };
   const r = video.getBoundingClientRect();
@@ -42,6 +45,7 @@ export function pageVideoState(): VideoState {
     paused: video.paused,
     muted: video.muted,
     ended: video.ended,
+    ad: !!video.closest(".html5-video-player")?.classList.contains("ad-showing"),
     rect,
   };
 }
@@ -119,18 +123,27 @@ export function pageCaptionsClick(): boolean {
   return true;
 }
 
-/** The ytInitialData script (≤ 5 MB) and the description text, for chapters. */
+/**
+ * The ytInitialData script (≤ 5 MB) and the description text, for chapters; the content's length
+ * from ytInitialPlayerResponse (an ad in the player never changes it).
+ */
 export function pageYoutubeData(): {
   initialDataScript: string | null;
   description: string | null;
+  lengthSeconds: number | null;
 } {
   const script = [...document.scripts].find((s) => (s.textContent ?? "").includes("ytInitialData"));
   const text = script?.textContent ?? null;
   const description = document.querySelector<HTMLElement>(
     "#description, ytd-text-inline-expander, #description-inline-expander",
   );
+  const player = [...document.scripts].find((s) =>
+    (s.textContent ?? "").includes("ytInitialPlayerResponse"),
+  );
+  const length = /"lengthSeconds"\s*:\s*"?(\d{1,6})"?/.exec(player?.textContent ?? "");
   return {
     initialDataScript: text && text.length <= 5_000_000 ? text : null,
     description: description ? description.innerText.slice(0, 20_000) : null,
+    lengthSeconds: length?.[1] && Number(length[1]) > 0 ? Number(length[1]) : null,
   };
 }

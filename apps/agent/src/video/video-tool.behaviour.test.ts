@@ -39,6 +39,13 @@ async function op(
     throw error;
   }
 }
+async function fidelityOf(runId: string) {
+  const [note] = await env.db.db
+    .select({ fidelity: notes.fidelity })
+    .from(notes)
+    .where(eq(notes.id, await noteOf(runId)));
+  return note?.fidelity;
+}
 async function noteOf(runId: string) {
   const [run] = await env.db.db
     .select({ noteId: runs.noteId })
@@ -137,13 +144,14 @@ describe("video tool (B4 done-when: the YouTube fixture produces a chaptered not
     expect(transcribed).toBe(0);
   }, 60_000);
 
-  it("caps one call at 600 s and reports DRM and unplayable video (S9, W9)", async () => {
+  it("caps one call at 600 s; DRM and unplayable video are flagged and never verified (S9, W9, I2)", async () => {
     const scope = await open("watch.html");
     await expect(
       op(scope, { op: "keyframes", range: { start: 0, end: 700 } }),
     ).rejects.toMatchObject({ code: "range_too_long" });
     const drm = await open("drm.html");
     expect(await op(drm, { op: "keyframes", range: null })).toMatchObject({ drm: true, kept: 0 });
+    expect(await fidelityOf(drm.runId)).toBe("partial");
     const broken = await open("broken.html");
     expect(await op(broken, { op: "keyframes", range: { start: 0, end: 10 } })).toMatchObject({
       drm: true,
@@ -154,6 +162,27 @@ describe("video tool (B4 done-when: the YouTube fixture produces a chaptered not
       .from(sources)
       .where(sql`${sources.meta}->>'noteId' = ${await noteOf(broken.runId)}`);
     expect(source?.meta).toMatchObject({ drm: true, playback: "failed" });
+    expect(await fidelityOf(broken.runId)).toBe("partial");
+  }, 180_000);
+
+  it("counts a slide it could not capture, so the note is not verified (I1)", async () => {
+    const scope = await open("watch-collapse.html");
+    const result = await op(scope, { op: "keyframes", range: null });
+    expect(result).toMatchObject({ op: "keyframes", drm: false });
+    expect((result as { kept: number }).kept).toBeGreaterThan(2);
+    expect(await fidelityOf(scope.runId)).toBe("partial");
+  }, 120_000);
+
+  it("uses the content's length, not an ad's, and refuses frames while the ad plays (I8)", async () => {
+    const scope = await open("watch-ad.html");
+    expect(await op(scope, { op: "captions", range: null })).toMatchObject({ segments: 8 });
+    await expect(op(scope, { op: "keyframes", range: null })).rejects.toMatchObject({
+      code: "ad_playing",
+    });
+    const broken = await open("broken.html");
+    await expect(op(broken, { op: "keyframes", range: null })).rejects.toMatchObject({
+      code: "duration_unknown",
+    });
   }, 120_000);
 
   it("never stores a keyframe whose pixels show a secret on a secret-holding run", async () => {
