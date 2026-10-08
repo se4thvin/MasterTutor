@@ -9,17 +9,20 @@ export async function searchNotes(
   db: Database,
   workspaceId: string,
   input: SearchInput,
-  deps: { embeddings: EmbeddingsClient },
+  deps: { embeddings: EmbeddingsClient; signal?: AbortSignal },
 ): Promise<{ items: SearchHit[] }> {
   let embedding: number[] | null;
   try {
+    // The request's signal too: a search the client dropped stops paying for its embedding (QA-091).
     const { vectors } = await embedTexts(deps.embeddings, [input.q], {
       batchTimeoutMs: QUERY_EMBED_TIMEOUT_MS,
+      signal: deps.signal,
     });
     embedding = vectors[0] ?? null;
   } catch {
     embedding = null;
   }
+  deps.signal?.throwIfAborted();
   const items = await hybridSearch(db, {
     workspaceId,
     q: input.q,
