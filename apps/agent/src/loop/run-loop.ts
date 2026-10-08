@@ -163,6 +163,9 @@ const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = [
   ...WAITS_KEPT_THROUGH_TAKEOVER,
 ];
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
+/** The wait shown when a page wants a sign-in the vault cannot provide. */
+export const signInNeeded = (origin: string) =>
+  `Sign-in needed for ${origin} — add it in the Vault or take over`;
 
 /** What an approval was for; an approved action only runs while its target still classifies the same. */
 function riskOf(request: ApprovalRequest): { kind: string | null; label: string | null } {
@@ -428,6 +431,14 @@ export class RunLoop {
     });
     this.#notesChanged = false;
     if (obs.captcha) return this.#wait("captcha", "A CAPTCHA needs a person", commit);
+    // Missing data, not an approval: every approval mode pauses, and the model never gets a turn
+    // on a sign-in page it has no saved sign-in for, so it cannot type guessed credentials.
+    if (
+      obs.signIn &&
+      obs.origin !== null &&
+      !(await this.#deps.hooks.hasSignIn(this.#run, obs.origin))
+    )
+      return this.#wait("takeover", signInNeeded(obs.origin), commit);
     if (stuck) return this.#wait("takeover", "stuck", commit);
     const exceeded = budgetExceeded(this.#run.usage, this.#run.budget);
     await this.#deps.store.commit(commit);
