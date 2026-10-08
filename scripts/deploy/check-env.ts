@@ -11,6 +11,7 @@ import {
   EnvError,
   GarageInitEnv,
   MigrateEnv,
+  ObservabilityInitEnv,
   WebEnv,
   liveForwardAuthAddress,
   liveRouterRule,
@@ -19,6 +20,7 @@ import {
 import { vaultKeyPairFromPrivate } from "@mastertutor/sealing/open";
 import { composeConfig, type ComposeConfig } from "../../tests/compose/compose-json.ts";
 import { prodModeProblems } from "../../tests/compose/prod-mode.ts";
+import { vapidPairMatches } from "../lib/vapid.ts";
 
 export const PRODUCTION_FILES = ["compose.yml", "compose.prod.yml"] as const;
 const SERVICE_SCHEMAS = {
@@ -26,6 +28,7 @@ const SERVICE_SCHEMAS = {
   agent: AgentEnv,
   migrate: MigrateEnv,
   "garage-init": GarageInitEnv,
+  "observability-init": ObservabilityInitEnv,
 };
 const REMOVED_KEYS: Record<string, string> = {
   TURN_SECRET: "v1 has no TURN relay, D42",
@@ -76,6 +79,8 @@ export async function checkProductionEnv(envFile: string): Promise<string[]> {
     .filter(Boolean);
   if (!profiles.includes("pdf")) problems.push("COMPOSE_PROFILES: must include pdf (docling, D42)");
   if (profiles.includes("turn")) problems.push("COMPOSE_PROFILES: must not include turn (D42)");
+  if (!profiles.includes("observability"))
+    problems.push("COMPOSE_PROFILES: must include observability (D50)");
 
   if (!has("DOMAIN")) {
     problems.push("DOMAIN: required");
@@ -117,6 +122,12 @@ export async function checkProductionEnv(envFile: string): Promise<string[]> {
       problems.push("VAULT_PRIVATE_KEY: not a valid vault key");
     }
   }
+  if (
+    has("VAPID_PUBLIC_KEY") &&
+    has("VAPID_PRIVATE_KEY") &&
+    !vapidPairMatches(root.VAPID_PUBLIC_KEY!, root.VAPID_PRIVATE_KEY!)
+  )
+    problems.push("VAPID_PUBLIC_KEY: does not match VAPID_PRIVATE_KEY");
 
   let config: ComposeConfig;
   try {

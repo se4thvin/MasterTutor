@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { GarageInitEnv, ObservabilityInitEnv, TelemetryEnv, WebEnv, parseEnv } from "./env.ts";
 
 const secret = "s".repeat(40);
+/** OpenObserve's password policy: lower, upper, digit and special (Task B1). */
+const o2Password = "Observe-password-0123456789abcdef";
 const web = {
   DATABASE_URL: "postgres://web_role:pw@postgres:5432/mastertutor",
   BETTER_AUTH_SECRET: secret,
@@ -50,14 +52,46 @@ describe("observability env (D50)", () => {
 
   it("parses the provisioner env with safe defaults", () => {
     const env = parseEnv(ObservabilityInitEnv, {
-      OBSERVE_ROOT_PASSWORD: secret,
-      OBSERVE_INGEST_PASSWORD: secret,
-      OBSERVE_VIEWER_PASSWORD: secret,
+      OBSERVE_ROOT_PASSWORD: o2Password,
+      OBSERVE_INGEST_PASSWORD: o2Password,
+      OBSERVE_VIEWER_PASSWORD: o2Password,
       ALERT_WEBHOOK_SECRET: secret,
     });
     expect(env.OBSERVE_URL).toBe("http://openobserve:5080/observability");
     expect(env.ALERT_WEBHOOK_URL).toBe("http://web:3000/api/alerts/webhook");
     expect(env.SPEND_ALERT_USD_PER_HOUR).toBe(25);
+  });
+});
+
+describe("OpenObserve passwords (Task B1: the image refuses weak ones, the root one at boot)", () => {
+  it("needs a lowercase letter, an uppercase letter, a digit and a special character, and names no value", () => {
+    const init = (password: string) => ({
+      OBSERVE_ROOT_PASSWORD: password,
+      OBSERVE_INGEST_PASSWORD: o2Password,
+      OBSERVE_VIEWER_PASSWORD: o2Password,
+      ALERT_WEBHOOK_SECRET: secret,
+    });
+    for (const weak of [
+      secret,
+      "A1-".repeat(12),
+      "a1-".repeat(12),
+      "Aa-".repeat(12),
+      "Aa1".repeat(12),
+    ]) {
+      try {
+        parseEnv(ObservabilityInitEnv, init(weak));
+        expect.unreachable(weak);
+      } catch (error) {
+        expect(String(error)).toContain("OBSERVE_ROOT_PASSWORD");
+        expect(String(error)).not.toContain(weak);
+      }
+    }
+    expect(() => parseEnv(WebEnv, { ...web, OBSERVE_VIEWER_PASSWORD: secret })).toThrow(
+      /OBSERVE_VIEWER_PASSWORD/,
+    );
+    expect(
+      parseEnv(WebEnv, { ...web, OBSERVE_VIEWER_PASSWORD: o2Password }).OBSERVE_VIEWER_PASSWORD,
+    ).toBe(o2Password);
   });
 });
 

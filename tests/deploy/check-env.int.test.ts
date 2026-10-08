@@ -25,7 +25,7 @@ function goodEnv(): Record<string, string> {
     DOMAIN: "notes.example.org",
     PUBLIC_URL: "https://notes.example.org",
     PUBLIC_IP: "8.8.4.4",
-    COMPOSE_PROFILES: "pdf",
+    COMPOSE_PROFILES: "pdf,observability",
     AUTH_SIGNUP_OPEN: "0",
   };
 }
@@ -132,6 +132,21 @@ describe("checkProductionEnv", () => {
       delete process.env.PUBLIC_IP;
     }
   });
+
+  it("requires the observability profile and a matching VAPID pair (D50)", async () => {
+    const values = {
+      ...goodEnv(),
+      COMPOSE_PROFILES: "pdf",
+      VAPID_PUBLIC_KEY: generateSecrets().VAPID_PUBLIC_KEY!,
+    };
+    const problems = await checkProductionEnv(envFile(values));
+    expect(problems).toContain("COMPOSE_PROFILES: must include observability (D50)");
+    expect(problems).toContain("VAPID_PUBLIC_KEY: does not match VAPID_PRIVATE_KEY");
+    expectNoValues(problems, values);
+  });
+
+  // Passes once compose.prod.yml requires the secret with `:?set OBSERVE_ROOT_PASSWORD` (Task B7).
+  it.todo("reports a missing observability secret by key");
 });
 
 describe("pnpm deploy:check-env (CLI)", () => {

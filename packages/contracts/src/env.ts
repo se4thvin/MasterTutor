@@ -5,6 +5,7 @@ import {
   DbPassword,
   GarageKeyId,
   GarageSecret,
+  ObservePassword,
   PostgresUrl,
 } from "./primitives.ts";
 import { SlotList } from "./constants.ts";
@@ -84,7 +85,7 @@ export const WebEnv = z
     /** OpenObserve's alert webhook bearer (spec §13.2): unset means the webhook does not exist. */
     ALERT_WEBHOOK_SECRET: Secret.optional(),
     /** The viewer user ForwardAuth injects for /observability (spec §12): unset means unavailable. */
-    OBSERVE_VIEWER_PASSWORD: Secret.optional(),
+    OBSERVE_VIEWER_PASSWORD: ObservePassword.optional(),
     /** Test-only: serve the in-memory fixture API (apps/web/lib/fixtures). Never set in compose files. */
     WEB_FIXTURE_API: Flag,
   })
@@ -152,9 +153,9 @@ export type GarageInitEnv = z.infer<typeof GarageInitEnv>;
 export const ObservabilityInitEnv = z.object({
   ...Common,
   OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
-  OBSERVE_ROOT_PASSWORD: Secret,
-  OBSERVE_INGEST_PASSWORD: Secret,
-  OBSERVE_VIEWER_PASSWORD: Secret,
+  OBSERVE_ROOT_PASSWORD: ObservePassword,
+  OBSERVE_INGEST_PASSWORD: ObservePassword,
+  OBSERVE_VIEWER_PASSWORD: ObservePassword,
   ALERT_WEBHOOK_SECRET: Secret,
   ALERT_WEBHOOK_URL: z.url().default("http://web:3000/api/alerts/webhook"),
   SPEND_ALERT_USD_PER_HOUR: z.coerce.number().positive().max(1_000).default(25),
