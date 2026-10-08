@@ -7,7 +7,9 @@ const CONFUSABLE: Record<string, string> = {
   L: "1",
   "|": "1",
   Z: "2",
-  S: "5",
+  // OCR reads 8 as B, S or 5 alike (measured on canvas text): one class.
+  S: "8",
+  "5": "8",
   B: "8",
   G: "6",
   T: "7",

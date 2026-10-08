@@ -202,6 +202,7 @@ describe("OCR'd text for the local pixel screens (QA-099)", () => {
     const mask = prints.forRun("run-a");
     expect(mask.inOcrText?.("Password MARMOTACANARYBVELVET")).toBe(false); // A for 4 is no confusable
     expect(mask.inOcrText?.("Password MARMOT4CANARYBVELVET")).toBe(true);
+    expect(mask.inOcrText?.("Password MARMOT4CANARYSVELVET")).toBe(true); // 8 read as S
     expect(mask.inOcrText?.("Password hunter2011 here")).toBe(true);
     expect(mask.inOcrText?.("Password TrOub4dor&3")).toBe(true);
     expect(mask.inOcrText?.("Password Trou b4 dor 3")).toBe(true);

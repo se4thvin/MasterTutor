@@ -2,6 +2,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { drawMasks, sameBoxes } from "./masking.ts";
 import { hammingDistance, perceptualHash } from "./phash.ts";
+import { closerLookBands } from "./screenshot.ts";
 
 const white = (width: number, height: number) =>
   sharp({ create: { width, height, channels: 3, background: { r: 255, g: 255, b: 255 } } })
@@ -58,5 +59,33 @@ describe("perceptualHash", () => {
     const a = await perceptualHash(striped);
     expect(hammingDistance(a, await perceptualHash(striped))).toBe(0);
     expect(hammingDistance(a, await perceptualHash(base))).toBeGreaterThan(10);
+  });
+});
+
+describe("closerLookBands (QA-098: 2x only where the 1x read was small or unsure)", () => {
+  const word = (y: number, height: number, confidence: number) => ({
+    text: "w",
+    confidence,
+    box: { x: 10, y, width: 30, height },
+  });
+  const size = { width: 800, height: 600 };
+  it("asks nothing more of large, confidently read text", () => {
+    expect(closerLookBands([{ words: [word(100, 20, 95), word(100, 9, 96)] }], size)).toEqual([]);
+  });
+  it("bands small or unsure lines across the width, merging close ones", () => {
+    expect(
+      closerLookBands(
+        [
+          { words: [word(100, 9, 95)] },
+          { words: [word(120, 20, 40)] },
+          { words: [word(400, 20, 95)] },
+          { words: [word(500, 10, 90)] },
+        ],
+        size,
+      ),
+    ).toEqual([
+      { x: 0, y: 94, width: 800, height: 52 },
+      { x: 0, y: 494, width: 800, height: 22 },
+    ]);
   });
 });

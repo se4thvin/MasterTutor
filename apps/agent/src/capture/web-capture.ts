@@ -26,7 +26,7 @@ import { pageExtract } from "./page/extract.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import type { PageExtract } from "./page/types.ts";
-import { pixelsAreClean } from "../browser/local-ocr.ts";
+import { pixelsAreClean, tallPixelsAreClean } from "../browser/local-ocr.ts";
 import { preparePage } from "./prepare.ts";
 import { registerClosedShadowRoots } from "./shadow.ts";
 import { takeSnapshot, type Snapshot } from "./snapshot.ts";
@@ -434,7 +434,7 @@ async function screenedSnapshot(
 ): Promise<Snapshot> {
   if (
     !snapshot.png ||
-    (await pixelsAreClean(services.localOcr, ctx.mask, snapshot.png, ctx.signal))
+    (await tallPixelsAreClean(services.localOcr, ctx.mask, snapshot.png, ctx.signal))
   )
     return snapshot;
   return {
