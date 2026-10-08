@@ -6,7 +6,7 @@ import {
   idleUrlForTests,
   nekoBaseUrlForTests,
 } from "../../../../tests/behaviour/constants.ts";
-import { restartSlot, xdotool } from "../../../../tests/behaviour/slot-tools.ts";
+import { endNekoViewer, restartSlot, xdotool } from "../../../../tests/behaviour/slot-tools.ts";
 import { waitFor } from "../testing/wait.ts";
 import { createSlotIdleProbe } from "./idle-probe.ts";
 import { createNekoAdmin, type NekoAdmin } from "./neko-admin.ts";
@@ -23,8 +23,9 @@ beforeAll(async () => {
   await restartSlot(SLOT);
   admin = createNekoAdmin({ adminSecret: BEHAVIOUR_NEKO_ADMIN_SECRET, baseUrl: () => base });
 });
-afterAll(() => {
+afterAll(async () => {
   for (const socket of sockets) socket.close();
+  await endNekoViewer(SLOT);
 });
 
 const userToken = () =>

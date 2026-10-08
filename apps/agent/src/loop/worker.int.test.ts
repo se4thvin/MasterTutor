@@ -16,6 +16,7 @@ import {
   type DbHandle,
 } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Scenario } from "../../../../tests/llm-mock/src/scenario.ts";
@@ -43,6 +44,7 @@ let workspaceId: string;
 let supervisor: Supervisor | undefined;
 let downloadsDir: string;
 let counter = 0;
+let telemetry: TestTelemetry;
 const browsers = new Map<string, FakeLoopBrowser>();
 
 /** A slot that "restarts" instantly with a new browser id. */
@@ -60,6 +62,7 @@ beforeAll(async () => {
   mock = await startLlmMock();
   workspaceId = await seedWorkspace(owner.db);
   downloadsDir = await mkdtemp(join(tmpdir(), "downloads-"));
+  telemetry = installTestTelemetry();
 });
 afterEach(async () => {
   await supervisor?.stop();
@@ -68,6 +71,7 @@ afterEach(async () => {
   expect(mock.failures.splice(0)).toEqual([]);
 });
 afterAll(async () => {
+  await telemetry?.shutdown();
   await mock?.close();
   await owner?.close();
   await database?.stop();
@@ -368,6 +372,18 @@ describe("RunWorker + Supervisor", () => {
     expect(browser.executed).toHaveLength(1);
     const last = JSON.stringify(mock.requests.at(-1)?.body.input);
     expect(last).toContain("Interrupted: the user took control");
+    const takeovers = telemetry
+      .spans()
+      .filter((s) => s.name === "mt.takeover" && s.attributes["mt.run.id"] === run.id);
+    expect(
+      takeovers.map((s) => [
+        s.attributes["mt.control.holder"],
+        s.attributes["mt.takeover.outcome"],
+      ]),
+    ).toEqual([
+      ["user", "ok"],
+      ["agent", "ok"],
+    ]);
   });
 
   it("cancels by web, and the kill switch stops everything quickly and refuses claims", async () => {
@@ -391,6 +407,13 @@ describe("RunWorker + Supervisor", () => {
     const final = await row(active.run.id);
     expect(final.finishedAt!.getTime() - killedAt.getTime()).toBeLessThan(CI_BOUND_MS);
     expect(final.error).toMatchObject({ code: "kill_switch" });
+    // A cancellation says why on its status; error events explain failures only, so a run the
+    // worker cancels for the kill switch looks the same as one the claim sweep cancels (review M5).
+    await until(active.run.id, (r) => r.slotName === null, "released after the kill");
+    const events = (
+      await owner.db.select().from(runEvents).where(eq(runEvents.runId, active.run.id))
+    ).map((e) => e.payload);
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
     const blocked = await insertRun(owner.db, { workspaceId });
     await owner.sql.notify("run_queued", encodeNotify("run_queued", { runId: blocked.id }));
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -716,6 +739,19 @@ describe("RunWorker + Supervisor", () => {
     const { run } = await queue([{ error: { status: 400, code: "invalid_value" } }]);
     await until(run.id, (r) => r.status === "failed", "failed");
     expect((await row(run.id)).error).toMatchObject({ code: "model_request_rejected" });
+    // The run view learns why a run failed from its stream (fe failureOf): the failure is an
+    // error event, committed with the terminal status (Phase 7 Task 4, D35).
+    const payloads = (
+      await owner.db
+        .select()
+        .from(runEvents)
+        .where(eq(runEvents.runId, run.id))
+        .orderBy(asc(runEvents.id))
+    ).map((e) => e.payload);
+    const failed = payloads.findIndex((e) => e.type === "status" && e.status === "failed");
+    const error = payloads.findIndex((e) => e.type === "error");
+    expect(payloads[error]).toMatchObject({ type: "error", code: "model_request_rejected" });
+    expect(error).toBeLessThan(failed);
   });
 
   it("the sweep notices a takeover whose NOTIFY was lost (M3)", async () => {
@@ -926,6 +962,11 @@ describe("B6 seams (A2)", () => {
     ]);
     expect(await row(run.id)).toMatchObject({ controller: "agent", controlUserId: null });
     expect(seen).toEqual([{ afterRestore: false }]);
+    const failed = telemetry
+      .spans()
+      .find((s) => s.name === "mt.takeover" && s.attributes["mt.run.id"] === run.id);
+    expect(failed!.attributes["mt.takeover.outcome"]).toBe("takeover_failed");
+    expect(failed!.attributes["mt.error.code"]).toBe("takeover_failed");
   });
 
   it("a throwing onUserControl is a failed takeover too, not a failed run (F3)", async () => {

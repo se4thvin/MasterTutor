@@ -2,6 +2,7 @@ import { AgentEnv, parseEnv } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { createDb, listBrowserSlots } from "@mastertutor/db";
 import { createStorage } from "@mastertutor/storage";
+import { getTelemetry, observeAgentGauges } from "@mastertutor/telemetry";
 import { assertConcurrencyFitsSlots } from "./boot-checks.ts";
 import { startHealthServer } from "./health.ts";
 import { createLibraryServices, libraryHooks } from "./library.ts";
@@ -73,6 +74,7 @@ try {
 } catch (error) {
   log.fatal({ err: error }, "boot check failed");
   await database.close();
+  await getTelemetry().flush(2_000);
   process.exit(1);
 }
 
@@ -88,6 +90,12 @@ const supervisor = new Supervisor({
   // (no overlap: a clash throws).
   hooks: composeRunHooks(vaultHooks(vault), liveHooks, libraryHooks(library)),
   config: { shutdownDrainMs: env.AGENT_SHUTDOWN_DRAIN_MS },
+});
+// D50: slot and run gauges read the same sources /healthz reads (spec §5.3).
+observeAgentGauges({
+  slotStates: async () =>
+    (await listBrowserSlots(database.db, env.BROWSER_SLOTS)).map((slot) => slot.state),
+  activeRuns: () => supervisor.activeRuns.length,
 });
 
 // /healthz listens first: starting the supervisor waits for every slot to come back (up to minutes).
@@ -119,6 +127,8 @@ async function shutdown(signal: string): Promise<void> {
   // Running runs go to sleep with a wake; the supervisor closes the database handle it owns.
   await supervisor.stop();
   await health.close();
+  // D50: what is still queued leaves before the process does (at most 3 s).
+  await getTelemetry().shutdown(3_000);
   process.exit(0);
 }
 // Registered before the (possibly long) boot reconcile, so a SIGTERM during boot is graceful too.

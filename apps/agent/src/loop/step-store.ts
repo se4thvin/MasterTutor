@@ -13,8 +13,11 @@ import {
   type Usage,
   type WaitReason,
 } from "@mastertutor/contracts";
+import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
 import { emitRunEvents, runSteps, runTranscript, runs, type Database } from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
+import { instrument } from "@mastertutor/telemetry/instrument";
+import { recordRunFailure, recordSpend } from "@mastertutor/telemetry/record";
 import { and, eq, gt, inArray, max, sql } from "drizzle-orm";
 import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
 import { LeaseLost, RunChanged } from "../runtime/errors.ts";
@@ -109,23 +112,34 @@ export class StepStore {
   readonly #options: StepStoreOptions;
   #seq: number;
   #transcriptSeq: number;
+  /** runs.usage.usd as last committed: committed spend is counted as its change (seam 5). */
+  #usd: number;
 
-  private constructor(options: StepStoreOptions, seq: number, transcriptSeq: number) {
+  private constructor(options: StepStoreOptions, seq: number, transcriptSeq: number, usd: number) {
     this.#options = options;
     this.#seq = seq;
     this.#transcriptSeq = transcriptSeq;
+    this.#usd = usd;
   }
 
   static async open(options: StepStoreOptions): Promise<StepStore> {
-    const [steps] = await options.db
-      .select({ value: max(runSteps.seq) })
-      .from(runSteps)
-      .where(eq(runSteps.runId, options.run.id));
-    const [transcript] = await options.db
-      .select({ value: max(runTranscript.seq) })
-      .from(runTranscript)
-      .where(eq(runTranscript.runId, options.run.id));
-    return new StepStore(options, (steps?.value ?? -1) + 1, (transcript?.value ?? -1) + 1);
+    const [[steps], [transcript], [current]] = await Promise.all([
+      options.db
+        .select({ value: max(runSteps.seq) })
+        .from(runSteps)
+        .where(eq(runSteps.runId, options.run.id)),
+      options.db
+        .select({ value: max(runTranscript.seq) })
+        .from(runTranscript)
+        .where(eq(runTranscript.runId, options.run.id)),
+      options.db.select({ usage: runs.usage }).from(runs).where(eq(runs.id, options.run.id)),
+    ]);
+    return new StepStore(
+      options,
+      (steps?.value ?? -1) + 1,
+      (transcript?.value ?? -1) + 1,
+      current?.usage.usd ?? 0,
+    );
   }
 
   nextSeq(): number {
@@ -137,8 +151,23 @@ export class StepStore {
     return objectKeys.stepScreenshot(this.#options.run.id, seq, randomUUID().replaceAll("-", ""));
   }
 
+  /** Seam 5 (spec §7.3): the step transaction's span; spend and failures counted only once committed. */
+  commit(commit: StepCommit): Promise<TranscriptEntry[]> {
+    return instrument(SPAN.stepCommit, { [ATTR.runId]: this.#options.run.id }, async () => {
+      const entries = await this.#commitOnce(commit);
+      const usd = commit.run?.usage?.usd;
+      if (usd !== undefined) {
+        recordSpend(usd - this.#usd);
+        this.#usd = usd;
+      }
+      if (commit.transition?.to === "failed")
+        recordRunFailure(commit.transition.error?.code ?? "unknown_error");
+      return entries;
+    });
+  }
+
   /** Commits in one transaction; returns the transcript entries as stored (images as refs). */
-  async commit(commit: StepCommit): Promise<TranscriptEntry[]> {
+  async #commitOnce(commit: StepCommit): Promise<TranscriptEntry[]> {
     const { storage, run } = this.#options;
     const nonce = randomUUID().replaceAll("-", "");
     const uploaded: string[] = [];
@@ -282,6 +311,14 @@ export class StepStore {
         );
       }
       if (commit.storage) await sessionStore.save(tx, run, commit.storage);
+      // A failed run's error is also on its stream, where the run view reads why it failed (D35).
+      // Other transitions (a kill-switch cancel) say why on their status (review M5).
+      if (transition?.to === "failed" && transition.error)
+        events.push({
+          type: "error",
+          code: transition.error.code,
+          message: transition.error.message.slice(0, 500),
+        });
       if (transition)
         events.push({
           type: "status",

@@ -1,5 +1,7 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "lib": ["es2024", "dom", "dom.iterable"] },
-  "include": ["vitest.config.ts", "scripts/**/*.ts", "tests/**/*.ts", "apps/browser-slot/**/*.ts"]
+  "include": ["vitest.config.ts", "scripts/**/*.ts", "tests/**/*.ts", "apps/browser-slot/**/*.ts"],
+  // Runs only inside the agent container (fed on stdin), where @aws-sdk/client-s3 resolves.
+  "exclude": ["tests/security/dump-objects.ts"]
 }

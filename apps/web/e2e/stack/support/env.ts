@@ -13,3 +13,10 @@ export const OWNER = {
   password: "e2e-owner-password-0123",
   name: "E2E Owner",
 } as const;
+/**
+ * Options for a request context with no session. The runner applies the project's storageState to
+ * every new request context, so a context is anonymous only when it says so.
+ */
+export const SIGNED_OUT: { storageState: { cookies: []; origins: [] } } = {
+  storageState: { cookies: [], origins: [] },
+};

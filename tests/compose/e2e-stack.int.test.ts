@@ -88,11 +88,15 @@ describe("compose.test.yml E2E stack (one overlay, X2)", () => {
       "backend",
       "edge",
     ]);
+    // Least privilege (review Minor 8): mail travels on its own internal network, so the vault
+    // fixture reaches greenmail but never postgres or garage.
+    expect(stack.networks.mail?.internal).toBe(true);
     expect(Object.keys(stack.services["vault-fixtures"]?.networks ?? {}).sort()).toEqual([
-      "backend",
       "fixtures",
+      "mail",
     ]);
-    expect(Object.keys(stack.services.greenmail?.networks ?? {})).toEqual(["backend"]);
+    expect(Object.keys(stack.services.greenmail?.networks ?? {})).toEqual(["mail"]);
+    expect(Object.keys(stack.services.agent?.networks ?? {})).toContain("mail");
   });
 
   it("runs Playwright inside Traefik's network namespace, on the app's own origin", () => {
@@ -101,6 +105,20 @@ describe("compose.test.yml E2E stack (one overlay, X2)", () => {
     expect(e2e.environment?.E2E_BASE_URL).toBe("http://localhost:18080");
     expect(e2e.environment?.E2E_LLM_MOCK_URL).toBe("http://llm-mock:8090");
     expect(e2e.profiles).toEqual(["e2e-runner"]);
+  });
+
+  it("derives the app's origin from TEST_HTTP_PORT everywhere it is spelled (review Minor 6)", () => {
+    const moved = composeConfig(".env.test", STACK, {
+      profiles: PROFILES,
+      env: { TEST_HTTP_PORT: "18181" },
+    });
+    const traefik = moved.services.traefik!;
+    expect(traefik.command).toContain("--entrypoints.web.address=:18181");
+    expect(traefik.ports?.map((p) => `${p.host_ip}:${p.published}:${p.target}`)).toEqual([
+      "127.0.0.1:18181:18181",
+    ]);
+    expect(moved.services.e2e?.environment?.E2E_BASE_URL).toBe("http://localhost:18181");
+    expect(moved.services.web?.environment?.BETTER_AUTH_URL).toBe("http://localhost:18181");
   });
 
   it("has one test overlay: compose.live-test.yml is folded in (P7-5)", () => {

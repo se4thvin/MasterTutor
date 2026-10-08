@@ -52,18 +52,27 @@ cleanup_run() {
   docker image rm -f "mt-ci-agent-image-check:$project" >/dev/null 2>&1 || true
   docker image rm -f "mt-ci-drill-runtime:$project" >/dev/null 2>&1 || true
   rm -rf "${runs_dir:?}/$project" 2>/dev/null || true
+  rm -rf "${runs_dir:?}/.claim-$project" 2>/dev/null || true
   release_stack_lock "$project"
 }
 
 take_stack_lock() {
   mkdir -p "$runs_dir"
-  until mkdir "$stack_lock" 2>/dev/null; do
+  # The claim names its owner before it becomes the lock: rename(2) is atomic and refuses a
+  # non-empty target, so the lock never exists without an owner (a crash leaves only the claim,
+  # which cleanup_run removes).
+  local claim="$runs_dir/.claim-$project"
+  rm -rf "$claim" && mkdir "$claim"
+  echo "$project" >"$claim/owner"
+  until mv -T "$claim" "$stack_lock" 2>/dev/null; do
     # A qa stack re-entering its own lock (a second `remote-test.sh qa`) goes straight on.
-    [[ "$(cat "$stack_lock/owner" 2>/dev/null)" == "$project" ]] && return 0
-    echo "remote-test: waiting for the stack lock (held by $(cat "$stack_lock/owner" 2>/dev/null || echo "a starting run"))" >&2
+    if [[ "$(cat "$stack_lock/owner" 2>/dev/null)" == "$project" ]]; then
+      rm -rf "$claim"
+      return 0
+    fi
+    echo "remote-test: waiting for the stack lock (held by $(cat "$stack_lock/owner" 2>/dev/null || echo "an unknown run"))" >&2
     sleep 15
   done
-  echo "$project" >"$stack_lock/owner"
 }
 
 if [[ "${1:-}" == "--cleanup" ]]; then
@@ -161,8 +170,9 @@ case "$suite" in
     command="$install && exec pnpm --filter @mastertutor/web test:ui \"\$@\"" ;;
   agent-image)
     command="AGENT_IMAGE_TAG=mt-ci-agent-image-check:$project exec bash scripts/check-agent-image.sh" ;;
+  # After the specs, e2e's canary scan (tests/security/stack-canary.ts) runs workspace code in Node.
   e2e)
-    command='exec bash scripts/e2e.sh "$@"' ;;
+    command="$install && exec bash scripts/e2e.sh \"\$@\"" ;;
   smoke)
     # The compose smoke, then the Dokploy-format backup/restore drill (its own project, CI labels,
     # no fixed ports or subnet). Nothing may follow an exec (tests/deploy/drill.int.test.ts).

@@ -9,7 +9,7 @@ import { Icon } from "@/components/ui/icon.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import { MEDIA } from "@/lib/breakpoints.ts";
 import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
-import type { ThinkingState, TimelineItem } from "../model/timeline-items.ts";
+import { selectedRowSeq, type ThinkingState, type TimelineItem } from "../model/timeline-items.ts";
 import { MessageComposer } from "./message-composer.tsx";
 
 interface TimelinePanelProps {
@@ -34,7 +34,7 @@ function Row({
   item: TimelineItem;
   runId: string;
   selected: boolean;
-  onReplay(seq: number): void;
+  onReplay(rowSeq: number, shotSeq: number): void;
 }) {
   switch (item.kind) {
     case "step": {
@@ -82,7 +82,7 @@ function Row({
               type="button"
               className="run-tl-body"
               aria-label={`Replay step: ${item.line}`}
-              onClick={() => onReplay(shotSeq)}
+              onClick={() => onReplay(item.seq, shotSeq)}
             >
               {body}
             </button>
@@ -138,7 +138,12 @@ function Row({
   }
 }
 
-function TimelineList(p: TimelinePanelProps) {
+function TimelineList(
+  p: TimelinePanelProps & {
+    clickedSeq: number | null;
+    onRowReplay(rowSeq: number, shotSeq: number): void;
+  },
+) {
   const listRef = useRef<HTMLOListElement>(null);
   useEffect(() => {
     const list = listRef.current;
@@ -146,6 +151,7 @@ function TimelineList(p: TimelinePanelProps) {
     if (list.scrollHeight - list.scrollTop - list.clientHeight < 160)
       list.scrollTop = list.scrollHeight;
   }, [p.items.length, p.otp]);
+  const selected = selectedRowSeq(p.items, p.replaySeq, p.clickedSeq);
   return (
     <ol ref={listRef} className="run-tl-list">
       {p.items.map((item) => (
@@ -153,8 +159,8 @@ function TimelineList(p: TimelinePanelProps) {
           key={item.key}
           item={item}
           runId={p.runId}
-          selected={item.kind === "step" && item.shotSeq !== null && item.shotSeq === p.replaySeq}
-          onReplay={p.onReplay}
+          selected={item.kind === "step" && item.seq === selected}
+          onReplay={p.onRowReplay}
         />
       ))}
       {p.thinking ? (
@@ -176,6 +182,15 @@ export function TimelinePanel(p: TimelinePanelProps) {
   const id = useId();
   const regular = useMediaQuery(MEDIA.md);
   const [open, setOpen] = useState(false);
+  const [clickedSeq, setClickedSeq] = useState<number | null>(null);
+  const list = {
+    ...p,
+    clickedSeq,
+    onRowReplay: (rowSeq: number, shotSeq: number) => {
+      setClickedSeq(rowSeq);
+      p.onReplay(shotSeq);
+    },
+  };
   const composer = <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />;
   if (regular) {
     return (
@@ -186,7 +201,7 @@ export function TimelinePanel(p: TimelinePanelProps) {
           </h2>
           <span className="run-tl-summary">{p.summary}</span>
         </div>
-        <TimelineList {...p} />
+        <TimelineList {...list} />
         {composer}
       </aside>
     );
@@ -202,7 +217,7 @@ export function TimelinePanel(p: TimelinePanelProps) {
         Steps · {p.summary}
       </Button>
       <Sheet open={open} onOpenChange={setOpen} title="Steps">
-        <TimelineList {...p} otp={null} />
+        <TimelineList {...list} otp={null} />
         {composer}
       </Sheet>
     </>

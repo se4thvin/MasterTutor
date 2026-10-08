@@ -6,6 +6,7 @@ import {
   type UsePasskeyArgs,
   type UsePasskeyResult,
 } from "@mastertutor/contracts";
+import { ATTR, type ToolAttributes } from "@mastertutor/contracts/telemetry";
 import type { ApprovalContext, Tool, ToolContext } from "./runtime.ts";
 
 export interface CredentialActions {
@@ -13,6 +14,17 @@ export interface CredentialActions {
   fillApproval(ctx: ApprovalContext, args: FillCredentialArgs): Promise<ApprovalRequest | null>;
   passkey(ctx: ToolContext, args: UsePasskeyArgs): Promise<UsePasskeyResult>;
   passkeyApproval(ctx: ApprovalContext, args: UsePasskeyArgs): Promise<ApprovalRequest | null>;
+}
+
+/** Spec §7.5: the alias (a name, never a secret) and the vault's own error code, if any. */
+function credentialTelemetry(
+  args: { alias: string },
+  result: FillCredentialResult | UsePasskeyResult,
+): ToolAttributes {
+  return {
+    [ATTR.vaultAlias]: args.alias,
+    ...("error" in result ? { [ATTR.errorCode]: result.error } : {}),
+  };
 }
 
 /**
@@ -31,6 +43,7 @@ export function vaultTools(
       untrusted: false,
       approval: (ctx, args) => actions.fillApproval(ctx, args),
       run: (ctx, args) => actions.fill(ctx, args),
+      telemetry: credentialTelemetry,
     },
     {
       name: "use_passkey",
@@ -39,6 +52,7 @@ export function vaultTools(
       untrusted: false,
       approval: (ctx, args) => actions.passkeyApproval(ctx, args),
       run: (ctx, args) => actions.passkey(ctx, args),
+      telemetry: credentialTelemetry,
     },
   ];
 }

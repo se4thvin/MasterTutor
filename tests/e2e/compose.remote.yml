@@ -88,6 +88,8 @@ networks:
     labels: *ci-labels
   fixtures:
     labels: *ci-labels
+  mail:
+    labels: *ci-labels
   pdf:
     labels: *ci-labels
   pulse:

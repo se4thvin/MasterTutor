@@ -7,16 +7,16 @@ services:
   traefik:
     image: traefik:v3.7.13
     # Listens on the public port inside its container too: the e2e runner shares this network
-    # namespace and opens exactly http://localhost:18080, the app's origin (BETTER_AUTH_URL).
+    # namespace and opens exactly http://localhost:$TEST_HTTP_PORT (default 18080), the app's origin.
     command:
-      - --entrypoints.web.address=:18080
+      - --entrypoints.web.address=:${TEST_HTTP_PORT:-18080}
       - --providers.file.filename=/etc/traefik/dynamic.yml
       - --ping=true
       - --log.level=WARN
     volumes:
       - ./infra/traefik/test-dynamic.yml:/etc/traefik/dynamic.yml:ro
     ports:
-      - "127.0.0.1:${TEST_HTTP_PORT:-18080}:18080"
+      - "127.0.0.1:${TEST_HTTP_PORT:-18080}:${TEST_HTTP_PORT:-18080}"
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 2s
@@ -35,10 +35,15 @@ services:
       OPENAI_BASE_URL: http://llm-mock:8090/v1
       # Fixture hosts (*.fixtures.test) bypass only the private-range check (network-policy.ts).
       AGENT_TEST_MODE: "1"
+    networks:
+      # IMAP to greenmail for emailed one-time codes (B3).
+      mail: {}
 
   web:
     environment:
       OPENAI_BASE_URL: http://llm-mock:8090/v1
+      # The app's origin is Traefik's published port: one variable for every place it is spelled.
+      BETTER_AUTH_URL: http://localhost:${TEST_HTTP_PORT:-18080}
 
   # Two slots: two concurrent runs and the live view's cross-slot cases. Each advertises its static
   # cdp address for WebRTC (outside the cdp ip_range .128/25), which the e2e runner reaches from
@@ -68,14 +73,14 @@ services:
   browser-6:
     profiles: !override ["extra-slots"]
 
-  # Test mailbox for email OTP (B3). IMAP greenmail:3143 and SMTP greenmail:3025 on backend only;
+  # Test mailbox for email OTP (B3). IMAP greenmail:3143 and SMTP greenmail:3025 on `mail` only;
   # GREENMAIL_OPTS is the Testcontainers helper's greenmailOpts() verbatim.
   greenmail:
     image: greenmail/standalone:2.1.14
     environment:
       GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=otp:KESTREL4IMAP9CANARY@mail.test"
     networks:
-      backend: {}
+      mail: {}
 
   # The model for the test stack (tests/llm-mock, B1 scenario format). Runs pick a scenario with
   # scenarioGoal() (tests/llm-mock/src/select.ts). Only this service builds the test-tools image.
@@ -140,7 +145,7 @@ services:
           ]
 
   # The vault-fixture site (B3; tests/fixtures/vault-sites/bin.ts) on its own hosts. Its account is
-  # tests/security/canaries.ts. It mails OTP codes to greenmail, which stays backend-only.
+  # tests/security/canaries.ts. It mails OTP codes to greenmail, over the internal `mail` network.
   vault-fixtures:
     profiles: ["e2e"]
     image: mastertutor/test-tools:local
@@ -169,7 +174,7 @@ services:
     networks:
       fixtures:
         aliases: [login.fixtures.test, log1n.fixtures.test, evil.fixtures-isolated.test]
-      backend: {}
+      mail: {}
 
   # Phase 10 Task 22's dynamic activity site (tests/fixtures/bench-activities/server.ts, created by
   # T22), on the fixtures network at http://bench.fixtures.test:8080. Its own profile keeps the e2e
@@ -190,7 +195,7 @@ services:
         aliases: [bench.fixtures.test]
 
   # Playwright for apps/web/playwright.stack.config.ts. It shares Traefik's network namespace, so
-  # localhost:18080 is the public entry point and the slots' WebRTC addresses are reachable, as for
+  # localhost:$TEST_HTTP_PORT is the public entry point and the slots' WebRTC addresses are reachable, as for
   # a real browser. Run it with scripts/e2e.sh (profile e2e-runner keeps `up` from starting it).
   e2e:
     profiles: ["e2e-runner"]
@@ -203,7 +208,7 @@ services:
     environment:
       CI: ${CI:-}
       HOME: /tmp
-      E2E_BASE_URL: http://localhost:18080
+      E2E_BASE_URL: http://localhost:${TEST_HTTP_PORT:-18080}
       E2E_LLM_MOCK_URL: http://llm-mock:8090
     volumes:
       - ./apps/web/e2e:/repo/apps/web/e2e
@@ -221,3 +226,7 @@ networks:
     ipam:
       config:
         - subnet: ${FIXTURES_SUBNET_PREFIX:-172.30.241}.0/24
+  # Mail only: greenmail, the vault fixture that sends codes and the agent that reads them. The
+  # vault fixture never joins backend (least privilege: no postgres, no garage).
+  mail:
+    internal: true

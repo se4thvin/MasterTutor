@@ -10,9 +10,20 @@ const config: NextConfig = {
     "@mastertutor/db",
     "@mastertutor/sealing",
     "@mastertutor/storage",
+    "@mastertutor/telemetry",
   ],
   // libsodium ships its own WASM loader; keep it a plain Node require in the server bundle.
-  serverExternalPackages: ["libsodium-wrappers", "libsodium"],
+  serverExternalPackages: [
+    "libsodium-wrappers",
+    "libsodium",
+    // D50: the instrumentations patch real node:http and undici, so these stay plain requires.
+    "@opentelemetry/instrumentation",
+    "@opentelemetry/instrumentation-http",
+    "@opentelemetry/instrumentation-undici",
+    "@opentelemetry/sdk-trace-node",
+    "require-in-the-middle",
+    "import-in-the-middle",
+  ],
   poweredByHeader: false,
   compiler: {
     // The fixture API exists only in builds made for UI tests. A production build (no
