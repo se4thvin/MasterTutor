@@ -1140,7 +1140,13 @@ describe("RunLoop (spec §5.3)", () => {
 
   describe("function-tool approvals (the tool's own approval request)", () => {
     const readPage: MockTurn = {
-      outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+      outputs: [
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
+      ],
     };
     const firstUse = async () =>
       ({
@@ -1161,7 +1167,7 @@ describe("RunLoop (spec §5.3)", () => {
       await resumed.resume(new AbortController().signal);
       expect(await drive(resumed)).toEqual({ kind: "completed" });
       expect(browser.functionRuns).toEqual([
-        { name: "read_page", args: { mode: "text", sinceHash: null } },
+        { name: "read_page", args: { mode: "text", sinceHash: null, offset: null } },
       ]);
     });
 
@@ -1216,8 +1222,16 @@ describe("RunLoop (spec §5.3)", () => {
     it("binds each call's approval to the destination its own card named (T10-12 I1)", async () => {
       const twoFills: MockTurn = {
         outputs: [
-          { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
-          { type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } },
+          {
+            type: "function",
+            name: "read_page",
+            args: { mode: "text", sinceHash: null, offset: null },
+          },
+          {
+            type: "function",
+            name: "read_page",
+            args: { mode: "interactive", sinceHash: null, offset: null },
+          },
         ],
       };
       const { run, browser, reload, ...first } = await setup([twoFills, done()]);
@@ -1280,7 +1294,11 @@ describe("RunLoop (spec §5.3)", () => {
           name: "fill_credential",
           args: { alias: "site", field: "otp", target: "e1" },
         },
-        { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
       ],
     };
     const { run, browser, loop } = await setup([fillOtp]);
@@ -1588,7 +1606,11 @@ describe("RunLoop (spec §5.3)", () => {
           name: "fill_credential",
           args: { alias: "site", field: "password", target: "e1" },
         },
-        { type: "function", name: "read_page", args: { mode: "text", sinceHash: null } },
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
       ],
     };
     const { run, browser, loop } = await setup([twoCalls]);
@@ -1601,7 +1623,13 @@ describe("RunLoop (spec §5.3)", () => {
   describe("bypass mode (D44)", () => {
     const bypass = { approvalMode: "bypass" as const };
     const readPage: MockTurn = {
-      outputs: [{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }],
+      outputs: [
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
+      ],
     };
     const firstUse = async () =>
       ({

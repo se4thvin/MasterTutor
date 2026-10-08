@@ -126,7 +126,7 @@ describe("parseModelOutput", () => {
         type: "function_call",
         call_id: "f1",
         name: "read_page",
-        arguments: '{"mode":"text","sinceHash":null}',
+        arguments: '{"mode":"text","sinceHash":null,"offset":null}',
       },
       { type: "function_call", call_id: "f2", name: "exec_js", arguments: "{}" },
       { type: "function_call", call_id: "f3", name: "read_page", arguments: "{bad json" },

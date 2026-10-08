@@ -281,6 +281,31 @@ esac
   });
 });
 
+describe("what the sync sends", () => {
+  it("sends the three benchmark protocol docs and nothing else from orchestration/ or env files", () => {
+    // rsync's first matching rule wins: the doc includes must come before the orchestration excludes.
+    const block = /rsync -az --delete \\\n([\s\S]*?)--rsync-path/.exec(client)![1]!;
+    const rules = [...block.matchAll(/--(include|exclude)=('[^']*'|\S+)/g)].map(
+      ([, kind, pattern]) => `${kind} ${pattern!.replace(/^'|'$/g, "")}`,
+    );
+    expect(rules.filter((r) => r.includes("orchestration"))).toEqual([
+      "include /orchestration/",
+      "include /orchestration/README.md",
+      "include /orchestration/benchmarks/",
+      "include /orchestration/benchmarks/README.md",
+      "include /orchestration/briefs/",
+      "include /orchestration/briefs/bench-fix.md",
+      "exclude /orchestration/**",
+      "exclude orchestration",
+    ]);
+    expect(rules.slice(0, 3)).toEqual([
+      "include /.env.test",
+      "include /.env.example",
+      "exclude .env*",
+    ]);
+  });
+});
+
 describe("per-run snapshots of one worktree's sync (remote-test/snapshot.sh)", () => {
   /** Runs snapshot.sh functions in a scratch tree: base/ is the synced worktree. */
   function snapshot(script: string) {

@@ -1,7 +1,7 @@
 import { basename, dirname } from "node:path";
 import { stepScreenshotPath, type ApprovalMode, type ToolProfile } from "@mastertutor/contracts";
 import type { Failure, WatchSummary } from "./classify.ts";
-import type { Verdict } from "./criteria.ts";
+import type { SectionOutcome, Verdict } from "./criteria.ts";
 import type { StackName, SuiteId } from "./types.ts";
 
 export interface BenchmarkResult {
@@ -48,6 +48,7 @@ export interface SuiteRunResult {
 
 const duration = (ms: number | null) =>
   ms === null ? "–" : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+const cell = (text: string) => text.replaceAll("|", "\\|");
 const usd = (n: number) => `$${n.toFixed(2)}`;
 type Scalar = string | number | boolean | null;
 /** Flat frontmatter: scalars and string lists, so a person can edit it by hand. */
@@ -125,6 +126,18 @@ export function assertContinueAllowed(path: string, records: readonly RecordSumm
   return target.id;
 }
 
+/** Every graded section: reading, URL, outcome and why (run 1's discovered readings). */
+export function sectionTable(sections: readonly SectionOutcome[]): string[] {
+  return [
+    "| Reading | Section | URL | Outcome | Why |",
+    "|---|---|---|---|---|",
+    ...sections.map(
+      (r) =>
+        `| ${r.reading} | ${cell(r.title)} | ${r.url ?? "–"} | ${r.outcome === "passed" ? "passed" : `**${r.outcome}**`} | ${cell(r.reason)} |`,
+    ),
+  ];
+}
+
 export function renderFailureNotes(failure: Failure | null, verdict: Verdict | null): string {
   const summary = `verdict: ${verdict?.summary ?? "none"}`;
   if (failure === null) return summary;
@@ -150,6 +163,7 @@ function record(r: SuiteRunResult, x: BenchmarkResult): string[] {
     `- Verdict: ${x.verdict?.summary ?? "none"}`,
     ...(x.verdict?.unmet ?? []).map((u) => `  - unmet: ${u}`),
     ...(x.verdict?.unvisited ?? []).map((u) => `  - never worked on: ${u}`),
+    ...(x.verdict?.sections?.length ? ["", ...sectionTable(x.verdict.sections), ""] : []),
     `- Failure: ${x.failure ? `${x.failure.cls}: ${x.failure.reason}` : "none"}${x.ticket ? ` (${x.ticket})` : ""}`,
     ...(step && x.runId
       ? [
@@ -201,6 +215,11 @@ export function renderReport(r: SuiteRunResult, reportPath: string): string {
       reviewed_by: null,
       authorize: 0,
       authorized_by: r.continues,
+      // What `pnpm bench regrade` re-reads (I5): per result, its spec, main run and grading run.
+      specs: r.results.map((x) => `${x.key}@${x.toolProfile}`),
+      run_ids: r.results.map((x) => x.runId ?? "none"),
+      grading_run_ids: r.results.map((x) => x.verifyRunIds.at(-1) ?? "none"),
+      takeovers: r.results.map((x) => String(x.metrics.takeovers)),
     }),
     "",
     `# Benchmark record: ${r.suite}`,
