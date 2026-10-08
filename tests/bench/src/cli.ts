@@ -1,6 +1,6 @@
 // Benchmark harness CLI (Phase 10). It never accepts site credentials (D34): the Vault UI is the only path.
 //   pnpm bench init --stack test|prod
-//   pnpm bench run|baseline|survey --suite fixtures|zybooks [--track computer_use|browser_use|both] [--only key]...
+//   pnpm bench run|baseline --suite fixtures|zybooks [--track computer_use|browser_use|both] [--only key]...
 //        [--approval-mode auto_within_allowlist|bypass] [--acknowledge-bypass] [--max-total-usd N] [--max-run-usd N]
 //        [--once] [--continue-after-review <record.md>] [--retries N] [--human-timeout-min 20] [--stall-min 10]
 //        [--allow-incomplete-baseline] [--reuse-baseline] [--mock]
@@ -48,8 +48,7 @@ import {
 import { assertMayStart, openLedger, totalUsd, type Ledger } from "./ledger.ts";
 import { appendEvidence } from "./appendix.ts";
 import { ensureFixtureVaultItem, fixturesSuite } from "./suites/fixtures.ts";
-import { surveySuite, zybooksSuite } from "./suites/zybooks.ts";
-import { writeSurveyEvidence } from "./survey.ts";
+import { zybooksSuite } from "./suites/zybooks.ts";
 import {
   BENCH_APPROVAL_MODES,
   STACKS,
@@ -95,7 +94,7 @@ export type CliCommand =
   | { kind: "watch"; runId: string }
   | { kind: "vault-check"; suite: SuiteId }
   | { kind: "resolve"; id: string }
-  | { kind: "run" | "baseline" | "survey"; suite: SuiteId; options: SuiteRunOptions };
+  | { kind: "run" | "baseline"; suite: SuiteId; options: SuiteRunOptions };
 
 const money = (flag: string) =>
   z.coerce
@@ -161,12 +160,8 @@ export function parseCli(
   if (command === "resolve") return { kind: "resolve", id: parsed(Uuid, arg) };
   const suite = oneOf(SUITE_IDS, "--suite", values.suite);
   if (command === "vault-check") return { kind: "vault-check", suite };
-  if (command !== "run" && command !== "baseline" && command !== "survey")
-    throw new UsageError(
-      "usage: pnpm bench <init|run|baseline|survey|vault-check|watch|resolve> …",
-    );
-  if (command === "survey" && suite !== "zybooks")
-    throw new UsageError("survey supports --suite zybooks only");
+  if (command !== "run" && command !== "baseline")
+    throw new UsageError("usage: pnpm bench <init|run|baseline|vault-check|watch|resolve> …");
 
   const defaults = SUITE_DEFAULTS[suite];
   if (values.mock && suite === "zybooks")
@@ -215,10 +210,6 @@ export function parseCli(
       throw new UsageError(`--continue-after-review: ${(error as Error).message}`);
     }
   }
-  if (command === "survey" && continues === null)
-    throw new UsageError(
-      "survey runs only as a reviewed continuation: --continue-after-review <record> (D46)",
-    );
   const once = continues === null && (suite === "zybooks" || values.once);
   if (once && retries > 0)
     throw new UsageError(
@@ -478,7 +469,7 @@ async function main(argv: string[]): Promise<void> {
     });
     return;
   }
-  const suite = cmd.kind === "survey" ? surveySuite() : SUITES[cmd.suite]();
+  const suite = SUITES[cmd.suite]();
   if (env.BENCH_STACK !== suite.stack)
     throw new UsageError(
       `suite ${suite.id} runs on the ${suite.stack} stack, but ${BENCH_ACCOUNT_FILE} is for ${env.BENCH_STACK}`,
@@ -543,13 +534,9 @@ async function main(argv: string[]): Promise<void> {
   }
   log(`record: ${path}`);
   // Evidence the record needs beyond T20's report (Task 23): per-step evidence on every real
-  // zyBooks record, and the survey's numbers (raw page text goes only to the git-ignored .raw/).
+  // zyBooks record.
   const evidence = { api, compose, loadTrace: loadRunTrace };
   if (suite.id === "zybooks" && !result.mock) await appendEvidence(result, path, evidence, suite);
-  if (cmd.kind === "survey")
-    log(
-      `survey evidence: ${(await writeSurveyEvidence(result, path, evidence)) ?? "none (no run started)"}`,
-    );
   if (result.mode === "once")
     log(
       `Stopped after one run (D46). Review ${path}, set reviewed: true, reviewed_by and authorize: N in its frontmatter, then continue with --continue-after-review ${path}.`,

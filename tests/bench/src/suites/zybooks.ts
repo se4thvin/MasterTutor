@@ -1,40 +1,25 @@
-// The zyBooks acceptance suite (D32). Prompts, patterns and section lists live only under tests/bench/
-// and orchestration/benchmarks/zybooks/, never in product code (no-site-hacks, Task 21).
-import { existsSync, readFileSync } from "node:fs";
-import { z } from "zod";
-import {
-  SectionSpec,
-  type BenchmarkSpec,
-  type SuiteDefinition,
-  type VerifySpec,
-} from "../types.ts";
-import { CREDENTIAL_HINT as HINT, signInInstruction } from "./prompts.ts";
+// The zyBooks acceptance suite (D32; D46 "full task, once"). Prompts and discovery patterns live only
+// here under tests/bench/, never in product code (no-site-hacks, Task 21).
+import { escapeRegExp } from "../discovery.ts";
+import type { BenchmarkSpec, Criterion, SuiteDefinition, VerifySpec } from "../types.ts";
+import { CREDENTIAL_HINT as HINT, discoveryInstruction, signInInstruction } from "./prompts.ts";
 
 export const ZYBOOKS_ORIGIN = "https://learn.zybooks.com";
 export const ZYBOOKS_BOOK = `${ZYBOOKS_ORIGIN}/zybook/UTDALLASCE2310EE2310AkourFall2026`;
-export const CALIBRATION_FILE = "orchestration/benchmarks/zybooks/sections.json";
+const READINGS = [1, 2, 3, 4, 5] as const;
 
-export const ZybooksCalibration = z
-  .object({
-    book: z.literal(ZYBOOKS_BOOK),
-    patterns: z.object({ activity: z.string().min(3), completed: z.string().min(3) }),
-    sections: z.array(SectionSpec).min(5).max(200),
-    calibratedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    surveyRunId: z.uuid(),
-  })
-  .refine((c) => c.sections.every((s) => s.url.startsWith(`${ZYBOOKS_BOOK}/`)), {
-    message: "every section must be inside the book",
-  })
-  .refine((c) => [1, 2, 3, 4, 5].every((r) => c.sections.some((s) => s.reading === r)), {
-    message: "readings 1-5 all need sections",
-  });
-export type ZybooksCalibration = z.infer<typeof ZybooksCalibration>;
-
-export function loadCalibration(): ZybooksCalibration | null {
-  return existsSync(CALIBRATION_FILE)
-    ? ZybooksCalibration.parse(JSON.parse(readFileSync(CALIBRATION_FILE, "utf8")))
-    : null;
-}
+/**
+ * How the grader reads readings and sections back from the grading run's read_page output. Not yet
+ * checked against the live book (no contact before run 1): a pattern that does not match leaves the
+ * sections unknown or failed in the record, with the reason, never passed. The grading run's raw
+ * read_page output stays in run_steps, so the patterns can be corrected from it.
+ */
+export const DISCOVERY = {
+  readingPattern: "^\\s*reading(?:\\s+assignment)?\\s*(\\d+)\\b",
+  sectionUrlPattern: `^${escapeRegExp(ZYBOOKS_BOOK)}/chapter/\\d+/section/\\d+(?:[/?#].*)?$`,
+  activityPattern: "participation\\s+activity",
+  completedPattern: "activity\\s+completed",
+} as const;
 
 type Track = "computer_use" | "browser_use";
 const VAULT = {
@@ -47,6 +32,9 @@ const LOGIN = signInInstruction(SIGN_IN_URL, VAULT.alias);
 const RULES =
   "Stay on learn.zybooks.com. Do not change account settings, do not open challenge activities, labs or zyLabs, " +
   "and do not submit anything other than participation activities.";
+const REDO =
+  "These participation activities are already completed on this account; redo every one of them fully anyway: " +
+  "answer each question again and run each animation to its end with its own controls.";
 const SIGNED_IN = { kind: "signed_in", origin: ZYBOOKS_ORIGIN, signInPath: "/signin" } as const;
 const COMMON = {
   approvalMode: "bypass", // D44/D46: the CLI needs --acknowledge-bypass (T21 selectBenchmarks)
@@ -57,23 +45,26 @@ const COMMON = {
   mockScenarios: null,
 } as const;
 
+const discovered = (readings: readonly number[]): Criterion => ({
+  kind: "discovered_readings",
+  readings,
+  ...DISCOVERY,
+  requireInteraction: true,
+});
+
 /**
- * A read-only grading run (I3, N2): it may interact only on the sign-in page, and reaches each section
- * through the address bar (CTRL+L, the URL, ENTER), which the grader counts as navigation.
+ * The read-only grading run (I3, N2): it signs in, then finds the readings and their sections itself,
+ * moving only through the address bar. It may interact only on the sign-in page.
  */
-function verify(urls: readonly string[], budget: VerifySpec["budget"]): VerifySpec {
+function grading(readings: readonly number[], budget: VerifySpec["budget"]): VerifySpec {
   return {
-    task:
-      `${LOGIN} ${HINT.browser_use} Then, for each of these pages in order, open it by typing its URL in the address bar ` +
-      '(CTRL+L, the URL, ENTER), scroll to the bottom once, and call read_page with mode "text" and then with mode ' +
-      `"interactive": ${urls.join(" ")} Do not click, type or press keys on these pages, and do not click links or ` +
-      "anything inside an activity. Then finish.",
+    task: `${LOGIN} ${HINT.browser_use} Then: ${discoveryInstruction(ZYBOOKS_BOOK, readings)}`,
     budget,
     signInUrl: SIGN_IN_URL,
   };
 }
 
-/** One agent run (D46): signed_in is graded on this run's own trace, so there is no verify run. */
+/** One agent run (D46): signed_in is graded on this run's own trace, so there is no grading run. */
 function login(toolProfile: Track): BenchmarkSpec {
   return {
     ...COMMON,
@@ -88,60 +79,55 @@ function login(toolProfile: Track): BenchmarkSpec {
   };
 }
 
-function reading(n: number, toolProfile: Track, c: ZybooksCalibration): BenchmarkSpec {
-  const sections = c.sections.filter((s) => s.reading === n);
+/**
+ * Run 1 (D46, "full task, once"): ONE agent run signs in fresh and redoes readings 1-5, finding them
+ * and their sections itself. The grading run discovers them too and grades each section. No baseline
+ * run: the redo is required by the main run's own interactions on every section.
+ */
+function full(toolProfile: Track): BenchmarkSpec {
+  return {
+    ...COMMON,
+    key: "full",
+    toolProfile,
+    task:
+      `${LOGIN} ${HINT[toolProfile]} Then open ${ZYBOOKS_BOOK}, find reading assignments 1 to 5 and every section ` +
+      `in each of them yourself, and work through every participation activity in those sections. ${REDO} ` +
+      `${RULES} Finish when you have redone every participation activity in reading assignments 1 to 5.`,
+    budget: { maxSteps: 3_000, maxUsd: 50, maxActiveMinutes: 600 },
+    criterion: discovered(READINGS),
+    verify: grading(READINGS, { maxSteps: 400, maxUsd: 10, maxActiveMinutes: 90 }),
+    signInCheck: SIGNED_IN,
+    baselineMustPass: false,
+  };
+}
+
+/** One reading at a time, for reviewed continuations (T25B), with a D32 baseline grading run first. */
+function reading(n: number, toolProfile: Track): BenchmarkSpec {
   return {
     ...COMMON,
     key: `reading-${n}`,
     toolProfile,
     task:
-      `${LOGIN} ${HINT[toolProfile]} Open ${ZYBOOKS_BOOK}. Reading assignment ${n} consists of these sections: ` +
-      `${sections.map((s) => `${s.title} (${s.url})`).join("; ")}. These activities are already completed on this account; ` +
-      "redo every participation activity fully anyway: answer each question again and run each animation to its end with its own controls. " +
-      `${RULES} Finish when you have redone every participation activity in these sections.`,
+      `${LOGIN} ${HINT[toolProfile]} Then open ${ZYBOOKS_BOOK}, find reading assignment ${n} and every section in it ` +
+      `yourself, and work through every participation activity in those sections. ${REDO} ${RULES} ` +
+      `Finish when you have redone every participation activity in reading assignment ${n}.`,
     budget: { maxSteps: 900, maxUsd: 50, maxActiveMinutes: 180 },
-    criterion: {
-      kind: "sections_complete",
-      sections,
-      activityPattern: c.patterns.activity,
-      completedPattern: c.patterns.completed,
-      requireInteraction: true,
-    },
-    verify: verify(
-      sections.map((s) => s.url),
-      { maxSteps: 40 + sections.length * 12, maxUsd: 4, maxActiveMinutes: 30 },
-    ),
+    criterion: discovered([n]),
+    verify: grading([n], { maxSteps: 150, maxUsd: 4, maxActiveMinutes: 30 }),
     signInCheck: SIGNED_IN,
     baselineMustPass: true,
   };
 }
 
-/** Calibration run (P10b-17/20): one section per reading, both read_page modes, nothing completed. */
-export function surveySpec(): BenchmarkSpec {
-  return {
-    ...login("browser_use"),
-    key: "survey",
-    task:
-      `${LOGIN} ${HINT.browser_use} Open ${ZYBOOKS_BOOK} and call read_page with mode "text", then "interactive". ` +
-      'Open the book\'s assignments list and call read_page with mode "text" and "interactive" there. ' +
-      'For each of reading assignments 1 to 5: open its section list and call read_page with mode "interactive" once, ' +
-      'then open the first section of that reading and call read_page with mode "text" and then "interactive". ' +
-      `Do not complete or click inside any activity. ${RULES} Then finish.`,
-    budget: { maxSteps: 120, maxUsd: 6, maxActiveMinutes: 30 },
-  };
-}
-
-export function surveySuite(): SuiteDefinition {
-  return { id: "zybooks", stack: "local", benchmarks: [surveySpec()] };
-}
-
-export function zybooksSuite(
-  calibration: ZybooksCalibration | null = loadCalibration(),
-): SuiteDefinition {
+export function zybooksSuite(): SuiteDefinition {
   const tracks = ["browser_use", "computer_use"] as const;
-  const benchmarks: BenchmarkSpec[] = tracks.map(login);
-  if (calibration)
-    for (const n of [1, 2, 3, 4, 5])
-      for (const t of tracks) benchmarks.push(reading(n, t, calibration));
-  return { id: "zybooks", stack: "local", benchmarks };
+  return {
+    id: "zybooks",
+    stack: "local",
+    benchmarks: [
+      ...tracks.map(full),
+      ...tracks.map(login),
+      ...READINGS.flatMap((n) => tracks.map((t) => reading(n, t))),
+    ],
+  };
 }

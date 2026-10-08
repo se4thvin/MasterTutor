@@ -1,38 +1,27 @@
 import { describe, expect, it } from "vitest";
-import {
-  surveySpec,
-  surveySuite,
-  ZYBOOKS_BOOK,
-  ZYBOOKS_ORIGIN,
-  ZybooksCalibration,
-  zybooksSuite,
-} from "./zybooks.ts";
+import { baselineCriterion, evaluate } from "../criteria.ts";
+import { addressBar, observe, readLinks, readPage, traceOf } from "../trace-fixtures.ts";
+import { DISCOVERY, ZYBOOKS_BOOK, ZYBOOKS_ORIGIN, zybooksSuite } from "./zybooks.ts";
 
-const calibration = ZybooksCalibration.parse({
-  book: ZYBOOKS_BOOK,
-  patterns: { activity: "PARTICIPATION ACTIVITY", completed: "Activity completed" },
-  sections: [1, 2, 3, 4, 5].map((reading) => ({
-    reading,
-    title: `${reading}.1`,
-    url: `${ZYBOOKS_BOOK}/chapter/${reading}/section/1`,
-  })),
-  calibratedAt: "2026-10-06",
-  surveyRunId: "88888888-8888-4888-8888-888888888888",
-});
 const SIGNED_IN = { kind: "signed_in", origin: ZYBOOKS_ORIGIN, signInPath: "/signin" };
+const find = (key: string, track = "browser_use") =>
+  zybooksSuite().benchmarks.find((b) => b.key === key && b.toolProfile === track)!;
 
 describe("zybooks suite", () => {
-  it("runs on the prod-like stack and has only login benchmarks until calibrated", () => {
-    const suite = zybooksSuite(null);
+  it("runs on the prod-like stack: run 1 (full task), login, and one benchmark per reading, on both tracks", () => {
+    const suite = zybooksSuite();
     expect(suite.stack).toBe("local");
-    expect(suite.benchmarks.map((b) => `${b.key}@${b.toolProfile}`)).toEqual([
+    expect(suite.benchmarks.map((b) => `${b.key}@${b.toolProfile}`).slice(0, 4)).toEqual([
+      "full@browser_use",
+      "full@computer_use",
       "login@browser_use",
       "login@computer_use",
     ]);
+    expect(suite.benchmarks.filter((b) => b.key.startsWith("reading-"))).toHaveLength(10);
   });
 
   it("runs every benchmark in bypass, pinned to one origin, signing in fresh with named fields (D46, P10b-4/6/18)", () => {
-    for (const b of [...zybooksSuite(calibration).benchmarks, surveySpec()]) {
+    for (const b of zybooksSuite().benchmarks) {
       expect(b.approvalMode).toBe("bypass");
       expect(b.allowedOrigins).toEqual([ZYBOOKS_ORIGIN]);
       expect(b.requiredVaultItem).toEqual({
@@ -48,53 +37,70 @@ describe("zybooks suite", () => {
     }
   });
 
-  it("grades login as ONE run from its own trace (signed_in on main, no verify run; D46, P10b-5)", () => {
-    for (const b of zybooksSuite(null).benchmarks) {
-      expect(b.criterion).toEqual(SIGNED_IN);
-      expect(b.verify).toBeNull();
-      expect(b.baselineMustPass).toBe(false);
-      expect(b.signInCheck).toBeNull();
-    }
+  it("run 1 is ONE agent run with the full goal: the agent finds readings 1-5 itself and redoes them ($50)", () => {
+    const full = find("full");
+    expect(full.task).toMatch(/find reading assignments 1 to 5 and every section/);
+    expect(full.task).toMatch(/already completed.*redo/i);
+    expect(full.task).not.toContain("/chapter/");
+    expect(full.budget.maxUsd).toBe(50);
+    expect(full.baselineMustPass).toBe(false);
+    expect(full.signInCheck).toEqual(SIGNED_IN);
+    expect(full.criterion).toMatchObject({
+      kind: "discovered_readings",
+      readings: [1, 2, 3, 4, 5],
+      requireInteraction: true,
+    });
   });
 
-  it("asks reading runs to redo already-completed work, with a baseline and signed_in on main (D32, P10b-5/7)", () => {
-    const r1 = zybooksSuite(calibration).benchmarks.find(
-      (b) => b.key === "reading-1" && b.toolProfile === "computer_use",
-    )!;
-    expect(r1.baselineMustPass).toBe(true);
-    expect(r1.task).toMatch(/already completed.*redo/i);
-    expect(r1.criterion).toMatchObject({ kind: "sections_complete", requireInteraction: true });
-    expect(r1.signInCheck).toEqual(SIGNED_IN);
-    expect(r1.verify!.task).toContain("/chapter/1/section/1");
-    expect(r1.budget.maxUsd).toBe(50);
-  });
-
-  it("lets a grading run interact only on the sign-in page, and reach sections through the address bar (I3, N2)", () => {
-    for (const b of zybooksSuite(calibration).benchmarks.filter((x) => x.verify !== null)) {
+  it("grades with a read-only run that discovers the sections itself and may interact only on the sign-in page (I3, N2)", () => {
+    for (const b of zybooksSuite().benchmarks.filter((x) => x.verify !== null)) {
       expect(b.verify!.signInUrl).toBe(`${ZYBOOKS_ORIGIN}/signin`);
       expect(b.verify!.task).toMatch(/address bar/);
-      expect(b.verify!.task).toMatch(/Do not click/);
-      if (b.criterion.kind !== "sections_complete") throw new Error("a reading grades sections");
-      for (const s of b.criterion.sections) expect(s.url.startsWith(`${ZYBOOKS_BOOK}/`)).toBe(true);
+      expect(b.verify!.task).toMatch(/Never click, type or press keys/);
+      expect(b.verify!.task).toContain(ZYBOOKS_BOOK);
     }
   });
 
-  it("surveys every reading in both read_page modes, as a one-benchmark suite (P10b-20)", () => {
-    expect(surveySuite().benchmarks.map((b) => `${b.key}@${b.toolProfile}`)).toEqual([
-      "survey@browser_use",
-    ]);
-    const task = surveySpec().task;
-    expect(task).toMatch(/reading assignments 1 to 5/);
-    expect(task).toMatch(/"text".*"interactive"/);
-    expect(task).toMatch(/Do not complete or click inside any activity/);
+  it("grades login as ONE run from its own trace (signed_in on main, no grading run; D46, P10b-5)", () => {
+    for (const track of ["browser_use", "computer_use"]) {
+      const b = find("login", track);
+      expect(b.criterion).toEqual(SIGNED_IN);
+      expect(b.verify).toBeNull();
+    }
   });
 
-  it("rejects calibration with sections outside the book", () => {
+  it("reads zyBooks-shaped pages: reading entries, section links inside the book only", () => {
+    const assignments = `${ZYBOOKS_BOOK}/assignments`;
+    const section = `${ZYBOOKS_BOOK}/chapter/1/section/2`;
+    const grading = traceOf([
+      addressBar(assignments),
+      observe(assignments),
+      readLinks(assignments, [
+        { name: "Reading 1" },
+        {
+          name: "1.2 Variables",
+          href: "/zybook/UTDALLASCE2310EE2310AkourFall2026/chapter/1/section/2",
+        },
+        { name: "Elsewhere", href: "https://evil.example/zybook/x/chapter/1/section/2" },
+      ]),
+      addressBar(section),
+      observe(section),
+      readPage(section, "PARTICIPATION ACTIVITY 1.2.1 ... Activity completed"),
+    ]);
+    const verdict = evaluate(baselineCriterion(find("reading-1").criterion), null, grading);
+    expect(verdict.sections).toEqual([
+      {
+        reading: 1,
+        title: "1.2 Variables",
+        url: section,
+        outcome: "passed",
+        reason: "1/1 activities complete",
+      },
+    ]);
     expect(
-      ZybooksCalibration.safeParse({
-        ...calibration,
-        sections: [{ reading: 1, title: "x", url: "https://evil.example/x" }],
-      }).success,
+      new RegExp(DISCOVERY.sectionUrlPattern).test(
+        "https://evil.example/zybook/x/chapter/1/section/2",
+      ),
     ).toBe(false);
   });
 });
