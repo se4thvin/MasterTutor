@@ -11,6 +11,7 @@ import {
 } from "../../apps/web/lib/server/live/open-live.ts";
 import { BEHAVIOUR_NEKO_MEMBER_SECRET, nekoBaseUrlForTests } from "./constants.ts";
 import { behaviourEnv } from "./env.ts";
+import { endNekoViewer } from "./slot-tools.ts";
 
 const SLOT = "browser-2";
 const now = 1_700_000_000;
@@ -37,6 +38,7 @@ beforeAll(async () => {
 });
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.close();
+  await endNekoViewer(SLOT);
   await releaseSlotForTest(owner.db, SLOT);
 });
 afterAll(async () => {
@@ -119,6 +121,30 @@ describe("openLive against a real slot (spec §10.2.1)", () => {
         ),
       { label: "openLive after the other tab closed", timeoutMs: 15_000, intervalMs: 500 },
     );
+  });
+
+  it("gives viewers no ICE servers: never n.eko's default third-party STUN (D42, self-hosted only)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId: member.workspaceId });
+    await leaseSlotForTest(owner.db, SLOT, runId);
+    const { setCookies } = await openLive(deps, { runId, userId: member.userId });
+    const token = cookieValue(setCookies, NEKO_SESSION_COOKIE);
+    const socket = new WebSocket(
+      `${nekoBaseUrlForTests(SLOT).replace("http", "ws")}/api/ws?token=${token}`,
+    );
+    sockets.push(socket);
+    // n.eko answers a WebRTC request with signal/provide, which carries the ICE servers it hands
+    // the viewer's browser. With none configured it falls back to stun:stun.l.google.com.
+    const provided = new Promise<unknown>((resolve, reject) => {
+      socket.addEventListener("message", (message: MessageEvent<string>) => {
+        const { event, payload } = JSON.parse(message.data) as { event: string; payload: unknown };
+        if (event === "system/init")
+          socket.send(JSON.stringify({ event: "signal/request", payload: {} }));
+        if (event === "signal/provide") resolve(payload);
+      });
+      socket.addEventListener("error", () => reject(new Error("ws failed")));
+    });
+    const provide = (await provided) as { iceservers?: unknown };
+    expect(provide.iceservers ?? []).toEqual([]);
   });
 
   it("reports unavailable when the slot does not answer", async () => {

@@ -297,3 +297,29 @@ describe("compose.test.yml overlay", () => {
     expect(traefik.networks!.cdp!.ipv4_address).toBe("172.30.231.12");
   });
 });
+
+describe("test stack: least privilege for test-only services (spec §12 key placement)", () => {
+  let stack: ComposeConfig;
+  beforeAll(() => {
+    stack = composeConfig(".env.test", ["compose.yml", "compose.test.yml"], {
+      profiles: ["e2e", "e2e-runner"],
+    });
+  });
+  const keys = (name: string) => Object.keys(stack.services[name]?.environment ?? {});
+
+  it("gives the mock, the fixture sites, the mailbox and the Playwright runner no product secret", () => {
+    for (const name of ["llm-mock", "fixtures", "vault-fixtures", "greenmail", "e2e"]) {
+      expect(stack.services[name], name).toBeDefined();
+      for (const key of keys(name)) {
+        expect(key, `${name}:${key}`).not.toMatch(
+          /^(VAULT_|OPENAI_API_KEY$|S3_|DATABASE_URL$|BETTER_AUTH|LIVE_COOKIE|NEKO_)/,
+        );
+      }
+    }
+  });
+
+  it("never gives web a vault decryption key, current or next", () => {
+    for (const key of ["VAULT_PRIVATE_KEY", "VAULT_NEXT_PRIVATE_KEY"])
+      expect(keys("web")).not.toContain(key);
+  });
+});

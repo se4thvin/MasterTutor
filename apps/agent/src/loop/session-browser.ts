@@ -10,7 +10,7 @@ import type { Page } from "playwright-core";
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import { sharedLocalOcr } from "../browser/local-ocr.ts";
 import type { BandRead } from "../browser/pixel-screen.ts";
-import type { MaskSources } from "../browser/masking.ts";
+import { secretFieldBoxesScript, type MaskSources } from "../browser/masking.ts";
 import { createScreenCache, type ScreenCache } from "../browser/screen-cache.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash, UNCOMPARABLE_HASH } from "../browser/phash.ts";
@@ -181,7 +181,11 @@ export class SessionLoopBrowser implements LoopBrowser {
       this.#screens,
     );
     const page = await readPage(session, { mode: "interactive", sinceHash: null, offset: null });
-    const state = await (await session.worlds()).evaluate(pageStateScript, null);
+    const worlds = await session.worlds();
+    const [state, secretFields] = await Promise.all([
+      worlds.evaluate(pageStateScript, null),
+      worlds.evaluate(secretFieldBoxesScript, null),
+    ]);
     return {
       url,
       title: this.#mask.redact(state.title),
@@ -190,6 +194,7 @@ export class SessionLoopBrowser implements LoopBrowser {
       screenshot,
       phash: await perceptualHash(screenshot.png),
       captcha: await detectCaptcha(session.page),
+      signIn: secretFields.length > 0,
       scroll: { x: state.scrollX, y: state.scrollY },
       videoTime: state.videoTime,
     };

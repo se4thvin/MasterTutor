@@ -175,13 +175,31 @@ export async function emit(page: Page, records: RunEventRecord[]): Promise<void>
 
 const FRAME_SVG = readFileSync(new URL("./frame.svg", import.meta.url), "utf8");
 
+/**
+ * A stand-in for n.eko's embed: the fixed frame and a `<video>` that decodes frames (as n.eko's
+ * does once WebRTC connects): at once, after `LATE_VIDEO_MS` ("late"), or never ("blank").
+ */
+const liveEmbedPage = (video: "video" | "late" | "blank") =>
+  `<!doctype html><html lang="en"><head><title>Remote page</title><style>html,body{margin:0;height:100%}svg{display:block;width:100%;height:100%}video{position:absolute;width:1px;height:1px;opacity:0}</style></head><body>${FRAME_SVG}<video autoplay muted playsinline></video>${
+    video === "blank"
+      ? ""
+      : `<script>setTimeout(() => {const c=document.createElement("canvas");c.width=64;c.height=36;const x=c.getContext("2d");let i=0;setInterval(()=>{x.fillStyle=i++%2?"#345":"#543";x.fillRect(0,0,64,36)},100);document.querySelector("video").srcObject=c.captureStream(10);}, ${video === "late" ? LATE_VIDEO_MS : 0});</script>`
+  }</body></html>`;
+
+/** When a "late" embed decodes its first frame. */
+export const LATE_VIDEO_MS = 9_000;
+
+/** Whether the n-th load (1-based) of the live embed decodes video. */
+export type LiveEmbed = (load: number) => "video" | "late" | "blank";
+
 /** Stubs the n.eko embed and the masked step and approval screenshots with one fixed frame. */
-export async function stubLiveFrame(page: Page): Promise<void> {
+export async function stubLiveFrame(
+  page: Page,
+  liveEmbed: LiveEmbed = () => "video",
+): Promise<void> {
+  let loads = 0;
   await page.route("**/live/**", (route) =>
-    route.fulfill({
-      contentType: "text/html",
-      body: `<!doctype html><html lang="en"><head><title>Remote page</title><style>html,body{margin:0;height:100%}svg{display:block;width:100%;height:100%}</style></head><body>${FRAME_SVG}</body></html>`,
-    }),
+    route.fulfill({ contentType: "text/html", body: liveEmbedPage(liveEmbed(++loads)) }),
   );
   for (const pattern of [
     "**/api/runs/*/steps/*/screenshot",
@@ -200,11 +218,13 @@ export interface GotoRunOptions {
   detail?: RunDetail;
   handlers?: Record<string, RpcHandler>;
   realEventSource?: boolean;
+  /** Whether each load of the live embed decodes video (default: always). */
+  liveEmbed?: LiveEmbed;
 }
 
 export async function gotoRun(page: Page, opts: GotoRunOptions = {}): Promise<RpcCall[]> {
   if (!opts.realEventSource) await installFakeEventSource(page);
-  await stubLiveFrame(page);
+  await stubLiveFrame(page, opts.liveEmbed);
   const detail = opts.detail;
   const calls = await mockRpc(page, {
     ...controlHandlers(),

@@ -13,3 +13,4 @@ apps/browser-slot
 apps/web/e2e/.out
 apps/web/test-results
 apps/web/playwright-report
+tests/security/.out

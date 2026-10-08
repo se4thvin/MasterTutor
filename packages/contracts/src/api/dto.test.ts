@@ -35,9 +35,30 @@ describe("run inputs", () => {
     expect(input.targetFolderId).toBeNull();
     expect(input.budget).toBeUndefined();
   });
-  it("needs a goal and at least one origin", () => {
+  it("needs a goal; sources and origins are optional", () => {
     expect(CreateRunInput.safeParse({ goal: " ", allowedOrigins: ["a.com"] }).success).toBe(false);
-    expect(CreateRunInput.safeParse({ goal: "x", allowedOrigins: [] }).success).toBe(false);
+    expect(CreateRunInput.parse({ goal: "Find a tutorial on Rust lifetimes" })).toMatchObject({
+      goal: "Find a tutorial on Rust lifetimes",
+      allowedOrigins: [],
+      approvalMode: "ask",
+    });
+    expect(CreateRunInput.safeParse({ goal: "x", allowedOrigins: [] }).success).toBe(true);
+  });
+  it("refuses auto mode with no allowed origin: it could never open a page", () => {
+    expect(
+      CreateRunInput.safeParse({ goal: "x", approvalMode: "auto_within_allowlist" }).success,
+    ).toBe(false);
+    expect(
+      CreateRunInput.safeParse({
+        goal: "x",
+        allowedOrigins: ["a.com"],
+        approvalMode: "auto_within_allowlist",
+      }).success,
+    ).toBe(true);
+    for (const approvalMode of ["ask", "bypass"] as const)
+      expect(
+        CreateRunInput.safeParse({ goal: "x", approvalMode, bypassAcknowledged: true }).success,
+      ).toBe(true);
   });
   it("accepts only 4-8 digit OTP codes", () => {
     expect(SubmitOtpInput.safeParse({ runId, code: "123456" }).success).toBe(true);

@@ -111,6 +111,7 @@ async function setup(
     budget?: Budget;
     hooks?: Partial<RunHooks>;
     leaseExpired?: () => boolean;
+    allowedOrigins?: string[];
   } = {},
 ) {
   const name = `s${++counter}`;
@@ -118,6 +119,7 @@ async function setup(
   const row = await insertRun(owner.db, {
     workspaceId,
     goal: `[scenario:${name}] Do the task`,
+    allowedOrigins: options.allowedOrigins,
     status: "running",
     leaseOwner: OWNER,
     approvalMode: options.approvalMode,
@@ -380,6 +382,68 @@ describe("RunLoop (spec §5.3)", () => {
       { kind: "new_origin", status: "denied", decidedBy: "policy" },
     ]);
     expect((await status(run.id))?.allowedOrigins).toEqual(["http://site.fixtures.test"]);
+  });
+
+  it("runs a goal-only run from a blank page: told to find sources, and every site it opens asks first", async () => {
+    const search = "https://html.duckduckgo.com/html/?q=rust%20lifetimes";
+    const firstTurn: MockTurn = {
+      ...click(),
+      check: (r) => {
+        const input = JSON.stringify(r.body.input);
+        for (const text of ["Allowed origins: none yet", "html.duckduckgo.com/html", "about:blank"])
+          if (!input.includes(text)) throw new Error(`no "${text}" in the first input`);
+      },
+    };
+    const { run, browser, loop, reload } = await setup(
+      [firstTurn, doneExpecting("the user allowed https://html.duckduckgo.com")],
+      { allowedOrigins: [] },
+    );
+    browser.url = "about:blank";
+    browser.computerHook = async () => {
+      browser.blocked.push({ url: search, origin: "https://html.duckduckgo.com" });
+    };
+    expect(await drive(loop)).toMatchObject({ kind: "waiting", reason: "approval" });
+    expect(browser.navigations).toEqual([]);
+    expect(await approvalRows(run.id)).toMatchObject([
+      { kind: "new_origin", status: "pending", request: { origin: "https://html.duckduckgo.com" } },
+    ]);
+    await decideApproval(run.id, "approved");
+    browser.computerHook = null;
+    const resumed = await reload();
+    await resumed.resume(new AbortController().signal);
+    expect(await drive(resumed)).toEqual({ kind: "completed" });
+    expect(browser.navigations).toEqual([search]);
+    expect((await status(run.id))?.allowedOrigins).toEqual(["https://html.duckduckgo.com"]);
+  });
+
+  it("a bypass goal-only run is never asked about new sites: each is approved as bypass and opened", async () => {
+    const search = "https://html.duckduckgo.com/html/?q=rust%20lifetimes";
+    const result = "https://doc.rust-lang.org/nomicon/lifetimes.html";
+    const { run, browser, loop } = await setup(
+      [click(), click(30, 40), doneExpecting("allowed by this run's bypass mode")],
+      { allowedOrigins: [], approvalMode: "bypass" },
+    );
+    browser.url = "about:blank";
+    const blocked = [
+      { url: search, origin: "https://html.duckduckgo.com" },
+      { url: result, origin: "https://doc.rust-lang.org" },
+    ];
+    browser.computerHook = async () => {
+      const next = blocked.shift();
+      if (next) browser.blocked.push(next);
+    };
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(browser.navigations).toEqual([search, result]);
+    expect(
+      (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
+    ).toEqual([
+      ["new_origin", "approved", "bypass"],
+      ["new_origin", "approved", "bypass"],
+    ]);
+    expect((await status(run.id))?.allowedOrigins).toEqual([
+      "https://html.duckduckgo.com",
+      "https://doc.rust-lang.org",
+    ]);
   });
 
   describe("downloads (spec §9)", () => {
@@ -1284,6 +1348,104 @@ describe("RunLoop (spec §5.3)", () => {
       event.payload.type === "step" && event.payload.action ? [event.payload.action] : [],
     );
     expect(actions).toContainEqual(expect.objectContaining({ tool: "computer", pointer: "click" }));
+  });
+
+  describe("a sign-in page (missing data, not an approval)", () => {
+    const ORIGIN = "http://site.fixtures.test";
+    const guess: MockTurn = {
+      outputs: [{ type: "computer", actions: [{ type: "type", text: "hunter2" }] }],
+    };
+    const statusReasons = async (runId: string) =>
+      (await owner.db.select().from(runEvents).where(eq(runEvents.runId, runId)))
+        .map((event) => event.payload as { type: string; reason?: string | null })
+        .filter((payload) => payload.type === "status")
+        .map((payload) => payload.reason);
+
+    it.each(["ask", "auto_within_allowlist", "bypass"] as const)(
+      "pauses for a person without a saved sign-in, before any model call or keystroke (%s)",
+      async (approvalMode) => {
+        const { name, run, browser, loop } = await setup([guess, done()], { approvalMode });
+        browser.signIn = true;
+        expect(await drive(loop)).toEqual({ kind: "waiting", reason: "takeover" });
+        expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "takeover" });
+        expect(await statusReasons(run.id)).toContain(
+          `Sign-in needed for ${ORIGIN} — add it in the Vault or take over`,
+        );
+        expect(mock.requestsFor(name)).toHaveLength(0);
+        expect(browser.executed).toEqual([]);
+      },
+    );
+
+    it("pauses at most once per origin: a resume without a sign-in goes on signed out, a new origin pauses once", async () => {
+      const OTHER_ORIGIN = "http://other.fixtures.test";
+      const goOn = (reason: string): MockTurn => ({
+        outputs: [{ type: "turn", status: "continue", reason }],
+      });
+      const { name, run, browser, loop, reload } = await setup([
+        goOn("Reading signed out"),
+        goOn("On the other site"),
+        done(),
+      ]);
+      browser.signIn = true;
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "takeover" });
+      expect(mock.requestsFor(name)).toHaveLength(0);
+
+      // The person resumes without adding a sign-in; a fresh worker restores the run.
+      const resumed = await reload();
+      await resumed.resume(new AbortController().signal);
+      // A second page on the same origin, still with a password field: no second pause.
+      browser.url = `${ORIGIN}/page2.html`;
+      browser.domHash = "e".repeat(64);
+      expect(await resumed.step(new AbortController().signal)).toEqual({ kind: "continue" });
+      expect(await resumed.step(new AbortController().signal)).toEqual({ kind: "continue" });
+      expect(mock.requestsFor(name)).toHaveLength(1);
+
+      // A different origin with a password field pauses, once.
+      browser.url = `${OTHER_ORIGIN}/login.html`;
+      browser.domHash = "f".repeat(64);
+      expect(await drive(resumed)).toEqual({ kind: "waiting", reason: "takeover" });
+      expect(await statusReasons(run.id)).toEqual(
+        expect.arrayContaining([
+          `Sign-in needed for ${ORIGIN} — add it in the Vault or take over`,
+          `Sign-in needed for ${OTHER_ORIGIN} — add it in the Vault or take over`,
+        ]),
+      );
+      const again = await reload();
+      await again.resume(new AbortController().signal);
+      expect(await drive(again)).toEqual({ kind: "completed" });
+      const pauses = (await statusReasons(run.id)).filter((reason) =>
+        reason?.startsWith("Sign-in needed"),
+      );
+      expect(pauses).toHaveLength(2);
+      // Signed out throughout: nothing was typed.
+      expect(browser.executed).toEqual([]);
+    });
+
+    it("fills from the vault as before when the origin has a saved sign-in", async () => {
+      const origins: string[] = [];
+      const fill: MockTurn = {
+        outputs: [
+          {
+            type: "function",
+            name: "fill_credential",
+            args: { alias: "site", field: "password", target: "e1" },
+          },
+        ],
+      };
+      const { browser, loop } = await setup([fill, done()], {
+        hooks: {
+          hasSignIn: async (_run, origin) => {
+            origins.push(origin);
+            return true;
+          },
+        },
+      });
+      browser.signIn = true;
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.functionRuns.map((call) => call.name)).toEqual(["fill_credential"]);
+      expect(origins[0]).toBe(ORIGIN);
+      expect(browser.executed).toEqual([]);
+    });
   });
 
   it("enters waiting(otp) when a tool asks for a code; later calls of the turn do not run (F5)", async () => {

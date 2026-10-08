@@ -1,4 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type RequestListener } from "node:http";
+import type * as NodeHttp from "node:http";
+import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { trace } from "@opentelemetry/api";
 import { createLogger } from "@mastertutor/contracts/server";
@@ -59,6 +61,29 @@ describe("startTelemetry (spec §6.3, §7)", () => {
     expect(paths).toContain("/v1/traces");
     collector.close();
     target.close();
+  });
+
+  it("spans made while serving a request record: incoming requests are not suppressed (review I1)", async () => {
+    const collector = await listen((req, res) => req.resume().on("end", () => res.end()));
+    startTelemetry({
+      service: "web",
+      env: { OTEL_EXPORTER_OTLP_ENDPOINT: collector.url, MT_DEPLOYMENT: "test" },
+      crash: "observe",
+      log: silent,
+    });
+    // Required after start, as Next.js's server is: the http instrumentation patches it now.
+    const http = createRequire(import.meta.url)("node:http") as typeof NodeHttp;
+    let recording: boolean | null = null;
+    const server = http.createServer((_req, res) => {
+      recording = trace.getTracer(TRACER_NAME).startSpan("mt.alert.delivery").isRecording();
+      res.end("ok");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await (await fetch(`http://127.0.0.1:${port}`)).text();
+    server.close();
+    collector.close();
+    expect(recording).toBe(true);
   });
 
   it("stdout keeps every line while the bridge drops (collector down, Review Focus 1)", async () => {

@@ -38,6 +38,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   title = "Fixture";
   domHash = "d".repeat(64);
   captcha = false;
+  /** The page shows a password, one-time-code or PIN field. */
+  signIn = false;
   phash: PerceptualHash = [1];
   png: Buffer = TINY_PNG;
   /** Why this step's screenshot is withheld (a black frame is sent instead), or null. */
@@ -87,7 +89,7 @@ export class FakeLoopBrowser implements LoopBrowser {
     return {
       url: this.url,
       title: this.title,
-      origin: new URL(this.url).origin,
+      origin: toOrigin(this.url),
       domHash: this.domHash,
       screenshot: {
         png: this.png,
@@ -100,6 +102,7 @@ export class FakeLoopBrowser implements LoopBrowser {
       },
       phash: this.phash,
       captcha: this.captcha,
+      signIn: this.signIn,
       scroll: { ...this.scroll },
       videoTime: null,
     };

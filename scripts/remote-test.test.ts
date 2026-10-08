@@ -74,6 +74,12 @@ describe("remote test runner (D45, X4, D48)", () => {
     expect(readme).toContain("scripts/remote-test.sh all");
   });
 
+  it("installs dependencies before e2e: its post-run canary scan runs workspace code (OCR) in Node", () => {
+    expect(host).toMatch(
+      /^ {2}e2e\)\n {4}command="\$install && exec bash scripts\/e2e\.sh \\"\\\$@\\"" ;;$/m,
+    );
+  });
+
   it("handles and documents every suite it offers", () => {
     for (const suite of suites) {
       expect(host, suite).toMatch(new RegExp(`(^|[ (|])${suite}( \\||\\))`, "m"));
@@ -216,6 +222,13 @@ describe("stack slots (scripts/remote-test/slots.sh, D48)", () => {
     expect(read("../apps/web/playwright.config.ts")).toContain('process.env["WEB_UI_PORT"]');
     for (const name of names.filter((n) => n.startsWith("BEHAVIOUR_")))
       expect(read("../tests/behaviour/constants.ts"), name).toContain(name);
+  });
+
+  it("never leaves the stack lock without an owner (review Minor 7)", () => {
+    // The lock appears only by renaming a directory that already names its owner.
+    expect(host).not.toContain('mkdir "$stack_lock"');
+    expect(host).toMatch(/echo "\$project" >"\$claim\/owner"/);
+    expect(host).toMatch(/mv -T "\$claim" "\$stack_lock"/);
   });
 });
 

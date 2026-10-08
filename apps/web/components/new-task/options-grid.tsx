@@ -1,7 +1,7 @@
 "use client";
 
 import { toOrigin, type ApprovalMode, type Budget, type FolderView } from "@mastertutor/contracts";
-import { useId, useState } from "react";
+import { useId, useState, type Ref } from "react";
 import { formatCount } from "@/components/bits/format.ts";
 import { RollingNumber } from "@/components/bits/rolling-number.tsx";
 import { RubberSegment } from "@/components/bits/rubber-segment.tsx";
@@ -36,6 +36,9 @@ interface OptionsGridProps {
   sources: SourceChip[];
   domains: string[];
   onDomains(next: string[]): void;
+  /** Why Start was refused because of the allowed domains (auto mode with none). */
+  domainsError: string | null;
+  addDomainRef: Ref<HTMLButtonElement>;
   budget: BudgetPreset;
   onBudget(next: BudgetPreset): void;
   standardBudget: Budget;
@@ -74,7 +77,11 @@ export function OptionsGrid(p: OptionsGridProps) {
         <h2 id={`${id}-domains`} className="nt-opt-title">
           Allowed domains
         </h2>
-        <p className="nt-opt-text">The agent stays on these. Leaving them asks you first.</p>
+        <p className="nt-opt-text">
+          {sourceHosts.length + p.domains.length > 0
+            ? "The agent stays on these. Leaving them asks you first."
+            : "None yet. Every site the agent opens is a new domain."}
+        </p>
         <ul className="nt-chips" aria-label="Allowed domains">
           {sourceHosts.map((host) => (
             <li key={`src-${host}`}>
@@ -126,10 +133,22 @@ export function OptionsGrid(p: OptionsGridProps) {
             {invalid ? <p className="nt-error">Enter a domain like example.com.</p> : null}
           </div>
         ) : (
-          <Button variant="plain" icon="add" onClick={() => setAdding(true)}>
+          <Button
+            ref={p.addDomainRef}
+            variant="plain"
+            icon="add"
+            aria-invalid={p.domainsError ? true : undefined}
+            aria-describedby={p.domainsError ? `${id}-domains-error` : undefined}
+            onClick={() => setAdding(true)}
+          >
             Add domain
           </Button>
         )}
+        {p.domainsError ? (
+          <p id={`${id}-domains-error`} role="alert" className="nt-error">
+            {p.domainsError}
+          </p>
+        ) : null}
       </section>
 
       <section className="nt-opt" aria-labelledby={`${id}-budget`}>

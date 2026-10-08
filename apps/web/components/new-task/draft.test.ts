@@ -91,11 +91,25 @@ describe("buildCreateRunInput", () => {
     });
   });
 
+  it("starts a run from a goal alone: no source, no allowed domain", () => {
+    expect(buildCreateRunInput(draft())).toEqual({
+      goal: "Every lecture and figure",
+      allowedOrigins: [],
+      budget: DEFAULT_BUDGET,
+      targetFolderId: null,
+      approvalMode: "ask",
+      toolProfile: "browser_use",
+    });
+  });
+
   it("explains what is missing", () => {
     expect(buildCreateRunInput(draft({ goal: "  " }))).toEqual({
-      error: "Describe the task or add a source.",
+      error: "Describe the task to start.",
     });
-    expect(buildCreateRunInput(draft())).toEqual({ error: "Add a source or an allowed domain." });
+    expect(buildCreateRunInput(draft({ approvalMode: "auto_within_allowlist" }))).toEqual({
+      error: "Auto mode needs an allowed domain. Add one, or choose Ask me.",
+      field: "domains",
+    });
     expect(
       buildCreateRunInput(draft({ goal: "x".repeat(4_100), domains: ["https://a.example"] })),
     ).toEqual({

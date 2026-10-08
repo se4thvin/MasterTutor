@@ -1,7 +1,8 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { CodeSlots } from "@/components/bits/code-slots.tsx";
+import { useToast } from "@/components/toast/toast-provider.tsx";
 import { api } from "@/lib/api/client.ts";
 
 type Phase = "entering" | "sending" | "sent" | "failed";
@@ -19,11 +20,29 @@ export function OtpCard({ runId, host }: { runId: string; host: string }) {
   const [sealed, setSealed] = useState<number | null>(null);
   // A failed submit remounts CodeSlots, so the retry starts with empty boxes.
   const [attempt, setAttempt] = useState(0);
+  // The run often resumes (and this card leaves) before or in the same render as submitOtp's
+  // answer: the confirmation then goes to a toast, so the person still sees where the code went
+  // (review M3). A layout effect clears `mounted` during the commit that removes the card.
+  const toast = useToast();
+  const mounted = useRef(true);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const submit = (code: string) => {
     setSealed(code.length);
     setPhase("sending");
     api.runs.submitOtp({ runId, code }).then(
-      () => setPhase("sent"),
+      () => {
+        setPhase("sent");
+        // Checked after the next frame: a resume batched with this answer unmounts the card before
+        // "sent" is ever painted.
+        requestAnimationFrame(() => {
+          if (!mounted.current) toast({ title: PHASE_TEXT.sent, icon: "codeOtp" });
+        });
+      },
       () => {
         setSealed(null);
         setPhase("failed");

@@ -1,6 +1,8 @@
 import { DEFAULT_BUDGET } from "@mastertutor/contracts";
+import { FIXTURE_AUTH_COOKIE } from "../lib/fixtures/cookies.ts";
 import { ids } from "../lib/fixtures/ids.ts";
 import { mockRpc } from "./helpers/run.ts";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/test.ts";
 
 type Logged = [string, unknown][];
@@ -102,10 +104,56 @@ test.describe("New task", () => {
     await page.getByRole("button", { name: /^Start/ }).click();
     // Next.js keeps its own (empty) route-announcer alert; ours is the form error.
     await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveText(
-      "Describe the task or add a source.",
+      "Describe the task to start.",
     );
     await expect(page.getByLabel("Describe the task")).toBeFocused();
     expect(creates).toBe(0);
+  });
+
+  test.describe("goal only", () => {
+    // The 3D hero is not under test here: on a software-GL host its shader compile can hold the
+    // main thread for seconds (timers, navigation). hero.spec.ts covers it.
+    test.use({ reducedMotion: "reduce" });
+
+    test("starts with just a goal: no source and no allowed domain", async ({ page }) => {
+      await page.goto("/new");
+      await expect(
+        page.getByText("None yet. Every site the agent opens is a new domain."),
+      ).toBeVisible();
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      const request = page.waitForRequest("**/api/rpc/runs/create");
+      await page.getByRole("button", { name: /^Start/ }).click();
+      expect(createBody((await request).postDataJSON())).toMatchObject({
+        goal: "Find a good intro to Rust lifetimes",
+        allowedOrigins: [],
+        approvalMode: "ask",
+      });
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
+    });
+
+    test("auto mode with no allowed domain explains instead of starting", async ({ page }) => {
+      let creates = 0;
+      page.on("request", (r) => {
+        if (r.url().endsWith("/api/rpc/runs/create")) creates += 1;
+      });
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      await page.getByRole("radio", { name: "Auto in allowed domains" }).click();
+      await page.getByRole("button", { name: /^Start/ }).click();
+      const error = page
+        .getByRole("alert")
+        .filter({ hasText: "Auto mode needs an allowed domain. Add one, or choose Ask me." });
+      await expect(error).toBeVisible();
+      // The refusal belongs to Allowed domains, not to the goal (M4).
+      const addDomain = page.getByRole("button", { name: "Add domain" });
+      await expect(addDomain).toBeFocused();
+      await expect(addDomain).toHaveAttribute("aria-invalid", "true");
+      await expect(addDomain).toHaveAccessibleDescription(
+        "Auto mode needs an allowed domain. Add one, or choose Ask me.",
+      );
+      await expect(page.getByLabel("Describe the task")).not.toHaveAttribute("aria-invalid");
+      expect(creates).toBe(0);
+    });
   });
 
   test("keeps the draft and explains when starting fails", async ({ page }) => {
@@ -189,5 +237,154 @@ test.describe("New task", () => {
       "true",
     );
     await expect(page.getByRole("checkbox", { name: /I understand/ })).toHaveCount(0);
+  });
+
+  test.describe("the draft is saved", () => {
+    // The 3D hero is not under test here: on a software-GL host its shader compile can hold the
+    // main thread for seconds (timers, navigation). hero.spec.ts covers it.
+    test.use({ reducedMotion: "reduce" });
+
+    const DRAFT_KEY = "mt.new-task-draft:fixture-user";
+    const storedDraft = (page: Page) =>
+      page.evaluate((key) => window.localStorage.getItem(key), DRAFT_KEY);
+
+    async function compose(page: Page) {
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Week 3: every lecture and table");
+      await page.getByRole("button", { name: "PDF", exact: true }).click();
+      await page.getByLabel("PDF address").fill("https://arxiv.org/pdf/1706.03762.pdf");
+      await page.getByLabel("PDF address").press("Enter");
+      await page.getByRole("button", { name: "Add domain" }).click();
+      await page.getByRole("textbox", { name: "Allowed domain" }).fill("github.com");
+      await page.getByRole("textbox", { name: "Allowed domain" }).press("Enter");
+      await page.getByRole("radio", { name: "Deep" }).click();
+      await page.getByLabel("Save to").selectOption(ids.folder(2));
+      await page.getByRole("radio", { name: "Auto in allowed domains" }).click();
+    }
+
+    async function expectRestored(page: Page) {
+      await expect(page.getByLabel("Describe the task")).toHaveValue(
+        "Week 3: every lecture and table",
+      );
+      await expect(page.getByRole("list", { name: "Sources" })).toContainText("arxiv.org/pdf");
+      await expect(page.getByRole("list", { name: "Allowed domains" })).toContainText("github.com");
+      await expect(page.getByRole("radio", { name: "Deep" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await expect(page.getByLabel("Save to")).toHaveValue(ids.folder(2));
+      // The approval mode is never remembered (S10, D44): it is always chosen afresh.
+      await expect(page.getByRole("radio", { name: "Ask me" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    }
+
+    test("restores what was typed after leaving the page and coming back", async ({ page }) => {
+      await compose(page);
+      const nav = page.getByRole("navigation", { name: "Primary" });
+      await nav.getByRole("link", { name: "Library" }).click();
+      await expect(page).toHaveURL(/\/library$/);
+      const saved = await storedDraft(page);
+      expect(saved).toContain("Week 3: every lecture and table");
+      expect(saved).not.toMatch(/approval|bypass|auto_within/i);
+      await nav.getByRole("link", { name: "New task" }).click();
+      await expectRestored(page);
+      // A full reload restores it too.
+      await page.reload();
+      await expectRestored(page);
+    });
+
+    test("is cleared once a run is created, and kept when starting fails", async ({ page }) => {
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      await page.route("**/api/rpc/runs/create", (route) =>
+        route.fulfill({
+          status: 500,
+          json: {
+            json: { defined: false, code: "INTERNAL_SERVER_ERROR", status: 500, message: "down" },
+          },
+        }),
+      );
+      await page.getByRole("button", { name: /^Start/ }).click();
+      await expect(page.getByText("Couldn't start the task. Try again.")).toBeVisible();
+      await expect.poll(() => storedDraft(page)).toContain("Rust lifetimes");
+      await page.unroute("**/api/rpc/runs/create");
+      await page.getByRole("button", { name: /^Start/ }).click();
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
+      expect(await storedDraft(page)).toBeNull();
+      await page.goto("/new");
+      await expect(page.getByRole("button", { name: /^Start/ })).toBeEnabled();
+      await expect(page.getByLabel("Describe the task")).toHaveValue("");
+    });
+
+    test("is kept per user: another account's draft in this browser is never restored", async ({
+      page,
+    }) => {
+      await page.addInitScript(() => {
+        window.localStorage.setItem(
+          "mt.new-task-draft:someone-else",
+          JSON.stringify({
+            v: 1,
+            goal: "Someone else's private task",
+            sources: [],
+            domains: null,
+            budget: "deep",
+            folderId: null,
+          }),
+        );
+      });
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Mine");
+      await expect.poll(() => storedDraft(page)).toContain("Mine");
+      await page.reload();
+      await expect(page.getByLabel("Describe the task")).toHaveValue("Mine");
+      await expect(page.getByRole("radio", { name: "Standard" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await expect(page.getByText("Someone else's private task")).toHaveCount(0);
+    });
+
+    test("sign-out removes every saved draft from this browser", async ({ page }) => {
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Week 3: every lecture and table");
+      await expect.poll(() => storedDraft(page)).toContain("Week 3");
+      await page.route("**/api/auth/sign-out", (route) =>
+        route.fulfill({
+          status: 200,
+          headers: { "set-cookie": `${FIXTURE_AUTH_COOKIE}=signed-out; Path=/` },
+          json: { success: true },
+        }),
+      );
+      await page.goto("/settings");
+      await page.getByRole("button", { name: "Sign out" }).click();
+      await expect(page).toHaveURL(/\/sign-in$/);
+      expect(
+        await page.evaluate(() =>
+          Object.keys(window.localStorage).filter((k) => k.startsWith("mt.new-task-draft:")),
+        ),
+      ).toEqual([]);
+    });
+
+    test("the page still works when storage throws", async ({ page }) => {
+      await page.addInitScript(() => {
+        const denied = () => {
+          throw new DOMException("Storage is blocked", "SecurityError");
+        };
+        Object.defineProperty(window, "localStorage", { configurable: true, get: denied });
+      });
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      const request = page.waitForRequest("**/api/rpc/runs/create");
+      await page.getByRole("button", { name: /^Start/ }).click();
+      expect(createBody((await request).postDataJSON())).toMatchObject({
+        goal: "Find a good intro to Rust lifetimes",
+      });
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
+      expect(errors).toEqual([]);
+    });
   });
 });

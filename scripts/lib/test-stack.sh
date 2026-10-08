@@ -3,8 +3,21 @@
 #
 # DC: the Compose command. On the shared CI host (scripts/remote-test.sh sets MT_CI_RUN_ID) it adds
 # tests/e2e/compose.remote.yml: CI labels, the slot AppArmor profile, no published media ports.
-DC=(docker compose --env-file .env.test -f compose.yml -f compose.test.yml)
+# The project is named per worktree (mt-<worktree dir>), so one worktree's `down -v` never removes
+# another's kept stack. A name the caller set wins: the remote runner sets its per-run project.
+# Locally stacks still cannot run side by side (fixed subnets and the Traefik port): the lock stays.
+worktree="$(basename "$PWD" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_\n-' '-')"
+: "${COMPOSE_PROJECT_NAME:=mt-${worktree}}"
+# Not exported: DC carries it (-p), and a shell that sourced this must not move other compose
+# tools (the behaviour stack) onto this project.
+DC=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env.test -f compose.yml -f compose.test.yml)
 if [[ -n "${MT_CI_RUN_ID:-}" ]]; then DC+=(-f tests/e2e/compose.remote.yml); fi
+
+# The app's origin: an exported TEST_HTTP_PORT wins, as in Compose's interpolation; then .env.test.
+stack_base_url() {
+  local port="${TEST_HTTP_PORT:-$(grep -E '^TEST_HTTP_PORT=' .env.test 2>/dev/null | cut -d= -f2)}"
+  echo "http://localhost:${port:-18080}"
+}
 
 # One heavy stack at a time on a laptop (D46): the same lock as the behaviour suite. On the CI host
 # each run instead holds a stack slot with its own subnets and ports (scripts/remote-test/slots.sh).

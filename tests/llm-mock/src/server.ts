@@ -83,6 +83,20 @@ function routeOf(body: MockRequestBody): { name: string; nonce: string | null } 
   }
 }
 
+/** openai-data-policy.md: stateless and anonymous, or the request is refused. */
+export function requestPolicyProblem(body: MockRequestBody): string | null {
+  if (body.store !== false) return "store must be false.";
+  for (const field of FORBIDDEN_FIELDS) if (field in body) return `${field} must not be sent.`;
+  // With store:false a reasoning item can only be replayed with its encrypted content.
+  const items = Array.isArray(body.input) ? (body.input as Array<Record<string, unknown>>) : [];
+  for (const item of items) {
+    if (item.type !== "reasoning") continue;
+    if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0)
+      return `Reasoning item ${String(item.id)} must carry encrypted_content when store is false.`;
+  }
+  return null;
+}
+
 export async function startLlmMock(
   options: { port?: number; host?: string; scenarios?: readonly Scenario[] } = {},
 ): Promise<LlmMock> {
@@ -293,20 +307,6 @@ export async function startLlmMock(
     return images > 1 ? "Computer tool cannot use multiple image inputs." : null;
   };
 
-  /** openai-data-policy.md: stateless and anonymous, or the request is refused. */
-  const policyProblem = (body: MockRequestBody): string | null => {
-    if (body.store !== false) return "store must be false.";
-    for (const field of FORBIDDEN_FIELDS) if (field in body) return `${field} must not be sent.`;
-    // With store:false a reasoning item can only be replayed with its encrypted content.
-    const items = Array.isArray(body.input) ? (body.input as Array<Record<string, unknown>>) : [];
-    for (const item of items) {
-      if (item.type !== "reasoning") continue;
-      if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0)
-        return `Reasoning item ${String(item.id)} must carry encrypted_content when store is false.`;
-    }
-    return null;
-  };
-
   /** Structured Responses calls (OCR, filing) carry no scenario tag; they route on text.format.name. */
   const structured = new Map<string, (body: MockRequestBody) => unknown>([
     ["ocr_text", () => ({ markdown: "" })],
@@ -411,7 +411,7 @@ export async function startLlmMock(
       const format = body.text?.format?.name;
       const answer = format ? structured.get(format) : undefined;
       if (answer) {
-        const policy = policyProblem(body);
+        const policy = requestPolicyProblem(body);
         if (policy) return refuse(response, path, body, policy);
         requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
         return respond(response, body, null, [
@@ -444,7 +444,7 @@ export async function startLlmMock(
         at: Date.now(),
         path,
       });
-      const policy = policyProblem(body);
+      const policy = requestPolicyProblem(body);
       if (policy) {
         requests.push(routed(null));
         failures.push(`${name} request: ${policy}`);

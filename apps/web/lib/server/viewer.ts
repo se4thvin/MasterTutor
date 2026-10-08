@@ -1,4 +1,5 @@
 import { cookies, headers } from "next/headers";
+import { cache } from "react";
 import { FIXTURE_AUTH_COOKIE } from "../fixtures/cookies.ts";
 import { getAuth } from "./auth.ts";
 import { getWebEnv } from "./env.ts";
@@ -15,8 +16,11 @@ export const FIXTURE_VIEWER: Viewer = {
   email: "sam@example.test",
 };
 
-/** The signed-in user, or null. Fixture mode signs in a fixed user unless the test sets "signed-out". */
-export async function getViewer(): Promise<Viewer | null> {
+/**
+ * The signed-in user, or null. Fixture mode signs in a fixed user unless the test sets "signed-out".
+ * Cached per server render, so a layout and its page share one session lookup.
+ */
+export const getViewer = cache(async function getViewer(): Promise<Viewer | null> {
   // Only a fixture build can sign anyone in by cookie; a production build folds this away.
   if (__FIXTURE_BUILD__ && getWebEnv().WEB_FIXTURE_API) {
     const jar = await cookies();
@@ -26,7 +30,7 @@ export async function getViewer(): Promise<Viewer | null> {
   return session
     ? { id: session.user.id, name: session.user.name, email: session.user.email }
     : null;
-}
+});
 
 /** The signed-in user's id, or null: what non-RPC routes pass to their services. */
 export async function getViewerId(): Promise<string | null> {

@@ -7,7 +7,13 @@ import {
   recordedSteps,
 } from "@/lib/fixtures/run-recording.ts";
 import { applyRunEvent, applyRunEvents, initRunModel } from "./run-model.ts";
-import { elapsedClock, summaryLabel, thinkingState, timelineItems } from "./timeline-items.ts";
+import {
+  elapsedClock,
+  selectedRowSeq,
+  summaryLabel,
+  thinkingState,
+  timelineItems,
+} from "./timeline-items.ts";
 
 const VIEWER = "fixture-user";
 const base = () => initRunModel(recordedDetail(), recordedSteps());
@@ -232,10 +238,38 @@ describe("step replay shots: the agent keeps screenshots on observe steps (Phase
   });
 
   it("keeps an act step's own screenshot when it has one", () => {
-    const rows = timelineItems(base(), [], VIEWER).filter((i) => i.kind === "step");
-    for (const row of rows)
-      if (row.kind === "step" && row.shotSeq !== null)
-        expect(base().steps.find((s) => s.seq === row.shotSeq)?.screenshotKey).not.toBeNull();
-    expect(rows.some((row) => row.kind === "step" && row.shotSeq === row.seq)).toBe(true);
+    const before = shot(50);
+    const own = rec({
+      type: "step",
+      seq: 51,
+      phase: "act",
+      state: "done",
+      caption: null,
+      url: null,
+      screenshotKey: "runs/r/steps/51-k.png",
+      action: { tool: "computer", summary: "Clicked", point: null },
+    });
+    const model = applyRunEvents(base(), [before, own]);
+    const row = timelineItems(model, [], VIEWER).find((i) => i.kind === "step" && i.seq === 51);
+    expect(row?.kind === "step" && row.shotSeq).toBe(51);
+  });
+});
+
+describe("selectedRowSeq: rows sharing a screenshot are not all selected (group 1 review, Minor 3)", () => {
+  const row = (seq: number, shotSeq: number | null) =>
+    ({ kind: "step", seq, shotSeq }) as Parameters<typeof selectedRowSeq>[0][number];
+  const items = [row(3, 1), row(4, 1), row(5, 1), row(7, 6)];
+
+  it("selects the clicked row while its screenshot is the one replayed", () => {
+    expect(selectedRowSeq(items, 1, 4)).toBe(4);
+  });
+
+  it("falls back to the first row of the replayed screenshot once replay moves on", () => {
+    expect(selectedRowSeq(items, 6, 4)).toBe(7);
+    expect(selectedRowSeq(items, 1, null)).toBe(3);
+  });
+
+  it("selects nothing outside replay", () => {
+    expect(selectedRowSeq(items, null, 4)).toBeNull();
   });
 });

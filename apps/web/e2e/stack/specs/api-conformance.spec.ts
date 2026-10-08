@@ -2,7 +2,7 @@ import { apiContract } from "@mastertutor/contracts";
 import { expect, request as playwrightRequest, test } from "@playwright/test";
 import { SITE } from "../../../../../tests/behaviour/constants.ts";
 import { scenarioGoal } from "../../../../../tests/llm-mock/src/select.ts";
-import { BASE_URL } from "../support/env.ts";
+import { BASE_URL, SIGNED_OUT } from "../support/env.ts";
 import { rpcCall, rpcOk } from "../support/rpc.ts";
 
 const MISSING = "00000000-0000-4000-8000-00000000dead";
@@ -135,11 +135,7 @@ test.describe("oRPC conformance over HTTP (Review Focus 1)", () => {
   }
 
   test("every procedure refuses a request without a session (401)", async () => {
-    // The runner applies the project's storageState to new request contexts too: clear it.
-    const anonymous = await playwrightRequest.newContext({
-      baseURL: BASE_URL,
-      storageState: { cookies: [], origins: [] },
-    });
+    const anonymous = await playwrightRequest.newContext({ baseURL: BASE_URL, ...SIGNED_OUT });
     try {
       const inputs = [
         ...PROBES.map(([p, i]) => [p, i] as const),
