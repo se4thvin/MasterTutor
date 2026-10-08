@@ -424,16 +424,20 @@ export class NoteWriter {
     return list;
   }
 
-  /** Coverage = min over captures; fidelity from the shared rule (refreshNoteQuality). Runs after the block inserts. */
+  /**
+   * Coverage = min over captures; fidelity from the shared rule (refreshNoteQuality). Runs after the
+   * block inserts. The note row is locked first, as web's "Mark verified" does, so neither write
+   * recomputes fidelity from the other's stale state.
+   */
   stageQuality(w: WriteContext, noteId: string, coverage: number | null): void {
     w.step.defer(async (tx) => {
       const [note] = await tx
         .select({ coverage: notes.coverage })
         .from(notes)
-        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)));
+        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)))
+        .for("update");
       if (!note) return;
-      const merged =
-        coverage === null ? (note?.coverage ?? null) : Math.min(note?.coverage ?? 1, coverage);
+      const merged = coverage === null ? note.coverage : Math.min(note.coverage ?? 1, coverage);
       await refreshNoteQuality(tx, w.scope.workspaceId, noteId, merged);
     });
   }

@@ -1,3 +1,4 @@
+import { networkInterfaces } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { startHealthServer, type HealthServer } from "./health.ts";
 
@@ -13,6 +14,19 @@ async function get(path: string) {
 }
 
 describe("health server", () => {
+  it("listens on loopback only by default: other containers on its networks cannot read it (QA-112)", async () => {
+    server = await startHealthServer({ port: 0, checks: {} });
+    expect((await get("/healthz")).status).toBe(200);
+    const external = Object.values(networkInterfaces())
+      .flat()
+      .find((address) => address && address.family === "IPv4" && !address.internal);
+    expect(external, "a non-loopback interface to probe from").toBeDefined();
+    await expect(
+      fetch(`http://${external!.address}:${server.port}/healthz`, {
+        signal: AbortSignal.timeout(2_000),
+      }),
+    ).rejects.toThrow();
+  });
   it("is ok when every check passes, with details", async () => {
     server = await startHealthServer({
       port: 0,

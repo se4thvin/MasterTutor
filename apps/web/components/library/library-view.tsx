@@ -1,7 +1,7 @@
 "use client";
 
 import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -34,13 +34,13 @@ import { FolderTree } from "./folder-tree.tsx";
 import { SearchResults } from "./search-results.tsx";
 import { NoteCard } from "./note-card.tsx";
 import { useDeleteNote } from "./use-delete-note.ts";
+import { useFolders } from "./use-folders.ts";
 import { useMoveNote } from "./use-move-note.ts";
 import { useNoteSearch } from "./use-note-search.ts";
 
 function useLibraryScope() {
   const params = parseLibraryParams(useSearchParams());
-  const { data } = useQuery(orpc.folders.tree.queryOptions({ input: {} }));
-  const folders = data?.folders ?? [];
+  const folders = useFolders();
   const path =
     params.folder !== "all" && params.folder !== "unfiled"
       ? folderPath(folders, params.folder)
@@ -170,14 +170,17 @@ export function LibraryView() {
   });
   const writeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(writeTimer.current), []);
-  useEffect(() => clearTimeout(writeTimer.current), [params.folder]);
   const typeQuery = (value: string) => {
     setDraft(value);
     clearTimeout(writeTimer.current);
-    writeTimer.current = setTimeout(
-      () => replaceUrl(libraryHref({ ...latest.current, q: value })),
-      URL_WRITE_DEBOUNCE_MS,
-    );
+    // A folder change before the write lands drops it. Checked when the timer fires, not by an
+    // effect on the folder: that effect's first run could come after a keystroke typed while the
+    // view hydrated, and cancel its write (QA-017).
+    const folder = latest.current.folder;
+    writeTimer.current = setTimeout(() => {
+      if (latest.current.folder !== folder) return;
+      replaceUrl(libraryHref({ ...latest.current, q: value }));
+    }, URL_WRITE_DEBOUNCE_MS);
   };
   const clearQuery = () => {
     clearTimeout(writeTimer.current);

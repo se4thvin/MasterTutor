@@ -1,7 +1,8 @@
 /**
  * Deterministic QA data for the Phase 8 screen catalog (spec §12, D22): every run-view state, every
  * approval kind, a bypass decision, a download, a nested library with every block origin, vault and
- * audit rows. Prints SQL for psql (scripts/qa-stack.sh); needs exactly one signed-up owner.
+ * audit rows. Prints SQL for psql (scripts/qa-stack.sh); needs T1's owner (support/env.ts OWNER)
+ * signed up.
  *
  * Every jsonb value is parsed with its contract schema first, and the two runs CHECKs are derived,
  * not typed in, so the seed cannot drift from what the app reads or the schema allows (P8-6).
@@ -28,6 +29,7 @@ import {
   type StepPhase,
   type WaitReason,
 } from "@mastertutor/contracts";
+import { OWNER } from "../support/env.ts";
 
 /** The QA clock: Playwright pins Date.now here, so relative times on screen never change. */
 export const QA_NOW = new Date("2026-10-05T15:00:00Z");
@@ -75,10 +77,11 @@ const jsonb = <T>(schema: Schema<T>, value: T) =>
   `${lit(JSON.stringify(schema.parse(value)))}::jsonb`;
 const at = (minutesAgo: number, seconds = 0) =>
   `timestamptz ${lit(new Date(QA_NOW.getTime() - minutesAgo * 60_000 + seconds * 1_000).toISOString())}`;
-const WS =
-  "(select workspace_id from workspace_members where role = 'owner' order by created_at limit 1)";
-const OWNER =
-  "(select user_id from workspace_members where role = 'owner' order by created_at limit 1)";
+// T1's owner by email, never "the first owner": psql pointed at any other database finds no such
+// user, so every insert fails on NOT NULL instead of writing into a real workspace (QA-040).
+const OWNED = `from workspace_members join "user" on "user".id = user_id where email = ${lit(OWNER.email)} and role = 'owner'`;
+const WS = `(select workspace_id ${OWNED})`;
+const OWNER_ID = `(select user_id ${OWNED})`;
 
 function insert(table: string, rows: readonly Record<string, string>[]): string {
   const columns = Object.keys(rows[0] ?? {});
@@ -360,7 +363,7 @@ function runRow(run: SeedRun): Record<string, string> {
     wait_reason: opt(run.waitReason),
     controller: lit(run.controller),
     // runs_control_user_matches_controller (0005): set exactly when a person holds control (P8-6).
-    control_user_id: run.controller === "user" ? OWNER : "null",
+    control_user_id: run.controller === "user" ? OWNER_ID : "null",
     approval_mode: lit(run.approvalMode),
     plan: jsonb(Plan, PLAN),
     usage: jsonb(Usage, run.usage),
@@ -636,7 +639,7 @@ export function seedSql(): string {
         filename: lit("attention-is-all-you-need.pdf"),
         asset_id: lit(SEED.download.asset),
         bytes: "2215244",
-        approved_by: OWNER,
+        approved_by: OWNER_ID,
       },
     ]),
     insert(
@@ -677,7 +680,7 @@ export function seedSql(): string {
         field: "null",
         action: lit("create"),
         run_id: "null",
-        approved_by: OWNER,
+        approved_by: OWNER_ID,
         outcome: lit("ok"),
         at: at(300),
       },
@@ -689,7 +692,7 @@ export function seedSql(): string {
         field: lit("password"),
         action: lit("fill"),
         run_id: lit(SEED.runs.completed),
-        approved_by: OWNER,
+        approved_by: OWNER_ID,
         outcome: lit("ok"),
         at: at(88),
       },

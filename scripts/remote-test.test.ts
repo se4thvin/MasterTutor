@@ -414,6 +414,54 @@ describe("per-run snapshots of one worktree's sync (remote-test/snapshot.sh)", (
       expect(text).not.toMatch(/git (add|commit)/);
   });
 
+  // The sync runs on the client (a Mac, openrsync), so this runs where rsync exists; the CI runner
+  // image has none. The static half below runs everywhere.
+  const hasRsync = spawnSync("bash", ["-c", "command -v rsync"]).status === 0;
+  it.runIf(hasRsync)(
+    "never lets a sync delete a run's results, whatever rsync honours of .gitignore (QA-039)",
+    () => {
+      // macOS's openrsync deletes git-ignored receiver files under --delete; explicit excludes hold.
+      const { status, stdout, stderr } = snapshot(`mkdir -p mac/apps/web/e2e mac/tests/bench
+      echo "test-results/" >mac/apps/web/.gitignore; echo src >mac/apps/web/e2e/a.ts; echo b >mac/tests/bench/b.ts
+      mkdir -p mac/apps/web/e2e/visual.spec.ts-snapshots; echo png >mac/apps/web/e2e/visual.spec.ts-snapshots/a.png
+      for p in $SNAPSHOT_RESULTS; do mkdir -p "host/$p"; echo r >"host/$p/r"; done
+      echo stale >host/apps/web/gone.ts
+      rsync -a --delete --filter=':- .gitignore' $(sync_excludes) mac/ host/
+      cd host && find . -type f | sort`);
+      expect(status, stderr).toBe(0);
+      expect(stdout.trim().split("\n")).toEqual([
+        "./apps/web/.gitignore",
+        "./apps/web/e2e/.out/r",
+        "./apps/web/e2e/a.ts",
+        "./apps/web/e2e/visual.spec.ts-snapshots/a.png",
+        "./apps/web/playwright-report/r",
+        "./apps/web/test-results/r",
+        "./tests/bench/.out/r",
+        "./tests/bench/b.ts",
+      ]);
+    },
+  );
+
+  it("syncs with the result-folder excludes (QA-039)", () => {
+    expect(client).toMatch(/^rsync -az --delete \\\n(?: .*\\\n)* .*\$\(sync_excludes\)/m);
+  });
+
+  it("keeps the baselines out of the result folders, so syncs and snapshots still carry them", () => {
+    // SNAPSHOT_BASELINES (runner-baselines) is defined once; no result folder (sync_excludes,
+    // take_snapshot) may contain a baseline, or every run would lose the committed PNGs.
+    const sources = [client, host, read("./remote-test/snapshot.sh")].join("\n");
+    expect(sources.match(/^SNAPSHOT_BASELINES=/gm)).toHaveLength(1);
+    const { status, stdout, stderr } = snapshot(`echo "$SNAPSHOT_BASELINES"; sync_excludes`);
+    expect(status, stderr).toBe(0);
+    const [baselines, ...excludes] = stdout.trim().split("\n");
+    const baseline = `/${baselines}/visual.spec.ts-snapshots/a.png`;
+    expect(excludes.length).toBeGreaterThan(0);
+    for (const exclude of excludes) {
+      const folder = exclude.replace(/^--exclude=/, "");
+      expect(baseline.startsWith(`${folder}/`), folder).toBe(false);
+    }
+  });
+
   it("syncs under the same per-worktree lock the host's snapshots take", () => {
     expect(client).toContain(
       '--rsync-path="mkdir -p $remote_dir mt-ci/.sync && flock mt-ci/.sync/$name.lock rsync"',

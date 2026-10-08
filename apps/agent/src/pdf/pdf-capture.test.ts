@@ -10,7 +10,7 @@ import { testLog } from "../testing/tool-context.ts";
 import { createOcrModel } from "../capture/opaque.ts";
 import { createDoclingClient } from "./docling.ts";
 import { buildPdfCapture, type PdfCaptureDeps } from "./pdf-capture.ts";
-import { MAX_PDF_BLOCKS } from "./protocol.ts";
+import { MAX_PDF_BLOCKS, MAX_PDF_RENDERS } from "./protocol.ts";
 
 const fixture = async () =>
   new Uint8Array(
@@ -146,6 +146,132 @@ describe("buildPdfCapture (pdf.js path)", () => {
   });
 });
 
+describe("buildPdfCapture docling branches (QA-107)", () => {
+  const box = { x: 72, y: 100, width: 400, height: 40 };
+  it("falls back to pdf.js when docling fails", async () => {
+    const capture = await buildPdfCapture(
+      deps({
+        docling: {
+          convert: async () => {
+            throw new Error("docling down");
+          },
+        },
+      }),
+      ctx(),
+      await fixture(),
+      "https://x.test/paper.pdf",
+    );
+    expect(capture.engine).toBe("pdfjs");
+    expect(capture.coverage).toBeGreaterThanOrEqual(0.98);
+  });
+  it("keeps a docling block the PDF text does not support unverified, and its low coverage", async () => {
+    const capture = await buildPdfCapture(
+      deps({
+        docling: {
+          convert: async () => [
+            {
+              type: "paragraph",
+              markdown: "Volcanoes erupt molten basalt across oceanic ridges",
+              page: 1,
+              bbox: box,
+              crop: false,
+            },
+          ],
+        },
+      }),
+      ctx(),
+      await fixture(),
+      "https://x.test/paper.pdf",
+    );
+    expect(capture.engine).toBe("docling");
+    expect(capture.blocks[0]).toMatchObject({ origin: "pdf", verified: false });
+    expect(capture.coverage).toBeLessThan(0.98);
+  });
+  it("renders a page docling crops that the first parse did not render, in a second call", async () => {
+    const calls: unknown[] = [];
+    const counting: PdfCaptureDeps["pdf"] = {
+      analyze: (bytes, options, signal) => (
+        calls.push(options.render),
+        worker.client.analyze(bytes, options, signal)
+      ),
+    };
+    const capture = await buildPdfCapture(
+      deps({
+        pdf: counting,
+        docling: {
+          convert: async () => [
+            { type: "figure", markdown: "Figure 2", page: 2, bbox: box, crop: true },
+          ],
+        },
+      }),
+      ctx(),
+      await fixture(),
+      "https://x.test/paper.pdf",
+    );
+    expect(calls).toEqual(["auto", [2]]);
+    expect(capture.blocks[0]).toMatchObject({
+      type: "figure",
+      assetId: expect.any(String),
+      anchor: { page: 2 },
+    });
+  });
+  it("checks a docling caption against the PDF text before calling it verified (QA-111)", async () => {
+    const caption = (markdown: string) =>
+      deps({
+        docling: {
+          convert: async () => [{ type: "figure", markdown, page: 1, bbox: box, crop: true }],
+        },
+      });
+    const invented = await buildPdfCapture(
+      caption("A satellite photo of Jupiter's moons"),
+      ctx(),
+      await fixture(),
+      "https://x.test/paper.pdf",
+    );
+    expect(invented.blocks[0]).toMatchObject({ type: "figure", verified: false });
+    const real = await buildPdfCapture(
+      caption("Photosynthesis: A Short Primer"),
+      ctx(),
+      await fixture(),
+      "https://x.test/paper.pdf",
+    );
+    expect(real.blocks[0]).toMatchObject({ type: "figure", verified: true });
+  });
+});
+
+describe("buildPdfCapture past MAX_PDF_RENDERS pages (QA-107)", () => {
+  /** Pages without a text layer, each with a mark on it: every one needs a render. */
+  const markedPages = async (count: number) => {
+    const doc = await PDFDocument.create();
+    for (let i = 0; i < count; i++)
+      doc.addPage([200, 200]).drawSvgPath("M 0 0 L 100 0 L 100 20 Z", { x: 20, y: 150 });
+    return doc.save();
+  };
+  it("counts pages past the render cap missing, and withholds the original on a secret run", async () => {
+    const pages = MAX_PDF_RENDERS + 5;
+    // Renders: page 1 at scale 1 takes one slot, so pages MAX_PDF_RENDERS..pages get none.
+    const missing = pages - (MAX_PDF_RENDERS - 1);
+    const plain = await buildPdfCapture(
+      deps({ ocr: { transcribe: async () => "Outlined words" } }),
+      ctx(),
+      await markedPages(pages),
+      "https://x.test/many.pdf",
+    );
+    expect(plain.mediaLost).toBe(missing);
+    expect(plain.originalWithheld).toBeNull();
+    // A secret run renders the rest in one more call (QA-109), itself capped: past two calls'
+    // worth of pages some stay unscreened, so the original is withheld.
+    const mask: MaskSources = { ...vault, redact: (t) => t.replaceAll("hunter2", "[secret]") };
+    const secret = await buildPdfCapture(
+      deps({ ocr: { transcribe: async () => "Outlined words" } }),
+      ctx(mask),
+      await markedPages(2 * MAX_PDF_RENDERS + 5),
+      "https://x.test/many.pdf",
+    );
+    expect(secret).toMatchObject({ pdfAssetId: null, originalWithheld: "unscreened" });
+  }, 120_000);
+});
+
 describe("buildPdfCapture on runs holding vault secrets", () => {
   it("refuses a PDF whose text layer shows a secret before storing anything", async () => {
     const { store, stored } = recordingAssets();
@@ -216,6 +342,33 @@ describe("buildPdfCapture on runs holding vault secrets", () => {
       ),
     ).rejects.toMatchObject({ code: "secret_on_page" });
     expect(stored).toEqual([]);
+  });
+});
+
+describe("buildPdfCapture screens every page before storing the original on a secret run (QA-109)", () => {
+  it("renders text-only pages too: vector drawings there can show a secret", async () => {
+    const mask: MaskSources = { ...vault, redact: (t) => t.replaceAll("hunter2", "[secret]") };
+    const screened: number[] = [];
+    // The fixture's page 2 has a text layer and no image: only an extra render shows its pixels.
+    const flagsPageTwo = (png: Uint8Array) => {
+      screened.push(png.length);
+      return Promise.resolve(screened.length === 4 ? "hunter2 drawn as paths" : "");
+    };
+    const leaking = await buildPdfCapture(
+      deps({ localOcr: { text: flagsPageTwo }, ocr: { transcribe: async () => "Scanned" } }),
+      ctx(mask),
+      await fixture(),
+      "https://x.test/p.pdf",
+    );
+    expect(screened).toHaveLength(4);
+    expect(leaking).toMatchObject({ pdfAssetId: null, originalWithheld: "unscreened" });
+    const clean = await buildPdfCapture(
+      deps({ localOcr: cleanOcr, ocr: { transcribe: async () => "Scanned" } }),
+      ctx(mask),
+      await fixture(),
+      "https://x.test/p.pdf",
+    );
+    expect(clean).toMatchObject({ pdfAssetId: expect.any(String), originalWithheld: null });
   });
 });
 

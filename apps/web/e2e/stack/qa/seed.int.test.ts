@@ -2,16 +2,21 @@ import { APPROVAL_KINDS, ApprovalRequest, RunEvent } from "@mastertutor/contract
 import { createDb, type DbHandle } from "@mastertutor/db";
 import { seedMember, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { OWNER } from "../support/env.ts";
 import { SEED, seedSql } from "./seed.ts";
 
 let database: TestDatabase | undefined;
 let handle: DbHandle | undefined;
 let ownerId = "";
+let otherWorkspace = "";
 
 beforeAll(async () => {
   database = await startTestDatabase({ slots: ["browser-1"] });
   handle = createDb(database.ownerUrl, { max: 1 });
+  // Another workspace's owner signed up first: the seed must still find T1's owner (QA-040).
+  ({ workspaceId: otherWorkspace } = await seedMember(handle.db, { role: "owner" }));
   ({ userId: ownerId } = await seedMember(handle.db, { role: "owner" }));
+  await handle.sql`update "user" set email = ${OWNER.email} where id = ${ownerId}`;
   await handle.sql.unsafe(seedSql()).simple();
 });
 
@@ -26,6 +31,12 @@ describe("QA seed against the migrated schema (P8-6, preflight §7)", () => {
     expect(rows.map((r) => r.id).sort()).toEqual(
       [...Object.values(SEED.runs), ...Object.values(SEED.approvalRuns)].sort(),
     );
+  });
+
+  it("writes into T1's owner's workspace only, never the first owner's (QA-040)", async () => {
+    const rows = await handle!.sql<{ n: number }[]>`
+      select count(*)::int as n from runs where workspace_id = ${otherWorkspace}`;
+    expect(rows).toEqual([{ n: 0 }]);
   });
 
   it("gives the user-held run its controller's user id, and no other run one", async () => {

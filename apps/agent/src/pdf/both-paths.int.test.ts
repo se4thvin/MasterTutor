@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { composeConfig } from "../../../../tests/compose/compose-json.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { StepCollector } from "../loop/step-collector.ts";
 import type { AssetStore } from "../notes/assets.ts";
@@ -9,8 +10,17 @@ import { testLog } from "../testing/tool-context.ts";
 import { createDoclingClient } from "./docling.ts";
 import { buildPdfCapture, type PdfCaptureDeps } from "./pdf-capture.ts";
 
-const DOCLING_IMAGE =
-  "quay.io/docling-project/docling-serve-cpu:v1.36.0@sha256:225c8586e20d5d0fc6811a9e0e044fa602bcc4393f00389009bad42d6787b58f";
+/** docling exactly as compose.yml runs it (profile `pdf`): image pin and hardening (QA-107). */
+const DOCLING = composeConfig(".env.test", ["compose.yml"], { profiles: ["pdf"] }).services
+  .docling!;
+
+/** testcontainers has no read-only root option; the service's own read_only is applied here. */
+class ComposeHardened extends GenericContainer {
+  readOnlyRoot(readOnly: boolean): this {
+    this.hostConfig.ReadonlyRootfs = readOnly;
+    return this;
+  }
+}
 const fixture = async () =>
   new Uint8Array(
     await readFile(new URL("../../../../tests/fixtures/sites/site/pdf/paper.pdf", import.meta.url)),
@@ -44,11 +54,26 @@ let docling: StartedTestContainer | undefined;
 let worker: Awaited<ReturnType<typeof startTestPdfWorker>>;
 beforeAll(async () => {
   worker = await startTestPdfWorker();
-  docling = await new GenericContainer(DOCLING_IMAGE)
-    .withEnvironment({
-      DOCLING_SERVE_ENABLE_UI: "false",
-      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "false",
-    })
+  expect(DOCLING).toMatchObject({ read_only: true, cap_drop: ["ALL"] });
+  docling = await new ComposeHardened(DOCLING.image!)
+    .readOnlyRoot(DOCLING.read_only === true)
+    .withTmpFs(
+      Object.fromEntries(
+        (DOCLING.tmpfs ?? []).map((mount) => {
+          const [path, ...options] = mount.split(":");
+          return [path!, options.join(":")];
+        }),
+      ),
+    )
+    .withDroppedCapabilities(...(DOCLING.cap_drop ?? []))
+    .withSecurityOpt(...(DOCLING.security_opt ?? []))
+    .withEnvironment(
+      Object.fromEntries(
+        Object.entries(DOCLING.environment ?? {}).filter(
+          (entry): entry is [string, string] => entry[1] !== null,
+        ),
+      ),
+    )
     .withExposedPorts(5001)
     .withWaitStrategy(Wait.forHttp("/health", 5001).forStatusCode(200))
     .withStartupTimeout(600_000)

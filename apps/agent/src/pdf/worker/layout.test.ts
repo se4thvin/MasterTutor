@@ -49,4 +49,16 @@ describe("pdfBlocks", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
     expect(blocks.map((b) => b.text).join(" ")).toContain("word49999");
   });
+  it("escapes the text after a numbered item's marker (QA-104)", () => {
+    const page: PdfPageText = {
+      page: 1,
+      width: 612,
+      height: 792,
+      hasImages: false,
+      items: [item("1. see [the link](https://evil.test) and *this*", 100)],
+    };
+    expect(pdfBlocks([page])[0]?.markdown).toBe(
+      "1. see \\[the link\\](https://evil.test) and \\*this\\*",
+    );
+  });
 });
