@@ -161,6 +161,32 @@ describe("applyRunEvent", () => {
     expect(model.model).toBe("gpt-6.1-sol");
   });
 
+  it("seeds the stored downloads from the snapshot, so a reload shows what the live view showed", () => {
+    const stored = {
+      id: ids.asset(21),
+      assetId: ids.asset(22),
+      filename: "week-2.pdf",
+      bytes: 28,
+      at: "2026-10-07T10:00:00.000Z",
+    };
+    const model = initRunModel(
+      recordedDetail({ status: "completed", downloads: [stored] }),
+      recordedSteps(),
+    );
+    expect(model.downloads).toEqual([stored]);
+    // The stream replays from the snapshot's position: the same download is not listed twice.
+    const replayed = applyRunEvents(model, [
+      rec({
+        type: "download_ready",
+        downloadId: stored.id,
+        assetId: stored.assetId,
+        filename: stored.filename,
+        bytes: stored.bytes,
+      }),
+    ]);
+    expect(replayed.downloads).toHaveLength(1);
+  });
+
   it("seeds the held downloads from the snapshot, so a reload during control still offers them", () => {
     const detail = recordedDetail({
       controller: "user",

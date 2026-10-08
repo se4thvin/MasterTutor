@@ -27,4 +27,15 @@ if ! grep -Eq '^scan-test-code: scanned [1-9][0-9]* files, 0 offenders$' <<<"$of
 fi
 docker run --rm --label mastertutor.ci=1 --entrypoint sh "$IMAGE" -c "test -f /app/apps/agent/src/main.ts" \
   || { echo "agent image lost its entry point" >&2; exit 1; }
-echo "ok - agent image carries no test code"
+# The pdf-worker service's pipeline runs in the image as compose runs it (read-only, uid 1000, no
+# network, no capabilities): node --permission roots, the native canvas binary, layout.
+docker run --rm --label mastertutor.ci=1 --entrypoint node --read-only --tmpfs /tmp \
+  --user 1000:1000 --network none --cap-drop ALL --security-opt no-new-privileges:true \
+  -v "$PWD/tests/fixtures/sites/site/pdf/paper.pdf:/paper.pdf:ro" "$IMAGE" --input-type=module -e "
+    const { readFileSync } = await import('node:fs');
+    const { analyzeDocument } = await import('/app/apps/agent/src/pdf/worker/server.ts');
+    const pdf = new Uint8Array(readFileSync('/paper.pdf'));
+    const out = await analyzeDocument({ render: 'auto', scale: 2 }, pdf, new AbortController().signal);
+    process.exit(out.ok && out.pages.length === 3 && out.renders.length === 3 && out.blocks.length > 0 ? 0 : 1);" \
+  || { echo "agent image cannot run the pdf-worker pipeline" >&2; exit 1; }
+echo "ok - agent image carries no test code and runs the pdf-worker pipeline"

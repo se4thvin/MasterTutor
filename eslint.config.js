@@ -31,6 +31,13 @@ const SEALING_OPEN_BAN = {
   group: [SEALING_OPEN],
   message: "web can seal but never open: @mastertutor/sealing/open is agent-only (spec §3.1).",
 };
+// Node-only contracts (the OpenAI factory, the logger, n.eko) never reach web client code: only
+// apps/web/lib/server/** and apps/web/app/api/** may import them (Task 0 review M1).
+const SERVER_CONTRACTS_BAN = {
+  group: ["@mastertutor/contracts/server", "@mastertutor/contracts/server/*"],
+  message:
+    "Server-only contracts may be imported only under apps/web/lib/server/ or apps/web/app/api/.",
+};
 /** `motion` defeats LazyMotion; `domMax` (layout animation, ~14 kB gz) must stay out of first-load JS (D43). */
 const motionImportBan = (importNames) =>
   ["motion/react", "motion/react-client"].map((name) => ({
@@ -46,10 +53,10 @@ const LAYOUT_FEATURES_STATIC = {
   message: "Load layout-features only with import(), inside <LayoutMotion> (D43 lazy boundary).",
 };
 // Every apps/web no-restricted-imports block replaces the earlier one, so it must carry the D38
-// OpenAI import ban, the D43 boundary and the sealing ban too.
+// OpenAI import ban, the D43 boundary, the sealing, fixtures and server-contracts bans too.
 const webImports = (
   patterns,
-  { paths = MOTION_COMPONENT_BAN, sealingOpen = false, fixtures = true } = {},
+  { paths = MOTION_COMPONENT_BAN, sealingOpen = false, fixtures = true, server = false } = {},
 ) => [
   "error",
   {
@@ -59,15 +66,22 @@ const webImports = (
       LAYOUT_FEATURES_STATIC,
       OPENAI_IMPORTS,
       ...(sealingOpen ? [] : [SEALING_OPEN_BAN]),
+      ...(server ? [] : [SERVER_CONTRACTS_BAN]),
       ...(fixtures ? [FIXTURES_BAN] : []),
       ...patterns,
     ],
   },
 ];
 
-// D38: stateful OpenAI APIs. Every block that sets no-restricted-syntax for apps/** must include
-// these, because a later block's no-restricted-syntax replaces an earlier one's.
+// D38: stateful OpenAI APIs and dynamic imports of the SDK. Every block that sets
+// no-restricted-syntax must include these, because a later block's no-restricted-syntax replaces
+// an earlier one's.
 const OPENAI_STATEFUL_BANS = [
+  {
+    selector: "ImportExpression[source.value=/^openai(\\/|$)/]",
+    message:
+      "Import OpenAI only through @mastertutor/contracts/server/openai (stateless factory, openai-data-policy.md).",
+  },
   {
     selector:
       "MemberExpression[property.name=/^(files|vectorStores|conversations|batches|fineTuning|evals)$/]:matches([object.name=/^(openai|client|openaiClient)$/i], [object.property.name=/^(openai|client|openaiClient)$/i])",
@@ -103,9 +117,10 @@ const ALL_BANNED = [
 ];
 
 const OPENAI_IMPORTS = {
-  group: ["openai", "openai/*"],
+  // The SDK package itself, not every module named "openai" (the contracts factory is one).
+  regex: "^openai(/|$)",
   message:
-    "Import OpenAI only through apps/agent/src/llm/openai.ts (stateless factory, openai-data-policy.md).",
+    "Import OpenAI only through @mastertutor/contracts/server/openai (stateless factory, openai-data-policy.md).",
 };
 
 export default defineConfig(
@@ -149,9 +164,30 @@ export default defineConfig(
   {
     // OpenAI data-minimisation policy (D38): one client factory, stateless endpoints only.
     files: ["**/*.{ts,tsx,js,mjs}"],
-    ignores: ["apps/agent/src/llm/openai.ts"],
+    ignores: ["packages/contracts/src/server/openai.ts"],
     rules: {
       "no-restricted-imports": ["error", { patterns: [OPENAI_IMPORTS] }],
+      "no-restricted-syntax": ["error", ...OPENAI_STATEFUL_BANS],
+    },
+  },
+  {
+    // CLAUDE.md 5, 6: the benchmark harness reads the product only through @mastertutor/contracts,
+    // never an app's source. This block replaces the one above, so it carries the OpenAI ban too.
+    files: ["tests/bench/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            OPENAI_IMPORTS,
+            {
+              regex: "(^|/)apps/[^/]+/src(/|$)",
+              message:
+                "tests/bench may not import an app's source; share the shape through @mastertutor/contracts.",
+            },
+          ],
+        },
+      ],
     },
   },
   {
@@ -194,6 +230,13 @@ export default defineConfig(
     },
   },
   {
+    // Server code may import the Node-only contracts (M1).
+    files: ["apps/web/lib/server/**/*.{ts,tsx}", "apps/web/app/api/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], { server: true }),
+    },
+  },
+  {
     // P7-14: the fixture API's own module, its gated entry points, tests and the Playwright suites.
     files: [
       "apps/web/lib/fixtures/**",
@@ -228,6 +271,7 @@ export default defineConfig(
     rules: {
       "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
         sealingOpen: true,
+        server: true,
         fixtures: false,
       }),
       "no-restricted-syntax": dynamicImportBan([

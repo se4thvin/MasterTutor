@@ -73,6 +73,8 @@ export interface StepCommit {
   events?: readonly RunEvent[];
   storage?: CollectedStorage | null;
   extra?: (tx: Tx) => Promise<void>;
+  /** Objects a tool uploaded for this step: deleted when the commit fails (preflight F17). */
+  ownedObjects?: readonly string[];
 }
 
 /** Sealed storageState per alias + origin (spec §5.6). B3 implements it; B1 only calls it. */
@@ -160,7 +162,9 @@ export class StepStore {
       await this.#write(commit, entries);
     } catch (error) {
       // Nothing was committed: do not leave this attempt's uploads behind (best effort).
-      await Promise.allSettled(uploaded.map((key) => storage.delete(key)));
+      await Promise.allSettled(
+        [...uploaded, ...(commit.ownedObjects ?? [])].map((key) => storage.delete(key)),
+      );
       throw error;
     }
     this.#transcriptSeq += entries.length;

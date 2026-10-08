@@ -4,6 +4,7 @@ import { createDb, listBrowserSlots } from "@mastertutor/db";
 import { createStorage } from "@mastertutor/storage";
 import { assertConcurrencyFitsSlots } from "./boot-checks.ts";
 import { startHealthServer } from "./health.ts";
+import { createLibraryServices, libraryHooks } from "./library.ts";
 import { createDownloadIngestor } from "./live/downloads.ts";
 import { createSlotIdleProbe } from "./live/idle-probe.ts";
 import { createLiveHooks, liveControlStore } from "./live/live-hooks.ts";
@@ -11,6 +12,7 @@ import { createNekoAdmin } from "./live/neko-admin.ts";
 import { createNekoLiveView } from "./live/neko-live-view.ts";
 import { startLiveRevocation } from "./live/revocation.ts";
 import { createOpenAIModelClient } from "./llm/client.ts";
+import { createOpenAI } from "./llm/openai.ts";
 import { composeRunHooks } from "./loop/hooks.ts";
 import { Supervisor } from "./loop/supervisor.ts";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime/config.ts";
@@ -28,6 +30,16 @@ const storage = createStorage({
   bucket: env.S3_BUCKET,
   accessKeyId: env.S3_ACCESS_KEY_ID,
   secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+});
+// One stateless OpenAI client per process (D38): the loop's model client and every later phase use it.
+const openai = createOpenAI({ apiKey: env.OPENAI_API_KEY, baseURL: env.OPENAI_BASE_URL });
+const library = createLibraryServices({
+  db: database.db,
+  storage,
+  openai,
+  doclingUrl: env.DOCLING_URL ?? null,
+  pdfWorkerUrl: env.PDF_WORKER_URL,
+  log: log.child({ module: "library" }),
 });
 const vault = createVault({
   db: database.db,
@@ -66,13 +78,14 @@ try {
 const supervisor = new Supervisor({
   db: database,
   storage,
-  model: createOpenAIModelClient({ apiKey: env.OPENAI_API_KEY, baseURL: env.OPENAI_BASE_URL }),
+  model: createOpenAIModelClient(openai),
   slots: env.BROWSER_SLOTS,
   cdpBaseUrl: (name) => slotCdpBaseUrl(name),
   log,
   testMode: env.AGENT_TEST_MODE,
-  // B3 owns the vault hooks; B6 owns control, onLeased and onLeaseEnding (no overlap: a clash throws).
-  hooks: composeRunHooks(vaultHooks(vault), liveHooks),
+  // B3 owns the vault hooks; B6 owns control, onLeased and onLeaseEnding; B2 adds the library tools
+  // (no overlap: a clash throws).
+  hooks: composeRunHooks(vaultHooks(vault), liveHooks, libraryHooks(library)),
   config: { shutdownDrainMs: env.AGENT_SHUTDOWN_DRAIN_MS },
 });
 
