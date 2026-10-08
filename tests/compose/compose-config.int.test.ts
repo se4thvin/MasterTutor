@@ -142,8 +142,8 @@ describe("compose.yml", () => {
 
   it("records slot audio only in audio-capture: no secrets, read-only, non-root, bounded, the slots' only Pulse peer (B4 I7)", () => {
     const capture = base.services["audio-capture"]!;
-    expect(nets(capture)).toEqual(["cdp"]);
-    expect(capture.networks!.cdp!.ipv4_address).toBe("172.30.231.13");
+    expect(nets(capture)).toEqual(["audio", "pulse"]);
+    expect(capture.networks!.pulse!.ipv4_address).toBe("172.30.233.10");
     expect(capture.environment ?? {}).toEqual({});
     expect(capture.read_only).toBe(true);
     expect(capture.user).toBe("1000:1000");
@@ -156,12 +156,33 @@ describe("compose.yml", () => {
     expect(Number(capture.cpus)).toBeGreaterThan(0);
     expect(Number(capture.pids_limit)).toBeGreaterThan(0);
     for (const slot of slots) {
-      expect(env(base.services[slot]!).PULSE_ALLOWED_IP, slot).toBe("172.30.231.13");
+      expect(env(base.services[slot]!).PULSE_ALLOWED_IP, slot).toBe("172.30.233.10");
       expect(env(base.services[slot]!).CDP_ALLOWED_IP, slot).toBe("172.30.231.10");
     }
     // The agent no longer carries an audio recorder: it runs the shared node-runtime image.
     expect(base.services.agent!.image).toBe("mastertutor/node-runtime:local");
     expect(env(base.services.agent!).AUDIO_CAPTURE_URL).toBe("http://audio-capture:5003");
+  });
+
+  it("audio-capture reaches only the slots (pulse) and the agent (audio): never web, Traefik or CDP (re-review I7)", () => {
+    for (const config of [base, test]) {
+      const members = (network: string) =>
+        Object.entries(config.services)
+          .filter(([, service]) => nets(service).includes(network))
+          .map(([name]) => name)
+          .sort();
+      expect(config.networks.pulse?.internal).toBe(true);
+      expect(config.networks.audio?.internal).toBe(true);
+      const slotNames = Object.keys(config.services).filter((n) => n.startsWith("browser-"));
+      expect(members("pulse")).toEqual(["audio-capture", ...slotNames].sort());
+      expect(members("audio")).toEqual(["agent", "audio-capture"]);
+      const peers = new Set(nets(config.services["audio-capture"]!).flatMap(members));
+      for (const unreachable of ["web", "traefik", "postgres", "garage"])
+        expect(peers.has(unreachable), unreachable).toBe(false);
+      expect(nets(config.services.agent!)).not.toContain("pulse");
+      expect(nets(config.services["audio-capture"]!)).not.toContain("cdp");
+    }
+    expect(test.services.traefik).toBeDefined();
   });
 
   it("fits two PDFs at once in pdf-worker's memory and restarts it when it dies (re-review N-2, N-3)", () => {

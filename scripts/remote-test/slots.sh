@@ -3,7 +3,7 @@
 # Every stack suite (behaviour, ui, e2e, smoke, bench-mock) holds one slot for its whole run. A
 # slot is a counting-semaphore seat (flock on ~/mt-ci/.runs/slot-<i>.lock, released by the kernel
 # when the run exits, even on a crash) and owns a block of addresses no other run uses:
-#   - networks: 10.213.<8i>.0/21, one /24 per network (cdp or behaviour, fixtures, edge, backend, egress);
+#   - networks: 10.213.<8i>.0/21, one /24 per network (cdp or behaviour, fixtures, edge, backend, egress, pulse);
 #   - loopback ports: 20000+100i .. 20000+100i+99.
 # Slot 31 is reserved for qa, whose long-lived stack keeps the legacy stack.lock instead of a seat.
 # None of this overlaps the legacy fixed values (172.30.x subnets, ports 18080 and 19223), so runs
@@ -23,6 +23,7 @@ slot_networks() {
   echo "MT_CI_EDGE_SUBNET=$SLOT_NET.$((n + 2)).0/24"
   echo "MT_CI_BACKEND_SUBNET=$SLOT_NET.$((n + 3)).0/24"
   echo "MT_CI_EGRESS_SUBNET=$SLOT_NET.$((n + 4)).0/24"
+  echo "PULSE_SUBNET_PREFIX=$SLOT_NET.$((n + 5))"
 }
 
 # The loopback port variables of slot $1, one NAME=VALUE per line.

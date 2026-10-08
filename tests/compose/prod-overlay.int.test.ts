@@ -297,18 +297,19 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
     expect(worker.read_only).toBe(true);
   });
 
-  it("records slot audio only in audio-capture: no env, read-only, on cdp, the slots' only Pulse peer (B4 I7)", () => {
+  it("records slot audio only in audio-capture: no env, read-only, on pulse and audio only, the slots' only Pulse peer (B4 I7)", () => {
     const capture = config.services["audio-capture"]!;
     expect(capture.image).toBe("mastertutor/audio-capture:prod");
     expect(capture.environment ?? {}).toEqual({});
     expect(capture.read_only).toBe(true);
     expect(capture.user).toBe("1000:1000");
     expect(capture.cap_drop).toEqual(["ALL"]);
-    expect(Object.keys(capture.networks ?? {})).toEqual(["cdp"]);
-    const address = capture.networks!.cdp!.ipv4_address;
+    expect(Object.keys(capture.networks ?? {}).sort()).toEqual(["audio", "pulse"]);
+    const address = capture.networks!.pulse!.ipv4_address;
     for (const slot of slots)
       expect(env(config.services[slot]).PULSE_ALLOWED_IP, slot).toBe(address);
-    expect(address).not.toBe(config.services.agent!.networks!.cdp!.ipv4_address);
+    expect(Object.keys(config.services.agent!.networks ?? {})).not.toContain("pulse");
+    expect(Object.keys(config.services.web!.networks ?? {})).not.toContain("audio");
     expect(env(config.services.agent).AUDIO_CAPTURE_URL).toBe("http://audio-capture:5003");
     expect(prodModeProblems(config)).toEqual([]);
   });
