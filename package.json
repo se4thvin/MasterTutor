@@ -25,7 +25,9 @@
     "test:live-stack": "RUN_LIVE_STACK=1 vitest run --project integration tests/live",
     "deploy:check-env": "node scripts/deploy/check-env.ts",
     "deploy:restore-drill": "bash scripts/deploy/restore-drill.sh",
-    "prod:smoke": "node tests/smoke/prod-smoke.ts"
+    "prod:smoke": "node tests/smoke/prod-smoke.ts",
+    "qa:shoot": "bash scripts/qa/shoot.sh",
+    "qa:findings": "node apps/web/e2e/stack/qa/findings-cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
