@@ -28,7 +28,7 @@ services:
     image: mastertutor/web:${MT_CI_RUN_ID}
     labels: *ci-labels
   agent:
-    image: mastertutor/node-runtime:${MT_CI_RUN_ID}
+    image: mastertutor/agent:${MT_CI_RUN_ID}
     labels: *ci-labels
   traefik:
     volumes: !override
