@@ -1,6 +1,7 @@
 import type { DbHandle } from "@mastertutor/db";
 import { ORPCError } from "@orpc/server";
 import {
+  type BenchmarkScope,
   BenchmarkNameTaken,
   BenchmarkNotFound,
   BenchmarkRunNotFinished,
@@ -34,15 +35,12 @@ export function createBenchmarkProcedures(deps: { db(): DbHandle }) {
     create: scoped.benchmarks.create.handler(({ context, input }) =>
       createBenchmark(context.db.db, context.workspaceId, input).catch(mapBenchmarkError),
     ),
-    start: scoped.benchmarks.start.handler(({ context, input }) =>
-      served(() =>
-        startBenchmark(
-          context.db.db,
-          { workspaceId: context.workspaceId, actor: context.actor },
-          input.benchmarkId,
-        ).catch(mapBenchmarkError),
-      ),
-    ),
+    start: scoped.benchmarks.start.handler(({ context, input }) => {
+      const scope: BenchmarkScope = { workspaceId: context.workspaceId, actor: context.actor };
+      return served(() =>
+        startBenchmark(context.db.db, scope, input.benchmarkId).catch(mapBenchmarkError),
+      );
+    }),
     runs: scoped.benchmarks.runs.handler(async ({ context, input }) => ({
       items: await listBenchmarkRuns(context.db.db, context.workspaceId, input),
     })),
