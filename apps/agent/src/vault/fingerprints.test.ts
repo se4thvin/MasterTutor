@@ -194,7 +194,7 @@ describe("one-time codes for the local pixel screen (ruling: OTP and TOTP codes)
 });
 
 describe("OCR'd text for the local pixel screens (QA-099)", () => {
-  it("matches a secret up to the characters OCR confuses, separators ignored", () => {
+  it("matches a secret up to the characters OCR confuses, within one token", () => {
     const prints = createSecretFingerprints();
     prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "MARMOT4CANARY8VELVET" });
     prints.remember("run-a", { filled: filled(fakeCdp(), [2]), secret: "hunter2Ol1" });
@@ -205,11 +205,23 @@ describe("OCR'd text for the local pixel screens (QA-099)", () => {
     expect(mask.inOcrText?.("Password MARMOT4CANARYSVELVET")).toBe(true); // 8 read as S
     expect(mask.inOcrText?.("Password hunter2011 here")).toBe(true);
     expect(mask.inOcrText?.("Password TrOub4dor&3")).toBe(true);
-    expect(mask.inOcrText?.("Password Trou b4 dor 3")).toBe(true);
+    // Whitespace OCR put inside a secret is not bridged (review: separators cause false hits).
+    expect(mask.inOcrText?.("Password Trou b4 dor 3")).toBe(false);
     expect(mask.inOcrText?.("Password hunter2 and more")).toBe(false);
     // Text redaction stays exact: folding would redact ordinary page text.
     expect(mask.redact("hunter2011")).toBe("hunter2011");
     expect(prints.forRun("run-b").inOcrText?.("hunter2011")).toBe(false);
+  });
+  it("never folds across a separator the secret does not have (review: PIN vs date)", () => {
+    const prints = createSecretFingerprints();
+    prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "199005" });
+    prints.remember("run-a", { filled: filled(fakeCdp(), [2]), secret: "Xk9#mQ2$vL" });
+    const mask = prints.forRun("run-a");
+    expect(mask.inOcrText?.("Born 1990-05-12")).toBe(false);
+    expect(mask.inOcrText?.("1990 05")).toBe(false);
+    expect(mask.inOcrText?.("PIN I99OO5")).toBe(true);
+    expect(mask.inOcrText?.("pw:Xk9#mQ2$vl")).toBe(true); // its own separators: one token
+    expect(mask.inOcrText?.("Xk9# mQ2$vL")).toBe(false);
   });
   it("folds only secrets long enough not to match ordinary text", () => {
     const prints = createSecretFingerprints();
