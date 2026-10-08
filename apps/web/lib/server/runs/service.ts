@@ -17,6 +17,7 @@ import {
   approvals,
   emitRunEvent,
   heldDownloads,
+  storedDownloads,
   keysetBefore,
   keysetCursor,
   msOf,
@@ -107,7 +108,8 @@ export async function getRun(db: Database, scope: RunScope, runId: string): Prom
     .from(approvals)
     .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")))
     .orderBy(asc(approvals.createdAt));
-  const held = await heldDownloads(db, { runId, workspaceId: scope.workspaceId });
+  const where = { runId, workspaceId: scope.workspaceId };
+  const [held, stored] = await Promise.all([heldDownloads(db, where), storedDownloads(db, where)]);
   return {
     ...runSummaryOf(row),
     plan: row.plan ?? null,
@@ -118,6 +120,11 @@ export async function getRun(db: Database, scope: RunScope, runId: string): Prom
     pendingApprovals: pending.map(approvalViewOf),
     // Stored already cleaned by the agent; cleaned again here, since the name is page-derived.
     heldDownloads: held.map((d) => ({ ...d, filename: safeFilename(d.filename) })),
+    downloads: stored.map((d) => ({
+      ...d,
+      filename: safeFilename(d.filename),
+      at: d.at.toISOString(),
+    })),
     lastEventId: last?.id ?? null,
   };
 }

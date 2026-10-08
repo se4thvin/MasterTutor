@@ -179,7 +179,7 @@ export function TimelinePanel(p: TimelinePanelProps) {
   const composer = <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />;
   if (regular) {
     return (
-      <aside className="run-tl" aria-labelledby={`${id}-title`}>
+      <aside className="run-tl" aria-labelledby={`${id}-title`} data-qa-obstacle>
         <div className="run-tl-head">
           <h2 id={`${id}-title`} className="run-tl-title">
             Steps

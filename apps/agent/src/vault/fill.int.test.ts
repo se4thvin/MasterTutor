@@ -10,7 +10,7 @@ import { StepCollector } from "../loop/step-collector.ts";
 import { readPageTool } from "../tools/read-page.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import { register } from "../tools/types.ts";
-import { ControlHeld, captureModelScreenshot } from "./runtime.ts";
+import { ControlHeld, captureModelScreenshot, resolveVaultTarget } from "./runtime.ts";
 import {
   humanApproval,
   launchTestBrowser,
@@ -688,5 +688,67 @@ describe("fill_credential", () => {
     expect(d.signInStarted.size).toBe(1);
     forgetFillState(d, runId, Date.now());
     expect([d.signInStarted.size, d.totpSteps.size]).toEqual([0, 0]);
+  });
+
+  describe('target "focused" (Phase 10, P10a-9/10): the real resolver, main frame only', () => {
+    const focusedDeps = () =>
+      env.deps({ resolveRef: resolveVaultTarget, logins: { noteLogin: () => undefined } });
+    const focused = (field: "username" | "password") => ({
+      alias: "site",
+      field,
+      target: "focused" as const,
+    });
+
+    it("fills the focused password input after every §9 check", async () => {
+      await tb.page.goto(`${login}/password`);
+      await tb.page.focus("#password");
+      expect(await fillCredential(focusedDeps(), ctx(), focused("password"))).toEqual({ ok: true });
+      expect(await tb.page.inputValue("#password")).not.toBe("");
+    });
+
+    it("refuses a password into a focused text input (field_type_mismatch)", async () => {
+      await tb.page.goto(`${login}/password`);
+      await tb.page.focus("#email");
+      expect(await fillCredential(focusedDeps(), ctx(), focused("password"))).toEqual({
+        error: "field_type_mismatch",
+      });
+    });
+
+    it("answers no_focused_field when nothing is focused", async () => {
+      await tb.page.goto(`${login}/password`);
+      await tb.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      expect(await fillCredential(focusedDeps(), ctx(), focused("password"))).toEqual({
+        error: "no_focused_field",
+      });
+    });
+
+    it("never reaches into a frame: focus inside an iframe is no_focused_field", async () => {
+      await tb.page.goto(`${login}/iframe-same-origin`);
+      const frame = tb.page.frames()[1]!;
+      await frame.waitForSelector("#child-password");
+      await frame.focus("#child-password");
+      expect(await fillCredential(focusedDeps(), ctx(), focused("password"))).toEqual({
+        error: "no_focused_field",
+      });
+      expect(await frame.inputValue("#child-password")).toBe("");
+    });
+
+    it("asks the approve-phase question about the focused field like any ref", async () => {
+      // A fresh, never-granted alias, so the card does not depend on test order (W2).
+      await env.seedItem({
+        alias: "focus-first",
+        origin: login,
+        secrets: { username: account.email },
+      });
+      await tb.page.goto(`${login}/password`);
+      await tb.page.focus("#email");
+      expect(
+        await fillApproval(focusedDeps(), ctx(), {
+          alias: "focus-first",
+          field: "username",
+          target: "focused",
+        }),
+      ).toEqual({ kind: "credential_first_use", alias: "focus-first", origin: login });
+    });
   });
 });

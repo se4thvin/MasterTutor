@@ -2,7 +2,7 @@ import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import { createAnnotateTool } from "./capture/annotate-tool.ts";
 import { createCaptureTool } from "./capture/capture-tool.ts";
-import { createLocalOcr, type LocalOcr } from "./browser/local-ocr.ts";
+import { sharedLocalOcr, type LocalOcr } from "./browser/local-ocr.ts";
 import { createOcrModel, type OcrModel } from "./capture/opaque.ts";
 import type { StatelessOpenAI } from "./llm/openai.ts";
 import type { RunHooks } from "./loop/hooks.ts";
@@ -50,7 +50,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
     assets: createAssetStore({ db: deps.db, storage: deps.storage }),
     storage: deps.storage,
     ocr: createOcrModel(deps.openai),
-    localOcr: createLocalOcr(),
+    localOcr: sharedLocalOcr(),
     filing: createFilingModel(deps.openai),
     docling: deps.doclingUrl ? createDoclingClient(deps.doclingUrl) : null,
     pdf: createPdfWorkerClient(deps.pdfWorkerUrl),
