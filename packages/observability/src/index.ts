@@ -5,3 +5,4 @@ export * from "./provision.ts";
 export * from "./dashboards/build.ts";
 export { DASHBOARDS } from "./dashboards/catalog.ts";
 export { upsertDashboards } from "./dashboards/upsert.ts";
+export * from "./alerts.ts";

@@ -130,9 +130,10 @@ export const O2_EMPTY_PANEL_FILTER = {
  * Alert semantics: an alert's stream must exist when it is created (metric streams only appear with
  * data, so the provisioner creates them first). A SQL alert's trigger threshold compares the number
  * of rows returned, so a count belongs in HAVING with a trigger threshold of 1. A PromQL alert compares
- * its value through promql_condition (column "value").
+ * its value through promql_condition (column "value") and its trigger threshold counts matching
+ * series, so 1 there too. Both verified firing (and not firing) against the image.
  */
-export const O2_SQL_ALERT_ROW_THRESHOLD = 1;
+export const O2_ALERT_TRIGGER_THRESHOLD = 1;
 
 export const UserList = z.object({ data: z.array(z.object({ email: z.string() }).loose()) });
 export const AlertList = z.object({
