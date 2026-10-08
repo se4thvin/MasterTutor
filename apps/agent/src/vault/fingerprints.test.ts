@@ -231,3 +231,18 @@ describe("OCR'd text for the local pixel screens (QA-099)", () => {
     expect(mask.inOcrText?.("Room 48 21, order 4B21")).toBe(false);
   });
 });
+
+describe("the secret-set version pixel-screen caches key on (QA-098 ruling)", () => {
+  it("changes when a secret or a one-time code is registered, not for a username", () => {
+    const prints = createSecretFingerprints();
+    const mask = prints.forRun("run-a");
+    const start = mask.secretsVersion?.();
+    prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: null });
+    expect(mask.secretsVersion?.()).toBe(start);
+    prints.remember("run-a", { filled: filled(fakeCdp(), [2]), secret: "hunter2-long" });
+    const afterSecret = mask.secretsVersion?.();
+    expect(afterSecret).not.toBe(start);
+    prints.remember("run-a", { filled: filled(fakeCdp(), [3]), secret: null, code: "482913" });
+    expect(mask.secretsVersion?.()).not.toBe(afterSecret);
+  });
+});

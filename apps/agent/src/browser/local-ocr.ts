@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { abortable } from "../runtime/abortable.ts";
 import { containsSecret, type Box, type MaskSources } from "./masking.ts";
+import { pixelKey, type ScreenCache } from "./screen-cache.ts";
 
 /** One OCR'd line: its words in reading order, each with its box in image pixels. */
 export interface OcrLine {
@@ -270,77 +271,115 @@ export function closerLookBands(
   return mergeSpans(spans, size.height).map((band) => ({ ...band, width: size.width }));
 }
 
-/** Which rows of an image hold ink, and its size. */
-async function inkRowsOf(
-  png: Uint8Array,
-): Promise<{ rows: boolean[]; width: number; height: number }> {
-  const { data, info } = await sharp(png).greyscale().raw().toBuffer({ resolveWithObject: true });
+/** The image's exact pixels (RGB, alpha flattened away) and which rows hold ink. */
+async function decode(png: Uint8Array): Promise<{
+  data: Buffer;
+  width: number;
+  height: number;
+  channels: number;
+  rows: boolean[];
+}> {
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const rows: boolean[] = [];
   for (let y = 0; y < info.height; y++) {
     let min = 255;
     let max = 0;
     const start = y * info.width * info.channels;
     for (let x = 0; x < info.width; x++) {
-      const value = data[start + x * info.channels]!;
+      const at = start + x * info.channels;
+      const value = (data[at]! * 299 + data[at + 1]! * 587 + data[at + 2]! * 114) / 1000;
       if (value < min) min = value;
       if (value > max) max = value;
     }
     rows.push(max - min >= INK_CONTRAST);
   }
-  return { rows, width: info.width, height: info.height };
+  return { data, width: info.width, height: info.height, channels: info.channels, rows };
 }
+
+/** A whole frame's 1× screen, or one 2× band's (boxes relative to the band, at 1×). */
+export type CachedScreen =
+  { kind: "frame"; screen: PixelScreen; bands: Box[] } | { kind: "band"; screen: PixelScreen };
 
 /**
  * Where registered secrets show in an image (I-1): the boxes of the words that hold one, from the
  * 1× read and the 2× bands. The vault registers only secret-class values (passwords, PINs), never
  * usernames or emails. A secret OCR reads across lines, or a read that fails, is `failed`: the
- * caller withholds the image. `urgent` is the agent loop's own screen (QA-092).
+ * caller withholds the image. `urgent` is the agent loop's own screen (QA-092). With the run's
+ * `cache`, a frame or band whose exact pixels were screened under the current secret set reuses
+ * that result; failed reads are never cached.
  */
 export async function screenPixels(
   ocr: LocalOcr,
   secrets: MaskSources,
   png: Uint8Array,
   signal: AbortSignal,
-  options: { urgent: boolean } = { urgent: false },
+  options: { urgent: boolean; cache?: ScreenCache<CachedScreen> } = { urgent: false },
 ): Promise<PixelScreen> {
   if (!screensPixels(secrets)) return { kind: "clean" };
+  const { cache } = options;
   const read = async (image: Uint8Array): Promise<OcrLine[] | null> => {
     try {
-      return await abortable(ocr.words(image, options), signal);
+      return await abortable(ocr.words(image, { urgent: options.urgent }), signal);
     } catch {
       signal.throwIfAborted();
       return null;
     }
   };
-  let ink: Awaited<ReturnType<typeof inkRowsOf>>;
+  let pixels: Awaited<ReturnType<typeof decode>>;
   try {
-    ink = await inkRowsOf(png);
+    pixels = await decode(png);
   } catch {
     return { kind: "failed" };
   }
-  const lines = await read(png);
-  if (lines === null) return { kind: "failed" };
-  const native = screenLines(secrets, lines);
-  if (native.kind === "failed") return native;
-  const boxes = native.kind === "hit" ? [...native.boxes] : [];
-  for (const band of closerLookBands(lines, ink, ink.rows)) {
-    const large = await sharp(png)
-      .extract({ left: band.x, top: band.y, width: band.width, height: band.height })
-      .resize(band.width * OCR_UPSCALE, band.height * OCR_UPSCALE, { kernel: "lanczos3" })
-      .png()
-      .toBuffer();
-    const bandLines = await read(new Uint8Array(large));
-    if (bandLines === null) return { kind: "failed" };
-    const closer = screenLines(secrets, bandLines);
-    if (closer.kind === "failed") return closer;
-    if (closer.kind === "hit")
-      for (const box of closer.boxes)
-        boxes.push({
-          x: band.x + box.x / OCR_UPSCALE,
-          y: band.y + box.y / OCR_UPSCALE,
-          width: box.width / OCR_UPSCALE,
-          height: box.height / OCR_UPSCALE,
-        });
+  const frameKey = cache ? pixelKey("frame", pixels, pixels.data) : "";
+  let frame = cache?.get(secrets, frameKey);
+  if (frame?.kind !== "frame") {
+    const lines = await read(png);
+    if (lines === null) return { kind: "failed" };
+    frame = {
+      kind: "frame",
+      screen: screenLines(secrets, lines),
+      bands: closerLookBands(lines, pixels, pixels.rows),
+    };
+    if (frame.screen.kind !== "failed") cache?.set(secrets, frameKey, frame);
+  }
+  if (frame.screen.kind === "failed") return frame.screen;
+  const boxes = frame.screen.kind === "hit" ? [...frame.screen.boxes] : [];
+  const rowBytes = pixels.width * pixels.channels;
+  for (const band of frame.bands) {
+    const bandPixels = pixels.data.subarray(band.y * rowBytes, (band.y + band.height) * rowBytes);
+    const bandKey = cache ? pixelKey("band", { ...pixels, height: band.height }, bandPixels) : "";
+    let closer = cache?.get(secrets, bandKey);
+    if (closer?.kind !== "band") {
+      const large = await sharp(png)
+        .extract({ left: band.x, top: band.y, width: band.width, height: band.height })
+        .resize(band.width * OCR_UPSCALE, band.height * OCR_UPSCALE, { kernel: "lanczos3" })
+        .png()
+        .toBuffer();
+      const bandLines = await read(new Uint8Array(large));
+      if (bandLines === null) return { kind: "failed" };
+      const screen = screenLines(secrets, bandLines);
+      closer = {
+        kind: "band",
+        screen:
+          screen.kind === "hit"
+            ? {
+                kind: "hit",
+                boxes: screen.boxes.map((box) => ({
+                  x: box.x / OCR_UPSCALE,
+                  y: box.y / OCR_UPSCALE,
+                  width: box.width / OCR_UPSCALE,
+                  height: box.height / OCR_UPSCALE,
+                })),
+              }
+            : screen,
+      };
+      if (screen.kind !== "failed") cache?.set(secrets, bandKey, closer);
+    }
+    if (closer.screen.kind === "failed") return closer.screen;
+    if (closer.screen.kind === "hit")
+      for (const box of closer.screen.boxes)
+        boxes.push({ ...box, x: band.x + box.x, y: band.y + box.y });
   }
   return boxes.length > 0 ? { kind: "hit", boxes } : { kind: "clean" };
 }

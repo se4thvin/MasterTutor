@@ -87,6 +87,8 @@ interface RunEntry {
    * tokens (review 14: "!! ##" matches across any spacing).
    */
   bareWindows: Map<number, Set<number>>;
+  /** Bumped whenever a secret or one-time code is registered: pixel screens cached under an older one are stale. */
+  version: number;
   /** Keyed digests of one-time codes filled this run, for the local pixel screen (ruling). */
   codes: Set<string>;
   /**
@@ -127,6 +129,7 @@ export function createSecretFingerprints(): SecretFingerprints {
         windows: new Map(),
         bareWindows: new Map(),
         codes: new Set(),
+        version: 0,
         folded: { tight: new Map(), spaced: new Map() },
         unwatch: new Map(),
       };
@@ -265,8 +268,14 @@ export function createSecretFingerprints(): SecretFingerprints {
       if (run.nodes.length > MAX_NODES_PER_RUN)
         run.nodes.splice(0, run.nodes.length - MAX_NODES_PER_RUN);
       watch(run, filled.cdp);
-      if (secret !== null && isScannableSecret(secret)) register(run, secret);
-      if (code) run.codes.add(digest(code));
+      if (secret !== null && isScannableSecret(secret)) {
+        register(run, secret);
+        run.version++;
+      }
+      if (code) {
+        run.codes.add(digest(code));
+        run.version++;
+      }
     },
     forRun: (runId) => ({
       // N2: keyed by frame id too, so a fill survives its frame's CDP session being replaced.
@@ -283,6 +292,7 @@ export function createSecretFingerprints(): SecretFingerprints {
       hasSecrets: () => (runs.get(runId)?.digests.size ?? 0) > 0,
       hasOneTimeCodes: () => (runs.get(runId)?.codes.size ?? 0) > 0,
       isOneTimeCode: (token) => runs.get(runId)?.codes.has(digest(token)) ?? false,
+      secretsVersion: () => runs.get(runId)?.version ?? 0,
       redact: (text) => {
         const run = runs.get(runId);
         return run && run.digests.size > 0 ? redact(run, text) : text;
