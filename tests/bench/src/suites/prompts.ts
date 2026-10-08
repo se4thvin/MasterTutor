@@ -27,6 +27,9 @@ export function discoveryInstruction(indexUrl: string, readings: readonly number
     `open its page by typing ` +
     'its link\'s URL in the address bar and call read_page with mode "interactive"; then open each of its sections ' +
     'the same way, scroll to the bottom once, and call read_page with mode "text" and then "interactive". ' +
-    "Never click, type or press keys on these pages: use only the address bar. Then finish."
+    "Every listing must be read whole: when an interactive result's total is larger than the elements it lists, " +
+    "call read_page again with offset 0, 400, 800, … until all are listed; when a chapter or group is " +
+    "[collapsed], expand it by clicking it, then call read_page again. Apart from expanding, never click, type " +
+    "or press keys on these pages: use only the address bar. Then finish."
   );
 }
