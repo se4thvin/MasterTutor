@@ -15,6 +15,8 @@ export const o2Paths = {
   health: () => "/healthz",
   users: (org: string) => `/api/${org}/users`,
   user: (org: string, email: string) => `/api/${org}/users/${e(email)}`,
+  /** Lists the org's streams; any authenticated user can read it. */
+  streams: (org: string) => `/api/${org}/streams`,
   /** POST creates (body: o2StreamCreateBody); an existing stream answers 400. There is no GET. */
   stream: (org: string, name: string, type: StreamType) =>
     `/api/${org}/streams/${e(name)}?type=${type}`,
@@ -89,6 +91,23 @@ export const O2_FIELDS = {
   traceDurationMicros: "duration",
 } as const;
 export const O2_TRACE_ERROR_STATUS = "ERROR";
+
+/**
+ * User bodies. An update takes the password only as change_password + new_password: a `password`
+ * field on PUT is silently ignored (the old password keeps working).
+ */
+export function o2UserCreateBody(email: string, password: string, role: string, name: string) {
+  return { email, password, role, first_name: name, last_name: "mastertutor" };
+}
+export function o2UserUpdateBody(password: string, role: string, name: string) {
+  return {
+    change_password: true,
+    new_password: password,
+    role,
+    first_name: name,
+    last_name: "mastertutor",
+  };
+}
 
 /** Stream create body: OpenObserve requires both keys. */
 export function o2StreamCreateBody(retentionDays?: number): { fields: []; settings: object } {
