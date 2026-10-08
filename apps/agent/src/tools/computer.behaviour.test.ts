@@ -533,9 +533,11 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
   });
 
   it("an unarmed frame that slides under the point while the press-time checks run is refused: the geometry is the last check (I2)", async () => {
-    const { s, executor } = await setup("/hung-frame.html?ms=3000");
+    // The advert hangs 900 ms from its load: long enough that the click's arm never reaches it
+    // (unarmed), short enough that it answers input again by the press.
+    const { s, executor } = await setup("/hung-frame.html?ms=900");
     await new Promise((resolve) => setTimeout(resolve, 300)); // the advert hangs once loaded
-    // The page-changed flush (the guard's last round trip before the geometry) slides the hung
+    // The page-changed flush (the guard's last round trip before the geometry) slides the
     // advert over Code, as a page could at that moment.
     const worlds = await s.worlds();
     const evaluate = worlds.evaluate.bind(worlds);
@@ -547,8 +549,9 @@ describe("ComputerExecutor with a hung frame and frames added mid-typing (fix ro
           const ad = document.getElementById("ad")!;
           ad.style.cssText += "; left: 40px; top: 20px; width: 200px; height: 30px";
         });
-        // Painted, so the browser routes a press there to the (hung) advert's own document.
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Its hang over and painted: the browser routes a press there to its own (unarmed)
+        // document, where nothing cancels it.
+        await new Promise((resolve) => setTimeout(resolve, 900));
       }
       return evaluate(...args);
     }) as typeof evaluate;
@@ -1313,7 +1316,9 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
     ) => {
       if (!started && String(args[0]).replace(/\s/g, "") === "()=>0") {
         started = true;
-        await s.page.evaluate(() => (location.href = "/interactive.html?held"));
+        await s.page.evaluate(() => {
+          setTimeout(() => (location.href = "/interactive.html?held"));
+        });
         await new Promise((resolve) => setTimeout(resolve, 100)); // its start is reported
       }
       return evaluate(...args);
@@ -1339,9 +1344,8 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
         `at=${at}&border=300&inner=child`,
         "nested-frames.html",
       );
-      expect(await executor.execute(click(edge), signal, await verdict(s, edge, false))).toBe(
-        expected,
-      );
+      const note = await executor.execute(click(edge), signal, await verdict(s, edge, false));
+      expect(note).toBe(expected);
       expect(await clickedGo(s)).toBe(expected === null ? "go" : undefined);
       release();
     },
