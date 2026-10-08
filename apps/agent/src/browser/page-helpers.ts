@@ -31,6 +31,14 @@ export interface TargetDescription {
   download?: { url: string; filename: string | null };
   isFormSubmit: boolean;
   formKind: "login" | "search" | "other" | null;
+  /** Only shows or hides content (a summary, or an aria-expanded control that submits nothing). */
+  disclosure?: boolean;
+  /**
+   * The opening text of its enclosing elements, innermost first (≤ 8, ≤ 160 characters each): which
+   * question or activity an input belongs to, for benchmark grading. Page text; the loop browser
+   * redacts vault secrets before it is stored.
+   */
+  ancestors?: string[];
   isSecretField: boolean;
   editable: boolean;
   interactive: boolean;
@@ -184,6 +192,33 @@ export function describeTarget(el: Element): TargetDescription {
     recordText = textIn(scope);
   }
   const parts = [recordText];
+  const opening = (scope: Element): string => {
+    const words: string[] = [];
+    let length = 0;
+    const walker = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node && length < 160; node = walker.nextNode()) {
+      if (node.parentElement?.closest(LIVE)) continue;
+      const text = clean(node.textContent);
+      if (text) {
+        words.push(text);
+        length += text.length + 1;
+      }
+    }
+    return words.join(" ").slice(0, 160);
+  };
+  const ancestors: string[] = [];
+  for (
+    let up = target.parentElement;
+    up && up !== body && up !== doc.documentElement && ancestors.length < 8;
+    up = up.parentElement
+  ) {
+    const text = opening(up);
+    if (text && text !== ancestors.at(-1)) ancestors.push(text);
+  }
+  const disclosure =
+    !isFormSubmit &&
+    !target.closest("a[href]") &&
+    (tag === "summary" || target.hasAttribute("aria-expanded"));
   const downloadLink = target.closest("a[download][href], area[download][href]") as
     HTMLAnchorElement | HTMLAreaElement | null;
   const context = [parts.join(" ").slice(0, 16_000), doc.location?.href ?? ""].join("\n");
@@ -198,6 +233,8 @@ export function describeTarget(el: Element): TargetDescription {
     isSecretField: isSecretField(target),
     editable,
     interactive: target !== el || el.matches(INTERACTIVE),
+    disclosure,
+    ancestors,
     ...(downloadLink
       ? {
           download: {

@@ -34,3 +34,16 @@ function safeName(title: string, extension: string): string {
 export const markdownFileName = (title: string): string => safeName(title, ".md");
 /** The download itself: always a zip (decision 18), so the name and the bytes agree. */
 export const archiveFileName = (title: string): string => safeName(title, ".zip");
+
+/**
+ * `attachment` with an ASCII `filename` fallback and the exact UTF-8 name as `filename*`. RFC 5987
+ * attr-chars exclude ' ( ) * !, which encodeURIComponent leaves alone, so they are encoded too.
+ */
+export function attachmentDisposition(fileName: string): string {
+  const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "");
+  const extended = encodeURIComponent(fileName).replace(
+    /['()*!]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${extended}`;
+}

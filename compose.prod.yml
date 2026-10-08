@@ -121,6 +121,11 @@ services:
   pdf-worker:
     <<: *node-runtime-prod
 
+  # Bounds and hardening are in compose.yml; production adds the image tag and log limits.
+  audio-capture:
+    <<: *logging
+    image: mastertutor/audio-capture:prod
+
   # Bounds and hardening are in compose.yml; production adds the shared host's log limits.
   docling:
     <<: *logging

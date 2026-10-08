@@ -9,15 +9,21 @@ test("the library hydrates cleanly after the sidebar has loaded the folders", as
   page.on("pageerror", (error) => uncaught.push(error.message));
   const foldersLoaded = page.waitForResponse((r) => r.url().includes("/api/rpc/folders/tree"));
   // Hold the library view's code until the sidebar's folders have arrived.
+  let held = false;
   await page.route("**/_next/static/chunks/**", async (route) => {
     const response = await route.fetch();
     const body = await response.text();
-    if (body.includes("Loading notes")) await foldersLoaded.then((r) => r.finished());
+    if (body.includes("Loading notes")) {
+      held = true;
+      await foldersLoaded.then((r) => r.finished());
+    }
     return route.fulfill({ response, body });
   });
   await page.goto("/library");
   await expect(page.locator('[data-qa="note-card"]').first()).toBeVisible();
   await expect(page.getByRole("main").getByRole("heading", { name: "Folders" })).toBeVisible();
+  // Without the hold (the marker copy changed) this would pass without testing the race.
+  expect(held, "the library view's chunk was held").toBe(true);
   expect(uncaught).toEqual([]);
   // Idle prefetches may still be in the handler when the page closes.
   await page.unrouteAll({ behavior: "ignoreErrors" });

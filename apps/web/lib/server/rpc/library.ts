@@ -45,10 +45,11 @@ export function createLibraryProcedures(deps: { db(): DbHandle; embeddings(): Em
       export: scoped.notes.export.handler(({ context, input }) =>
         served(() => exportNote(context.db.db, context.workspaceId, input)),
       ),
-      search: scoped.notes.search.handler(({ context, input }) =>
+      search: scoped.notes.search.handler(({ context, input, signal }) =>
         served(() =>
           searchNotes(context.db.db, context.workspaceId, input, {
             embeddings: deps.embeddings(),
+            signal,
           }),
         ),
       ),

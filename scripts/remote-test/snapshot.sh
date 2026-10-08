@@ -10,13 +10,11 @@
 
 # Folders a suite writes results to, which remote-test.sh fetches from ~/mt-ci/<worktree>/.
 SNAPSHOT_RESULTS="apps/web/playwright-report apps/web/test-results apps/web/e2e/.out tests/bench/.out"
-# Tracked sources a ui run may rewrite (--update-snapshots). Snapshotted and synced like any source,
-# so never in SNAPSHOT_RESULTS; run-on-host.sh publishes them after a ui run (B1, QA-043).
-SNAPSHOT_BASELINES="apps/web/e2e/visual.spec.ts-snapshots"
 
 # sync_excludes: rsync args that keep remote-test.sh's sync away from the result folders. Without
 # them a sync's --delete wipes a run's published results before they are fetched: macOS's
 # openrsync does not protect git-ignored receiver files the way rsync's `:- .gitignore` does.
+# Baselines (SNAPSHOT_BASELINES) are tracked sources: synced and snapshotted, never excluded.
 sync_excludes() {
   local path
   for path in $SNAPSHOT_RESULTS; do echo "--exclude=/$path"; done
@@ -34,13 +32,28 @@ take_snapshot() {
     "${excludes[@]}" -cf - . | tar -C "$snap" -xf -
 }
 
-# publish_results <snapshot dir> <synced dir> <sync lock> [extra folders...]: copies the result
-# folders a run made, and any extra folders, back to where remote-test.sh fetches them (the last
-# run of a suite wins, as before snapshots).
+# Playwright baselines a run may rewrite on purpose (--update-snapshots): every
+# <spec>.spec.ts-snapshots/*.png under apps/web/e2e.
+SNAPSHOT_BASELINES="apps/web/e2e"
+
+# publish_baselines <snapshot dir> <synced dir> <sync lock>: copies the baselines a run wrote or
+# changed back to the synced folder, for remote-test.sh to fetch, and names each one. Unchanged
+# baselines are left alone. Nothing is committed: the person reviews and commits them.
+publish_baselines() {
+  local snap=$1 base=$2 lock=$3 path
+  [[ -d "$snap/$SNAPSHOT_BASELINES" ]] || return 0
+  while IFS= read -r path; do
+    cmp -s "$snap/$path" "$base/$path" && continue
+    flock "$lock" bash -c 'mkdir -p "$(dirname "$2")" && cp -p "$1" "$2"' bash "$snap/$path" "$base/$path"
+    echo "remote-test: baseline updated: $path" >&2
+  done < <(cd "$snap" && find "$SNAPSHOT_BASELINES" -path '*.spec.ts-snapshots/*.png' -type f | sort)
+}
+
+# publish_results <snapshot dir> <synced dir> <sync lock>: copies the result folders a run made
+# back to where remote-test.sh fetches them (the last run of a suite wins, as before snapshots).
 publish_results() {
   local snap=$1 base=$2 lock=$3 path
-  shift 3
-  for path in $SNAPSHOT_RESULTS "$@"; do
+  for path in $SNAPSHOT_RESULTS; do
     [[ -d "$snap/$path" ]] || continue
     mkdir -p "$(dirname "$base/$path")"
     flock "$lock" bash -c 'rm -rf "$2" && cp -a "$1" "$2"' bash "$snap/$path" "$base/$path"

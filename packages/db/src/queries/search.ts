@@ -6,7 +6,9 @@ export const RRF_K = 60;
 const CANDIDATES = 50;
 /**
  * Nearest neighbours below this cosine similarity are not matches: without it every block is a
- * vector candidate, and an unrelated block would become a hit's snippet. Tunable.
+ * vector candidate. Tunable, and not yet calibrated on text-embedding-3 vectors, where unrelated
+ * pairs often score 0.1-0.3 (QA-089). So the floor only bounds the candidates: which block a hit
+ * shows never rests on it (see `shown` below).
  */
 const MIN_VECTOR_SIMILARITY = 0.2;
 
@@ -34,7 +36,7 @@ export async function hybridSearch(db: DbLike, input: HybridSearchInput): Promis
         order by b.embedding <=> ${vector}::vector limit ${CANDIDATES})`
     : sql``;
   const vecContribution = vector
-    ? sql`union all select note_id, block_id, 1.0 / (${RRF_K} + rank) from vec`
+    ? sql`union all select note_id, block_id, 1.0 / (${RRF_K} + rank), false from vec`
     : sql``;
   const rows = await db.execute(sql`
     with q as (select websearch_to_tsquery('english', ${input.q}) as query),
@@ -50,14 +52,24 @@ export async function hybridSearch(db: DbLike, input: HybridSearchInput): Promis
       order by ts_rank_cd(n.search, q.query) desc limit ${CANDIDATES})
     ${vec},
     contributions as (
-      select note_id, block_id, 1.0 / (${RRF_K} + rank) as s from lex
+      select note_id, block_id, 1.0 / (${RRF_K} + rank) as s, true as lexical from lex
       ${vecContribution}),
-    per_block as (select note_id, block_id, sum(s) as s from contributions group by note_id, block_id),
-    best as (select distinct on (note_id) note_id, block_id, s from per_block order by note_id, s desc),
+    per_block as (
+      select note_id, block_id, sum(s) as s, bool_or(lexical) as lexical
+      from contributions group by note_id, block_id),
+    best as (select distinct on (note_id) note_id, s from per_block order by note_id, s desc),
+    shown as (
+      select distinct on (note_id) note_id, block_id, lexical
+      from per_block order by note_id, lexical desc, s desc),
     scored as (
-      select coalesce(best.note_id, titles.note_id) as note_id, best.block_id,
+      select coalesce(best.note_id, titles.note_id) as note_id,
+             -- A title hit shows a block only when its text matched too: a vector-only neighbour
+             -- still ranks the note, but never stands in as its snippet (QA-089).
+             case when titles.note_id is not null and not shown.lexical then null
+                  else shown.block_id end as block_id,
              coalesce(best.s, 0) + coalesce(1.0 / (${RRF_K} + titles.rank), 0) as score
-      from best full outer join titles on titles.note_id = best.note_id)
+      from best join shown on shown.note_id = best.note_id
+      full outer join titles on titles.note_id = best.note_id)
     select s.note_id, s.block_id, n.title, s.score,
            case when s.block_id is null then coalesce(n.lede, '')
                 else ts_headline('english', b.markdown, q.query, 'MaxWords=30, MinWords=10, MaxFragments=1') end as snippet

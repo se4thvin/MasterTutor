@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs a test suite on the shared CI host (SSH alias coursebite-build) instead of this machine.
 # Syncs the current worktree to ~/mt-ci/<worktree>/ there (honouring .gitignore; never node_modules,
-# .env*, .superpowers, orchestration or .next; .env.test and .env.example are the only env files
+# .env*, .superpowers, orchestration (except the three benchmark protocol docs that
+# tests/bench/src/protocol-docs.test.ts reads) or .next; .env.test and .env.example are the only env files
 # sent), then runs scripts/remote-test/run-on-host.sh, streaming its output. Exits with the suite's
 # exit code. Results of ui (apps/web/playwright-report/, apps/web/test-results/), e2e and qa
 # (apps/web/e2e/.out/) and bench-mock (tests/bench/.out/) come back to the same paths here.
@@ -66,19 +67,34 @@ echo "remote-test: syncing $name to $host:~/$remote_dir" >&2
 rsync -az --delete \
   --filter=':- .gitignore' \
   --include=/.env.test --include=/.env.example --exclude='.env*' \
-  --exclude=/.git --exclude=node_modules --exclude=.superpowers --exclude=orchestration \
+  --exclude=/.git --exclude=node_modules --exclude=.superpowers \
+  --include=/orchestration/ --include=/orchestration/README.md \
+  --include=/orchestration/benchmarks/ --include=/orchestration/benchmarks/README.md \
+  --include=/orchestration/briefs/ --include=/orchestration/briefs/bench-fix.md \
+  --exclude='/orchestration/**' --exclude=orchestration \
   --exclude=.next --exclude=/.worktrees $(sync_excludes) \
   --rsync-path="mkdir -p $remote_dir mt-ci/.sync && flock mt-ci/.sync/$name.lock rsync" \
   "$root/" "$host:$remote_dir/"
 
 # The sync excludes the result folders (sync_excludes), so its --delete never touches them.
-# fetch <folder> [rsync args...]
-fetch() { rsync -az "${@:2}" "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
+fetch() { rsync -az "$host:$remote_dir/$1/" "$root/$1/" 2>/dev/null || echo "remote-test: no $1 to fetch" >&2; }
+# Baselines an explicit --update-snapshots (or -u) changed on the host (remote-test/snapshot.sh
+# publishes only those): the changed *.spec.ts-snapshots/*.png files, never committed here.
+# --update keeps a baseline edited here after the run's sync.
+fetch_baselines() {
+  rsync -az --update --prune-empty-dirs --out-format='remote-test: fetched baseline %n' \
+    --include='*/' --include='*.spec.ts-snapshots/*.png' --exclude='*' \
+    "$host:$remote_dir/apps/web/e2e/" "$root/apps/web/e2e/" >&2 ||
+    echo "remote-test: no baselines to fetch" >&2
+}
+wants_baselines() {
+  local arg
+  for arg in "$@"; do [[ "$arg" == -u || "$arg" == --update-snapshots* ]] && return 0; done
+  return 1
+}
 fetch_results() {
   case "$1" in
-    # ui also brings back visual baselines that an explicit --update-snapshots wrote (Task 8, B1);
-    # --update keeps a baseline changed here after the run's snapshot was taken.
-    ui) fetch apps/web/playwright-report && fetch apps/web/test-results && fetch apps/web/e2e/visual.spec.ts-snapshots --update ;;
+    ui) fetch apps/web/playwright-report && fetch apps/web/test-results ;;
     e2e | qa) fetch apps/web/e2e/.out ;;
     bench-mock) fetch tests/bench/.out ;;
   esac
@@ -157,5 +173,6 @@ trap cancel INT TERM HUP
 status=0
 wait "$ssh_pid" || status=$?
 fetch_results "$suite"
+if [[ "$suite" == ui || "$suite" == e2e ]] && wants_baselines "$@"; then fetch_baselines; fi
 echo "remote-test: $suite exited $status after $((SECONDS - start))s" >&2
 exit "$status"

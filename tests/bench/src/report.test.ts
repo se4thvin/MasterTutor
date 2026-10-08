@@ -196,3 +196,35 @@ describe("the D46 review gate", () => {
     expect(() => assertContinueAllowed("nope.md", [first])).toThrow(/no record/);
   });
 });
+
+describe("per-section outcomes in the record (run 1, discovered readings)", () => {
+  it("lists every section with its reading, URL, outcome and reason", () => {
+    const sections = [
+      {
+        reading: 1,
+        title: "1.1 Variables",
+        url: "https://x.test/c/1/s/1",
+        outcome: "passed" as const,
+        reason: "2/2 activities complete",
+      },
+      {
+        reading: 3,
+        title: "Reading 3",
+        url: null,
+        outcome: "unknown" as const,
+        reason: "reading 3 was not found in any read_page result",
+      },
+    ];
+    const md = renderReport(
+      { ...suite, results: [{ ...result, verdict: { ...result.verdict!, sections } }] },
+      PATH,
+    );
+    expect(md).toContain("| Reading | Section | URL | Outcome | Why |");
+    expect(md).toContain(
+      "| 1 | 1.1 Variables | https://x.test/c/1/s/1 | passed | 2/2 activities complete |",
+    );
+    expect(md).toContain(
+      "| 3 | Reading 3 | – | **unknown** | reading 3 was not found in any read_page result |",
+    );
+  });
+});

@@ -1,21 +1,20 @@
-import { hammingDistance } from "../browser/phash.ts";
+import { PERCEPTUAL_SAME, perceptualDistance, type PerceptualHash } from "../browser/phash.ts";
 
 export const SAME_ACTION_LIMIT = 3;
 export const NO_PROGRESS_LIMIT = 8;
-export const PHASH_SAME_DISTANCE = 4;
 
 /** Spec §5.5 loop detection. In memory per run; a restore or a human wait starts it afresh. */
 export class LoopDetector {
-  #repeat: { signature: string; phash: bigint; count: number } | null = null;
+  #repeat: { signature: string; phash: PerceptualHash; count: number } | null = null;
   #last: { url: string; domHash: string } | null = null;
   #stale = 0;
 
-  recordAction(signature: string, phash: bigint): boolean {
+  recordAction(signature: string, phash: PerceptualHash): boolean {
     const previous = this.#repeat;
     if (
       previous &&
       previous.signature === signature &&
-      hammingDistance(previous.phash, phash) <= PHASH_SAME_DISTANCE
+      perceptualDistance(previous.phash, phash) <= PERCEPTUAL_SAME
     ) {
       previous.count += 1;
     } else {

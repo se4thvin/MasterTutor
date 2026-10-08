@@ -16,7 +16,13 @@ services:
   browser-2:
     security_opt: [apparmor=mastertutor-slot]
     labels: *ci-labels
+  audio-capture:
+    labels: *ci-labels
 
 networks:
   behaviour:
+    labels: *ci-labels
+  pulse:
+    labels: *ci-labels
+  audio:
     labels: *ci-labels

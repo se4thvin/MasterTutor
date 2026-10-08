@@ -21,6 +21,116 @@ style="position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.45)"><div style=
 <button class="at" style="left:1000px;top:38px;width:200px"
 onclick="document.cookie='consent=1; Path=/; SameSite=Lax';document.getElementById('consent').remove()">Accept</button></div></div>`;
 
+/**
+ * A small book for section discovery and per-activity grading (Task 23, run 1): readings with
+ * sections whose participation activities (quizzes, animations) are already complete or not, a
+ * challenge activity that must never count, a section with no activity, and a section hidden in a
+ * collapsed chapter. Static: nothing here changes when clicked, so grading reads a fixed state and
+ * the main run's work shows only in its own trace.
+ */
+type Activity =
+  | { kind: "quiz"; id: string; title: string; questions: string[]; done: boolean }
+  | { kind: "animation"; id: string; title: string; steps: number; done: boolean }
+  | { kind: "challenge"; id: string; title: string };
+const quiz = (id: string, title: string, questions: string[], done: boolean): Activity => ({
+  kind: "quiz",
+  id,
+  title,
+  questions,
+  done,
+});
+const LIBRARY: Record<number, { title: string; activities: Activity[]; collapsed?: boolean }[]> = {
+  1: [
+    {
+      title: "1.1 Variables",
+      activities: [
+        quiz("1.1.1", "Naming", ["Can a name start with a digit?", "Is case significant?"], true),
+        { kind: "animation", id: "1.1.2", title: "Assignment", steps: 2, done: true },
+      ],
+    },
+    { title: "1.2 Types", activities: [quiz("1.2.1", "Kinds", ["Is 3 an integer?"], true)] },
+  ],
+  2: [
+    {
+      title: "2.1 Loops",
+      activities: [
+        quiz("2.1.1", "Loop quiz", ["Does a loop repeat?", "Can it stop early?"], true),
+        quiz("2.1.2", "Nested loops", ["Can loops nest?"], false),
+        { kind: "challenge", id: "2.1.3", title: "Loop challenge" },
+      ],
+    },
+    {
+      title: "2.2 Functions",
+      activities: [quiz("2.2.1", "Calls", ["Can a function return?", "Can it call itself?"], true)],
+    },
+  ],
+  3: [
+    { title: "3.1 Overview", activities: [] },
+    { title: "3.2 Review", activities: [quiz("3.2.1", "Recap", ["Ready?"], true)] },
+    {
+      title: "3.3 Extra",
+      activities: [quiz("3.3.1", "Bonus", ["One more?"], true)],
+      collapsed: true,
+    },
+  ],
+  4: [{ title: "4.1 Beyond", activities: [quiz("4.1.1", "Later", ["Not yet?"], false)] }],
+};
+
+const status = (done: boolean) => `<p>${done ? "Activity completed" : "Not started"}</p>`;
+function activityHtml(a: Activity): string {
+  if (a.kind === "challenge")
+    return `<div class="activity"><h3>CHALLENGE ACTIVITY ${a.id}: ${a.title}</h3><p>Activity completed</p></div>`;
+  const body =
+    a.kind === "quiz"
+      ? a.questions
+          .map(
+            (q, k) =>
+              `<div class="question"><p>${k + 1}) ${q}</p><button type="button">Answer ${a.id}.${k + 1}</button></div>`,
+          )
+          .join("")
+      : `<div class="animation"><button type="button">Start ${a.id}</button> ${Array.from(
+          { length: a.steps },
+          (_, k) => `<span>Step ${k + 1}</span>`,
+        ).join(" ")} <button type="button">Play step ${a.id}</button></div>`;
+  return `<div class="activity"><h3>PARTICIPATION ACTIVITY ${a.id}: ${a.title}</h3>${body}${status(a.done)}</div>`;
+}
+
+function libraryPage(path: string): { title: string; body: string } | null {
+  if (path === "/library")
+    return {
+      title: "Library",
+      body: `<h1>Assignments</h1><ul>${Object.keys(LIBRARY)
+        .map((n) => `<li><a href="/library/reading/${n}">Reading ${n}</a></li>`)
+        .join("")}</ul>`,
+    };
+  const reading = /^\/library\/reading\/(\d+)$/.exec(path);
+  if (reading) {
+    const sections = LIBRARY[Number(reading[1])];
+    if (!sections) return null;
+    const link = (s: { title: string }, i: number) =>
+      `<li><a href="/library/chapter/${reading[1]}/section/${i + 1}">${s.title}</a></li>`;
+    const open = sections.map((s, i) => (s.collapsed ? "" : link(s, i))).join("");
+    const hidden = sections.map((s, i) => (s.collapsed ? link(s, i) : "")).join("");
+    return {
+      title: `Reading ${reading[1]}`,
+      body:
+        `<h1>Reading ${reading[1]}</h1><ul>${open}</ul>` +
+        (hidden
+          ? `<details><summary>Chapter ${reading[1]} more</summary><ul>${hidden}</ul></details>`
+          : "") +
+        `<a href="/library">Back to the library</a>`,
+    };
+  }
+  const section = /^\/library\/chapter\/(\d+)\/section\/(\d+)$/.exec(path);
+  const s = section ? LIBRARY[Number(section[1])]?.[Number(section[2]) - 1] : undefined;
+  if (!s) return null;
+  const activities = s.activities.map(activityHtml).join("");
+  return {
+    title: s.title,
+    body: `<h1>${s.title}</h1>${activities || "<p>An overview with no activities.</p>"}`,
+  };
+}
+
 function page(req: IncomingMessage, title: string, body: string): string {
   const consented = /(?:^|;\s*)consent=1(?:;|$)/.test(req.headers.cookie ?? "");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>
@@ -144,6 +254,8 @@ export async function startFixtureServer(options: {
         done.add(id as ActivityId);
         return send(res, 204);
       }
+      const library = libraryPage(url.pathname);
+      if (library) return send(res, 200, page(req, library.title, library.body));
       return send(res, 404, "Not found");
     } catch {
       return send(res, 400);
