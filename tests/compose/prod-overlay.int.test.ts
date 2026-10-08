@@ -458,6 +458,7 @@ describe("the D47 bench stack", () => {
   it("passes the local prod smoke's preflight (final review I1)", () => {
     expect(
       localPreflightProblems(".env.test", {
+        ...OBSERVABILITY_SECRETS,
         DOMAIN: "localhost",
         TRAEFIK_ENTRYPOINT: "web",
         TRAEFIK_TLS: "false",
