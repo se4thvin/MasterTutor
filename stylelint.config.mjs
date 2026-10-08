@@ -1,6 +1,7 @@
 /** Motion rules for CSS (spec §11.4, D28). styles/motion.css is the only place raw timing lives. */
 const ANIMATABLE = "(transform|opacity|scale|translate|rotate|visibility)";
-const RAW_TIMING_KEYWORD = "/(?<![-\\w])(ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)(?![-\\w(])/";
+const RAW_TIMING_KEYWORD =
+  "/(?<![-\\w])(ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)(?![-\\w(])/";
 const RAW_LINEAR_FN = "/(?<![-\\w])linear\\(/";
 
 export default {

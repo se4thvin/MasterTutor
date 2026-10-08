@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nested frames</title>
+  </head>
+  <body>
+    <main>
+      <article>
+        <h1>Nested frames</h1>
+        <p>
+          The electron transport chain pumps protons across the inner membrane, and the gradient it
+          builds drives ATP synthase.
+        </p>
+        <!-- The outer frame shows no text of its own and is too small to capture; only the frame
+             inside it shows text, so only the recursive check counts it missing. -->
+        <iframe
+          srcdoc="<iframe srcdoc='<p>Nested frame sentinel text</p>' width='60' height='30'></iframe>"
+          width="80"
+          height="40"
+        ></iframe>
+      </article>
+    </main>
+  </body>
+</html>

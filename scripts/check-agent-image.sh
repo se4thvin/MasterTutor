@@ -50,7 +50,27 @@ docker run --rm --label mastertutor.ci=1 --entrypoint node --read-only --tmpfs /
     const out = await analyzeDocument({ render: 'auto', scale: 2 }, pdf, new AbortController().signal);
     process.exit(out.ok && out.pages.length === 3 && out.renders.length === 3 && out.blocks.length > 0 ? 0 : 1);" \
   || { echo "agent image cannot run the pdf-worker pipeline" >&2; exit 1; }
-echo "ok - agent image carries no test code and runs the pdf-worker pipeline"
+# Only the OCR assets Node loads ship (QA-093): no browser-only .wasm.js core copies and no
+# legacy 4.0.0 model; the worker still starts offline from what is left.
+extra="$(docker run --rm --label mastertutor.ci=1 --entrypoint sh "$IMAGE" -c "
+    find /app/node_modules/.pnpm -path '*/node_modules/tesseract.js-core/*.wasm.js'
+    find /app/node_modules/.pnpm -path '*/node_modules/@tesseract.js-data/eng/4.0.0'")"
+if [[ -n "$extra" ]]; then
+  echo "agent image ships unused OCR assets:" >&2
+  echo "$extra" >&2
+  exit 1
+fi
+docker run --rm --label mastertutor.ci=1 --entrypoint node --read-only --tmpfs /tmp \
+  --user 1000:1000 --network none "$IMAGE" --input-type=module -e "
+    const { createRequire } = await import('node:module');
+    const sharp = createRequire('/app/apps/agent/src/main.ts')('sharp');
+    const { createLocalOcr } = await import('/app/apps/agent/src/browser/local-ocr.ts');
+    const png = await sharp({ create: { width: 64, height: 32, channels: 3, background: '#fff' } }).png().toBuffer();
+    const ocr = createLocalOcr();
+    await ocr.text(new Uint8Array(png));
+    await ocr.close();" \
+  || { echo "agent image cannot start local OCR offline" >&2; exit 1; }
+echo "ok - agent image carries no test code, runs the pdf-worker pipeline and local OCR"
 
 # audio-capture as compose runs it (read-only, uid 1000, no capabilities, tmpfs): parec is there
 # and the service answers on its port.

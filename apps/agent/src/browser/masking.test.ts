@@ -114,6 +114,7 @@ function fakeSession(options: FakeOptions = {}) {
     lastScale: 1,
     page: { bringToFront: async () => undefined },
     layout: async () => ({ ...size, scrollX: 0, scrollY: 0 }),
+    stopStuckNavigation: async () => false,
     cdp: async () => cdp,
     worlds: async () => ({ evaluate: async () => [] }),
     outOfProcessFrames: async () => {

@@ -1824,15 +1824,19 @@ describe("function-tool writes join the act commit (B2 seam F2)", () => {
 
   it("commits onComplete's writes with the completed transition", async () => {
     const event = blockAdded();
+    let seen: unknown;
     const { run, loop } = await setup([done()], {
       hooks: {
-        onComplete: async ({ step }) => {
+        onComplete: async ({ step, signal }) => {
+          seen = signal;
           step.emit(event);
           return { ok: true };
         },
       },
     });
     expect((await drive(loop)).kind).toBe("completed");
+    // A kill during completion reaches the hook's model calls (QA-082).
+    expect(seen).toBeInstanceOf(AbortSignal);
     const rows = await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id));
     expect(rows.map((row) => row.type)).toContain("block_added");
   });

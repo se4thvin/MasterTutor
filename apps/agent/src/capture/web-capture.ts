@@ -4,6 +4,8 @@ import {
   VERIFIED_COVERAGE,
   type BlockType,
 } from "@mastertutor/contracts";
+import { deleteUnusedAssets } from "@mastertutor/db";
+import sharp from "sharp";
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import { PageScriptError } from "../browser/isolated-world.ts";
 import { containsSecretText } from "../browser/masking.ts";
@@ -25,7 +27,8 @@ import { pageExtract } from "./page/extract.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import type { PageExtract } from "./page/types.ts";
-import { pixelsAreClean } from "../browser/local-ocr.ts";
+import { tallPixelsAreClean } from "../browser/local-ocr.ts";
+import { screenPixels } from "../browser/pixel-screen.ts";
 import { readRegion } from "./ocr-region.ts";
 import { preparePage } from "./prepare.ts";
 import { registerClosedShadowRoots } from "./shadow.ts";
@@ -434,7 +437,7 @@ async function screenedSnapshot(
 ): Promise<Snapshot> {
   if (
     !snapshot.png ||
-    (await pixelsAreClean(services.localOcr, ctx.mask, snapshot.png, ctx.signal))
+    (await tallPixelsAreClean(services.localOcr, ctx.mask, snapshot.png, ctx.signal))
   )
     return snapshot;
   return {
@@ -443,6 +446,54 @@ async function screenedSnapshot(
     pngSha256: null,
     skipped: [...snapshot.skipped, "png:withheld"],
   };
+}
+
+/** Context screened above and below an opaque tile, so a line its edge cuts is read whole (I2). */
+const TILE_SCREEN_MARGIN = 120;
+
+/**
+ * One opaque-page tile, or null when it is withheld. Pixels reach OpenAI only after the full local
+ * screen (1×, plus 2× where needed) passes over the tile and TILE_SCREEN_MARGIN around it: a secret
+ * line cut by the tile edge is screened whole, not as two halves tesseract cannot read (review I2).
+ */
+async function screenedTile(
+  services: LibraryServices,
+  ctx: ToolContext,
+  clip: { x: number; y: number; width: number; height: number },
+  pageHeight: number,
+): Promise<Uint8Array | null> {
+  const top = Math.max(0, clip.y - TILE_SCREEN_MARGIN);
+  const bottom = Math.min(
+    Math.max(pageHeight, clip.y + clip.height),
+    clip.y + clip.height + TILE_SCREEN_MARGIN,
+  );
+  const around = { ...clip, y: top, height: bottom - top };
+  const wide = await captureMaskedRegion(
+    ctx.session,
+    ctx.mask,
+    { clip: around, scale: 1 },
+    ctx.signal,
+  );
+  if (!wide) return null;
+  if (ctx.mask.hasSecrets() || (ctx.mask.hasOneTimeCodes?.() ?? false)) {
+    const read = await screenPixels(services.localOcr, ctx.mask, wide, ctx.signal);
+    if (read.kind !== "clean") return null;
+  }
+  const meta = await sharp(wide).metadata();
+  const ratio = (meta.height ?? around.height) / around.height;
+  const tile = await sharp(wide)
+    .extract({
+      left: 0,
+      top: Math.round((clip.y - top) * ratio),
+      width: meta.width ?? Math.round(clip.width * ratio),
+      height: Math.min(
+        Math.round(clip.height * ratio),
+        (meta.height ?? 0) - Math.round((clip.y - top) * ratio),
+      ),
+    })
+    .png()
+    .toBuffer();
+  return new Uint8Array(tile);
 }
 
 /** Spec §7.7 for pages without usable DOM text: masked viewport tiles, each transcribed by OCR. */
@@ -466,7 +517,7 @@ async function opaqueBlocks(
       width: viewport.clientWidth,
       height: viewport.clientHeight,
     };
-    const png = await captureMaskedRegion(ctx.session, ctx.mask, { clip, scale: 1 }, ctx.signal);
+    const png = await screenedTile(services, ctx, clip, metrics.cssContentSize.height);
     if (!png) {
       withheld++;
       lost++;
@@ -488,6 +539,8 @@ async function opaqueBlocks(
       label: `Page region ${i + 1}`,
       imageOrigin: "dom",
       anchor,
+      // screenedTile ran the full screen over the tile and its edges (review I2).
+      screened: true,
     });
     blocks.push(...region.blocks);
     if (region.lost) {
@@ -498,8 +551,38 @@ async function opaqueBlocks(
   return { blocks, withheld, lost };
 }
 
-/** Spec §7 for a web page: prepare → secret gate → snapshot → extract (frames too) → assets → verify. */
+/**
+ * Spec §7 for a web page: prepare → secret gate → snapshot → extract (frames too) → assets → verify.
+ * Assets are written as they are stored; a vault-secret refusal after that (OpenAI's tile
+ * transcription seeing what the local screen missed, or a frame's text) deletes the ones nothing
+ * else uses, so "nothing was stored" holds (QA-094).
+ */
 export async function captureWeb(
+  services: LibraryServices,
+  ctx: ToolContext,
+  scope: CaptureScope,
+): Promise<WebCapture> {
+  const stored: string[] = [];
+  const recording: LibraryServices = {
+    ...services,
+    assets: {
+      async put(workspaceId, input, secrets) {
+        const asset = await services.assets.put(workspaceId, input, secrets);
+        stored.push(asset.assetId);
+        return asset;
+      },
+    },
+  };
+  try {
+    return await readWebPage(recording, ctx, scope);
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === "secret_on_page" && stored.length > 0)
+      await deleteUnusedAssets(services.db, ctx.workspaceId, stored);
+    throw error;
+  }
+}
+
+async function readWebPage(
   services: LibraryServices,
   ctx: ToolContext,
   scope: CaptureScope,
@@ -509,11 +592,14 @@ export async function captureWeb(
   // D8: a page that shows a vault secret is refused before any snapshot or asset is written.
   if (ctx.mask.hasSecrets() && (await containsSecretText(ctx.session, ctx.mask, ctx.signal)))
     throw new ToolError("secret_on_page", "The page shows a saved secret; nothing was stored");
-  const snapshot = await screenedSnapshot(
+  // page.png's local screen (up to ~20 s of OCR on a secret run) runs while the page is read; it
+  // only has to finish before the snapshot is uploaded (QA-092).
+  const screening = screenedSnapshot(
     services,
     ctx,
     await takeSnapshot(ctx.session, ctx.mask, ctx.signal),
   );
+  screening.catch(() => undefined); // awaited below; a read that fails first must not leave it unhandled
   const worlds = await captureWorlds(ctx.session);
   const main = await captureDocument(services, ctx, worlds, await worlds.mainFrameId(), scope, 0);
   const blocks = [...main.blocks];
@@ -531,6 +617,7 @@ export async function captureWeb(
   }
   // Unread frames are missing content: the note cannot claim to be verified (I4).
   mediaLost += main.framesMissing;
+  const snapshot = await screening;
   // Coverage of what the note finally holds (I2).
   const captured = blocks.map((b) => blockPlainText(b)).join("\n");
   const page = coverageOf(pageText, captured);

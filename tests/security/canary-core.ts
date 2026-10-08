@@ -2,6 +2,8 @@
  * Secret-canary matching (spec §12 security test 1), one source for B3's in-process vault tests
  * and the post-E2E stack scan. Pure: no test framework, no I/O. Never puts a value in a message.
  */
+import { foldConfusables as fold } from "../../apps/agent/src/vault/confusables.ts";
+
 export type Canaries = Readonly<Record<string, string>>;
 export type CanaryForm = "plain" | "hex" | "base64" | "utf16" | "ocr";
 export interface CanaryHit {
@@ -84,28 +86,6 @@ export const describeHit = (hit: CanaryHit): string =>
 export function expectAbsent(haystack: string, where: string, canaries: Canaries): void {
   const hits = findCanaryHits(haystack, where, canaries);
   if (hits.length > 0) throw new Error(hits.map(describeHit).join("; "));
-}
-
-/** Characters OCR confuses, folded to one form on both sides of a comparison. */
-const CONFUSABLE: Record<string, string> = {
-  O: "0",
-  Q: "0",
-  D: "0",
-  I: "1",
-  L: "1",
-  "|": "1",
-  Z: "2",
-  S: "5",
-  B: "8",
-  G: "6",
-  T: "7",
-};
-
-function fold(text: string): string {
-  return Array.from(
-    text.toUpperCase().replace(/[^A-Z0-9|]/g, ""),
-    (char) => CONFUSABLE[char] ?? char,
-  ).join("");
 }
 
 function distance(a: string, b: string): number {

@@ -1,10 +1,12 @@
-import { noteBlocks, notes, runs, sources } from "@mastertutor/db";
-import { eq, sql } from "drizzle-orm";
+import { assets, noteBlocks, notes, objectDeletions, runs, sources } from "@mastertutor/db";
+import { eq, inArray, like, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MaskSources } from "../browser/masking.ts";
 import { FIXTURES } from "../testing/browser-harness.ts";
 import { type CaptureEnv, startCaptureEnv } from "../testing/capture-env.ts";
 import { seedRun } from "../testing/notes.ts";
+import { createLocalOcr } from "../browser/local-ocr.ts";
+import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { createCaptureTool } from "./capture-tool.ts";
 import { pageExtract } from "./page/extract.ts";
 import { captureWorlds } from "./worlds.ts";
@@ -245,8 +247,14 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
   it("reads frames without a placeholder and counts unread text as missing (re-review N2)", async () => {
     const { result, blocks, source } = await capture("frames/aside.html");
     expect(blocks.some((b) => b.markdown.includes("Small frame sentinel"))).toBe(false);
-    expect((source.meta as { framesMissing: number }).framesMissing).toBeGreaterThanOrEqual(1);
+    // Both paths: the small frame (never a placeholder) and the sidebar frame (placeholder dropped).
+    expect((source.meta as { framesMissing: number }).framesMissing).toBe(2);
     expect(result.fidelity).not.toBe("verified");
+    // A frame whose text sits only in a frame nested inside it counts once (QA-078).
+    const nested = await capture("frames/nested.html");
+    expect(nested.blocks.some((b) => b.markdown.includes("Nested frame sentinel"))).toBe(false);
+    expect((nested.source.meta as { framesMissing: number }).framesMissing).toBe(1);
+    expect(nested.result.fidelity).not.toBe("verified");
   });
 
   it("OCRs and screens opaque tiles before storing them (re-review I1)", async () => {
@@ -263,13 +271,16 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     // Only the viewport-sized page-region tiles: local OCR (a fake that reads nothing) passes the
     // canvas, and OpenAI's transcription of a tile is what shows the secret here.
     const tiles: string[] = [];
+    const stored: string[] = [];
     const leaking = createCaptureTool({
       ...env.services,
       assets: {
-        put: (workspaceId, input, secrets) => {
+        put: async (workspaceId, input, secrets) => {
           if (input.width === viewport.clientWidth && input.height === viewport.clientHeight)
             tiles.push(input.mime);
-          return env.services.assets.put(workspaceId, input, secrets);
+          const asset = await env.services.assets.put(workspaceId, input, secrets);
+          stored.push(asset.assetId);
+          return asset;
         },
       },
       ocr: { transcribe: async () => "Password: hunter2-canary" },
@@ -278,6 +289,56 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     await expect(leaking.run(ctx, page)).rejects.toMatchObject({ code: "secret_on_page" });
     await env.discard(ctx);
     expect(tiles).toEqual([]);
+    // The canvas the local screen passed was stored first; the refusal deletes it (QA-094).
+    expect(stored.length).toBeGreaterThan(0);
+    const left = await env.db.db
+      .select({ key: assets.key })
+      .from(assets)
+      .where(inArray(assets.id, stored));
+    expect(left).toEqual([]);
+    const queued = await env.db.db
+      .select({ key: objectDeletions.key })
+      .from(objectDeletions)
+      .where(like(objectDeletions.key, `assets/${scope.workspaceId}/%`));
+    expect(queued.length).toBeGreaterThan(0);
+  });
+  it("withholds an opaque tile OpenAI could not read on a secret run, keeps it otherwise (QA-079)", async () => {
+    const vault: MaskSources = {
+      nodeIds: () => [],
+      hasSecrets: () => true,
+      redact: (text: string) => text,
+    };
+    for (const [mask, kept] of [
+      [vault, false],
+      [undefined, true],
+    ] as const) {
+      const scope = await seedRun(env.db.db);
+      await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+      const { cssVisualViewport: viewport } = await (
+        await env.session.cdp()
+      ).send("Page.getLayoutMetrics");
+      const tiles: string[] = [];
+      const tool = createCaptureTool({
+        ...env.services,
+        assets: {
+          put: (workspaceId, input, secrets) => {
+            if (input.width === viewport.clientWidth && input.height === viewport.clientHeight)
+              tiles.push(input.mime);
+            return env.services.assets.put(workspaceId, input, secrets);
+          },
+        },
+        ocr: {
+          transcribe: async () => {
+            throw new Error("upstream 503");
+          },
+        },
+      });
+      const ctx = env.context(scope, mask);
+      const result = await tool.run(ctx, page);
+      await env.commit(ctx);
+      expect(tiles.length > 0).toBe(kept);
+      expect(result.fidelity).not.toBe("verified");
+    }
   });
   it("counts only frames inside the capture scope and visible (A-I1)", async () => {
     // An element capture is not held back by an unrelated text frame elsewhere on the page.
@@ -310,8 +371,12 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     const crashed = async (): Promise<never> => {
       throw new Error("tesseract crashed");
     };
+    const box = { x: 10, y: 10, width: 200, height: 20 };
     for (const localOcr of [
-      { text: async () => "Password: hunter2-canary", words: async () => [] },
+      {
+        text: async () => "Password: hunter2-canary",
+        words: async () => [{ words: [{ text: "hunter2-canary", box }] }],
+      },
       { text: crashed, words: crashed },
     ]) {
       const scope = await seedRun(env.db.db);
@@ -333,6 +398,88 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       expect(stored.filter((key) => key.endsWith("page.png"))).toEqual([]);
     }
   });
+
+  it("reads the page while page.png is screened, not after it (QA-092)", async () => {
+    const vault: MaskSources = { nodeIds: () => [], hasSecrets: () => true, redact: (t) => t };
+    let stored = false;
+    const storedDuringScreen: boolean[] = [];
+    const localOcr = {
+      // The page's own read stores the article image; each screen waits for that (5 s at most).
+      text: async () => {
+        for (let waited = 0; !stored && waited < 5_000; waited += 50)
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        storedDuringScreen.push(stored);
+        return "";
+      },
+      words: async () => [],
+    };
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/article/index.html`, signal);
+    const ctx = env.context(scope, vault);
+    const tool = createCaptureTool({
+      ...env.services,
+      localOcr,
+      assets: {
+        put: async (workspaceId, input, secrets) => {
+          stored = true;
+          return env.services.assets.put(workspaceId, input, secrets);
+        },
+      },
+    });
+    const result = await tool.run(ctx, page);
+    await env.commit(ctx);
+    expect(storedDuringScreen[0]).toBe(true);
+    const [source] = await env.db.db
+      .select()
+      .from(sources)
+      .where(sql`${sources.meta}->>'noteId' = ${result.noteId}`);
+    expect(source?.screenshotKey).toMatch(/page\.png$/);
+  });
+
+  it("screens an opaque tile with its neighbours' edge lines whole before OpenAI sees it (review I2)", async () => {
+    // The vault's own matcher (exact and confusable-folded), as a run holding this secret has.
+    const prints = createSecretFingerprints();
+    prints.remember("review-i2", {
+      filled: {
+        cdp: await env.session.cdp(),
+        frameId: "main",
+        loaderId: "doc",
+        backendNodeIds: [],
+      },
+      secret: "MARMOT4CANARY8VELVET",
+    });
+    const vault = prints.forRun("review-i2");
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/opaque/index.html`, signal);
+    const { cssVisualViewport: viewport } = await (
+      await env.session.cdp()
+    ).send("Page.getLayoutMetrics");
+    // A canvas-only page whose secret line straddles the first tile's bottom edge.
+    const edge = viewport.clientHeight;
+    await env.session.page.setContent(`<body style="margin:0">
+      <canvas id="c" width="1000" height="${edge * 2}"></canvas><script>{
+        const ctx = document.getElementById("c").getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, ${edge * 2});
+        ctx.fillStyle = "#000"; ctx.font = "40px sans-serif";
+        ctx.fillText("Quarterly report", 40, 120);
+        ctx.fillText("Key MARMOT4CANARY8VELVET", 40, ${edge + 14});
+      }</script></body>`);
+    let openAiPixels = 0;
+    const reader = createLocalOcr();
+    try {
+      const tool = createCaptureTool({
+        ...env.services,
+        localOcr: reader,
+        ocr: { transcribe: async () => ((openAiPixels += 1), "Quarterly report") },
+      });
+      const ctx = env.context(scope, vault);
+      await tool.run(ctx, page);
+      await env.commit(ctx);
+    } finally {
+      await reader.close();
+    }
+    expect(openAiPixels).toBe(0);
+  }, 180_000);
 
   it("withholds page.png when local OCR finds a secret or fails (A-M2)", async () => {
     const vault: MaskSources = {
