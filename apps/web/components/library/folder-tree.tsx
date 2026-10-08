@@ -1,10 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { Icon, type IconName } from "@/components/ui/icon.tsx";
-import { orpc } from "@/lib/api/client.ts";
 import { cx } from "@/lib/cx.ts";
 import { FOLDER_DRAG_TYPE, acceptsDrop, getDragged, setDragged } from "@/lib/folders/drag.ts";
 import {
@@ -14,6 +12,7 @@ import {
   type FolderNode,
 } from "@/lib/folders/tree.ts";
 import { FolderMark } from "./folder-mark.tsx";
+import { useFolders } from "./use-folders.ts";
 import { useMoveFolder } from "./use-move-folder.ts";
 import { libraryHref, parseLibraryParams, type LibraryScope } from "@/lib/library/params.ts";
 
@@ -52,8 +51,7 @@ export function FolderTree({
   const search = useSearchParams();
   const params = parseLibraryParams(search);
   const scope: LibraryScope = pathname.startsWith("/library") ? params.folder : "";
-  const { data } = useQuery(orpc.folders.tree.queryOptions({ input: {} }));
-  const folders = useMemo(() => data?.folders ?? [], [data]);
+  const folders = useFolders();
   const tree = useMemo(() => buildFolderTree(folders), [folders]);
 
   // Reveal the current folder by opening its ancestors (not the folder itself), once per scope
