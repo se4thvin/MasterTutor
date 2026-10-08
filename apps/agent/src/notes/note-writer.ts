@@ -1,17 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
   Anchor,
-  CAPTURED_ORIGINS,
   MAX_BLOCK_CHARS,
-  noteFidelity,
   toOrigin,
   unescapeMarkdown,
   type BlockOrigin,
   type BlockType,
   type SourceKind,
 } from "@mastertutor/contracts";
-import { type DbLike, noteBlocks, notes, runs, sources } from "@mastertutor/db";
-import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { type DbLike, noteBlocks, notes, refreshNoteQuality, runs, sources } from "@mastertutor/db";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { containsSecret, type MaskSources } from "../browser/masking.ts";
 import type { StepWriter, ToolContext } from "../tools/types.ts";
 import type { Embedder } from "./embedder.ts";
@@ -364,7 +362,7 @@ export class NoteWriter {
     return list;
   }
 
-  /** Coverage = min over captures; fidelity from the shared rule. Runs after the block inserts. */
+  /** Coverage = min over captures; fidelity from the shared rule (refreshNoteQuality). Runs after the block inserts. */
   stageQuality(w: WriteContext, noteId: string, coverage: number | null): void {
     w.step.defer(async (tx) => {
       const [note] = await tx
@@ -374,41 +372,7 @@ export class NoteWriter {
       if (!note) return;
       const merged =
         coverage === null ? (note?.coverage ?? null) : Math.min(note?.coverage ?? 1, coverage);
-      const [unverified] = await tx
-        .select({ n: count() })
-        .from(noteBlocks)
-        .where(
-          and(
-            eq(noteBlocks.noteId, noteId),
-            inArray(noteBlocks.origin, [...CAPTURED_ORIGINS]),
-            eq(noteBlocks.verified, false),
-          ),
-        );
-      // A non-numeric mediaLost counts as none rather than aborting the step transaction.
-      const mediaLost = sql`${sources.meta}->>'mediaLost'`;
-      const [lost] = await tx
-        .select({
-          n: sql<number>`coalesce(sum(case when ${mediaLost} ~ '^[0-9]{1,9}$' then (${mediaLost})::int else 0 end), 0)::int`,
-        })
-        .from(sources)
-        .where(
-          and(
-            eq(sources.workspaceId, w.scope.workspaceId),
-            sql`${sources.meta}->>'noteId' = ${noteId}`,
-          ),
-        );
-      await tx
-        .update(notes)
-        .set({
-          coverage: merged,
-          fidelity: noteFidelity({
-            coverage: merged,
-            unverifiedCaptured: unverified?.n ?? 0,
-            missingMedia: lost?.n ?? 0,
-          }),
-          updatedAt: new Date(),
-        })
-        .where(and(eq(notes.id, noteId), eq(notes.workspaceId, w.scope.workspaceId)));
+      await refreshNoteQuality(tx, w.scope.workspaceId, noteId, merged);
     });
   }
 
