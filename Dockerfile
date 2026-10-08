@@ -2,7 +2,7 @@
 # Node services. Two targets:
 #   node-runtime: agent, migrate, garage-init (TS via Node type stripping);
 #   web: the Next.js standalone server.
-FROM node:24-slim AS base
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS base
 ENV CI=true NEXT_TELEMETRY_DISABLED=1
 RUN npm install -g pnpm@10.34.6 && npm cache clean --force
 WORKDIR /repo
@@ -27,7 +27,7 @@ RUN find apps/agent packages -path '*/node_modules' -prune -o \
       \( -name '*.test.ts' -o -name testing -o -name testing.ts \) -print0 | xargs -0 rm -rf
 
 # Workspace packages stay symlinked outside node_modules, which Node type stripping requires.
-FROM node:24-slim AS node-runtime
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS node-runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=runtime-build --chown=node:node /repo/package.json ./package.json
@@ -37,7 +37,7 @@ COPY --from=runtime-build --chown=node:node /repo/apps/agent ./apps/agent
 USER node
 CMD ["node", "apps/agent/src/main.ts"]
 
-FROM node:24-slim AS web
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS web
 ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 COPY --from=web-build --chown=node:node /repo/apps/web/.next/standalone ./
