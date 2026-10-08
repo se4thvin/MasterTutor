@@ -42,7 +42,15 @@ describe("DownloadGate while a person holds control", () => {
     const capped: string[] = [];
     const finished: string[] = [];
     g.onFinished((download) => void finished.push(download.id));
-    await g.userControl(true, { maxBytes: 1_000, onCapped: ({ reason }) => capped.push(reason) });
+    let reported = () => undefined as void;
+    const report = new Promise<void>((resolve) => (reported = resolve));
+    await g.userControl(true, {
+      maxBytes: 1_000,
+      onCapped: ({ reason }) => {
+        capped.push(reason);
+        reported();
+      },
+    });
     cdp.emit("Browser.downloadWillBegin", {
       guid: "g1",
       url: "https://a.test/f",
@@ -56,7 +64,8 @@ describe("DownloadGate while a person holds control", () => {
       receivedBytes: 5_000,
       totalBytes: 5_000,
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The cap is reported once the cancel is acknowledged and its files are gone.
+    await report;
     expect(capped).toEqual(["too_large"]);
     expect(await readdir(folder)).toEqual([]);
     expect(finished).toEqual([]); // never reported for B6 to file
