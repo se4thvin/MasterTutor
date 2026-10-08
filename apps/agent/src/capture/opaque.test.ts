@@ -2,7 +2,7 @@ import { EMPTY_USAGE } from "@mastertutor/contracts";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { StepCollector } from "../loop/step-collector.ts";
-import { createOcrModel, ocrTiles } from "./opaque.ts";
+import { createOcrModel, OcrBudgetExhausted, ocrTiles } from "./opaque.ts";
 
 const png = async (width: number, height: number) =>
   new Uint8Array(
@@ -48,5 +48,28 @@ describe("OCR input stays within 1280×800 (data policy rule 4, D5)", () => {
     expect(JSON.stringify(requests[0]!.input)).not.toContain('"system"');
     expect(step.usage.inputTokens).toBe(20);
     expect(step.usage.usd).toBeGreaterThan(EMPTY_USAGE.usd);
+  });
+  it("checks the run's budget before every OCR call (final review I6)", async () => {
+    let calls = 0;
+    const model = createOcrModel({
+      responses: {
+        create: async () => {
+          throw new Error("unused");
+        },
+        parse: async () => {
+          calls++;
+          return {
+            parsed: { markdown: "tile" } as never,
+            model: "gpt-6-astra",
+            tokens: { input: 10, cached: 0, output: 5 },
+          };
+        },
+      },
+    });
+    const broke = new StepCollector({ usdLeft: 0 });
+    await expect(
+      model.transcribe(await png(100, 50), { signal: new AbortController().signal, step: broke }),
+    ).rejects.toBeInstanceOf(OcrBudgetExhausted);
+    expect(calls).toBe(0);
   });
 });

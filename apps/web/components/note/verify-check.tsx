@@ -1,24 +1,11 @@
 "use client";
 
-import type { NoteBlock, NoteDetail } from "@mastertutor/contracts";
+import type { NoteBlock } from "@mastertutor/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { SpringCheck } from "@/components/bits/spring-check.tsx";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
 import { patchNoteDetail } from "@/lib/notes/cache.ts";
-
-/** Same rule the server applies: a needs-review note is promoted once every block is verified. */
-function withVerified(detail: NoteDetail, blockId: string): NoteDetail {
-  const blocks = detail.blocks.map((b) => (b.id === blockId ? { ...b, verified: true } : b));
-  const allVerified = blocks.every((b) => b.verified);
-  const fidelity =
-    detail.note.fidelity === "needs_review" && allVerified
-      ? (detail.note.coverage ?? 1) >= 0.98
-        ? "verified"
-        : "partial"
-      : detail.note.fidelity;
-  return { ...detail, blocks, note: { ...detail.note, fidelity } };
-}
 
 export function VerifyCheck({ block }: { block: NoteBlock }) {
   const qc = useQueryClient();
@@ -28,19 +15,21 @@ export function VerifyCheck({ block }: { block: NoteBlock }) {
     await qc.cancelQueries({
       queryKey: orpc.notes.get.queryKey({ input: { noteId: block.noteId } }),
     });
-    const before = patchNoteDetail(qc, block.noteId, (d) => withVerified(d, block.id));
+    // Optimistic for the check only: the note's fidelity is the server's rule (noteFidelity),
+    // never recomputed here, and arrives with the answer.
+    const setVerified = (verified: boolean) =>
+      patchNoteDetail(qc, block.noteId, (d) => ({
+        ...d,
+        blocks: d.blocks.map((b) => (b.id === block.id ? { ...b, verified } : b)),
+      }));
+    setVerified(true);
     try {
-      await api.notes.markVerified({ blockId: block.id });
+      const { fidelity } = await api.notes.markVerified({ blockId: block.id });
+      patchNoteDetail(qc, block.noteId, (d) => ({ ...d, note: { ...d.note, fidelity } }));
       toast({ title: "Marked verified", icon: "verified" });
     } catch {
-      // Undo only this block (and the fidelity it promoted), so concurrent changes survive.
-      if (before) {
-        patchNoteDetail(qc, block.noteId, (d) => ({
-          ...d,
-          blocks: d.blocks.map((b) => (b.id === block.id ? { ...b, verified: block.verified } : b)),
-          note: { ...d.note, fidelity: before.note.fidelity },
-        }));
-      }
+      // Undo only this block, so concurrent changes survive.
+      setVerified(block.verified);
       toast({
         title: "Couldn't mark the block verified.",
         description: "It still needs review.",
@@ -48,8 +37,13 @@ export function VerifyCheck({ block }: { block: NoteBlock }) {
         tone: "danger",
       });
     } finally {
-      // The note's fidelity shows in lists too; refetch rather than patch every page.
-      await qc.invalidateQueries({ queryKey: orpc.notes.list.key() });
+      // The note page and the lists refetch, so every view settles on the server's state.
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: orpc.notes.get.queryKey({ input: { noteId: block.noteId } }),
+        }),
+        qc.invalidateQueries({ queryKey: orpc.notes.list.key() }),
+      ]);
     }
   };
   return (

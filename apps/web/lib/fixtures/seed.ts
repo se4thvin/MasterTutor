@@ -103,6 +103,8 @@ interface NoteSeed {
   source: SourceView;
   blocks: BlockSeed[];
   runId?: string;
+  /** Content the capture lost (keyframes, regions), as sources.meta.mediaLost records it. */
+  mediaLost?: number;
 }
 
 function note(seed: NoteSeed): NoteRecord {
@@ -123,6 +125,7 @@ function note(seed: NoteSeed): NoteRecord {
     },
     blocks: blocks(noteId, seed.source.id, seed.source.capturedAt, seed.blocks),
     sources: [seed.source],
+    ...(seed.mediaLost ? { mediaLost: seed.mediaLost } : {}),
   };
 }
 
@@ -453,6 +456,8 @@ function notes(): NoteRecord[] {
       folderId: ids.folder(7),
       fidelity: "needs_review",
       coverage: 0.99,
+      // One keyframe was withheld: verifying the transcript leaves the note partial, never verified.
+      mediaLost: 1,
       createdAt: at("2026-09-28"),
       source: source(
         9,
