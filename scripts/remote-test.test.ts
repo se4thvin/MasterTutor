@@ -127,6 +127,11 @@ describe("remote test runner (D45, X4, D48)", () => {
     }
   });
 
+  it("runs ui in a network namespace of its own: Chromium aborts loads when host networks change", () => {
+    expect(host).toContain('[[ "$suite" == ui ]] && runner_network=bridge');
+    expect(host).toContain('--network "$runner_network"');
+  });
+
   it("keeps the legacy stack lock for qa only; stack suites hold a slot instead", () => {
     expect(host).toContain('stack_lock="$runs_dir/stack.lock"');
     expect(host).not.toContain("behaviour.lock");
