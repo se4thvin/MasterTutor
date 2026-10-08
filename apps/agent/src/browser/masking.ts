@@ -27,6 +27,13 @@ export interface MaskSources {
    * while it shows that document. Optional: no fills, no frames.
    */
   filledFrames?(): readonly FilledFrame[];
+  /**
+   * One-time codes (OTP, TOTP) the vault filled this run, for the local pixel screen only: matched
+   * as exact whole tokens, never by the text redactor (short codes would match ordinary text).
+   * Optional: no codes filled.
+   */
+  hasOneTimeCodes?(): boolean;
+  isOneTimeCode?(token: string): boolean;
 }
 
 /** A frame's document the vault filled into: CDP frame id plus that document's loaderId. */
