@@ -152,3 +152,14 @@ export const noteBlocks = pgTable(
     index("note_blocks_search_idx").using("gin", t.search),
   ],
 );
+
+/**
+ * Stored objects whose rows are gone (a deleted note's assets and snapshots): written in the same
+ * transaction as the delete, removed by the agent's sweep once the object is deleted. web's
+ * storage key is read-only (spec §3.1), and a failed object delete is retried by the next sweep,
+ * so no row ever points at a missing object.
+ */
+export const objectDeletions = pgTable("object_deletions", {
+  key: text("key").primaryKey(),
+  createdAt: createdAt(),
+});

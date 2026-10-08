@@ -1,16 +1,18 @@
 import { fakeEmbeddingsClient } from "@mastertutor/contracts/testing";
 import {
+  assets,
   createDb,
   ensureWorkspaceMember,
   folders,
   noteBlocks,
   notes,
+  objectDeletions,
   sources,
   type DbHandle,
 } from "@mastertutor/db";
 import { seedMember, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { createRouterClient } from "@orpc/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Viewer } from "../viewer.ts";
 import { createLibraryProcedures } from "./library.ts";
@@ -105,7 +107,7 @@ afterAll(async () => {
 });
 
 describe("library binding on the live router (Task 0C)", () => {
-  it("requires a session and a workspace, and maps LibraryError codes 1:1", async () => {
+  it("requires a session and a workspace, and maps service error codes 1:1", async () => {
     await expect(client(null).folders.tree({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await owner.sql`insert into "user" (id, name, email) values ('u-lib-none', 'N', 'lib-none@example.test')`;
     await expect(
@@ -235,11 +237,125 @@ describe("library binding on the live router (Task 0C)", () => {
     expect((await client().notes.export({ noteId: note.noteId })).downloadUrl).toBe(
       `/api/notes/${note.noteId}/export`,
     );
+    // Two matching blocks in one note: the search still answers one hit for that note.
+    await owner.db.insert(noteBlocks).values([
+      {
+        noteId: note.noteId,
+        position: "b0",
+        type: "paragraph",
+        markdown: "Photosynthesis makes sugar",
+        origin: "dom",
+        verified: true,
+      },
+      {
+        noteId: note.noteId,
+        position: "b1",
+        type: "paragraph",
+        markdown: "Photosynthesis needs light",
+        origin: "dom",
+        verified: true,
+      },
+    ]);
     const { items } = await client().notes.search({ q: "Photosynthesis" });
-    expect(new Set(items.map((i) => i.noteId)).size).toBe(items.length);
+    expect(items.filter((i) => i.noteId === note.noteId)).toHaveLength(1);
     await expect(client().notes.delete({ noteId: note.noteId })).resolves.toEqual({ ok: true });
     await expect(client().notes.get({ noteId: note.noteId })).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
+  });
+  it("edits and marks verified the same block at once without a deadlock (one lock order)", async () => {
+    for (let round = 0; round < 25; round++) {
+      const note = await seedNote(workspaceId, { title: `Race ${round}` });
+      const results = await Promise.allSettled([
+        client().notes.updateBlock({ blockId: note.unverified, markdown: `Edited ${round}` }),
+        client().notes.markVerified({ blockId: note.unverified }),
+        client().notes.updateBlock({ blockId: note.verified, markdown: `Other ${round}` }),
+        client().notes.markVerified({ blockId: note.verified }),
+      ]);
+      expect(results.filter((r) => r.status === "rejected")).toEqual([]);
+    }
+  });
+
+  it("deleting a note removes its sources and the assets only it used, and queues their objects", async () => {
+    const note = await seedNote(workspaceId, { title: "With media" });
+    const other = await seedNote(workspaceId, { title: "Shares one image" });
+    const asset = async (sha: string) =>
+      (
+        await owner.db
+          .insert(assets)
+          .values({
+            workspaceId,
+            sha256: sha,
+            bucket: "b",
+            key: `assets/${workspaceId}/${sha}`,
+            mime: "image/png",
+            bytes: 1,
+          })
+          .returning({ id: assets.id, key: assets.key })
+      )[0]!;
+    const own = await asset("1".repeat(64));
+    const inline = await asset("2".repeat(64));
+    const shared = await asset("3".repeat(64));
+    await owner.db.insert(noteBlocks).values([
+      {
+        noteId: note.noteId,
+        position: "c0",
+        type: "image",
+        markdown: "Own",
+        origin: "dom",
+        assetId: own.id,
+        verified: true,
+      },
+      {
+        noteId: note.noteId,
+        position: "c1",
+        type: "paragraph",
+        markdown: `See ![x](asset:${inline.id})`,
+        origin: "dom",
+        verified: true,
+      },
+      {
+        noteId: note.noteId,
+        position: "c2",
+        type: "image",
+        markdown: "Shared",
+        origin: "dom",
+        assetId: shared.id,
+        verified: true,
+      },
+      {
+        noteId: other.noteId,
+        position: "c0",
+        type: "paragraph",
+        markdown: `Also ![y](asset:${shared.id})`,
+        origin: "dom",
+        verified: true,
+      },
+    ]);
+    await owner.db
+      .update(sources)
+      .set({ mhtmlKey: `snapshots/${note.noteId}/page.mhtml` })
+      .where(sql`${sources.meta}->>'noteId' = ${note.noteId}`);
+    await client().notes.delete({ noteId: note.noteId });
+    expect(
+      await owner.db.select().from(noteBlocks).where(eq(noteBlocks.noteId, note.noteId)),
+    ).toEqual([]);
+    expect(
+      await owner.db
+        .select()
+        .from(sources)
+        .where(sql`${sources.meta}->>'noteId' = ${note.noteId}`),
+    ).toEqual([]);
+    const left = (await owner.db.select({ id: assets.id }).from(assets)).map((a) => a.id);
+    expect(left).not.toContain(own.id);
+    expect(left).not.toContain(inline.id);
+    expect(left).toContain(shared.id);
+    const queued = (await owner.db.select({ key: objectDeletions.key }).from(objectDeletions)).map(
+      (r) => r.key,
+    );
+    expect(queued).toEqual(
+      expect.arrayContaining([own.key, inline.key, `snapshots/${note.noteId}/page.mhtml`]),
+    );
+    expect(queued).not.toContain(shared.key);
   });
 });
