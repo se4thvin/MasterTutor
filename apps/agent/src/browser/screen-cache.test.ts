@@ -7,7 +7,7 @@ import { createScreenCache } from "./screen-cache.ts";
 
 const signal = new AbortController().signal;
 
-/** 400×200 white, with a dark bar (ink) in rows 20–29 and optionally one changed pixel. */
+/** 400×200 white, with a striped dark bar (ink) in rows 20–29 and optionally one changed pixel. */
 async function frame(changed?: { x: number; y: number }) {
   const { data, info } = await sharp({
     create: { width: 400, height: 200, channels: 3, background: "#fff" },
@@ -15,23 +15,39 @@ async function frame(changed?: { x: number; y: number }) {
     .raw()
     .toBuffer({ resolveWithObject: true });
   for (let y = 20; y < 30; y++)
-    for (let x = 10; x < 300; x++) data.fill(0, (y * 400 + x) * 3, (y * 400 + x) * 3 + 3);
+    // Striped like glyph strokes: dark and light alternate along the row.
+    for (let x = 10; x < 300; x += 2) data.fill(0, (y * 400 + x) * 3, (y * 400 + x) * 3 + 3);
   if (changed)
     data.fill(90, (changed.y * 400 + changed.x) * 3, (changed.y * 400 + changed.x) * 3 + 3);
   return new Uint8Array(await sharp(data, { raw: info }).png().toBuffer());
 }
 
-/** A fake reader that counts reads: one small, sure line over the bar (so the bar gets a 2× band). */
+/** A fake reader that counts reads: one sure word boxed over whatever dark rows the image holds. */
 function countingOcr() {
   const ocr: LocalOcr & { reads: number } = {
     reads: 0,
     text: async () => "",
-    words: async () => {
+    words: async (png) => {
       ocr.reads++;
+      const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+      const dark: number[] = [];
+      for (let y = 0; y < info.height; y++)
+        for (let x = 0; x < info.width; x++)
+          if (data[(y * info.width + x) * info.channels]! < 128) {
+            dark.push(y);
+            break;
+          }
+      if (dark.length === 0) return [];
+      const top = dark[0]!;
+      // Height 10 at 1x is small text: the bar gets a 2x look.
       return [
         {
           words: [
-            { text: "Quarterly", confidence: 95, box: { x: 10, y: 20, width: 290, height: 10 } },
+            {
+              text: "Quarterly",
+              confidence: 95,
+              box: { x: 10, y: top, width: 290, height: dark.at(-1)! - top + 1 },
+            },
           ],
         },
       ];
@@ -64,7 +80,7 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
     await screenPixels(ocr, sources, png, signal, { urgent: true, cache });
     expect(ocr.reads).toBe(2);
   });
-  it("re-screens what changed: a pixel outside the band re-reads the frame, not the band", async () => {
+  it("re-screens what changed: a mark outside the bar is read on its own, the bar is not read again", async () => {
     const ocr = countingOcr();
     const sources = vault();
     const cache = createScreenCache<BandRead>(sources);
@@ -73,13 +89,13 @@ describe("the per-run pixel-screen cache (QA-098 ruling)", () => {
       urgent: true,
       cache,
     });
-    expect(ocr.reads).toBe(3);
+    expect(ocr.reads).toBe(4); // the new mark: 1x and its 2x look;
     // A pixel inside the band changes the band too.
     await screenPixels(ocr, sources, await frame({ x: 50, y: 25 }), signal, {
       urgent: true,
       cache,
     });
-    expect(ocr.reads).toBe(5);
+    expect(ocr.reads).toBe(6); // the changed bar: 1x and 2x;
   });
   it("drops every result when the secret set changes (a new secret or one-time code)", async () => {
     const ocr = countingOcr();
