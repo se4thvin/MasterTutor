@@ -98,6 +98,9 @@ importers:
       '@mastertutor/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@mastertutor/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
       '@mozilla/readability':
         specifier: 0.6.0
         version: 0.6.0
