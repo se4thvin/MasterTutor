@@ -38,6 +38,8 @@ export class FakeLoopBrowser implements LoopBrowser {
   captcha = false;
   phash = 1n;
   png: Buffer = TINY_PNG;
+  /** Why this step's screenshot is withheld (a black frame is sent instead), or null. */
+  withheld: string | null = null;
   scroll: ScrollPosition = { x: 0, y: 0 };
   readonly targets = new Map<string, TargetDescription>();
   /** What has keyboard focus, for keypress/type targets at act time (null: PLAIN_TARGET). */
@@ -85,7 +87,15 @@ export class FakeLoopBrowser implements LoopBrowser {
       title: this.title,
       origin: new URL(this.url).origin,
       domHash: this.domHash,
-      screenshot: { png: this.png, width: 1, height: 1, scale: 1, masked: 0, dropped: false },
+      screenshot: {
+        png: this.png,
+        width: 1,
+        height: 1,
+        scale: 1,
+        masked: 0,
+        dropped: this.withheld !== null,
+        withheld: this.withheld,
+      },
       phash: this.phash,
       captcha: this.captcha,
       scroll: { ...this.scroll },

@@ -199,6 +199,15 @@ describe("RunLoop (spec §5.3)", () => {
     expect(JSON.stringify(mock.requests.at(-1)?.body.input)).toContain("computer_call_output");
   });
 
+  it("tells the model when a step's screenshot was withheld (I-1)", async () => {
+    const { browser, loop } = await setup([done()]);
+    browser.withheld = "it could not be checked for saved secrets";
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect(JSON.stringify(mock.requests.at(-1)?.body.input)).toContain(
+      "Screenshot withheld: it could not be checked for saved secrets",
+    );
+  });
+
   it("asks for approval of a risky click, then acts after approval (ask mode)", async () => {
     const { run, browser, loop, reload } = await setup([click(), done()]);
     browser.targets.set("10,20", risky("Delete account"));

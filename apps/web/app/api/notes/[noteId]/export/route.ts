@@ -1,0 +1,42 @@
+import { Uuid } from "@mastertutor/contracts";
+import { workspaceIdOf } from "@mastertutor/db";
+import { getDb } from "@/lib/server/db.ts";
+import { getWebEnv } from "@/lib/server/env.ts";
+import { buildNoteExport } from "@/lib/server/library/export.ts";
+import { OBJECT_CACHE, OBJECT_HEADERS } from "@/lib/server/library/objects.ts";
+import { getStorage } from "@/lib/server/storage.ts";
+import { getViewerId } from "@/lib/server/viewer.ts";
+
+export const dynamic = "force-dynamic";
+
+const status = (code: number) =>
+  new Response(null, {
+    status: code,
+    headers: { ...OBJECT_HEADERS, "Cache-Control": OBJECT_CACHE },
+  });
+
+/** GET /api/notes/<uuid>/export: the note's zip (decision 18), for the viewer's workspace only. */
+export async function GET(
+  _request: Request,
+  ctx: { params: Promise<{ noteId: string }> },
+): Promise<Response> {
+  if (__FIXTURE_BUILD__ && getWebEnv().WEB_FIXTURE_API) return status(404);
+  const { noteId } = await ctx.params;
+  if (!Uuid.safeParse(noteId).success) return status(404);
+  const userId = await getViewerId();
+  if (!userId) return status(401);
+  const db = getDb().db;
+  const workspaceId = await workspaceIdOf(db, userId);
+  if (!workspaceId) return status(404);
+  const out = await buildNoteExport({ db, storage: getStorage() }, workspaceId, noteId);
+  if (!out) return status(404);
+  const ascii = out.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+  return new Response(new Blob([out.bytes as Uint8Array<ArrayBuffer>]), {
+    headers: {
+      ...OBJECT_HEADERS,
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(out.fileName)}`,
+      "Cache-Control": OBJECT_CACHE,
+    },
+  });
+}
