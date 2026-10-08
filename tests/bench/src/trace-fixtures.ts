@@ -2,6 +2,7 @@ import {
   summarizeComputerActions,
   wrapUntrusted,
   type ActionEffect,
+  type ActionTarget,
   type ComputerAction,
   type ReadPageResult,
 } from "@mastertutor/contracts";
@@ -28,7 +29,11 @@ export const observe = (url: string): StepRow => ({
   result: { url, title: "t", domHash: "h" },
 });
 /** A computer call as the executor stores it: the batch's summary plus one effect per action. */
-export const batch = (actions: ComputerAction[], effects: ActionEffect[] | null): StepRow => ({
+export const batch = (
+  actions: ComputerAction[],
+  effects: ActionEffect[] | null,
+  targets: (ActionTarget | null)[] | null = null,
+): StepRow => ({
   phase: "act",
   state: "done",
   url: null,
@@ -45,6 +50,7 @@ export const batch = (actions: ComputerAction[], effects: ActionEffect[] | null)
     notes: [],
     acknowledged: [],
     ...(effects === null ? {} : { effects }),
+    ...(targets === null ? {} : { targets }),
   },
 });
 const PAGE_INPUT = new Set(["click", "double_click", "drag", "keypress", "type"]);
@@ -81,15 +87,20 @@ export const readPage = (url: string, text: string): StepRow => {
   const result: ReadPageResult = { hash: "a".repeat(64), url, title: "t", text };
   return fn("read_page", wrapUntrusted(new URL(url).origin, JSON.stringify(result)));
 };
+/** One click on a labelled control, recorded with the opening text of its enclosing elements. */
+export const clickOn = (label: string, ancestors: string[]): StepRow =>
+  batch([{ type: "click", x: 5, y: 5, button: "left" }], ["input"], [{ label, ancestors }]);
 /** An interactive read_page result listing links (name, raw href) as the agent records them. */
 export const readLinks = (
   url: string,
   links: readonly { name: string; href?: string }[],
+  page: { total?: number; offset?: number } = { total: links.length },
 ): StepRow => {
   const result: ReadPageResult = {
     hash: "b".repeat(64),
     url,
     title: "t",
+    ...page,
     elements: links.map((link, i) => ({
       ref: `e${i + 1}`,
       tag: link.href ? "a" : "button",

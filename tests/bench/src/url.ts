@@ -1,12 +1,14 @@
+/** A document's identity: origin and path, ignoring query, hash and a trailing slash. */
+export function documentKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return url;
+  }
+}
+
 /** The same document: origin and path, ignoring query, hash and a trailing slash. */
 export function sameDocument(a: string, b: string): boolean {
-  const norm = (u: string) => {
-    try {
-      const url = new URL(u);
-      return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
-    } catch {
-      return u;
-    }
-  };
-  return norm(a) === norm(b);
+  return documentKey(a) === documentKey(b);
 }
