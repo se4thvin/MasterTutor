@@ -14,6 +14,7 @@ const watch: WatchSummary = {
   humanWait: null,
   spendCapHit: false,
   safetyChecks: [],
+  autoApprovedSafetyChecks: [],
   takeovers: 0,
 };
 const signals = (over: Partial<FailureSignals> = {}): FailureSignals => ({
@@ -81,5 +82,67 @@ describe("suggestFailureClass", () => {
       cls: "perception",
       step: { seq: 2, url: "https://x.test/a", screenshotKey: first.screenshotKey },
     });
+  });
+});
+
+describe("auto-approved safety checks (I4)", () => {
+  it("ignores a check bypass approved: a navigation failure stays navigation", async () => {
+    const { initialWatchState, onRecord } = await import("./watch.ts");
+    const policy = {
+      onBudget: "ask_human",
+      onSafetyCheck: "ask_human",
+      humanTimeoutMs: 1,
+      stallMs: 1,
+    } as const;
+    const id = "44444444-4444-4444-8444-444444444441";
+    let s = onRecord(
+      initialWatchState(0),
+      {
+        id: "1",
+        runId: "33333333-3333-4333-8333-333333333333",
+        at: "2026-10-06T12:00:00.000Z",
+        event: {
+          type: "approval_requested",
+          approvalId: id,
+          request: {
+            kind: "risky_click",
+            action: { type: "click", x: 1, y: 1, button: "left" },
+            label: "Go",
+            url: "https://x.test/a",
+            screenshotKey: null,
+            safetyChecks: [{ code: "irrelevant_domain", message: "m" }],
+          },
+        },
+      },
+      0,
+      policy,
+    ).state;
+    s = onRecord(
+      s,
+      {
+        id: "2",
+        runId: "33333333-3333-4333-8333-333333333333",
+        at: "2026-10-06T12:00:00.000Z",
+        event: {
+          type: "approval_resolved",
+          approvalId: id,
+          status: "approved",
+          decidedBy: "bypass",
+        },
+      },
+      0,
+      policy,
+    ).state;
+    const summary: WatchSummary = {
+      ...watch,
+      safetyChecks: s.safetyChecks,
+      autoApprovedSafetyChecks: s.autoApprovedSafetyChecks,
+    };
+    expect(summary.autoApprovedSafetyChecks).toEqual(["irrelevant_domain"]);
+    expect(
+      suggestFailureClass(
+        signals({ watch: summary, verdict: { ...verdict, unvisited: ["https://x.test/s/1"] } }),
+      ).cls,
+    ).toBe("navigation");
   });
 });

@@ -161,6 +161,7 @@ function record(r: SuiteRunResult, x: BenchmarkResult): string[] {
       ? [
           `- Watch: budget hit ${x.watch.budgetHit}, spend cap hit ${x.watch.spendCapHit}, stalled ${x.watch.stalled}, human wait ${x.watch.humanWait ?? "none"}, takeovers ${x.watch.takeovers}`,
           `- Safety checks: ${x.watch.safetyChecks.join(", ") || "none"}`,
+          `- Safety checks auto_approved (decided_by=bypass/policy): ${x.watch.autoApprovedSafetyChecks.join(", ") || "none"}`,
         ]
       : []),
     ...x.bypassNewOrigins.map((o) => `- **BREACH: new origin approved in bypass: ${o}**`),

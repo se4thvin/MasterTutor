@@ -1,5 +1,6 @@
 import {
   TERMINAL_RUN_STATUSES,
+  isPersonDecider,
   type RunEventRecord,
   type RunStatus,
   type WaitReason,
@@ -25,7 +26,12 @@ export interface WatchState {
   humanWait: WaitReason | null;
   userControl: boolean;
   pendingApprovals: string[];
+  /** Safety checks not yet resolved, by approval id: a stop only once the run waits on a person. */
+  pendingSafetyChecks: Record<string, string[]>;
+  /** Checks the run actually stopped on for a person (D44). */
   safetyChecks: string[];
+  /** Checks the policy or bypass resolved at once: logged, never a stop (I4). */
+  autoApprovedSafetyChecks: string[];
   budgetHit: boolean;
   takeovers: number;
   stalled: boolean;
@@ -51,7 +57,9 @@ export function initialWatchState(now: number): WatchState {
     humanWait: null,
     userControl: false,
     pendingApprovals: [],
+    pendingSafetyChecks: {},
     safetyChecks: [],
+    autoApprovedSafetyChecks: [],
     budgetHit: false,
     takeovers: 0,
     stalled: false,
@@ -76,7 +84,9 @@ export function onRecord(
   const s: WatchState = {
     ...state,
     pendingApprovals: [...state.pendingApprovals],
+    pendingSafetyChecks: { ...state.pendingSafetyChecks },
     safetyChecks: [...state.safetyChecks],
+    autoApprovedSafetyChecks: [...state.autoApprovedSafetyChecks],
   };
   const commands: WatchCommand[] = [];
   const event = record.event;
@@ -89,6 +99,18 @@ export function onRecord(
       s.humanSince = humanClock(s, now, state.status === "waiting" ? state.humanSince : null);
       if (s.humanWait)
         commands.push({ type: "log", line: `NEEDS HUMAN (${s.humanWait}): ${event.reason ?? ""}` });
+      if (s.humanWait === "approval") {
+        // The checks still pending are the ones the run stopped on for a person.
+        for (const [approvalId, codes] of Object.entries(s.pendingSafetyChecks)) {
+          s.safetyChecks.push(...codes);
+          if (policy.onSafetyCheck === "deny") commands.push({ type: "deny_approval", approvalId });
+          commands.push({
+            type: "log",
+            line: `safety check ${codes.join(",")} -> ${policy.onSafetyCheck === "deny" ? "denied" : "NEEDS HUMAN"}`,
+          });
+        }
+        s.pendingSafetyChecks = {};
+      }
       if (TERMINAL.includes(event.status)) s.done = true;
       commands.push({
         type: "log",
@@ -115,23 +137,31 @@ export function onRecord(
           line: `budget hit (${request.exceeded}) -> ${policy.onBudget === "finish_now" ? "finish now" : "NEEDS HUMAN"}`,
         });
       } else if (request.kind === "risky_click" && request.safetyChecks?.length) {
+        // Policy and bypass resolve in the same commit; only a wait makes it a stop (I4).
         const codes = request.safetyChecks.map((check) => check.code ?? "unknown");
-        s.safetyChecks.push(...codes);
-        if (policy.onSafetyCheck === "deny")
-          commands.push({ type: "deny_approval", approvalId: event.approvalId });
-        commands.push({
-          type: "log",
-          line: `safety check ${codes.join(",")} -> ${policy.onSafetyCheck === "deny" ? "denied" : "NEEDS HUMAN"}`,
-        });
+        s.pendingSafetyChecks[event.approvalId] = codes;
+        commands.push({ type: "log", line: `safety check ${codes.join(",")} requested` });
       } else {
         commands.push({ type: "log", line: `approval requested: ${request.kind}` });
       }
       break;
     }
-    case "approval_resolved":
+    case "approval_resolved": {
       s.pendingApprovals = s.pendingApprovals.filter((id) => id !== event.approvalId);
+      const codes = s.pendingSafetyChecks[event.approvalId];
+      delete s.pendingSafetyChecks[event.approvalId];
+      if (codes && event.status === "approved" && !isPersonDecider(event.decidedBy)) {
+        s.autoApprovedSafetyChecks.push(...codes);
+        commands.push({
+          type: "log",
+          line: `safety check ${codes.join(",")} auto_approved (decided_by=${event.decidedBy})`,
+        });
+      } else if (codes) {
+        s.safetyChecks.push(...codes);
+      }
       commands.push({ type: "log", line: `approval ${event.status} by ${event.decidedBy}` });
       break;
+    }
     case "control":
       s.userControl = event.holder === "user";
       if (event.holder === "user") s.takeovers = state.takeovers + 1;
