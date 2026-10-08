@@ -1,6 +1,8 @@
 import { alertPushPayload, type AlertRule } from "@mastertutor/contracts";
-import type { PushOutcome } from "@mastertutor/contracts/telemetry";
+import { ATTR, SPAN, type PushOutcome } from "@mastertutor/contracts/telemetry";
 import type { PushTarget } from "@mastertutor/db";
+import { instrument } from "@mastertutor/telemetry/instrument";
+import { recordPush } from "@mastertutor/telemetry/record";
 import type { VapidKeys } from "../push/config.ts";
 import { sendPush, type SendPush } from "../push/send.ts";
 
@@ -13,9 +15,9 @@ interface DeliverDeps {
 }
 
 /**
- * Fans one alert out to the owner's phones, in parallel, once each (spec §13.4). Runs after the
- * webhook has answered, so it never rejects: a failed lookup sends nothing, a failed forget is
- * retried by the next 410.
+ * Fans one alert out to the owner's phones, in parallel, once each (spec §13.4, seam 10). Runs
+ * after the webhook has answered, so it never rejects: a failed lookup sends nothing, a failed
+ * forget is retried by the next 410.
  */
 export async function deliverAlert(
   deps: DeliverDeps,
@@ -23,14 +25,22 @@ export async function deliverAlert(
 ): Promise<PushOutcome[]> {
   const vapid = deps.vapid;
   if (!vapid) return [];
-  const payload = alertPushPayload(alert);
-  const send = deps.send ?? sendPush;
-  const targets = await deps.targets().catch(() => []);
-  return Promise.all(
-    targets.map(async (target) => {
-      const outcome = await send(target, payload, vapid);
-      if (outcome === "gone") await deps.forget(target.endpoint).catch(() => undefined);
-      return outcome;
-    }),
-  );
+  return instrument(SPAN.alertDelivery, { [ATTR.alertRule]: alert.rule }, async (span) => {
+    const payload = alertPushPayload(alert);
+    const send = deps.send ?? sendPush;
+    const targets = await deps.targets().catch(() => {
+      span.fail("push_targets_failed");
+      return [];
+    });
+    const outcomes = await Promise.all(
+      targets.map(async (target) => {
+        const outcome = await send(target, payload, vapid);
+        recordPush(outcome);
+        if (outcome === "gone") await deps.forget(target.endpoint).catch(() => undefined);
+        return outcome;
+      }),
+    );
+    if (outcomes.length > 0 && !outcomes.includes("sent")) span.fail("push_failed");
+    return outcomes;
+  });
 }
