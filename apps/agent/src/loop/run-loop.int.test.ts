@@ -1767,6 +1767,22 @@ describe("function-tool writes join the act commit (B2 seam F2)", () => {
     expect(await storage.head("assets/orphan")).toBeNull();
   });
 
+  it("tells a tool what the run's budget still allows before it spends (B4 review I4)", async () => {
+    const { browser, loop } = await setup([capture, done()], {
+      budget: { maxSteps: 50, maxUsd: 2, maxActiveMinutes: 60 },
+    });
+    const left: number[] = [];
+    browser.functionHook = async (_name, step) => {
+      left.push(step.usdLeft());
+      step.addUsage({ ...EMPTY_USAGE, usd: 0.5 });
+      left.push(step.usdLeft());
+    };
+    expect((await drive(loop)).kind).toBe("completed");
+    expect(left[0]).toBeLessThanOrEqual(2);
+    expect(left[0]).toBeGreaterThan(1);
+    expect(left[1]).toBeCloseTo(left[0]! - 0.5, 6);
+  });
+
   it("charges what an interrupted tool already spent (Task 0 review M7)", async () => {
     const { run, browser, loop } = await setup([capture, done()]);
     browser.functionHook = async (_name, step) => {
