@@ -7,7 +7,7 @@
     "node": ">=24.4"
   },
   "scripts": {
-    "lint": "eslint . && stylelint \"apps/web/**/*.css\"",
+    "lint": "eslint . && stylelint \"apps/web/**/*.css\" --ignore-path .gitignore",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
