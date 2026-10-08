@@ -78,6 +78,22 @@ function humanClock(s: WatchState, now: number, previous: number | null): number
   return previous ?? now;
 }
 
+/** The run waits on this check for a person: a stop. Fixtures deny it at once; never approve (D44). */
+function stopOnSafetyCheck(
+  s: WatchState,
+  approvalId: string,
+  codes: string[],
+  policy: WatchPolicy,
+  commands: WatchCommand[],
+): void {
+  s.safetyChecks.push(...codes);
+  if (policy.onSafetyCheck === "deny") commands.push({ type: "deny_approval", approvalId });
+  commands.push({
+    type: "log",
+    line: `safety check ${codes.join(",")} -> ${policy.onSafetyCheck === "deny" ? "denied" : "NEEDS HUMAN"}`,
+  });
+}
+
 export function onRecord(
   state: WatchState,
   record: RunEventRecord,
@@ -108,15 +124,9 @@ export function onRecord(
       if (s.humanWait)
         commands.push({ type: "log", line: `NEEDS HUMAN (${s.humanWait}): ${event.reason ?? ""}` });
       if (s.humanWait === "approval") {
-        // The checks still pending are the ones the run stopped on for a person.
-        for (const [approvalId, codes] of Object.entries(s.pendingSafetyChecks)) {
-          s.safetyChecks.push(...codes);
-          if (policy.onSafetyCheck === "deny") commands.push({ type: "deny_approval", approvalId });
-          commands.push({
-            type: "log",
-            line: `safety check ${codes.join(",")} -> ${policy.onSafetyCheck === "deny" ? "denied" : "NEEDS HUMAN"}`,
-          });
-        }
+        // The checks already requested are the ones the run stopped on for a person.
+        for (const [approvalId, codes] of Object.entries(s.pendingSafetyChecks))
+          stopOnSafetyCheck(s, approvalId, codes, policy, commands);
         s.pendingSafetyChecks = {};
       }
       if (TERMINAL.includes(event.status)) s.done = true;
@@ -145,10 +155,16 @@ export function onRecord(
           line: `budget hit (${request.exceeded}) -> ${policy.onBudget === "finish_now" ? "finish now" : "NEEDS HUMAN"}`,
         });
       } else if (request.kind === "risky_click" && request.safetyChecks?.length) {
-        // Policy and bypass resolve in the same commit; only a wait makes it a stop (I4).
+        // Policy and bypass resolve in the same commit; only a wait makes it a stop (I4). The store
+        // writes the waiting status before the request (N3), so a request that arrives while the
+        // run already waits on an approval is that stop.
         const codes = request.safetyChecks.map((check) => check.code ?? "unknown");
-        s.pendingSafetyChecks[event.approvalId] = codes;
-        commands.push({ type: "log", line: `safety check ${codes.join(",")} requested` });
+        if (s.status === "waiting" && s.waitReason === "approval")
+          stopOnSafetyCheck(s, event.approvalId, codes, policy, commands);
+        else {
+          s.pendingSafetyChecks[event.approvalId] = codes;
+          commands.push({ type: "log", line: `safety check ${codes.join(",")} requested` });
+        }
       } else {
         commands.push({ type: "log", line: `approval requested: ${request.kind}` });
       }

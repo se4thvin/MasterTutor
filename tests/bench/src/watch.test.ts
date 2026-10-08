@@ -91,6 +91,27 @@ describe("watcher decisions", () => {
     expect(z.state.safetyChecks).toEqual(["malicious_instructions"]);
   });
 
+  it("denies a person-wait check at once in either event order: no 60 s sleep or 20 min timeout (N3)", () => {
+    const waiting = status("waiting", "approval");
+    const orders = {
+      // The store's order (StepStore.#write): the status transition before the commit's events.
+      "status first": [waiting, safety("malicious_instructions")],
+      "request first": [safety("malicious_instructions"), waiting],
+    };
+    for (const [name, [first, second]] of Object.entries(orders)) {
+      const at = 1_000;
+      const a = apply(initialWatchState(0), first!, at, fixtures);
+      const b = apply(a.state, second!, at, fixtures);
+      const denies = [...a.commands, ...b.commands].filter((c) => c.type === "deny_approval");
+      expect(denies, name).toEqual([{ type: "deny_approval", approvalId: A1 }]);
+      expect(b.commands, name).toContainEqual({ type: "deny_approval", approvalId: A1 });
+      expect(b.state.safetyChecks, name).toEqual(["malicious_instructions"]);
+      expect(b.state.pendingSafetyChecks, name).toEqual({});
+      // Nothing more on a later tick: the deny did not wait for a timer.
+      expect(onTick(b.state, at + 1, fixtures).commands, name).toEqual([]);
+    }
+  });
+
   it("logs a check the bypass policy approved as auto_approved, never as a stop (I4)", () => {
     const resolved = rec({
       type: "approval_resolved",
