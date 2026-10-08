@@ -26,6 +26,9 @@
     "deploy:check-env": "node scripts/deploy/check-env.ts",
     "deploy:restore-drill": "bash scripts/deploy/restore-drill.sh",
     "prod:smoke": "node tests/smoke/prod-smoke.ts",
+    "bench": "node tests/bench/src/cli.ts",
+    "bench:mock": "bash scripts/remote-test.sh bench-mock",
+    "bench:real-fixtures": "bash scripts/bench-real-fixtures.sh",
     "qa:shoot": "bash scripts/qa/shoot.sh",
     "qa:findings": "node apps/web/e2e/stack/qa/findings-cli.ts"
   },
@@ -34,6 +37,8 @@
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
     "@mastertutor/sealing": "workspace:*",
+    "@orpc/client": "1.15.4",
+    "@orpc/contract": "1.15.4",
     "@types/node": "24.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -41,6 +46,7 @@
     "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-react-hooks": "7.1.1",
+    "pdf-lib": "1.17.1",
     "playwright-core": "1.63.0",
     "prettier": "3.9.9",
     "react": "19.3.0",
@@ -50,6 +56,7 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.1",
     "vite": "8.3.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.3",
+    "zod": "4.6.5"
   }
 }

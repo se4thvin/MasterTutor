@@ -13,6 +13,8 @@ import {
   type Usage,
   type WaitReason,
   WAITS_KEPT_THROUGH_TAKEOVER,
+  wrapUntrusted,
+  type CallResult,
 } from "@mastertutor/contracts";
 import { emitRunEvent, returnControlToAgent, type Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
@@ -30,7 +32,6 @@ import {
 } from "../guardrails/policy.ts";
 import { UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL } from "../tools/computer.ts";
 import type { CallApproval } from "../tools/types.ts";
-import { wrapUntrusted } from "../tools/untrusted.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
 import { NUDGE, agentInstructions, goalText } from "../llm/instructions.ts";
 import {
@@ -72,7 +73,6 @@ import {
   PAGE_CHANGED,
   RESTARTED,
   notRun,
-  type CallResult,
 } from "./call-result.ts";
 import {
   seedFromSummary,
@@ -963,7 +963,12 @@ export class RunLoop {
         ? call.safetyChecks
         : [];
       return {
-        result: { kind: "computer", notes: [...run.notes, ...refusals], acknowledged },
+        result: {
+          kind: "computer",
+          notes: [...run.notes, ...refusals],
+          acknowledged,
+          effects: run.effects,
+        },
         ran: run.executed > 0,
         failed: false,
         wait: null,
