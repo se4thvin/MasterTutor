@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
   toOrigin,
@@ -11,7 +10,7 @@ import type { Page } from "playwright-core";
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import type { MaskSources } from "../browser/masking.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
-import { perceptualHash } from "../browser/phash.ts";
+import { perceptualHash, UNCOMPARABLE_HASH } from "../browser/phash.ts";
 import { captureModelScreenshot, WITHHELD, withheldScreenshot } from "../browser/screenshot.ts";
 import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession } from "../browser/session.ts";
@@ -120,9 +119,9 @@ export async function observeOnOnePage(
         title: "",
         domHash: "",
         screenshot: await withheldScreenshot(observation.screenshot, WITHHELD.navigating),
-        // A black frame says nothing about the page: a random hash keeps loop detection from
-        // treating consecutive withheld frames as the same screen (M8).
-        phash: randomBytes(8).readBigUInt64BE(),
+        // A black frame says nothing about the page: loop detection never treats consecutive
+        // withheld frames as the same screen (M8).
+        phash: UNCOMPARABLE_HASH,
       };
     url = now;
   }

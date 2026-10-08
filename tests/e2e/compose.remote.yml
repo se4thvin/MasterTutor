@@ -54,6 +54,9 @@ services:
   pdf-worker:
     image: mastertutor/node-runtime:${MT_CI_RUN_ID}
     labels: *ci-labels
+  audio-capture:
+    image: mastertutor/audio-capture:${MT_CI_RUN_ID}
+    labels: *ci-labels
   browser-1:
     image: mastertutor/browser-slot:${MT_CI_RUN_ID}
     security_opt: [apparmor=mastertutor-slot]
@@ -86,6 +89,10 @@ networks:
   fixtures:
     labels: *ci-labels
   pdf:
+    labels: *ci-labels
+  pulse:
+    labels: *ci-labels
+  audio:
     labels: *ci-labels
 
 volumes:

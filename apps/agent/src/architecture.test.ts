@@ -21,6 +21,20 @@ describe("module boundaries (CLAUDE.md principle 5: no circular dependencies)", 
     expect((await importsOf("notes")).filter((entry) => banned.has(entry.from))).toEqual([]);
   });
 
+  it("the agent reaches slot audio only through the audio-capture contract (B4 review I7)", async () => {
+    const offenders: string[] = [];
+    for (const dir of ["video", "loop", "tools", "capture", "notes", "browser", "vault", "live"]) {
+      for (const file of (await readdir(join(SRC, dir))).filter((name) => name.endsWith(".ts"))) {
+        const text = await readFile(join(SRC, dir, file), "utf8");
+        for (const match of text.matchAll(/from "\.\.\/audio\/([a-z-]+)\.ts"/g))
+          if (match[1] !== "protocol") offenders.push(`${dir}/${file} → audio/${match[1]}`);
+        if (/node:child_process/.test(text) && /parec/.test(text))
+          offenders.push(`${dir}/${file} runs parec`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("guardrails depend on tools, never the other way round", async () => {
     expect((await importsOf("tools")).filter((entry) => entry.from === "../guardrails")).toEqual(
       [],

@@ -6,12 +6,12 @@ export class BodyTooLarge extends Error {
   }
 }
 
-/** Reads a body as UTF-8 text, cancelling the stream once it passes `maxBytes`. */
-export async function readCappedText(
+/** Reads a body's bytes, cancelling the stream once it passes `maxBytes`. */
+export async function readCappedBytes(
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
-): Promise<string> {
-  if (!body) return "";
+): Promise<Uint8Array> {
+  if (!body) return new Uint8Array();
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -25,5 +25,13 @@ export async function readCappedText(
     }
     chunks.push(value);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
+/** Reads a body as UTF-8 text, cancelling the stream once it passes `maxBytes`. */
+export async function readCappedText(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string> {
+  return Buffer.from(await readCappedBytes(body, maxBytes)).toString("utf8");
 }
