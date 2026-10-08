@@ -225,8 +225,14 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
   it("reads frames without a placeholder and counts unread text as missing (re-review N2)", async () => {
     const { result, blocks, source } = await capture("frames/aside.html");
     expect(blocks.some((b) => b.markdown.includes("Small frame sentinel"))).toBe(false);
-    expect((source.meta as { framesMissing: number }).framesMissing).toBeGreaterThanOrEqual(1);
+    // Both paths: the small frame (never a placeholder) and the sidebar frame (placeholder dropped).
+    expect((source.meta as { framesMissing: number }).framesMissing).toBe(2);
     expect(result.fidelity).not.toBe("verified");
+    // A frame whose text sits only in a frame nested inside it counts once (QA-078).
+    const nested = await capture("frames/nested.html");
+    expect(nested.blocks.some((b) => b.markdown.includes("Nested frame sentinel"))).toBe(false);
+    expect((nested.source.meta as { framesMissing: number }).framesMissing).toBe(1);
+    expect(nested.result.fidelity).not.toBe("verified");
   });
 
   it("OCRs and screens opaque tiles before storing them (re-review I1)", async () => {
