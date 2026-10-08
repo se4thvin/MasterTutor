@@ -1,4 +1,6 @@
+import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
 import type { Database } from "@mastertutor/db";
+import { instrument } from "@mastertutor/telemetry/instrument";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
@@ -108,7 +110,17 @@ export class SlotPool {
     }
   }
 
-  async #reset(name: string, { neverLeased }: { neverLeased: boolean }): Promise<void> {
+  /** Seam 7: one mt.slot.reset span per recycle; a slot that misses its deadline is a failure. */
+  #reset(name: string, options: { neverLeased: boolean }): Promise<void> {
+    return instrument(SPAN.slotReset, { [ATTR.slotName]: name }, async (span) => {
+      const restarted = await this.#restart(name, options);
+      span.set({ [ATTR.slotOutcome]: restarted ? "ok" : "timeout" });
+      if (!restarted) span.fail("slot_restart_timeout");
+    });
+  }
+
+  /** Waits for the slot's fresh browser; false when it missed the restart deadline. */
+  async #restart(name: string, { neverLeased }: { neverLeased: boolean }): Promise<boolean> {
     const { config, log } = this.#options;
     let previous = this.#known.get(name) ?? null;
     const deadline = Date.now() + config.slotRestartTimeoutMs;
@@ -120,7 +132,7 @@ export class SlotPool {
         if (neverLeased || (previous !== null && id !== previous)) {
           this.#known.set(name, id);
           if (await this.#options.store.markIdle(name)) this.#options.onIdle?.(name);
-          return;
+          return true;
         }
         // Either we never saw this slot's browser (it may hold a previous run's profile) or it is still
         // the old browser: close it once and wait for a replacement with a different id.
@@ -136,5 +148,6 @@ export class SlotPool {
       { slot: name },
       "slot did not restart in time; it stays restarting until the next sweep",
     );
+    return false;
   }
 }

@@ -5,6 +5,8 @@ import {
   type ToolProfile,
   wrapUntrusted,
 } from "@mastertutor/contracts";
+import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
+import { instrument, type ProductSpan } from "@mastertutor/telemetry/instrument";
 import { NO_MASK_SOURCES, redactDeep, type MaskSources } from "../browser/masking.ts";
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
@@ -52,13 +54,29 @@ export class ToolRegistry {
     return (await this.#tools.get(name)?.approval(ctx, args)) ?? null;
   }
 
-  async run(
+  /** Seam 3 (spec §7.3): one mt.tool span per function call. */
+  run(
     name: FunctionToolName,
     args: unknown,
     ctx: Omit<ToolContext, "requestWait" | "requestHandOver">,
   ): Promise<ToolRun> {
+    return instrument(
+      SPAN.tool,
+      { [ATTR.runId]: ctx.runId, [ATTR.toolName]: name },
+      (span) => this.#invoke(name, args, ctx, span),
+      { expected: interruptionOf },
+    );
+  }
+
+  async #invoke(
+    name: FunctionToolName,
+    args: unknown,
+    ctx: Omit<ToolContext, "requestWait" | "requestHandOver">,
+    span: ProductSpan,
+  ): Promise<ToolRun> {
     const tool = this.#tools.get(name);
-    if (!tool)
+    if (!tool) {
+      span.set({ [ATTR.toolOutcome]: "unavailable" });
       return {
         output: JSON.stringify({ error: "tool_unavailable" }),
         notesChanged: false,
@@ -66,6 +84,7 @@ export class ToolRegistry {
         wait: null,
         handOver: null,
       };
+    }
     let wait: "otp" | null = null;
     let handOver: string | null = null;
     const requestHandOver = (reason: string) => {
@@ -75,17 +94,21 @@ export class ToolRegistry {
       wait = reason;
     };
     try {
+      const raw = await tool.invoke({ ...ctx, requestWait, requestHandOver }, args);
       // M13: a page can reflect a vault secret into its text; no tool result carries it out.
-      const result = redactDeep(
-        await tool.invoke({ ...ctx, requestWait, requestHandOver }, args),
-        this.#mask,
-      );
+      const result = redactDeep(raw, this.#mask);
       const text = JSON.stringify(result);
       const output = tool.untrusted ? wrapUntrusted(toOrigin(ctx.session.page.url()), text) : text;
+      const declared = tool.telemetry?.(args, raw) ?? {};
+      const declaredError = declared[ATTR.errorCode];
+      span.set({ ...declared, [ATTR.toolOutcome]: declaredError ? "tool_error" : "ok" });
+      if (declaredError) span.fail(declaredError);
       return { output, notesChanged: wroteBlocks(result), failed: false, wait, handOver };
     } catch (error) {
       if (interruptionOf(error) !== null || ctx.signal.aborted) throw error;
-      if (error instanceof ToolError)
+      if (error instanceof ToolError) {
+        span.set({ [ATTR.toolOutcome]: "tool_error" });
+        span.fail(error.code);
         return {
           // Tool-written, but a message can quote what it looked for: redacted all the same (M4).
           output: JSON.stringify({ error: error.code, message: this.#mask.redact(error.message) }),
@@ -94,7 +117,10 @@ export class ToolRegistry {
           wait: null,
           handOver: null,
         };
-      if (error instanceof StaleRef)
+      }
+      if (error instanceof StaleRef) {
+        span.set({ [ATTR.toolOutcome]: "stale_ref" });
+        span.fail("stale_ref");
         return {
           output: JSON.stringify({ error: "stale_ref" }),
           notesChanged: false,
@@ -102,6 +128,9 @@ export class ToolRegistry {
           wait: null,
           handOver: null,
         };
+      }
+      span.set({ [ATTR.toolOutcome]: "failed" });
+      span.fail("tool_failed");
       this.#log.warn({ runId: ctx.runId, tool: name, errorCode: "tool_failed" }, "tool failed");
       return {
         output: JSON.stringify({ error: "tool_failed" }),

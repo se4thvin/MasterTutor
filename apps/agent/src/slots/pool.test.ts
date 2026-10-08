@@ -1,4 +1,5 @@
 import { createLogger } from "@mastertutor/contracts/server";
+import { installTestTelemetry } from "@mastertutor/telemetry/testing";
 import { describe, expect, it } from "vitest";
 import { runtimeConfig } from "../runtime/config.ts";
 import type { BrowserControl } from "./lifecycle.ts";
@@ -188,5 +189,37 @@ describe("SlotPool.reconcile", () => {
     await pool.reconcile();
     expect(Date.now() - started).toBeGreaterThanOrEqual(25);
     expect(idle).toEqual(["browser-1"]);
+  });
+});
+
+describe("slot reset telemetry (seam 7)", () => {
+  it("records ok when the slot comes back and timeout when it does not", async () => {
+    const telemetry = installTestTelemetry();
+    const healthy = fakeSlot("old");
+    await new SlotPool({
+      store: fakeStore().store,
+      slots: ["browser-1"],
+      cdpBaseUrl: async () => "http://slot",
+      control: healthy.control,
+      config: runtimeConfig({ slotPollMs: 5, slotRestartTimeoutMs: 200 }),
+      log,
+    }).reset("browser-1");
+    await new SlotPool({
+      store: fakeStore().store,
+      slots: ["browser-2"],
+      cdpBaseUrl: async () => "http://slot",
+      control: { readBrowserId: async () => null, closeBrowser: async () => undefined },
+      config: runtimeConfig({ slotPollMs: 5, slotRestartTimeoutMs: 30 }),
+      log,
+    }).reset("browser-2");
+    const spans = telemetry.spans().filter((s) => s.name === "mt.slot.reset");
+    expect(
+      spans.map((s) => [s.attributes["mt.slot.name"], s.attributes["mt.slot.outcome"]]),
+    ).toEqual([
+      ["browser-1", "ok"],
+      ["browser-2", "timeout"],
+    ]);
+    expect(spans[1]!.attributes["mt.error.code"]).toBe("slot_restart_timeout");
+    await telemetry.shutdown();
   });
 });

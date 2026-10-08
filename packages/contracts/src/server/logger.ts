@@ -1,6 +1,7 @@
 import pino, { type DestinationStream, type Logger } from "pino";
 import { CREDENTIAL_FIELDS, VAULT_SECRET_FIELDS } from "../enums.ts";
 import type { LogLevel } from "../env.ts";
+import { logCorrelation, otelLogStream } from "./log-bridge.ts";
 
 /** Keys whose values are secret wherever they appear, derived from the credential contracts. */
 const SECRET_KEYS = [
@@ -40,6 +41,16 @@ export function createLogger(options: LoggerOptions): Logger {
     level: options.level ?? "info",
     base: { service: options.service },
     redact: { paths: [...REDACT_PATHS], censor: "[redacted]" },
+    // trace_id, span_id and run_id when a span or run is active (D50, spec §9).
+    mixin: logCorrelation,
   };
-  return options.destination ? pino(config, options.destination) : pino(config);
+  // stdout stays synchronous JSON for Dokploy; the bridge sees the same redacted line.
+  const stdout = options.destination ?? pino.destination({ dest: 1, sync: true });
+  return pino(
+    config,
+    pino.multistream([
+      { level: "trace", stream: stdout },
+      { level: "trace", stream: otelLogStream(options.service) },
+    ]),
+  );
 }
