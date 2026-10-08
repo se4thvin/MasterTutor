@@ -4,7 +4,6 @@ import sharp from "sharp";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { abortable } from "../runtime/abortable.ts";
 import { containsSecret, type Box, type MaskSources } from "./masking.ts";
-import { pixelKey, type ScreenCache } from "./screen-cache.ts";
 
 /** One OCR'd line: its words in reading order, each with its box in image pixels. */
 export interface OcrLine {
@@ -135,20 +134,20 @@ export function sharedLocalOcr(): LocalOcr {
   return shared;
 }
 
+/** True while the run has anything the pixel screens look for: secrets, or filled one-time codes. */
+export const screensPixels = (secrets: MaskSources) =>
+  secrets.hasSecrets() || (secrets.hasOneTimeCodes?.() ?? false);
+
+/** A filled one-time code shows as an exact whole token (edge punctuation aside). */
+export const isCode = (secrets: MaskSources, word: string) =>
+  secrets.isOneTimeCode?.(word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")) ?? false;
+
 /**
  * True when pixels may be stored or sent to OpenAI (CLAUDE.md: secrets never reach the model).
  * Without registered secrets there is nothing to find. With them, local OCR must read the pixels
  * and find no secret; a hit or an OCR failure withholds them (A-M1, A-M2). The run's signal
  * cancels the wait at once (the kill switch never waits for a long read).
  */
-/** True while the run has anything the pixel screens look for: secrets, or filled one-time codes. */
-export const screensPixels = (secrets: MaskSources) =>
-  secrets.hasSecrets() || (secrets.hasOneTimeCodes?.() ?? false);
-
-/** A filled one-time code shows as an exact whole token (edge punctuation aside). */
-const isCode = (secrets: MaskSources, word: string) =>
-  secrets.isOneTimeCode?.(word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")) ?? false;
-
 export async function pixelsAreClean(
   ocr: Pick<LocalOcr, "text">,
   secrets: MaskSources,
@@ -203,217 +202,4 @@ export async function tallPixelsAreClean(
     if (top + TILE.height >= height) break;
   }
   return true;
-}
-
-export type PixelScreen = { kind: "clean" } | { kind: "hit"; boxes: Box[] } | { kind: "failed" };
-
-/** Longest run of OCR words one secret is matched across (a secret OCR split into pieces). */
-const MAX_WORDS = 6;
-
-/**
- * Tesseract misses most UI-size text (11–14 px) at 1× and reads it at 2× (QA-098, measured): the
- * image is read once at 1×, then full-width bands are re-read at 2× where that read found small
- * text (a line under SMALL_LINE_PX tall, 14 px text and smaller), an unsure word, or ink and no word at all.
- */
-const OCR_UPSCALE = 2;
-const SMALL_LINE_PX = 15;
-const SURE_CONFIDENCE = 85;
-/** Context kept around a band, and the gap under which two bands merge into one read. */
-const BAND_PAD = 6;
-const BAND_GAP = 16;
-/** A row holds ink when its pixels span at least this much luminance (any colours, any theme). */
-const INK_CONTRAST = 40;
-/** Ink rows a band needs to be worth a read (a 1 px rule is not text). */
-const MIN_INK_ROWS = 4;
-
-type Span = readonly [top: number, bottom: number];
-
-function mergeSpans(spans: readonly Span[], height: number): Box[] {
-  const merged: Array<[number, number]> = [];
-  for (const [top, bottom] of [...spans].sort((a, b) => a[0] - b[0])) {
-    const from = Math.max(0, top - BAND_PAD);
-    const to = Math.min(height, bottom + BAND_PAD);
-    const last = merged.at(-1);
-    if (last && from - last[1] <= BAND_GAP) last[1] = Math.max(last[1], to);
-    else merged.push([from, to]);
-  }
-  return merged
-    .filter(([top, bottom]) => bottom > top)
-    .map(([top, bottom]) => ({ x: 0, y: top, width: 0, height: bottom - top }));
-}
-
-/** Full-width bands to re-read at 2×: small or unsure lines, and ink the 1× read found no word in. */
-export function closerLookBands(
-  lines: readonly OcrLine[],
-  size: { width: number; height: number },
-  inkRows: readonly boolean[] = [],
-): Box[] {
-  const spans: Span[] = [];
-  const read = new Array<boolean>(size.height).fill(false);
-  for (const { words } of lines) {
-    if (words.length === 0) continue;
-    const top = Math.min(...words.map((word) => word.box.y));
-    const bottom = Math.max(...words.map((word) => word.box.y + word.box.height));
-    for (let y = Math.max(0, top - BAND_PAD); y < Math.min(size.height, bottom + BAND_PAD); y++)
-      read[y] = true;
-    // The line's full height (ascender top to descender bottom) tracks its text size: 11 px text
-    // spans ~11 px, 14 px ~13, 16 px body ~16 (measured).
-    const small = bottom - top < SMALL_LINE_PX;
-    const unsure = words.some((word) => (word.confidence ?? 100) < SURE_CONFIDENCE);
-    if (small || unsure) spans.push([top, bottom]);
-  }
-  for (let y = 0; y < inkRows.length;) {
-    let end = y;
-    while (end < inkRows.length && inkRows[end] && !read[end]) end++;
-    if (end - y >= MIN_INK_ROWS) spans.push([y, end]);
-    y = Math.max(end, y + 1);
-  }
-  return mergeSpans(spans, size.height).map((band) => ({ ...band, width: size.width }));
-}
-
-/** The image's exact pixels (RGB, alpha flattened away) and which rows hold ink. */
-async function decode(png: Uint8Array): Promise<{
-  data: Buffer;
-  width: number;
-  height: number;
-  channels: number;
-  rows: boolean[];
-}> {
-  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const rows: boolean[] = [];
-  for (let y = 0; y < info.height; y++) {
-    let min = 255;
-    let max = 0;
-    const start = y * info.width * info.channels;
-    for (let x = 0; x < info.width; x++) {
-      const at = start + x * info.channels;
-      const value = (data[at]! * 299 + data[at + 1]! * 587 + data[at + 2]! * 114) / 1000;
-      if (value < min) min = value;
-      if (value > max) max = value;
-    }
-    rows.push(max - min >= INK_CONTRAST);
-  }
-  return { data, width: info.width, height: info.height, channels: info.channels, rows };
-}
-
-/** A whole frame's 1× screen, or one 2× band's (boxes relative to the band, at 1×). */
-export type CachedScreen =
-  { kind: "frame"; screen: PixelScreen; bands: Box[] } | { kind: "band"; screen: PixelScreen };
-
-/**
- * Where registered secrets show in an image (I-1): the boxes of the words that hold one, from the
- * 1× read and the 2× bands. The vault registers only secret-class values (passwords, PINs), never
- * usernames or emails. A secret OCR reads across lines, or a read that fails, is `failed`: the
- * caller withholds the image. `urgent` is the agent loop's own screen (QA-092). With the run's
- * `cache`, a frame or band whose exact pixels were screened under the current secret set reuses
- * that result; failed reads are never cached.
- */
-export async function screenPixels(
-  ocr: LocalOcr,
-  secrets: MaskSources,
-  png: Uint8Array,
-  signal: AbortSignal,
-  options: { urgent: boolean; cache?: ScreenCache<CachedScreen> } = { urgent: false },
-): Promise<PixelScreen> {
-  if (!screensPixels(secrets)) return { kind: "clean" };
-  const { cache } = options;
-  const read = async (image: Uint8Array): Promise<OcrLine[] | null> => {
-    try {
-      return await abortable(ocr.words(image, { urgent: options.urgent }), signal);
-    } catch {
-      signal.throwIfAborted();
-      return null;
-    }
-  };
-  let pixels: Awaited<ReturnType<typeof decode>>;
-  try {
-    pixels = await decode(png);
-  } catch {
-    return { kind: "failed" };
-  }
-  const frameKey = cache ? pixelKey("frame", pixels, pixels.data) : "";
-  let frame = cache?.get(secrets, frameKey);
-  if (frame?.kind !== "frame") {
-    const lines = await read(png);
-    if (lines === null) return { kind: "failed" };
-    frame = {
-      kind: "frame",
-      screen: screenLines(secrets, lines),
-      bands: closerLookBands(lines, pixels, pixels.rows),
-    };
-    if (frame.screen.kind !== "failed") cache?.set(secrets, frameKey, frame);
-  }
-  if (frame.screen.kind === "failed") return frame.screen;
-  const boxes = frame.screen.kind === "hit" ? [...frame.screen.boxes] : [];
-  const rowBytes = pixels.width * pixels.channels;
-  for (const band of frame.bands) {
-    const bandPixels = pixels.data.subarray(band.y * rowBytes, (band.y + band.height) * rowBytes);
-    const bandKey = cache ? pixelKey("band", { ...pixels, height: band.height }, bandPixels) : "";
-    let closer = cache?.get(secrets, bandKey);
-    if (closer?.kind !== "band") {
-      const large = await sharp(png)
-        .extract({ left: band.x, top: band.y, width: band.width, height: band.height })
-        .resize(band.width * OCR_UPSCALE, band.height * OCR_UPSCALE, { kernel: "lanczos3" })
-        .png()
-        .toBuffer();
-      const bandLines = await read(new Uint8Array(large));
-      if (bandLines === null) return { kind: "failed" };
-      const screen = screenLines(secrets, bandLines);
-      closer = {
-        kind: "band",
-        screen:
-          screen.kind === "hit"
-            ? {
-                kind: "hit",
-                boxes: screen.boxes.map((box) => ({
-                  x: box.x / OCR_UPSCALE,
-                  y: box.y / OCR_UPSCALE,
-                  width: box.width / OCR_UPSCALE,
-                  height: box.height / OCR_UPSCALE,
-                })),
-              }
-            : screen,
-      };
-      if (screen.kind !== "failed") cache?.set(secrets, bandKey, closer);
-    }
-    if (closer.screen.kind === "failed") return closer.screen;
-    if (closer.screen.kind === "hit")
-      for (const box of closer.screen.boxes)
-        boxes.push({ ...box, x: band.x + box.x, y: band.y + box.y });
-  }
-  return boxes.length > 0 ? { kind: "hit", boxes } : { kind: "clean" };
-}
-
-/** Where registered secrets show in lines already read (screenPixels without the read). */
-export function screenLines(secrets: MaskSources, lines: readonly OcrLine[]): PixelScreen {
-  const boxes: Box[] = [];
-  const exact = (words: OcrLine["words"]) =>
-    containsSecret(secrets, words.map((word) => word.text).join(" ")) ||
-    containsSecret(secrets, words.map((word) => word.text).join(""));
-  // A misread secret (O for 0, l for 1…) matches only through the vault's folded form (QA-099).
-  const folded = (words: OcrLine["words"]) =>
-    secrets.inOcrText?.(words.map((word) => word.text).join(" ")) ?? false;
-  const holds = (words: OcrLine["words"]) => exact(words) || folded(words);
-  for (const { words } of lines) {
-    // Folded matching scans the whole text: only lines that hold a folded secret pay for windows.
-    const lineFolded = folded(words);
-    const inLine = (window: OcrLine["words"]) => exact(window) || (lineFolded && folded(window));
-    for (const word of words) if (isCode(secrets, word.text)) boxes.push(word.box);
-    // The shortest window ending at each word: growing backwards from `end` finds the words
-    // that hold the secret and no neighbours ("pw" before a password stays readable).
-    let from = 0;
-    for (let end = 0; end < words.length; end++) {
-      for (let start = end; start >= Math.max(from, end - MAX_WORDS + 1); start--) {
-        const window = words.slice(start, end + 1);
-        if (!inLine(window)) continue;
-        boxes.push(...window.map((word) => word.box));
-        from = end + 1;
-        break;
-      }
-    }
-  }
-  if (boxes.length > 0) return { kind: "hit", boxes };
-  // A secret only the whole text holds (split across lines) has no box to fill.
-  const all = lines.flatMap((line) => line.words);
-  return holds(all) ? { kind: "failed" } : { kind: "clean" };
 }
