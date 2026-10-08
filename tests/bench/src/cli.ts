@@ -89,7 +89,7 @@ const SUITES: Record<SuiteId, () => SuiteDefinition> = {
 };
 
 export type CliCommand =
-  | { kind: "init"; stack: StackName }
+  | { kind: "init"; stack: StackName; baseUrl: string | null; origin: string | null }
   | { kind: "watch"; runId: string }
   | { kind: "vault-check"; suite: SuiteId }
   | { kind: "resolve"; id: string }
@@ -124,6 +124,8 @@ export function parseCli(
     strict: true,
     options: {
       stack: { type: "string" },
+      "base-url": { type: "string" },
+      origin: { type: "string" },
       suite: { type: "string" },
       track: { type: "string", default: "both" },
       only: { type: "string", multiple: true },
@@ -143,7 +145,16 @@ export function parseCli(
   });
   const [command, arg, ...extra] = positionals;
   if (extra.length > 0) throw new UsageError(`unexpected arguments: ${extra.join(" ")}`);
-  if (command === "init") return { kind: "init", stack: oneOf(STACKS, "--stack", values.stack) };
+  if (command === "init") {
+    const url = (flag: string, value: string | undefined) =>
+      value === undefined ? null : parsed(z.url({ error: `${flag} must be a URL` }), value);
+    return {
+      kind: "init",
+      stack: oneOf(STACKS, "--stack", values.stack),
+      baseUrl: url("--base-url", values["base-url"]),
+      origin: url("--origin", values.origin),
+    };
+  }
   if (command === "watch") return { kind: "watch", runId: parsed(Uuid, arg) };
   if (command === "resolve") return { kind: "resolve", id: parsed(Uuid, arg) };
   const suite = oneOf(SUITE_IDS, "--suite", values.suite);
@@ -288,7 +299,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const log = (line: string) => console.log(`${new Date().toISOString().slice(11, 19)} ${line}`);
 const exec = promisify(execFile);
 
-async function init(stack: StackName): Promise<void> {
+async function init(cmd: Extract<CliCommand, { kind: "init" }>): Promise<void> {
   let existing: BenchEnv | null;
   try {
     existing = existsSync(BENCH_ACCOUNT_FILE) ? readBenchEnv() : null;
@@ -296,17 +307,20 @@ async function init(stack: StackName): Promise<void> {
     existing = null;
   }
   const env: BenchEnv = {
-    BENCH_STACK: stack,
-    BENCH_BASE_URL: existing?.BENCH_BASE_URL ?? "http://localhost:18080",
+    BENCH_STACK: cmd.stack,
+    BENCH_BASE_URL: cmd.baseUrl ?? existing?.BENCH_BASE_URL ?? "http://localhost:18080",
     BENCH_EMAIL: existing?.BENCH_EMAIL ?? "bench-owner@local.test",
     BENCH_PASSWORD: existing?.BENCH_PASSWORD ?? randomBytes(24).toString("base64url"),
   };
+  const origin = cmd.origin ?? existing?.BENCH_APP_ORIGIN;
+  if (origin) env.BENCH_APP_ORIGIN = origin;
   // The real Better Auth flow (D47): sign up once, sign in after.
   await authCookie(
     env.BENCH_BASE_URL,
     env.BENCH_EMAIL,
     env.BENCH_PASSWORD,
     existing ? "sign-in" : "sign-up",
+    env.BENCH_APP_ORIGIN,
   );
   writeBenchEnv(BENCH_ACCOUNT_FILE, env);
   log(
@@ -425,7 +439,7 @@ const NO_SPEND: SpendBook = {
 async function main(argv: string[]): Promise<void> {
   assertNoSiteCredentialsInEnv(process.env);
   const cmd = parseCli(argv, (suite) => listRecords(suite));
-  if (cmd.kind === "init") return init(cmd.stack);
+  if (cmd.kind === "init") return init(cmd);
   if (cmd.kind === "resolve") {
     const ledger = openLedger();
     try {
@@ -442,8 +456,9 @@ async function main(argv: string[]): Promise<void> {
     env.BENCH_EMAIL,
     env.BENCH_PASSWORD,
     "sign-in",
+    env.BENCH_APP_ORIGIN,
   );
-  const api = createApi(env.BENCH_BASE_URL, cookie);
+  const api = createApi(env.BENCH_BASE_URL, cookie, env.BENCH_APP_ORIGIN);
   if (cmd.kind === "watch") {
     await watchRun({ api, baseUrl: env.BENCH_BASE_URL, cookie, log, now: Date.now }, cmd.runId, {
       onBudget: "ask_human",

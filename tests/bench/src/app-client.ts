@@ -20,11 +20,12 @@ export async function authCookie(
   email: string,
   password: string,
   mode: "sign-in" | "sign-up",
+  origin = baseUrl,
 ): Promise<string> {
   const body = mode === "sign-up" ? { email, password, name: "Benchmark" } : { email, password };
   const response = await fetch(`${baseUrl}/api/auth/${mode}/email`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: baseUrl },
+    headers: { "content-type": "application/json", origin },
     body: JSON.stringify(body),
     redirect: "manual",
   });
@@ -38,10 +39,10 @@ export async function authCookie(
   return cookie;
 }
 
-export function createApi(baseUrl: string, cookie: string): BenchApi {
+export function createApi(baseUrl: string, cookie: string, origin = baseUrl): BenchApi {
   const link = new RPCLink({
     url: `${baseUrl}/api/rpc`,
-    headers: () => ({ cookie, origin: baseUrl }),
+    headers: () => ({ cookie, origin }),
   });
   return createORPCClient(link);
 }

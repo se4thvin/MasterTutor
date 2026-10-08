@@ -10,7 +10,12 @@ take_stack_lock                    # no-op on the CI host (it holds ~/mt-ci/.run
 trap 'stop_stack --profile e2e --profile bench' EXIT
 # llm-mock, fixtures and vault-fixtures are in profile e2e; bench-fixtures is in profile bench (T1).
 "${DC[@]}" --profile e2e --profile bench up -d --build --wait --wait-timeout 600
-pnpm bench init --stack test
+# On a CI slot the app is reached on the slot's TEST_HTTP_PORT, but its origin stays PUBLIC_URL (D48).
+env_test() { grep -E "^$1=" .env.test | cut -d= -f2 || true; }
+PORT="${TEST_HTTP_PORT:-$(env_test TEST_HTTP_PORT)}"
+ORIGIN="${PUBLIC_URL:-$(env_test PUBLIC_URL)}"
+pnpm bench init --stack test --base-url "http://localhost:${PORT:-18080}" \
+  --origin "${ORIGIN:-http://localhost:18080}"
 pnpm bench run --suite fixtures --mock --track both --max-total-usd 10
 pnpm bench run --suite fixtures --mock --track computer_use \
   --approval-mode bypass --acknowledge-bypass --max-total-usd 10

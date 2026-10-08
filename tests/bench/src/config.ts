@@ -45,6 +45,8 @@ export const BenchEnv = z.object({
   BENCH_BASE_URL: z.url(),
   BENCH_EMAIL: z.email(),
   BENCH_PASSWORD: z.string().min(16),
+  /** The app's origin (PUBLIC_URL) when BENCH_BASE_URL is another port, as on a CI slot (D48). */
+  BENCH_APP_ORIGIN: z.url().optional(),
 });
 export type BenchEnv = z.infer<typeof BenchEnv>;
 
