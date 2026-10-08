@@ -6,8 +6,9 @@ start, stop or reseed any stack.
 ## Inputs
 - Your shots were already taken (the orchestrator ran `pnpm qa:shoot --group {{GROUP}} --run {{RUN_ID}}`):
   `orchestration/runs/{{RUN_ID}}/artifacts/shots/<screen>/<w1440|w1180|w1024|w820|w390>-<light|dark>.{png,json}`
-  plus `summary.json` and `auto-findings.json`. Each JSON lists fe's layout issues (44px targets included) and serious or
-  critical axe violations.
+  plus `summary.json` and `auto-findings.json`. Each JSON lists fe's layout issues (44px targets included), serious or
+  critical axe violations, and `errors`: the screen did not open, a 5xx response, or a page error. A screen that did not
+  open has no detector results, and its PNG (if any) shows what was there instead.
 - Screens: `apps/web/e2e/stack/qa/screens.ts` (`group === "{{GROUP}}"`). Widths come from
   `apps/web/e2e/helpers/breakpoints.ts`.
 - Rules: spec §11 (`docs/superpowers/specs/2026-10-05-agentic-notes-design.md`), D22 in `orchestration/STATE.md`.
