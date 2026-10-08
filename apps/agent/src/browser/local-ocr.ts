@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import path from "node:path";
-import sharp, { type OverlayOptions } from "sharp";
+import sharp from "sharp";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { abortable } from "../runtime/abortable.ts";
 import { containsSecret, type Box, type MaskSources } from "./masking.ts";
@@ -220,8 +220,6 @@ const SURE_CONFIDENCE = 85;
 /** Context kept around a band, and the gap under which two bands merge into one read. */
 const BAND_PAD = 6;
 const BAND_GAP = 16;
-/** Blank rows between bands stacked into one 2× read. */
-const BAND_GAP_PX = 24;
 /** A row holds ink when its pixels span at least this much luminance (any colours, any theme). */
 const INK_CONTRAST = 40;
 /** Ink rows a band needs to be worth a read (a 1 px rule is not text). */
@@ -325,49 +323,24 @@ export async function screenPixels(
   const native = screenLines(secrets, lines);
   if (native.kind === "failed") return native;
   const boxes = native.kind === "hit" ? [...native.boxes] : [];
-  const bands = closerLookBands(lines, ink, ink.rows);
-  if (bands.length > 0) {
-    // All bands in one 2× read (stacked with a blank gap): one OCR call, not one per band.
-    const placed: Array<{ band: Box; top: number }> = [];
-    let height = 0;
-    const parts: OverlayOptions[] = [];
-    for (const band of bands) {
-      const large = await sharp(png)
-        .extract({ left: band.x, top: band.y, width: band.width, height: band.height })
-        .resize(band.width * OCR_UPSCALE, band.height * OCR_UPSCALE, { kernel: "lanczos3" })
-        .png()
-        .toBuffer();
-      placed.push({ band, top: height });
-      parts.push({ input: large, left: 0, top: height });
-      height += band.height * OCR_UPSCALE + BAND_GAP_PX;
-    }
-    const stacked = await sharp({
-      create: {
-        width: ink.width * OCR_UPSCALE,
-        height,
-        channels: 3,
-        background: { r: 255, g: 255, b: 255 },
-      },
-    })
-      .composite(parts)
-      // A created canvas carries no density; tesseract warns on the default and guesses.
-      .withMetadata({ density: 144 })
+  for (const band of closerLookBands(lines, ink, ink.rows)) {
+    const large = await sharp(png)
+      .extract({ left: band.x, top: band.y, width: band.width, height: band.height })
+      .resize(band.width * OCR_UPSCALE, band.height * OCR_UPSCALE, { kernel: "lanczos3" })
       .png()
       .toBuffer();
-    const stackedLines = await read(new Uint8Array(stacked));
-    if (stackedLines === null) return { kind: "failed" };
-    const closer = screenLines(secrets, stackedLines);
+    const bandLines = await read(new Uint8Array(large));
+    if (bandLines === null) return { kind: "failed" };
+    const closer = screenLines(secrets, bandLines);
     if (closer.kind === "failed") return closer;
     if (closer.kind === "hit")
-      for (const box of closer.boxes) {
-        const at = placed.findLast((entry) => entry.top <= box.y) ?? placed[0]!;
+      for (const box of closer.boxes)
         boxes.push({
-          x: at.band.x + box.x / OCR_UPSCALE,
-          y: at.band.y + (box.y - at.top) / OCR_UPSCALE,
+          x: band.x + box.x / OCR_UPSCALE,
+          y: band.y + box.y / OCR_UPSCALE,
           width: box.width / OCR_UPSCALE,
           height: box.height / OCR_UPSCALE,
         });
-      }
   }
   return boxes.length > 0 ? { kind: "hit", boxes } : { kind: "clean" };
 }
