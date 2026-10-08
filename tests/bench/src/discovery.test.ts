@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { evaluate } from "./criteria.ts";
+import { evaluate, verifyTainted } from "./criteria.ts";
 import { discoverReadings } from "./discovery.ts";
-import { addressBar, clickOn, observe, readLinks, readPage, traceOf } from "./trace-fixtures.ts";
+import {
+  addressBar,
+  batch,
+  clickOn,
+  observe,
+  readLinks,
+  readPage,
+  traceOf,
+} from "./trace-fixtures.ts";
 import type { Criterion } from "./types.ts";
 
 const SITE = "http://bench.fixtures.test:8080";
@@ -252,5 +260,26 @@ describe("grading each section per activity", () => {
     expect(verdict.sections!.at(-1)).toMatchObject({ reading: 2, outcome: "unknown" });
     expect(verdict.outcome).toBe("partial");
     expect(evaluate(criterion(), null, traceOf([observe(INDEX)])).outcome).toBe("failed");
+  });
+});
+
+describe("expand clicks in a grading run (re-review N1)", () => {
+  const expand = batch(
+    [{ type: "click", x: 5, y: 5, button: "left" }],
+    ["disclosure"],
+    [{ label: "Show answer", ancestors: [] }],
+  );
+  const signin = `${SITE}/signin`;
+  it("are harmless on listing pages, where they open collapsed chapters", () => {
+    const listing = traceOf([observe(reading(3)), expand, readLinks(reading(3), [])]);
+    expect(verifyTainted(listing, signin, criterion())).toBe(false);
+  });
+  it("taint the run on a graded section page, where a toggle could do the work", () => {
+    const graded = traceOf([
+      observe(section(1, 1)),
+      expand,
+      readPage(section(1, 1), quiz("1.1.1", 1, true)),
+    ]);
+    expect(verifyTainted(graded, signin, criterion())).toBe(true);
   });
 });

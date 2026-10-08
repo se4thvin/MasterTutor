@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   ElementRef,
   READ_PAGE_ATTRS,
+  READ_PAGE_MAX_ELEMENTS,
   ReadPageArgs,
   ReadPageResult,
   type ReadPageElement,
@@ -12,7 +13,7 @@ import { readPageScript } from "./read-page-script.ts";
 import type { Tool } from "./types.ts";
 
 /** Below the contract caps (2,000 elements / 200,000 chars) to bound token cost per call. */
-export const MAX_ELEMENTS = 400;
+export const MAX_ELEMENTS = READ_PAGE_MAX_ELEMENTS;
 export const MAX_TEXT = 50_000;
 
 export async function readPage(

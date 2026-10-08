@@ -95,24 +95,28 @@ describe("sections_complete", () => {
     const work = "https://learn.example/book/chapter/1/section/1/activities";
     const type = computer({ type: "type", text: "42" });
     const key = computer({ type: "keypress", keys: ["ENTER"] });
-    expect(verifyTainted(verifyAll, signin)).toBe(false);
-    expect(verifyTainted(traceOf([observe(signin), click, type, key, observe(s1)]), signin)).toBe(
-      false,
-    );
+    expect(verifyTainted(verifyAll, signin, criterion)).toBe(false);
+    expect(
+      verifyTainted(traceOf([observe(signin), click, type, key, observe(s1)]), signin, criterion),
+    ).toBe(false);
     // Work done on a page that is not graded still taints: the fixtures' two-page layout.
     for (const act of [click, type, key])
       expect(
-        verifyTainted(traceOf([observe(work), act, observe(s1), readPage(s1, page(2, 2))]), signin),
+        verifyTainted(
+          traceOf([observe(work), act, observe(s1), readPage(s1, page(2, 2))]),
+          signin,
+          criterion,
+        ),
       ).toBe(true);
-    expect(verifyTainted(traceOf([observe(s1), click, readPage(s1, page(2, 2))]), signin)).toBe(
-      true,
-    );
+    expect(
+      verifyTainted(traceOf([observe(s1), click, readPage(s1, page(2, 2))]), signin, criterion),
+    ).toBe(true);
     // Without a declared sign-in page, nothing may be clicked at all.
-    expect(verifyTainted(traceOf([observe(signin), click]), null)).toBe(true);
+    expect(verifyTainted(traceOf([observe(signin), click]), null, criterion)).toBe(true);
     // Scrolls and reads are not mutating.
-    expect(verifyTainted(traceOf([observe(work), scroll, readPage(s1, page(2, 2))]), null)).toBe(
-      false,
-    );
+    expect(
+      verifyTainted(traceOf([observe(work), scroll, readPage(s1, page(2, 2))]), null, criterion),
+    ).toBe(false);
   });
 });
 
@@ -192,7 +196,7 @@ describe("a zyBooks-style read-only grading run (N2)", () => {
   it("signs in, opens every section through the address bar, reads it, and is not tainted", () => {
     const visits = sections.flatMap((url) => [addressBar(url), observe(url), readPage(url, done)]);
     const verify = traceOf([...signIn, ...visits]);
-    expect(verifyTainted(verify, signin)).toBe(false);
+    expect(verifyTainted(verify, signin, criterion)).toBe(false);
     expect(evaluate(criterion, null, verify).outcome).toBe("passed");
   });
   it("is tainted by typing into a page field on a section", () => {
@@ -204,7 +208,7 @@ describe("a zyBooks-style read-only grading run (N2)", () => {
       typed,
       readPage(sections[0]!, done),
     ]);
-    expect(verifyTainted(verify, signin)).toBe(true);
+    expect(verifyTainted(verify, signin, criterion)).toBe(true);
   });
   it("is tainted by a click hidden in a batch (N1)", () => {
     const hidden = batch(
@@ -215,6 +219,6 @@ describe("a zyBooks-style read-only grading run (N2)", () => {
       ["passive", "input"],
     );
     const verify = traceOf([...signIn, addressBar(sections[0]!), observe(sections[0]!), hidden]);
-    expect(verifyTainted(verify, signin)).toBe(true);
+    expect(verifyTainted(verify, signin, criterion)).toBe(true);
   });
 });

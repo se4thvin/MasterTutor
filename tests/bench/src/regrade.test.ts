@@ -62,7 +62,7 @@ const traces: Record<string, RunTrace> = {
   ]),
 };
 
-function writeRecord(): string {
+function writeRecord(takeovers = 0): string {
   const result = {
     key: "readings",
     name: "fixtures/readings@browser_use:auto_within_allowlist#abcd1234",
@@ -80,7 +80,7 @@ function writeRecord(): string {
       unvisited: [],
     },
     error: null,
-    metrics: { steps: 1, usd: 0.1, durationMs: 1, takeovers: 0 },
+    metrics: { steps: 1, usd: 0.1, durationMs: 1, takeovers },
     watch: null,
     failure: null,
     bypassNewOrigins: [],
@@ -156,5 +156,23 @@ describe("bench regrade (I5): a finished run graded again from its stored traces
     await expect(
       regradeRecord(path, suite("x"), { compose: [], loadTrace: vi.fn() }, () => "t"),
     ).rejects.toThrow(/run_ids/);
+  });
+});
+
+describe("regrade keeps the takeover rule of the original grade (re-review N2)", () => {
+  it("caps a run that needed a takeover at partial, as the service does", async () => {
+    const path = writeRecord(1);
+    expect(readFileSync(path, "utf8")).toContain("takeovers: [1]");
+    const loadTrace = vi.fn(async (_compose: readonly string[], id: string) => traces[id]!);
+    const text = await regradeRecord(
+      path,
+      suite("^(?:Reading|Assignment) (\\d+)$"),
+      { compose: [], loadTrace },
+      () => "t",
+    );
+    expect(text).toContain(
+      "- Outcome: **partial** (1 takeover: a run that needed a takeover never passes)",
+    );
+    expect(text).not.toContain("- Outcome: **passed**");
   });
 });
