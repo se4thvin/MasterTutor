@@ -33,4 +33,13 @@ describe("stylelint motion rules", () => {
       ]),
     );
   });
+
+  it("rejects step-start and step-end timing keywords (QA-021)", async () => {
+    for (const css of [
+      ".a { transition-timing-function: step-end; }",
+      ".a { animation-timing-function: step-start; }",
+      ".a { animation: k var(--motion-dur-micro) step-end; }",
+    ])
+      expect(await problems(css), css).toEqual(["declaration-property-value-disallowed-list"]);
+  });
 });
