@@ -177,6 +177,9 @@ services:
       DATABASE_URL: postgres://agent_role:${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD}@postgres:5432/mastertutor
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # Set only when COMPOSE_PROFILES includes "pdf"; compose.prod.yml pins it.
+      DOCLING_URL: ${DOCLING_URL:-}
+      PDF_WORKER_URL: http://pdf-worker:5002
       VAULT_PRIVATE_KEY: ${VAULT_PRIVATE_KEY:?set VAULT_PRIVATE_KEY}
       NEKO_ADMIN_SECRET: ${NEKO_ADMIN_SECRET:?set NEKO_ADMIN_SECRET}
       S3_ENDPOINT: http://garage:3900
@@ -204,10 +207,82 @@ services:
         condition: service_completed_successfully
       garage-init:
         condition: service_completed_successfully
+      docling:
+        condition: service_healthy
+        required: false
     networks:
       backend: {}
       cdp:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.10
+      pdf: {}
+
+  # Every PDF is parsed here, never in the agent (B5 review I-1): pdf.js in a `node --permission`
+  # child per PDF, two at a time. No secrets, no egress (only the internal `pdf` network, shared
+  # with the agent), read-only root, non-root uid, its own memory, CPU and process bounds.
+  pdf-worker:
+    image: mastertutor/node-runtime:local
+    restart: unless-stopped
+    command: ["node", "apps/agent/src/pdf/worker/server.ts"]
+    user: "1000:1000"
+    # A crash, an OOM kill or an exit restarts it; a hung child is killed per PDF at 120 s.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Two PDFs at once fit (PDF_MEMORY_BUDGET_BYTES, asserted in tests/compose).
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 128
+    healthcheck:
+      <<: *node-health
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5002/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+    networks:
+      - pdf
+
+  # High-fidelity PDF path (spec §7.6), profile `pdf`. Only the agent can reach it: it has no route
+  # to Postgres, Garage or the internet (B5 decision 17, preflight S4), so its models are baked in.
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu:v1.36.0@sha256:225c8586e20d5d0fc6811a9e0e044fa602bcc4393f00389009bad42d6787b58f
+    profiles: ["pdf"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 6g
+    cpus: 2
+    pids_limit: 512
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "false"
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "false"
+      DOCLING_SERVE_MAX_FILE_SIZE: "104857600"
+      DOCLING_SERVE_MAX_NUM_PAGES: "500"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    networks:
+      - pdf
 
   browser-1:
     <<: *browser-slot
@@ -273,6 +348,9 @@ networks:
       config:
         - subnet: ${CDP_SUBNET_PREFIX:-172.30.231}.0/24
           ip_range: ${CDP_SUBNET_PREFIX:-172.30.231}.128/25
+  # The agent and the PDF parsers only: pdf-worker always, docling under profile `pdf`.
+  pdf:
+    internal: true
 
 volumes:
   pgdata: {}
