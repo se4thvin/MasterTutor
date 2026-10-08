@@ -1,7 +1,7 @@
 import { VideoArgs, VideoResult } from "@mastertutor/contracts";
 import { noteBlocks } from "@mastertutor/db";
 import { and, eq } from "drizzle-orm";
-import { pixelsAreClean } from "../capture/local-ocr.ts";
+import { pixelsAreClean } from "../browser/local-ocr.ts";
 import type { LibraryServices } from "../library.ts";
 import {
   NoteWriteError,
