@@ -1,4 +1,5 @@
 import {
+  FOCUSED_TARGET,
   MAX_POSTS_TO_CHARS,
   isPersonDecider,
   toOrigin,
@@ -146,6 +147,8 @@ async function fillInto(
       backendNodeIds: group.map((box) => box.backendNodeId),
     },
     secret: SECRET_FIELDS.has(field) ? text : null,
+    // A filled code stays registered with the local pixel screen for the rest of the run (ruling).
+    code: field === "otp" || field === "totp" ? text : null,
   });
   return fillGroup(group, text, { forcePassword, pinnedOrigin });
 }
@@ -258,7 +261,10 @@ export async function fillCredential(
     );
   if (toOrigin(ctx.session.page.url()) !== item.origin) return refuse("origin_mismatch");
   const ref = await deps.resolveRef(ctx.session, args.target);
-  if (!ref) return refuse("fill_failed", "target_not_found");
+  if (!ref)
+    return args.target === FOCUSED_TARGET
+      ? refuse("no_focused_field")
+      : refuse("fill_failed", "target_not_found");
   const target = await openTarget(ref.cdp, ref.backendNodeId);
   if (!target) return refuse("fill_failed", "target_not_found");
   try {

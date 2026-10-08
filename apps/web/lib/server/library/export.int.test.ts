@@ -2,7 +2,8 @@ import { assets, createDb, type DbHandle, noteBlocks, notes, workspaces } from "
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildNoteExport } from "./export.ts";
+import { EXPORT_LIMITS } from "@mastertutor/contracts/export";
+import { buildNoteExport, exportNote } from "./export.ts";
 
 let tdb: TestDatabase;
 let h: DbHandle;
@@ -50,27 +51,63 @@ afterAll(async () => {
   await tdb?.stop();
 });
 
+const stream = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer>]).stream();
+
 describe("buildNoteExport", () => {
-  it("zips the Markdown with its assets, workspace-scoped", async () => {
-    const out = await buildNoteExport(
-      { db: h.db, storage: { getBytes: async () => new Uint8Array([1, 2, 3]) } },
-      ws,
-      noteId,
-    );
+  it("streams the Markdown with its assets, workspace-scoped", async () => {
+    const opened: string[] = [];
+    const storage = {
+      getStream: async (key: string) => (opened.push(key), stream(new Uint8Array([1, 2, 3]))),
+    };
+    const out = await buildNoteExport({ db: h.db, storage }, ws, noteId);
     expect(out?.fileName).toBe("Leaves light.zip");
-    const files = unzipSync(out!.bytes);
+    expect(opened).toEqual([]); // nothing is read before the response streams
+    const files = unzipSync(new Uint8Array(await new Response(out!.body).arrayBuffer()));
     expect(Object.keys(files).sort()).toEqual(
       [`assets/${"b".repeat(64)}.svg`, "Leaves light.md"].sort(),
     );
     expect(new TextDecoder().decode(files["Leaves light.md"]!)).toMatch(
       /First[\s\S]*!\[Leaf\]\(assets\/b{64}\.svg\)/,
     );
-    expect(
-      await buildNoteExport(
-        { db: h.db, storage: { getBytes: async () => new Uint8Array() } },
-        crypto.randomUUID(),
-        noteId,
-      ),
-    ).toBeNull();
+    expect(await buildNoteExport({ db: h.db, storage }, crypto.randomUUID(), noteId)).toBeNull();
+  });
+
+  it("refuses an export over the size cap before reading anything (13-14 review)", async () => {
+    const owner = createDb(tdb.ownerUrl);
+    const [big] = await owner.db
+      .insert(assets)
+      .values({
+        workspaceId: ws,
+        sha256: "c".repeat(64),
+        bucket: "x",
+        key: "assets/big",
+        mime: "image/png",
+        bytes: EXPORT_LIMITS.maxBytes + 1,
+      })
+      .returning({ id: assets.id });
+    const [{ id: bigNote }] = (await owner.db
+      .insert(notes)
+      .values({ workspaceId: ws, title: "Huge" })
+      .returning({ id: notes.id })) as [{ id: string }];
+    await owner.db.insert(noteBlocks).values({
+      noteId: bigNote,
+      position: "a0",
+      type: "image",
+      markdown: "Big",
+      origin: "dom",
+      assetId: big!.id,
+      verified: true,
+    });
+    await owner.close();
+    let read = false;
+    const storage = { getStream: async () => ((read = true), stream(new Uint8Array())) };
+    await expect(buildNoteExport({ db: h.db, storage }, ws, bigNote)).rejects.toMatchObject({
+      code: "invalid",
+      message: expect.stringMatching(/MB/),
+    });
+    await expect(exportNote(h.db, ws, { noteId: bigNote })).rejects.toMatchObject({
+      code: "invalid",
+    });
+    expect(read).toBe(false);
   });
 });

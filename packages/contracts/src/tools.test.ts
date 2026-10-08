@@ -3,9 +3,15 @@ import { strictSchemaProblems } from "./testing/strict-schema.ts";
 import {
   CaptureArgs,
   ComputerAction,
+  CREDENTIAL_ERROR_CODES,
+  FillCredentialArgs,
+  FOCUSED_TARGET,
   FUNCTION_TOOLS,
+  isToolInProfile,
+  ReadPageElement,
   ReadPageResult,
   TOOL_NAMES,
+  TOOL_PROFILE_TOOLS,
   VideoArgs,
 } from "./tools.ts";
 
@@ -102,5 +108,41 @@ describe("other tool schemas", () => {
       false,
     );
     expect(VideoArgs.safeParse({ op: "captions", range: null }).success).toBe(true);
+  });
+});
+
+describe("tool profiles (Phase 10)", () => {
+  it("browser_use is the full product tool list", () => {
+    expect(TOOL_PROFILE_TOOLS.browser_use).toEqual(TOOL_NAMES);
+  });
+  it("computer_use is pixels plus the vault-only credential tools", () => {
+    expect(TOOL_PROFILE_TOOLS.computer_use).toEqual(["computer", "fill_credential", "use_passkey"]);
+    expect(isToolInProfile("computer_use", "read_page")).toBe(false);
+    expect(isToolInProfile("computer_use", "capture")).toBe(false);
+    expect(isToolInProfile("computer_use", "fill_credential")).toBe(true);
+    expect(isToolInProfile("browser_use", "read_page")).toBe(true);
+  });
+});
+
+describe("fill_credential target", () => {
+  it.each(["e1", "e123456", FOCUSED_TARGET])("accepts %s", (target) => {
+    expect(FillCredentialArgs.safeParse({ alias: "zz", field: "password", target }).success).toBe(
+      true,
+    );
+  });
+  it.each(["Focused", "body", "e", "e1234567", "#password"])("rejects %s", (target) => {
+    expect(FillCredentialArgs.safeParse({ alias: "zz", field: "password", target }).success).toBe(
+      false,
+    );
+  });
+  it("has an error code for a focused fill with nothing focused", () => {
+    expect(CREDENTIAL_ERROR_CODES).toContain("no_focused_field");
+  });
+});
+
+describe("read_page elements (P10a-2)", () => {
+  it("carry a click point and no separate box", () => {
+    expect(Object.keys(ReadPageElement.shape)).toContain("point");
+    expect(Object.keys(ReadPageElement.shape)).not.toContain("box");
   });
 });

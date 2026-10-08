@@ -174,3 +174,21 @@ describe("secret fingerprints (the mask source B1 consumes)", () => {
     expect(prints.forRun("run-b").filledFrames?.()).toEqual([]);
   });
 });
+
+describe("one-time codes for the local pixel screen (ruling: OTP and TOTP codes)", () => {
+  it("registers filled codes as exact whole tokens, apart from text redaction", () => {
+    const prints = createSecretFingerprints();
+    const mask = prints.forRun("run-a");
+    expect(mask.hasOneTimeCodes?.()).toBe(false);
+    prints.remember("run-a", { filled: filled(fakeCdp(), [3]), secret: null, code: "482913" });
+    expect(mask.hasOneTimeCodes?.()).toBe(true);
+    expect(mask.isOneTimeCode?.("482913")).toBe(true);
+    expect(mask.isOneTimeCode?.("4829130")).toBe(false);
+    expect(mask.isOneTimeCode?.("82913")).toBe(false);
+    // Short codes match too much text: the text redactor (deviation 7) still ignores them.
+    expect(mask.redact("Your code is 482913")).toBe("Your code is 482913");
+    expect(prints.forRun("run-b").isOneTimeCode?.("482913")).toBe(false);
+    prints.forgetRun("run-a");
+    expect(prints.forRun("run-a").hasOneTimeCodes?.()).toBe(false);
+  });
+});

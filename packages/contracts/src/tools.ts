@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { VIEWPORT } from "./constants.ts";
-import { ANNOTATE_KINDS, CredentialField, Fidelity, VideoOp } from "./enums.ts";
+import { ANNOTATE_KINDS, CredentialField, Fidelity, VideoOp, type ToolProfile } from "./enums.ts";
 import { Alias, ElementRef, Sha256Hex, Uuid } from "./primitives.ts";
 
 /** Exactly these tools reach the model (spec §6). There is no exec_* tool. */
@@ -24,6 +24,19 @@ export const FUNCTION_TOOL_NAMES = [
   "annotate",
 ] as const satisfies readonly ToolName[];
 export type FunctionToolName = (typeof FUNCTION_TOOL_NAMES)[number];
+
+/**
+ * The tools the model receives per profile (Phase 10). computer_use is screenshots plus the computer
+ * tool, with only the vault's credential tools beside it, so no DOM text reaches the model.
+ */
+export const TOOL_PROFILE_TOOLS = {
+  browser_use: TOOL_NAMES,
+  computer_use: ["computer", "fill_credential", "use_passkey"],
+} as const satisfies Record<ToolProfile, readonly ToolName[]>;
+
+export function isToolInProfile(profile: ToolProfile, tool: ToolName): boolean {
+  return (TOOL_PROFILE_TOOLS[profile] as readonly ToolName[]).includes(tool);
+}
 
 const X = z
   .number()
@@ -146,14 +159,22 @@ export const CREDENTIAL_ERROR_CODES = [
   "field_not_stored",
   /** Only a person can approve this use (a form that posts off-origin, in auto mode). */
   "needs_human",
+  /** fill_credential {target: "focused"} found no focused field in the main frame. */
+  "no_focused_field",
   "fill_failed",
 ] as const;
 export const CredentialErrorCode = z.enum(CREDENTIAL_ERROR_CODES);
 export type CredentialErrorCode = z.infer<typeof CredentialErrorCode>;
+export const FOCUSED_TARGET = "focused";
+/** A read_page element ref, or "focused": the main-frame element with keyboard focus (pixel-only runs). */
+export const CredentialTarget = z
+  .string()
+  .regex(/^(?:e[0-9]{1,6}|focused)$/, "Expected an element ref like e12, or focused");
+export type CredentialTarget = z.infer<typeof CredentialTarget>;
 export const FillCredentialArgs = z.object({
   alias: Alias,
   field: CredentialField,
-  target: ElementRef,
+  target: CredentialTarget,
 });
 export type FillCredentialArgs = z.infer<typeof FillCredentialArgs>;
 export const FillCredentialResult = z.union([ToolOk, z.object({ error: CredentialErrorCode })]);
