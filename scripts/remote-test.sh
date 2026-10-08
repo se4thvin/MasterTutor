@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs a test suite on the shared CI host (SSH alias coursebite-build) instead of this machine.
 # Syncs the current worktree to ~/mt-ci/<worktree>/ there (honouring .gitignore; never node_modules,
-# .env*, .superpowers, orchestration or .next; .env.test and .env.example are the only env files
+# .env*, .superpowers, orchestration (except the three benchmark protocol docs that
+# tests/bench/src/protocol-docs.test.ts reads) or .next; .env.test and .env.example are the only env files
 # sent), then runs scripts/remote-test/run-on-host.sh, streaming its output. Exits with the suite's
 # exit code. Results of ui (apps/web/playwright-report/, apps/web/test-results/), e2e and qa
 # (apps/web/e2e/.out/) and bench-mock (tests/bench/.out/) come back to the same paths here.
@@ -63,7 +64,11 @@ echo "remote-test: syncing $name to $host:~/$remote_dir" >&2
 rsync -az --delete \
   --filter=':- .gitignore' \
   --include=/.env.test --include=/.env.example --exclude='.env*' \
-  --exclude=/.git --exclude=node_modules --exclude=.superpowers --exclude=orchestration \
+  --exclude=/.git --exclude=node_modules --exclude=.superpowers \
+  --include=/orchestration/ --include=/orchestration/README.md \
+  --include=/orchestration/benchmarks/ --include=/orchestration/benchmarks/README.md \
+  --include=/orchestration/briefs/ --include=/orchestration/briefs/bench-fix.md \
+  --exclude='/orchestration/**' --exclude=orchestration \
   --exclude=.next --exclude=/.worktrees --exclude=/.mt-install.lock \
   --rsync-path="mkdir -p $remote_dir && rsync" \
   "$root/" "$host:$remote_dir/"
