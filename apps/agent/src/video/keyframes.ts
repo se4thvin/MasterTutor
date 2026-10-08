@@ -1,7 +1,12 @@
 import sharp from "sharp";
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import type { MaskSources } from "../browser/masking.ts";
-import { hammingDistance, perceptualHash } from "../browser/phash.ts";
+import {
+  PERCEPTUAL_SAME,
+  perceptualDistance,
+  perceptualHash,
+  type PerceptualHash,
+} from "../browser/phash.ts";
 import { captureMaskedRegion } from "../browser/region-capture.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import {
@@ -14,7 +19,6 @@ import {
 } from "./page/player.ts";
 
 export const KEYFRAME_INTERVAL_S = 2;
-export const PHASH_DUPLICATE_DISTANCE = 6;
 export const DRM_LUMINANCE = 0.03;
 export const DRM_PROBE_FRAMES = 5;
 
@@ -32,20 +36,20 @@ export interface Keyframe {
 /** spec §8: drop frames within the threshold of the segment's reference; keep the last frame before a change. */
 export class KeyframeSampler {
   readonly #threshold: number;
-  #reference: bigint | null = null;
+  #reference: PerceptualHash | null = null;
   #segmentStart = 0;
   #last: { t: number; png: Uint8Array } | null = null;
   readonly #kept: Keyframe[] = [];
   dropped = 0;
 
-  constructor(threshold: number = PHASH_DUPLICATE_DISTANCE) {
+  constructor(threshold: number = PERCEPTUAL_SAME) {
     this.#threshold = threshold;
   }
 
-  push(frame: { t: number; hash: bigint; png: Uint8Array }): void {
+  push(frame: { t: number; hash: PerceptualHash; png: Uint8Array }): void {
     if (
       this.#reference !== null &&
-      hammingDistance(this.#reference, frame.hash) <= this.#threshold
+      perceptualDistance(this.#reference, frame.hash) <= this.#threshold
     ) {
       this.dropped++;
       this.#last = { t: frame.t, png: frame.png };

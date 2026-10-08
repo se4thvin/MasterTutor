@@ -9,20 +9,10 @@ const dir = dirname(fileURLToPath(import.meta.url));
 const W = 640;
 const H = 360;
 
-// Each slide sits on a diagonal luminance ramp: flat stripes alone leave most DCT coefficients at
-// the median, so encoder noise would flip perceptual-hash bits between frames of one slide.
-const ramp = (x: number, y: number) => Math.round(((x + 2 * y) / (W + 2 * H)) * 90) - 45;
-const clamp = (v: number) => Math.max(0, Math.min(255, v));
-
 function ppm(name: string, paint: (x: number, y: number) => [number, number, number]): string {
   const header = Buffer.from(`P6\n${W} ${H}\n255\n`, "ascii");
   const pixels = Buffer.alloc(W * H * 3);
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++)
-      pixels.set(
-        paint(x, y).map((c) => clamp(c + ramp(x, y))),
-        (y * W + x) * 3,
-      );
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) pixels.set(paint(x, y), (y * W + x) * 3);
   const file = join(dir, name);
   writeFileSync(file, Buffer.concat([header, pixels]));
   return name;
@@ -51,7 +41,7 @@ ffmpeg([
   ...slides.flatMap((s) => ["-loop", "1", "-t", "5", "-i", s]),
   ...["-f", "lavfi", "-t", "20", "-i", "sine=frequency=440:sample_rate=48000"],
   ...["-filter_complex", "[0:v][1:v][2:v][3:v]concat=n=4:v=1:a=0,fps=25,format=yuv420p[v]"],
-  ...["-map", "[v]", "-map", "4:a", "-c:v", "libvpx", "-b:v", "2M", "-qmax", "8", "-g", "25"],
+  ...["-map", "[v]", "-map", "4:a", "-c:v", "libvpx", "-b:v", "300k", "-g", "25"],
   ...["-c:a", "libopus", "-b:a", "48k", "-shortest", "video.webm"],
 ]);
 ffmpeg([
