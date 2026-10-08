@@ -62,7 +62,7 @@
     left: 0;
     width: 1.25rem;
     height: 1.25rem;
-    will-change: transform;
+    will-change: transform, opacity;
     transition-property: opacity;
     transition-duration: var(--motion-dur-base);
     transition-timing-function: var(--motion-ease-out);
@@ -403,6 +403,9 @@
     height: 100%;
     object-fit: contain;
     opacity: 0;
+    /* Fades in and out (D28): a layer of its own is painted while transparent, so a fade never
+       paints its content the frame it starts. */
+    will-change: opacity;
     /* Even transparent, it sits over the live frame: it must never take the user's clicks. */
     pointer-events: none;
     transition-property: opacity;
@@ -424,6 +427,8 @@
     inset: 0;
     z-index: 4;
     opacity: 0;
+    /* As .run-shot: painted while transparent, so the fade in is compositor-only (D28). */
+    will-change: opacity;
     pointer-events: none;
     transition-property: opacity;
     transition-duration: var(--motion-dur-panel);
