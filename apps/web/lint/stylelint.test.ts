@@ -57,3 +57,41 @@ describe("stylelint motion rules", () => {
       expect(await problems(css), css).toEqual(["declaration-property-value-disallowed-list"]);
   });
 });
+
+describe("stylelint type tokens (spec §11.1)", () => {
+  it("accepts SF Pro and the type scale tokens", async () => {
+    expect(
+      await problems(`.a { font: var(--weight-semibold) var(--text-13)/1.3 var(--font-ui); }
+        .b { font-family: var(--font-ui); font-size: var(--text-12); font-weight: var(--weight-medium);
+          letter-spacing: var(--tracking-caps); font-variant-numeric: tabular-nums; }
+        .c { font: italic var(--weight-regular) var(--text-12)/1.42 var(--font-ui); letter-spacing: 0; }
+        .d { font: inherit; letter-spacing: inherit; }`),
+    ).toEqual([]);
+  });
+
+  it("allows SF Mono on the note code blocks only", async () => {
+    expect(
+      await problems(`.prose { & pre { font: var(--weight-regular) var(--text-13)/1.65 var(--font-code); }
+        & :not(pre) > code { font-family: var(--font-code); } }`),
+    ).toEqual([]);
+    for (const css of [
+      ".run-meta { font: var(--weight-regular) var(--text-11)/1.4 var(--font-code); }",
+      ".kbd { font-family: var(--font-code); }",
+      ".prose { & .id { font-family: var(--font-code); } }",
+      "@theme { --font-mono: var(--font-code); }",
+    ])
+      expect(await problems(css), css).toEqual(["mastertutor/type-tokens"]);
+  });
+
+  it.each([
+    ["a raw family", ".a { font-family: Inter, sans-serif; }"],
+    ["a monospace stack", ".a { font-family: ui-monospace, monospace; }"],
+    ["a raw family in the shorthand", ".a { font: 600 var(--text-13) Helvetica; }"],
+    ["a raw size", ".a { font-size: 0.8125rem; }"],
+    ["a raw shorthand size and weight", ".a { font: 600 0.8125rem/1.3 var(--font-ui); }"],
+    ["a raw weight", ".a { font-weight: 600; }"],
+    ["raw tracking", ".a { letter-spacing: -0.02em; }"],
+  ])("rejects %s", async (_, css) => {
+    expect(await problems(css)).toEqual(["mastertutor/type-tokens"]);
+  });
+});

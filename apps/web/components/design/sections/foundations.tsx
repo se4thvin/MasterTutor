@@ -23,7 +23,7 @@ const TYPE = [
   ["t-foot", "Footnote"],
   ["eyebrow", "Eyebrow"],
   ["cap", "Caption"],
-  ["mono", "Mono 12 · 0123456789"],
+  ["tabular", "Tabular 12 · 0123456789"],
 ] as const;
 const RADII = ["xs", "sm", "md", "lg", "xl", "frame"] as const;
 const SHADOWS = [
@@ -42,7 +42,7 @@ export function FoundationsSection() {
         {COLORS.map((name) => (
           <li key={name} className="grid gap-1.5">
             <span className="h-12 rounded-md shadow-e1" style={{ background: `var(--${name})` }} />
-            <code className="mono text-label-2">--{name}</code>
+            <code className="tabular text-label-2">--{name}</code>
           </li>
         ))}
       </ul>
@@ -60,12 +60,12 @@ export function FoundationsSection() {
             className="grid size-20 place-items-center bg-elevated shadow-e1"
             style={{ borderRadius: `var(--r-${r})` }}
           >
-            <span className="mono">{r}</span>
+            <span className="tabular">{r}</span>
           </li>
         ))}
         {SHADOWS.map(([s, cls]) => (
           <li key={s} className={`grid size-20 place-items-center rounded-lg bg-elevated ${cls}`}>
-            <span className="mono">{s}</span>
+            <span className="tabular">{s}</span>
           </li>
         ))}
       </ul>
