@@ -39,55 +39,12 @@
         margin: 16px;
       }
     </style>
-    <script>
-      var ytInitialData = {
-        playerOverlays: {
-          playerOverlayRenderer: {
-            decoratedPlayerBarRenderer: {
-              decoratedPlayerBarRenderer: {
-                playerBar: {
-                  multiMarkersPlayerBarRenderer: {
-                    markersMap: [
-                      {
-                        key: "DESCRIPTION_CHAPTERS",
-                        value: {
-                          chapters: [
-                            {
-                              chapterRenderer: {
-                                title: { simpleText: "Intro" },
-                                timeRangeStartMillis: 0,
-                              },
-                            },
-                            {
-                              chapterRenderer: {
-                                title: { simpleText: "Light reactions" },
-                                timeRangeStartMillis: 5000,
-                              },
-                            },
-                            {
-                              chapterRenderer: {
-                                title: { simpleText: "Calvin cycle" },
-                                timeRangeStartMillis: 10000,
-                              },
-                            },
-                            {
-                              chapterRenderer: {
-                                title: { simpleText: "Summary" },
-                                timeRangeStartMillis: 15000,
-                              },
-                            },
-                          ],
-                        },
-                      },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        },
-      };
-    </script>
+    <!-- prettier-ignore -->
+    <script>var ytInitialData = {"playerOverlays":{"playerOverlayRenderer":{"decoratedPlayerBarRenderer":{"decoratedPlayerBarRenderer":{"playerBar":{"multiMarkersPlayerBarRenderer":{"markersMap":[{"key":"DESCRIPTION_CHAPTERS","value":{"chapters":[
+{"chapterRenderer":{"title":{"simpleText":"Intro"},"timeRangeStartMillis":0}},
+{"chapterRenderer":{"title":{"simpleText":"Light reactions"},"timeRangeStartMillis":5000}},
+{"chapterRenderer":{"title":{"simpleText":"Calvin cycle"},"timeRangeStartMillis":10000}},
+{"chapterRenderer":{"title":{"simpleText":"Summary"},"timeRangeStartMillis":15000}}]}}]}}}}}}};</script>
   </head>
   <body>
     <div id="movie_player" class="html5-video-player">
@@ -102,10 +59,12 @@
     >
       CC
     </button>
-    <div id="description">
-      Photosynthesis in four short chapters. 0:00 Intro 0:05 Light reactions 0:10 Calvin cycle 0:15
-      Summary
-    </div>
+    <!-- prettier-ignore -->
+    <div id="description">Photosynthesis in four short chapters.
+0:00 Intro
+0:05 Light reactions
+0:10 Calvin cycle
+0:15 Summary</div>
     <script src="player.js"></script>
   </body>
 </html>
