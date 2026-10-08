@@ -1,5 +1,41 @@
 # Browser slot (spec §3.1, run 15 §8): n.eko v3.1.6 (Apache-2.0, amd64+arm64) + headed
 # Chromium with its sandbox + socat CDP proxy + an iptables ingress/egress filter.
+#
+# n.eko v3.1.6's server (Apache-2.0), rebuilt from its tag with one pion/ice v4.2.2 (MIT) fix (I1,
+# group-2-report.md §11): behind 1:1 NAT the ICE-TCP mux handed the browser's connection to a conn
+# no ICE agent read, so the live video sometimes never started. Build-only stage: only the binary
+# and the licences reach the slot image.
+FROM golang:1.25-trixie@sha256:2c4c60ef415fbfa5e90300722293bef36c5e63fae17570ce18f580af933dbd73 AS neko-server
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        libx11-dev libxrandr-dev libxtst-dev libgtk-3-dev libxcvt-dev \
+        libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev; \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN set -eux; \
+    git init -q .; \
+    git fetch -q --depth 1 https://github.com/m1k1o/neko.git 65fba485de2987998c7028b04240b21669d674e0; \
+    git checkout -q FETCH_HEAD; \
+    test "$(git rev-parse HEAD)" = 65fba485de2987998c7028b04240b21669d674e0
+COPY neko/pion-ice-v4.2.2-tcp-mux-nat.patch /tmp/
+WORKDIR /src/server
+# pion/ice v4.2.2 comes from the module proxy, checked against n.eko's go.sum, then patched; the
+# patch's own test (and the mux's) must pass before the server is built against it.
+RUN set -eux; \
+    dir="$(go mod download -json github.com/pion/ice/v4 | sed -n 's/^\t"Dir": "\(.*\)",$/\1/p')"; \
+    cp -r "$dir" /pion-ice; \
+    chmod -R u+w /pion-ice; \
+    cd /pion-ice; \
+    git apply /tmp/pion-ice-v4.2.2-tcp-mux-nat.patch; \
+    go test -count=1 -run 'TestTCPMux' .; \
+    cd /src/server; \
+    go mod edit -replace github.com/pion/ice/v4=/pion-ice; \
+    go build -trimpath -o /neko -ldflags "-s -w \
+        -X 'github.com/m1k1o/neko/server.gitCommit=65fba48' \
+        -X 'github.com/m1k1o/neko/server.gitTag=v3.1.6+mt-pion-tcp-mux'" \
+        cmd/neko/main.go
+
 FROM ghcr.io/m1k1o/neko/chromium:3.1.6@sha256:2471119c7b4010067f76f3421a78a8bcf35e3c223b2d1f4db084914ec915fb30
 
 RUN set -eux; \
@@ -14,6 +50,9 @@ RUN set -eux; \
     sed -i 's/Modes "1920x1080_60.00"/Modes "1280x800_30.00" "1920x1080_60.00"/' /etc/neko/xorg.conf; \
     grep -q 'Modeline "1280x800_30.00" 37.90' /etc/neko/xorg.conf
 
+COPY --from=neko-server /neko /usr/bin/neko
+COPY --from=neko-server /src/LICENSE /usr/share/doc/neko/LICENSE
+COPY --from=neko-server /pion-ice/LICENSE /usr/share/doc/neko/pion-ice.LICENSE
 COPY supervisord/chromium.conf /etc/neko/supervisord/chromium.conf
 COPY policies.json /etc/chromium/policies/managed/policies.json
 COPY --chmod=0755 bin/slot-entrypoint bin/exit-on-chromium bin/slot-health bin/slot-idle-http /usr/local/bin/

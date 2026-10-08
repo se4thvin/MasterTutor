@@ -6,16 +6,10 @@ import { liveVideo, videoWidth } from "../support/live.ts";
 import { rpcOk } from "../support/rpc.ts";
 import { createRun, waitForRun } from "../support/runs.ts";
 
-// I1 (group-2-report.md §8, §10, §11): behind 1:1 NAT pion's TCP mux hands the browser's ICE-TCP
-// connection to a conn no ICE agent reads, so the live video sometimes never starts.
-const I1 =
-  "I1 pion TCP-mux race (removed by branch neko-pion-fix) — must be green before the Phase 8 gate";
-
 test("the live view decodes the slot's video with UDP disabled (TCP mux)", async ({
   page,
   request,
 }) => {
-  test.fixme(true, I1);
   const runId = await createRun(request, {
     goal: scenarioGoal(E2E_SCENARIO.holdPage, `Hold ${SITE}/takeover.html`),
   });

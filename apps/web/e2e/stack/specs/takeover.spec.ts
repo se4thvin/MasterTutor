@@ -68,17 +68,11 @@ async function cancelAndReplay(request: APIRequestContext, runId: string) {
   return (await replayEvents(request, runId)).records;
 }
 
-// I1 (group-2-report.md §8, §10): behind 1:1 NAT pion's TCP mux hands the browser's ICE-TCP
-// connection to a conn no ICE agent reads, so the live video sometimes never starts.
-const I1 =
-  "I1 pion TCP-mux race (removed by branch neko-pion-fix) — must be green before the Phase 8 gate";
-
 test.describe("takeover (spec §10.3)", () => {
   test("take over pauses the agent, input reaches the page through n.eko, hand back resumes; a second takeover is a no-op (D10)", async ({
     page,
     request,
   }) => {
-    test.fixme(true, I1);
     const runId = await holdOn(request, "takeover.html");
     let records;
     try {
@@ -121,7 +115,6 @@ test.describe("takeover (spec §10.3)", () => {
     page,
     request,
   }) => {
-    test.fixme(true, I1);
     const runId = await holdOn(request, "takeover-download.html");
     try {
       await takeOver(page, request, runId);
@@ -152,7 +145,6 @@ test.describe("takeover (spec §10.3)", () => {
     page,
     request,
   }) => {
-    test.fixme(true, I1);
     const runId = await holdOn(request, "takeover-download.html");
     let records;
     try {
