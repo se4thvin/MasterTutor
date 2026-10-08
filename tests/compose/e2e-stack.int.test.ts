@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { LOGIN, OTHER, SITE } from "../behaviour/constants.ts";
@@ -8,7 +9,19 @@ const STACK = ["compose.yml", "compose.test.yml"];
 const PROFILES = ["e2e", "e2e-runner", "bench"];
 const FIXTURES_SUBNET = "172.30.241.0/24";
 const RUN = "mt-config-check";
+const RUN_DIR = "/home/ci/mt-ci/.runs/mt-config-check";
 const SLOTS = ["browser-1", "browser-2"];
+/** Stack slot 3's variables, as scripts/remote-test/slots.sh gives them to a run on the CI host. */
+const SLOT_ENV = Object.fromEntries(
+  execFileSync(
+    "bash",
+    ["-c", "source scripts/remote-test/slots.sh && slot_networks 3 && slot_ports 3"],
+    { encoding: "utf8", cwd: new URL("../..", import.meta.url) },
+  )
+    .trim()
+    .split("\n")
+    .map((line) => line.split("=") as [string, string]),
+);
 
 let plain: ComposeConfig;
 let stack: ComposeConfig;
@@ -18,7 +31,7 @@ beforeAll(() => {
   stack = composeConfig(".env.test", STACK, { profiles: PROFILES });
   remote = composeConfig(".env.test", [...STACK, "tests/e2e/compose.remote.yml"], {
     profiles: PROFILES,
-    env: { MT_CI_RUN_ID: RUN },
+    env: { MT_CI_RUN_ID: RUN, MT_CI_RUN_DIR: RUN_DIR, ...SLOT_ENV },
   });
 });
 
@@ -130,5 +143,44 @@ describe("tests/e2e/compose.remote.yml on the shared CI host (X4, D45)", () => {
   it("publishes nothing beyond 127.0.0.1", () => {
     for (const [name, service] of Object.entries(remote.services))
       for (const port of service.ports ?? []) expect(port.host_ip, name).toBe("127.0.0.1");
+  });
+
+  it("runs on its slot's own subnets and port, so concurrent stacks never collide (D48)", () => {
+    const subnets = Object.fromEntries(
+      Object.entries(remote.networks).map(([name, network]) => [
+        name,
+        network.ipam?.config?.[0]?.subnet,
+      ]),
+    );
+    expect(subnets).toEqual({
+      cdp: "10.213.24.0/24",
+      fixtures: "10.213.25.0/24",
+      edge: "10.213.26.0/24",
+      backend: "10.213.27.0/24",
+      egress: "10.213.28.0/24",
+    });
+    for (const slot of SLOTS)
+      expect(remote.services[slot]?.environment?.SLOT_EGRESS_ALLOW_CIDRS, slot).toBe(
+        "10.213.25.0/24",
+      );
+    expect(remote.services.traefik?.ports?.map((port) => port.published)).toEqual(["20380"]);
+  });
+
+  it("points Traefik at the run's dynamic config (live-auth on the run's cdp subnet)", () => {
+    expect(remote.services.traefik?.volumes).toEqual([
+      expect.objectContaining({
+        source: `${RUN_DIR}/traefik-dynamic.yml`,
+        target: "/etc/traefik/dynamic.yml",
+        read_only: true,
+      }),
+    ]);
+  });
+
+  it("tags every image the stack builds with the run, never the shared :local tag", () => {
+    for (const [name, service] of Object.entries(remote.services))
+      if (service.image?.startsWith("mastertutor/"))
+        expect(service.image, name).toMatch(new RegExp(`^mastertutor/[a-z0-9-]+:${RUN}$`));
+    for (const [name, service] of Object.entries(stack.services))
+      if (service.build) expect(remote.services[name]?.image, name).toContain(`:${RUN}`);
   });
 });

@@ -6,8 +6,8 @@
 DC=(docker compose --env-file .env.test -f compose.yml -f compose.test.yml)
 if [[ -n "${MT_CI_RUN_ID:-}" ]]; then DC+=(-f tests/e2e/compose.remote.yml); fi
 
-# One heavy stack at a time on a laptop (D46): the same lock as the behaviour suite. The CI host
-# serialises full-stack suites with its own lock (~/mt-ci/.runs/stack.lock, run-on-host.sh).
+# One heavy stack at a time on a laptop (D46): the same lock as the behaviour suite. On the CI host
+# each run instead holds a stack slot with its own subnets and ports (scripts/remote-test/slots.sh).
 LOCAL_STACK_LOCK=/tmp/mt-behaviour.lock
 STACK_LOCK_HELD=0
 
