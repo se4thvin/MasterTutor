@@ -16,3 +16,12 @@ describe("scripts/bench-local.sh (D46, D47)", () => {
     expect(script).toContain("pnpm prod:smoke --max-usd 1");
   });
 });
+
+describe("scripts/bench-mock.sh (fresh stack per invocation)", () => {
+  const mock = readFileSync(new URL("../../../scripts/bench-mock.sh", import.meta.url), "utf8");
+  it("drops a leftover account file before init, since every run boots an empty stack", () => {
+    const drop = mock.indexOf("rm -f .env.bench-account");
+    expect(drop).toBeGreaterThan(-1);
+    expect(drop).toBeLessThan(mock.indexOf("pnpm bench init"));
+  });
+});
