@@ -44,7 +44,11 @@ export async function startTestDatabase(options: { slots?: string[] } = {}): Pro
     webUrl: asRole("web_role", TEST_ROLE_PASSWORDS.web),
     agentUrl: asRole("agent_role", TEST_ROLE_PASSWORDS.agent),
     stop: async () => {
-      await container.stop();
+      // Stop only. On a loaded host docker stop can return while the daemon still reports the
+      // container running, and testcontainers' remove then fails with 409 (it failed a whole
+      // integration file once). Ryuk removes stopped containers on a laptop; on the CI host the
+      // run's label-scoped cleanup does (scripts/remote-test/run-on-host.sh).
+      await container.stop({ remove: false });
     },
   };
 }
