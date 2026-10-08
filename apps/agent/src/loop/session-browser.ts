@@ -8,7 +8,9 @@ import {
 } from "@mastertutor/contracts";
 import type { Page } from "playwright-core";
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
+import { sharedLocalOcr, type CachedScreen } from "../browser/local-ocr.ts";
 import type { MaskSources } from "../browser/masking.ts";
+import { createScreenCache, type ScreenCache } from "../browser/screen-cache.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { perceptualHash, UNCOMPARABLE_HASH } from "../browser/phash.ts";
 import { captureModelScreenshot, WITHHELD, withheldScreenshot } from "../browser/screenshot.ts";
@@ -133,6 +135,8 @@ export class SessionLoopBrowser implements LoopBrowser {
   readonly #executor: ComputerExecutor;
   readonly #registry: ToolRegistry;
   readonly #mask: MaskSources;
+  /** This run's pixel-screen cache: lives and dies with this lease (QA-098 ruling). */
+  readonly #screens: ScreenCache<CachedScreen>;
   readonly #run: () => RunSnapshot;
   readonly #log: Log;
   readonly #slotName: string;
@@ -152,6 +156,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     this.#executor = options.executor;
     this.#registry = options.registry;
     this.#mask = options.mask;
+    this.#screens = createScreenCache(options.mask);
     this.#run = options.run;
     this.#log = options.log;
   }
@@ -166,7 +171,13 @@ export class SessionLoopBrowser implements LoopBrowser {
 
   async #capture(url: string, signal: AbortSignal): Promise<Observation> {
     const session = this.#session;
-    const screenshot = await captureModelScreenshot(session, this.#mask, signal);
+    const screenshot = await captureModelScreenshot(
+      session,
+      this.#mask,
+      signal,
+      sharedLocalOcr(),
+      this.#screens,
+    );
     const page = await readPage(session, { mode: "interactive", sinceHash: null, offset: null });
     const state = await (await session.worlds()).evaluate(pageStateScript, null);
     return {

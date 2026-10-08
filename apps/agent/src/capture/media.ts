@@ -87,8 +87,11 @@ async function orLost<T>(ctx: MediaContext, work: () => Promise<T | null>): Prom
   }
 }
 
-/** Canvas pixels are invisible to every text screen: screened locally while the run holds secrets. */
-const canvasIsClean = (ctx: MediaContext, png: Uint8Array) =>
+/**
+ * Canvas pixels and element shots are invisible to every text screen: screened locally while the
+ * run holds secrets (a shot can show a positioned canvas over the figure, QA-100).
+ */
+const pixelsClean = (ctx: MediaContext, png: Uint8Array) =>
   pixelsAreClean(ctx.localOcr, ctx.secrets, png, ctx.signal);
 
 async function storeOne(
@@ -97,10 +100,15 @@ async function storeOne(
   report: MediaReport,
 ): Promise<StoredMedia> {
   ctx.signal.throwIfAborted();
+  /** A canvas whose own pixels failed the screen: its shot shows the same pixels (QA-080). */
+  let canvasWithheld = false;
   const assetId = await orLost(ctx, async () => {
     const found = await original(ctx, item);
     if (!found) return null;
-    if (item.kind === "canvas" && !(await canvasIsClean(ctx, found.bytes))) return null;
+    if (item.kind === "canvas" && !(await pixelsClean(ctx, found.bytes))) {
+      canvasWithheld = true;
+      return null;
+    }
     return put(ctx, {
       bytes: found.bytes,
       mime: found.mime,
@@ -114,10 +122,9 @@ async function storeOne(
   if (ctx.shoot && item.rect && !item.fixed && (item.figure || assetId === null)) {
     const shoot = ctx.shoot;
     const rect = item.rect;
-    const png = await orLost(ctx, () => shoot(rect, ELEMENT_SCALE));
+    const png = canvasWithheld ? null : await orLost(ctx, () => shoot(rect, ELEMENT_SCALE));
     const shot = png ? await imageInfo(png) : null;
-    const clean = png && item.kind === "canvas" ? await canvasIsClean(ctx, png) : true;
-    if (png && shot && clean) {
+    if (png && shot && (await pixelsClean(ctx, png))) {
       screenshotAssetId = await orLost(ctx, () =>
         put(ctx, {
           bytes: png,

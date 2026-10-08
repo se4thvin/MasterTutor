@@ -212,7 +212,14 @@ export async function buildPdfCapture(
           // Q7: docling text is a caption here, escaped; the image itself is the block's assetId (decision 14).
           if (id) {
             const caption = escapeMarkdownText(block.markdown);
-            blocks.push(figureBlock("figure", caption, id, anchor(block.page, block.bbox)));
+            // The crop is the page's own pixels; the caption is docling's text, held to the PDF
+            // text like any other block (QA-111).
+            const figure = figureBlock("figure", caption, id, anchor(block.page, block.bbox));
+            const plain = block.markdown.trim();
+            blocks.push({
+              ...figure,
+              verified: plain === "" || precision(plain) >= VERIFIED_COVERAGE,
+            });
           } else lost++;
         } else {
           const ocrPage = !textPages.has(block.page);
@@ -280,11 +287,24 @@ export async function buildPdfCapture(
     }
   }
 
-  // The original keeps every page's pixels: stored only once each image page passed the screen.
-  const imagePages = pages.filter((p) => p.hasImages || !p.hasText).map((p) => p.page);
+  // The original keeps every page's pixels, vector drawings on text pages included (QA-109): on a
+  // secret-holding run it is stored only once every page was rendered and passed the screen.
+  if (ctx.mask.hasSecrets() && rendersWithheld === 0) {
+    const unrendered = pages
+      .filter((p) => !rendered.has(`${p.page}@${RENDER_SCALE}`))
+      .map((p) => p.page);
+    if (unrendered.length > 0) {
+      const extra = await deps.pdf.analyze(
+        bytes,
+        { render: unrendered, scale: RENDER_SCALE },
+        ctx.signal,
+      );
+      await keepClean(extra.renders);
+    }
+  }
   const pixelsScreened =
     rendersWithheld === 0 &&
-    (!ctx.mask.hasSecrets() || imagePages.every((page) => pageRender(page) !== undefined));
+    (!ctx.mask.hasSecrets() || pages.every((page) => pageRender(page.page) !== undefined));
   // Text past the block cap is not in the note: it counts as missing, so the note is partial.
   const blocksTruncated =
     engine === "pdfjs" && (analysis.truncated || analysis.blocks.length > MAX_PDF_BLOCKS);

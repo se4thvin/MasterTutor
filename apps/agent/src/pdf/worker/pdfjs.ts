@@ -12,6 +12,8 @@ const PDFJS_DIR = dirname(require.resolve("pdfjs-dist/package.json"));
 /** Q8: the standard-14 fonts and CJK maps ship with pdf.js; without them Node renders some text wrongly. */
 const STANDARD_FONTS = `${join(PDFJS_DIR, "standard_fonts")}/`;
 const CMAPS = `${join(PDFJS_DIR, "cmaps")}/`;
+/** JPEG 2000 and JBIG2 decoders (OpenJPEG, jbig2) ship as wasm; without them those images stay blank (QA-111). */
+const WASM = `${join(PDFJS_DIR, "wasm")}/`;
 const IMAGE_OPS = new Set([
   OPS.paintImageXObject,
   OPS.paintInlineImageXObject,
@@ -102,6 +104,7 @@ export async function analyze(request: ChildRequest, bytes: Uint8Array): Promise
     standardFontDataUrl: STANDARD_FONTS,
     cMapUrl: CMAPS,
     cMapPacked: true,
+    wasmUrl: WASM,
     // I-2: an image or canvas past these bounds is skipped, never allocated.
     maxImageSize: request.maxImagePixels,
     canvasMaxAreaInBytes: request.maxPixels * 4,
