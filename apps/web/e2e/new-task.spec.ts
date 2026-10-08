@@ -1,6 +1,7 @@
 import { DEFAULT_BUDGET } from "@mastertutor/contracts";
 import { ids } from "../lib/fixtures/ids.ts";
 import { mockRpc } from "./helpers/run.ts";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/test.ts";
 
 type Logged = [string, unknown][];
@@ -226,5 +227,105 @@ test.describe("New task", () => {
       "true",
     );
     await expect(page.getByRole("checkbox", { name: /I understand/ })).toHaveCount(0);
+  });
+
+  test.describe("the draft is saved", () => {
+    // The 3D hero is not under test here: on a software-GL host its shader compile can hold the
+    // main thread for seconds (timers, navigation). hero.spec.ts covers it.
+    test.use({ reducedMotion: "reduce" });
+
+    const DRAFT_KEY = "mt.new-task-draft:fixture-user";
+    const storedDraft = (page: Page) =>
+      page.evaluate((key) => window.localStorage.getItem(key), DRAFT_KEY);
+
+    async function compose(page: Page) {
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Week 3: every lecture and table");
+      await page.getByRole("button", { name: "PDF", exact: true }).click();
+      await page.getByLabel("PDF address").fill("https://arxiv.org/pdf/1706.03762.pdf");
+      await page.getByLabel("PDF address").press("Enter");
+      await page.getByRole("button", { name: "Add domain" }).click();
+      await page.getByRole("textbox", { name: "Allowed domain" }).fill("github.com");
+      await page.getByRole("textbox", { name: "Allowed domain" }).press("Enter");
+      await page.getByRole("radio", { name: "Deep" }).click();
+      await page.getByLabel("Save to").selectOption(ids.folder(2));
+      await page.getByRole("radio", { name: "Auto in allowed domains" }).click();
+    }
+
+    async function expectRestored(page: Page) {
+      await expect(page.getByLabel("Describe the task")).toHaveValue(
+        "Week 3: every lecture and table",
+      );
+      await expect(page.getByRole("list", { name: "Sources" })).toContainText("arxiv.org/pdf");
+      await expect(page.getByRole("list", { name: "Allowed domains" })).toContainText("github.com");
+      await expect(page.getByRole("radio", { name: "Deep" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await expect(page.getByLabel("Save to")).toHaveValue(ids.folder(2));
+      // The approval mode is never remembered (S10, D44): it is always chosen afresh.
+      await expect(page.getByRole("radio", { name: "Ask me" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    }
+
+    test("restores what was typed after leaving the page and coming back", async ({ page }) => {
+      await compose(page);
+      const nav = page.getByRole("navigation", { name: "Primary" });
+      await nav.getByRole("link", { name: "Library" }).click();
+      await expect(page).toHaveURL(/\/library$/);
+      const saved = await storedDraft(page);
+      expect(saved).toContain("Week 3: every lecture and table");
+      expect(saved).not.toMatch(/approval|bypass|auto_within/i);
+      await nav.getByRole("link", { name: "New task" }).click();
+      await expectRestored(page);
+      // A full reload restores it too.
+      await page.reload();
+      await expectRestored(page);
+    });
+
+    test("is cleared once a run is created, and kept when starting fails", async ({ page }) => {
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      await page.route("**/api/rpc/runs/create", (route) =>
+        route.fulfill({
+          status: 500,
+          json: {
+            json: { defined: false, code: "INTERNAL_SERVER_ERROR", status: 500, message: "down" },
+          },
+        }),
+      );
+      await page.getByRole("button", { name: /^Start/ }).click();
+      await expect(page.getByText("Couldn't start the task. Try again.")).toBeVisible();
+      await expect.poll(() => storedDraft(page)).toContain("Rust lifetimes");
+      await page.unroute("**/api/rpc/runs/create");
+      await page.getByRole("button", { name: /^Start/ }).click();
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
+      expect(await storedDraft(page)).toBeNull();
+      await page.goto("/new");
+      await expect(page.getByRole("button", { name: /^Start/ })).toBeEnabled();
+      await expect(page.getByLabel("Describe the task")).toHaveValue("");
+    });
+
+    test("the page still works when storage throws", async ({ page }) => {
+      await page.addInitScript(() => {
+        const denied = () => {
+          throw new DOMException("Storage is blocked", "SecurityError");
+        };
+        Object.defineProperty(window, "localStorage", { configurable: true, get: denied });
+      });
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      const request = page.waitForRequest("**/api/rpc/runs/create");
+      await page.getByRole("button", { name: /^Start/ }).click();
+      expect(createBody((await request).postDataJSON())).toMatchObject({
+        goal: "Find a good intro to Rust lifetimes",
+      });
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
+      expect(errors).toEqual([]);
+    });
   });
 });
