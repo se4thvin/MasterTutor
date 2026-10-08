@@ -43,8 +43,9 @@ cleanup_run() {
   [[ -z "$ids" ]] || docker network rm $ids >/dev/null
   ids="$(docker volume ls -q --filter "label=mastertutor.ci.run=$project")"
   [[ -z "$ids" ]] || docker volume rm $ids >/dev/null
-  ids="$(docker image ls -q --filter "reference=mastertutor/*:$project" | sort -u)"
-  [[ -z "$ids" ]] || docker image rm -f $ids >/dev/null 2>&1 || true
+  # By tag, not ID: concurrent runs that built the same content share an image ID.
+  ids="$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=mastertutor/*:$project")"
+  [[ -z "$ids" ]] || docker image rm $ids >/dev/null 2>&1 || true
   docker image rm -f "mt-ci-agent-image-check:$project" >/dev/null 2>&1 || true
   docker image rm -f "mt-ci-drill-runtime:$project" >/dev/null 2>&1 || true
   rm -rf "${runs_dir:?}/$project" 2>/dev/null || true
