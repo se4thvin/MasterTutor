@@ -6,6 +6,7 @@ import { OTHER, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts"
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { captureModelScreenshot } from "../browser/screenshot.ts";
+import { settle } from "../browser/settle.ts";
 import { BrowserSession } from "../browser/session.ts";
 import { ARM_BUDGET_MS, markStillUnguarded, markUnguarded } from "../browser/input-guard.ts";
 import { instantClock } from "../runtime/clock.ts";
@@ -1404,6 +1405,43 @@ describe("ComputerExecutor with frames navigating away from the point (ruling 3)
     console.info(JSON.stringify({ metric: "unreadable_box_refusal_ms", waited }));
     expect(waited).toBeLessThan(1_500);
     expect(await clickedGo(s)).toBeUndefined();
+    release();
+  });
+
+  /** Starts a navigation of the page itself to a page whose answer the test holds back. */
+  const leaveForHeldPage = (s: BrowserSession) =>
+    s.page.evaluate(() => {
+      setTimeout(() => (location.href = "/interactive.html?held"));
+    });
+
+  it("a click while the page's own document waits on a navigation that never answers is refused promptly, not stalled", async () => {
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/loading-frames.html`, signal);
+    await leaveForHeldPage(s);
+    await new Promise((resolve) => setTimeout(resolve, 300)); // under way (Chromium now answers nothing about the page)
+    const started = Date.now();
+    expect(await executor.execute(click(centre), signal)).toBe(PAGE_SETTLING_REFUSAL);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    release();
+  });
+
+  it("a navigation that never answers does not stall the agent: settling stops it, and the page answers and clicks again", async () => {
+    const { s, executor } = await setup();
+    const release = await holdSlowPages(s);
+    await s.goto(`${SITE}/loading-frames.html`, signal);
+    await leaveForHeldPage(s);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const started = Date.now();
+    await settle(s, signal, { navigationTimeoutMs: 1_000 });
+    const shot = await captureModelScreenshot(s, NO_MASK_SOURCES, signal);
+    const elapsed = Date.now() - started;
+    console.info(JSON.stringify({ metric: "stuck_navigation_settle_ms", elapsed }));
+    expect(elapsed).toBeLessThan(8_000);
+    expect(shot.png.length).toBeGreaterThan(0);
+    expect(s.page.url()).toContain("loading-frames.html"); // the old document stayed
+    expect(await executor.execute(click(centre), signal)).toBeNull();
+    expect(await clickedGo(s)).toBe("go");
     release();
   });
 });

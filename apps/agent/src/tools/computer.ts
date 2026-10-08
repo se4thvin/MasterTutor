@@ -239,6 +239,13 @@ export class ComputerExecutor {
   ): Promise<string | null> {
     this.omnibox.cancel();
     if (button === "back" || button === "forward") return this.#accelerator(button, signal);
+    // While the page's own document is being replaced it answers nothing (not even its layout):
+    // wait a moment, then refuse rather than stall.
+    const loadedBy = Date.now() + NAVIGATION_SETTLE_MS;
+    while (this.#session.mainFrameNavigating()) {
+      if (Date.now() >= loadedBy) return this.#refuse(PAGE_SETTLING_REFUSAL);
+      await pause(25, signal);
+    }
     const point = await this.toPage(x, y);
     if (!point) return this.#outside(x, y);
     const mouse = this.#session.page.mouse;

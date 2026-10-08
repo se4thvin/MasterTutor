@@ -34,6 +34,8 @@ export const WITHHELD = {
 } as const;
 
 const MAX_ATTEMPTS = 3;
+/** How long an observation waits for a main-frame navigation before stopping it. */
+const STUCK_NAVIGATION_WAIT_MS = 5_000;
 
 function targetSize(layout: Layout) {
   const scale = Math.min(1, VIEWPORT.width / layout.width, VIEWPORT.height / layout.height);
@@ -144,6 +146,8 @@ export async function captureModelScreenshot(
   /** The run's screen cache (session-browser): unchanged regions are not read again. */
   cache?: ScreenCache<CachedScreen>,
 ): Promise<ModelScreenshot> {
+  // The page answers nothing while its main frame waits on a navigation that never answers.
+  await session.stopStuckNavigation(signal, STUCK_NAVIGATION_WAIT_MS);
   let layout = await session.layout();
   const drop = async (reason: string = WITHHELD.moved) => {
     const dropped = await blackFrame(layout, reason);
