@@ -373,3 +373,41 @@ describe("recordedRun: the ledger around one invocation (I1, I2)", () => {
     }
   });
 });
+
+describe("SIGINT/SIGTERM during a recorded run", () => {
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "%s cancels the in-flight run through runs.cancel and marks the entry cancelled with its last spend",
+    async (signal) => {
+      const ledger = openLedger(mkdtempSync(join(tmpdir(), "bench-ledger-")));
+      const cancel = vi.fn(async () => ({ ok: true }));
+      const exit = vi.fn();
+      const before = process.listenerCount(signal);
+      let finish!: () => void;
+      try {
+        const running = recordedRun(
+          ledger,
+          "fixtures",
+          null,
+          "run",
+          async (book) => {
+            book.runStarted("22222222-2222-4222-8222-222222222222");
+            book.checkpoint(1.25);
+            process.emit(signal);
+            await new Promise<void>((resolve) => (finish = resolve));
+            return { spentBeforeUsd: 0, spentAfterUsd: 1.25 } as SuiteRunResult;
+          },
+          () => "x.md",
+          { api: { runs: { cancel } } as unknown as BenchApi, log: () => undefined, exit },
+        );
+        await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(130));
+        expect(cancel).toHaveBeenCalledWith({ runId: "22222222-2222-4222-8222-222222222222" });
+        expect(ledger.entries()).toMatchObject([{ status: "cancelled", usd: 1.25 }]);
+        finish();
+        await running.catch(() => undefined);
+      } finally {
+        ledger.close();
+      }
+      expect(process.listenerCount(signal)).toBe(before);
+    },
+  );
+});

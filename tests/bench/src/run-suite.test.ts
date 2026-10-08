@@ -146,7 +146,7 @@ function fake(
     ),
     reset: vi.fn(async () => undefined),
     // The durable ledger's total before this invocation (I2); the stack's usage API is never read.
-    spend: { priorUsd: over.spent ?? 0, checkpoint: vi.fn() },
+    spend: { priorUsd: over.spent ?? 0, checkpoint: vi.fn(), runStarted: vi.fn() },
     watch: vi.fn(async () => ({
       ...initialWatchState(0),
       status: "completed" as const,

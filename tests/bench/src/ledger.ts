@@ -40,6 +40,7 @@ const LedgerEvent = z.discriminatedUnion("type", [
     at: z.string(),
   }),
   z.object({ type: z.literal("resolve"), id: z.uuid(), at: z.string() }),
+  z.object({ type: z.literal("cancel"), id: z.uuid(), at: z.string() }),
 ]);
 type LedgerEvent = z.infer<typeof LedgerEvent>;
 
@@ -49,7 +50,8 @@ export interface LedgerEntry {
   command: string;
   startedAt: string;
   /** running: started and never ended, which includes a crashed or killed CLI. */
-  status: "running" | "finished" | "resolved";
+  /** cancelled: stopped by SIGINT/SIGTERM after cancelling its runs through runs.cancel. */
+  status: "running" | "finished" | "resolved" | "cancelled";
   /** Highest spend recorded for this invocation; it never goes down. */
   usd: number;
   record: string | null;
@@ -100,7 +102,7 @@ function fold(text: string): LedgerEntry[] {
       entry.usd = Math.max(entry.usd, event.usd);
       entry.status = "finished";
       entry.record = event.record;
-    } else entry.status = "resolved";
+    } else entry.status = event.type === "cancel" ? "cancelled" : "resolved";
   }
   return [...entries.values()];
 }
@@ -138,6 +140,8 @@ export interface Ledger {
   end(id: string, usd: number, record: string | null): void;
   /** `pnpm bench resolve <id>`: a person has checked a run that never ended. */
   resolve(id: string): void;
+  /** The CLI was interrupted and cancelled its runs; the last checkpointed spend stays. */
+  cancel(id: string): void;
   close(): void;
 }
 
@@ -204,6 +208,10 @@ export function openLedger(dir = ledgerDir()): Ledger {
     resolve(id) {
       running(id);
       append({ type: "resolve", id, at: at() });
+    },
+    cancel(id) {
+      running(id);
+      append({ type: "cancel", id, at: at() });
     },
     close() {
       if (!open) return;

@@ -82,6 +82,8 @@ export interface SpendBook {
   priorUsd: number;
   /** Records this invocation's spend so far. */
   checkpoint(usd: number): void;
+  /** Every agent run this invocation starts, so an interrupt can cancel it. */
+  runStarted(runId: string): void;
 }
 
 export interface RunnerDeps extends WatchDeps {
@@ -188,7 +190,10 @@ function spendGuard(deps: RunnerDeps, options: SuiteRunOptions) {
     return deps.spend.priorUsd + current;
   };
   return {
-    track: (runId: string) => void runIds.push(runId),
+    track: (runId: string) => {
+      runIds.push(runId);
+      deps.spend.runStarted(runId);
+    },
     spent,
     remaining: async () => options.maxTotalUsd - (await spent()),
     /** Worst-case refusal for a main run, whose budget is stored on the benchmark: it must fit whole (X10). */
