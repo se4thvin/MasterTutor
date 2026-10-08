@@ -4,6 +4,12 @@ import { resolveGarageRef, type TranscriptEntry } from "./transcript.ts";
 
 /** Only the newest screenshots go to the model as images (openai-data-policy.md rule 4). */
 export const SCREENSHOT_WINDOW = 3;
+/**
+ * Of those, at most one may sit in a message: with the computer tool declared (every request),
+ * OpenAI refuses a second message image ("Computer tool cannot use multiple image inputs");
+ * computer_call_output screenshots do not count.
+ */
+export const MESSAGE_IMAGE_WINDOW = 1;
 export const SCREENSHOT_OMITTED = "[screenshot omitted]";
 /**
  * A computer_call_output must carry an image, so an omitted one becomes this blank 1×1 PNG (no
@@ -45,16 +51,29 @@ function assertPaired(items: readonly Loose[]): void {
     throw new Error(`model input is unpaired: no output for ${[...open].join(", ")}`);
 }
 
+interface ImageSlot {
+  kind: "output" | "message";
+  /** Position among all image slots. */
+  index: number;
+  /** Position among message image slots (-1 for a call output). */
+  messageIndex: number;
+}
+
 /** Visits every image slot in order; `replace` returns the new item for that slot. */
 function mapImages(
   items: readonly Loose[],
-  replace: (url: string, slot: { kind: "output" | "message"; index: number }) => string | null,
+  replace: (url: string, slot: ImageSlot) => string | null,
 ): Loose[] {
   let index = 0;
+  let messageIndex = 0;
   return items.map((item) => {
     const output = item.output as Loose | undefined;
     if (item.type === "computer_call_output" && output?.type === "computer_screenshot") {
-      const url = replace(String(output.image_url ?? ""), { kind: "output", index: index++ });
+      const url = replace(String(output.image_url ?? ""), {
+        kind: "output",
+        index: index++,
+        messageIndex: -1,
+      });
       return { ...item, output: { ...output, image_url: url ?? BLANK_SCREENSHOT } };
     }
     if (!Array.isArray(item.content)) return item;
@@ -62,7 +81,11 @@ function mapImages(
       ...item,
       content: (item.content as Loose[]).map((part) => {
         if (part.type !== "input_image") return part;
-        const url = replace(String(part.image_url ?? ""), { kind: "message", index: index++ });
+        const url = replace(String(part.image_url ?? ""), {
+          kind: "message",
+          index: index++,
+          messageIndex: messageIndex++,
+        });
         return url === null
           ? { type: "input_text", text: SCREENSHOT_OMITTED }
           : { ...part, image_url: url };
@@ -86,12 +109,17 @@ export function buildModelInput(
   ];
   assertPaired(items);
   let total = 0;
-  mapImages(items, (url) => {
+  let messages = 0;
+  mapImages(items, (url, slot) => {
     total += 1;
+    if (slot.kind === "message") messages += 1;
     return url;
   });
   return mapImages(items, (url, slot) =>
-    slot.index >= total - keep ? url : null,
+    slot.index >= total - keep &&
+    (slot.kind === "output" || slot.messageIndex >= messages - MESSAGE_IMAGE_WINDOW)
+      ? url
+      : null,
   ) as unknown as ResponseInputItem[];
 }
 

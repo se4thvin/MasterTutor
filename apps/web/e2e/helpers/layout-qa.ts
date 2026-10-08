@@ -65,8 +65,16 @@ export async function findLayoutIssues(
       // scrollWidth also counts ::before/::after overflow (the 44px hit areas), which is not text spilling.
       // Measuring the real content with a Range ignores pseudo-elements. Fixed descendants are not
       // this box's content when they escape it (see holdsFixed), so they are measured out.
+      // A descendant that truncates its own text with an ellipsis ends at its box: the hidden rest
+      // of its text is cut on purpose, so an ancestor measures the box, not the full text run.
+      const truncates = (d: Element) => {
+        const s = getComputedStyle(d);
+        return s.textOverflow === "ellipsis" && s.overflowX !== "visible";
+      };
       const hasEscaping = (el: Element, root: Element) =>
-        Array.from(el.querySelectorAll("*")).some((d) => isFixed(d) && escapes(d, root));
+        Array.from(el.querySelectorAll("*")).some(
+          (d) => (isFixed(d) && escapes(d, root)) || truncates(d),
+        );
       const contentRight = (el: Element, root: Element = el): number => {
         const range = document.createRange();
         if (!hasEscaping(el, root)) {
@@ -76,6 +84,10 @@ export async function findLayoutIssues(
         let right = Number.NEGATIVE_INFINITY;
         for (const child of Array.from(el.childNodes)) {
           if (child instanceof Element && isFixed(child) && escapes(child, root)) continue;
+          if (child instanceof Element && truncates(child)) {
+            right = Math.max(right, child.getBoundingClientRect().right);
+            continue;
+          }
           if (child instanceof Element && hasEscaping(child, root)) {
             right = Math.max(right, child.getBoundingClientRect().right, contentRight(child, root));
             continue;

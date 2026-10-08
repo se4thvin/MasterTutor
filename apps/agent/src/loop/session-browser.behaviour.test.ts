@@ -69,6 +69,10 @@ describe("SessionLoopBrowser", () => {
     expect(a.domHash).toBe(b.domHash);
     expect(a.title).toBe("Interactive fixture");
     expect(a.captcha).toBe(false);
+    // interactive.html has a password field: the page wants a sign-in.
+    expect(a.signIn).toBe(true);
+    await browser.navigate(`${SITE}/storage.html`, signal);
+    expect((await browser.observe(signal)).signIn).toBe(false);
     await browser.navigate(`${SITE}/captcha-invisible.html`, signal);
     expect((await browser.observe(signal)).captcha).toBe(false);
     await browser.navigate(`${SITE}/captcha.html`, signal);

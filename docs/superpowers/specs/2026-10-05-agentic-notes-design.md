@@ -529,9 +529,9 @@ The direction is mockup D "Cutaway" (`orchestration/runs/2026-10-05-12-design-ap
 `apps/web/styles/tokens.css` maps to Tailwind v4 `@theme`. No raw values appear in components.
 
 **Type**
-- Stack: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter, sans-serif`, with Inter self-hosted through `next/font`.
-- Mono: `ui-monospace, "SF Mono", "Geist Mono"`.
-- Sizes: the run 12 scale. Reading body is 17/1.65 at about 68ch. There is no serif.
+- One typeface, SF Pro, from the system stack `--font-ui`: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui`, then other platforms' UI fonts. SF Pro is never bundled (Apple's licence forbids redistribution).
+- Mono (`--font-code`: `ui-monospace, "SF Mono"`) is for code blocks in notes only. Ids, numbers and meters use SF Pro with `tabular-nums`.
+- Sizes, weights and tracking come from the `--text-*`, `--weight-*` and `--tracking-*` tokens: the run 12 scale. Reading body is 17/1.65 at about 68ch. There is no serif. Stylelint (`mastertutor/type-tokens`) and ESLint (`typography/no-raw-font`) enforce this.
 
 **Colour** (light / dark)
 
