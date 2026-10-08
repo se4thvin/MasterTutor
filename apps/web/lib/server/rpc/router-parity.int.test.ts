@@ -43,7 +43,6 @@ const UNTIL_P3_B2 = [
   "notes/markVerified",
   "notes/move",
   "notes/delete",
-  "notes/export",
   "folders/tree",
   "folders/create",
   "folders/rename",
