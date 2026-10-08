@@ -16,3 +16,7 @@ apps/web/AGENTS.md
 apps/web/CLAUDE.md
 tests/fixtures/vault-sites/.dist/
 apps/web/e2e/.out/
+.env.bench
+.env.bench-account
+orchestration/benchmarks/.raw/
+tests/bench/.out/
