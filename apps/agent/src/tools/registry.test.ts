@@ -10,7 +10,7 @@ import type { BrowserSession } from "../browser/session.ts";
 import { Interrupted, StaleRef } from "../runtime/errors.ts";
 import { NO_MASK_SOURCES, SECRET_REDACTION, type MaskSources } from "../browser/masking.ts";
 import { StepCollector } from "../loop/step-collector.ts";
-import { ToolRegistry } from "./registry.ts";
+import { ToolRegistry, profileTools } from "./registry.ts";
 import { ToolError, register, type CallApproval, type ToolContext } from "./types.ts";
 
 const log = createLogger({ service: "test", level: "silent" });
@@ -179,5 +179,51 @@ describe("ToolRegistry", () => {
     const { output } = await registry.run("read_page", readArgs, ctx());
     expect(output).not.toContain("hunter2-secret");
     expect(output).toContain(`Your password is ${SECRET_REDACTION}`);
+  });
+});
+
+describe("profileTools (Phase 10)", () => {
+  const fakeFill = register({
+    name: "fill_credential",
+    args: FillCredentialArgs,
+    result: FillCredentialResult,
+    untrusted: false,
+    run: async () => ({ ok: true as const }),
+  });
+  const read = fakeReadPage(async () => ({
+    hash: "a".repeat(64),
+    url: "https://a.com/x",
+    title: "t",
+    text: "page",
+  }));
+
+  it("registers only the profile's tools, so an out-of-profile call answers tool_unavailable in code", async () => {
+    const registry = new ToolRegistry(profileTools("computer_use", [read, fakeFill]), log);
+    expect(await registry.run("read_page", readArgs, ctx())).toEqual({
+      output: '{"error":"tool_unavailable"}',
+      notesChanged: false,
+      failed: true,
+      wait: null,
+      handOver: null,
+    });
+    expect(
+      await registry.approval("read_page", readArgs, {
+        ...ctx(),
+        signal: new AbortController().signal,
+      }),
+    ).toBeNull();
+    const fill = await registry.run(
+      "fill_credential",
+      { alias: "zz", field: "password", target: "focused" },
+      ctx(),
+    );
+    expect(fill.output).toBe('{"ok":true}');
+  });
+
+  it("keeps every tool in browser_use", () => {
+    expect(profileTools("browser_use", [read, fakeFill]).map((tool) => tool.name)).toEqual([
+      "read_page",
+      "fill_credential",
+    ]);
   });
 });

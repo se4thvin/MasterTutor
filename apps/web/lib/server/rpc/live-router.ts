@@ -8,6 +8,7 @@ import type { LiveDeps } from "../live/open-live.ts";
 import { createLiveHandlers } from "../live/procedures.ts";
 import { getSealer, type Sealer } from "../vault/sealer.ts";
 import { createAssetProcedures } from "./assets.ts";
+import { createBenchmarkProcedures } from "./benchmarks.ts";
 import { createExportProcedure } from "./export.ts";
 import { liveOs as os } from "./live-os.ts";
 import { createRunProcedures } from "./runs.ts";
@@ -25,9 +26,9 @@ interface LiveRouterDeps {
 }
 
 /**
- * Procedures whose backend is not on this branch yet: notes.* (but search and export) and folders.* (P3),
- * benchmarks.* (T18). Nothing else may use this; router-parity.int.test.ts lists each exclusion by
- * the branch that removes it.
+ * Procedures whose backend is not on this branch yet: notes.* (but search and export) and
+ * folders.* (P3). Nothing else may use this; router-parity.int.test.ts lists each exclusion by the
+ * branch that removes it.
  */
 const notWired = (): never => {
   throw new ORPCError("NOT_IMPLEMENTED", {
@@ -40,6 +41,7 @@ export function createLiveRouter(deps: LiveRouterDeps) {
   const vault = createVaultProcedures({ sealer: deps.sealer, db: deps.db });
   const runs = createRunProcedures({ db: deps.db });
   const settings = createSettingsProcedures({ db: deps.db });
+  const benchmarks = createBenchmarkProcedures({ db: deps.db });
   /** B6: the live view and the control lock (spec §10.2, §10.3). */
   const live = createLiveHandlers(deps.live);
   return os.router({
@@ -72,13 +74,7 @@ export function createLiveRouter(deps: LiveRouterDeps) {
     vault: vault.vault,
     settings,
     assets: createAssetProcedures({ db: deps.db }),
-    benchmarks: {
-      list: os.benchmarks.list.handler(notWired),
-      create: os.benchmarks.create.handler(notWired),
-      start: os.benchmarks.start.handler(notWired),
-      runs: os.benchmarks.runs.handler(notWired),
-      grade: os.benchmarks.grade.handler(notWired),
-    },
+    benchmarks,
   });
 }
 

@@ -55,7 +55,7 @@ async function connect(hooks: RunHooks = withHooks()) {
     log,
   });
   runId = randomUUID();
-  const run = { id: runId, allowedOrigins: [SITE] } as RunSnapshot;
+  const run = { id: runId, allowedOrigins: [SITE], toolProfile: "browser_use" } as RunSnapshot;
   attached = await connector({ slotName: "browser-1", run: () => run, guard: new ControlGuard() });
   return attached.browser;
 }
