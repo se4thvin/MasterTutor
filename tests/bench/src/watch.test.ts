@@ -141,6 +141,21 @@ describe("watcher decisions", () => {
     });
   });
 
+  it("keeps the human timer running when a waiting run is parked as sleeping", () => {
+    let s = apply(initialWatchState(0), status("waiting", "takeover"), 10).state;
+    s = apply(
+      s,
+      rec({ type: "status", status: "sleeping", waitReason: null, reason: null }),
+      60_000,
+    ).state;
+    expect(s.humanWait).toBe("takeover");
+    expect(onTick(s, 10 + 1_199_000, zybooks).commands).toEqual([]);
+    expect(onTick(s, 10 + 1_200_001, zybooks).commands).toContainEqual({
+      type: "cancel",
+      reason: "human_timeout",
+    });
+  });
+
   it("clears a pending approval when it resolves", () => {
     let s = apply(initialWatchState(0), safety("irrelevant_domain"), 1).state;
     expect(s.pendingApprovals).toEqual([A1]);
