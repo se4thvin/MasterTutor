@@ -1,4 +1,9 @@
-import { toOrigin, type FunctionToolName } from "@mastertutor/contracts";
+import {
+  isToolInProfile,
+  toOrigin,
+  type FunctionToolName,
+  type ToolProfile,
+} from "@mastertutor/contracts";
 import { NO_MASK_SOURCES, redactDeep, type MaskSources } from "../browser/masking.ts";
 import { StaleRef, interruptionOf } from "../runtime/errors.ts";
 import type { Log } from "../runtime/types.ts";
@@ -93,4 +98,15 @@ export class ToolRegistry {
       };
     }
   }
+}
+
+/**
+ * The run's function tools (Phase 10). A tool outside the profile is never registered, so a
+ * hallucinated call to it answers {"error":"tool_unavailable"} in code, not by prompt.
+ */
+export function profileTools(
+  profile: ToolProfile,
+  tools: readonly RegisteredTool[],
+): RegisteredTool[] {
+  return tools.filter((tool) => isToolInProfile(profile, tool.name));
 }
