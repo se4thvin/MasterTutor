@@ -109,8 +109,14 @@ image="mt-ci-runner:$image_hash"
 base="$root"
 run_dir="$runs_dir/$project"
 sync_lock="$HOME/mt-ci/.sync/$(basename "$base").lock"
+# Playwright's --update-snapshots (or -u) rewrites baselines on purpose; only then do they go back.
+update_baselines=0
+case "$suite" in
+  ui | e2e) for arg in "$@"; do [[ "$arg" == -u || "$arg" == --update-snapshots* ]] && update_baselines=1; done ;;
+esac
 on_exit() {
   publish_results "$run_dir/src" "$base" "$sync_lock" || true
+  if [[ "$update_baselines" == 1 ]]; then publish_baselines "$run_dir/src" "$base" "$sync_lock" || true; fi
   # qa's stack (and its snapshot) outlives this script; everything else is removed when it exits.
   if [[ "$suite" != qa ]]; then cleanup_run "$project"; fi
 }
