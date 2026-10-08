@@ -1,4 +1,4 @@
-import type { Scenario } from "../scenario.ts";
+import type { MockOutput, MockTurn, Scenario } from "../scenario.ts";
 
 /** Scenarios served by the standalone mock (Compose E2E, Phase 7). Agent-behaviour tests pass their own. */
 export const SCENARIOS: Scenario[] = [
@@ -28,3 +28,55 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
 ];
+
+const click = (x: number, y: number) => ({
+  type: "computer" as const,
+  actions: [{ type: "click", button: "left", x, y }],
+});
+const fillFocused = (field: "username" | "password") => ({
+  type: "function" as const,
+  name: "fill_credential",
+  args: { alias: "bench-fixture", field, target: "focused" },
+});
+const turn = (outputs: MockOutput[]): MockTurn => ({ outputs });
+const done = turn([{ type: "turn", status: "done", reason: "Finished" }]);
+
+/** Consent, then sign in by coordinates (computer_use). */
+const signInByCoordinates: MockTurn[] = [
+  turn([click(1100, 60)]),
+  turn([click(640, 302)]),
+  turn([fillFocused("username")]),
+  turn([click(640, 372)]),
+  turn([fillFocused("password")]),
+  turn([click(640, 442)]),
+];
+/** Consent, then sign in by read_page refs (browser_use). */
+const signInByRefs: MockTurn[] = [
+  turn([{ type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } }]),
+  turn([{ type: "click_named", name: "Accept" }]),
+  turn([{ type: "function", name: "read_page", args: { mode: "interactive", sinceHash: null } }]),
+  turn([{ type: "fill_named", alias: "bench-fixture", field: "username", name: "Email" }]),
+  turn([{ type: "fill_named", alias: "bench-fixture", field: "password", name: "Password" }]),
+  turn([{ type: "click_named", name: "Sign in" }]),
+];
+const activities: MockTurn[] = [
+  turn([click(640, 322)]),
+  turn([click(280, 222)]),
+  turn([click(480, 222)]),
+  turn([click(260, 412)]),
+  turn([click(400, 412)]),
+  turn([click(400, 412)]),
+  turn([click(280, 602)]),
+  turn([{ type: "computer", actions: [{ type: "type", text: "42" }] }]),
+  turn([click(440, 602)]),
+];
+const readBook: MockTurn[] = [
+  turn([{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }]),
+];
+
+SCENARIOS.push(
+  { name: "bench-activities-computer_use", turns: [...signInByCoordinates, ...activities, done] },
+  { name: "bench-activities-browser_use", turns: [...signInByRefs, ...activities, done] },
+  { name: "bench-verify-computer_use", turns: [...signInByCoordinates, ...readBook, done] },
+  { name: "bench-verify-browser_use", turns: [...signInByRefs, ...readBook, done] },
+);

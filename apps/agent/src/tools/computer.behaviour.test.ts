@@ -158,6 +158,28 @@ describe("ComputerExecutor", () => {
     expect(s.drainBlockedNavigations()).toEqual([{ url: `${OTHER}/`, origin: OTHER }]);
   });
 
+  it("records what each action of a batch did: page input, navigation or the address bar (bench N1, N2)", async () => {
+    const { s, executor } = await setup();
+    const go = await point(s, "Go to page two");
+    const batch = await executor.run(
+      [{ type: "move", x: go.x, y: go.y }, { type: "wait" }, click(go)],
+      signal,
+    );
+    expect(batch.effects).toEqual(["passive", "passive", "input"]);
+    const back = await executor.run([{ type: "keypress", keys: ["ALT", "LEFT"] }], signal);
+    expect(back.effects).toEqual(["navigate"]);
+    const bar = (url: string): ComputerAction[] => [
+      { type: "keypress", keys: ["CTRL", "L"] },
+      { type: "type", text: url },
+      { type: "keypress", keys: ["ENTER"] },
+    ];
+    const opened = await executor.run(bar(`${SITE}/page2`), signal);
+    expect(s.page.url()).toBe(`${SITE}/page2`);
+    expect(opened.effects).toEqual(["address_bar", "address_bar", "address_bar_landed"]);
+    const blocked = await executor.run(bar(`${OTHER}/`), signal);
+    expect(blocked.effects).toEqual(["address_bar", "address_bar", "address_bar"]);
+  });
+
   it("follows a new tab (Review Focus 1) and stops the batch after navigation (Review Focus 3)", async () => {
     const { s, executor } = await setup();
     await executor.execute(click(await point(s, "Open in new tab")), signal);
@@ -886,6 +908,7 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     expect(await executor.run([click({ x: 80, y: 20 })], signal, gated)).toEqual({
       executed: 1,
       notes: [],
+      effects: ["input"],
       handOver: null,
     });
     expect(await text(s, "#count")).toBe("1");
@@ -902,7 +925,7 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
     const box = (await embed.locator("#cancel").boundingBox())!;
     const cancel = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
     const run = await executor.run([click(cancel)], signal, gated);
-    expect(run).toEqual({ executed: 1, notes: [], handOver: null });
+    expect(run).toEqual({ executed: 1, notes: [], effects: ["input"], handOver: null });
     expect(
       await embed.locator("#cancel").evaluate(() => (window as { __clicked?: string }).__clicked),
     ).toBe("cancel");
@@ -933,7 +956,7 @@ describe("ComputerExecutor when the click guard is not whole (breaker fix)", () 
         target: (await hitTest(s, at)).target,
         personApproved: false,
       }));
-      expect(run).toEqual({ executed: 1, notes: [], handOver: null });
+      expect(run).toEqual({ executed: 1, notes: [], effects: ["input"], handOver: null });
     };
     // interactive.html (one frame): a button, a form's submit button, the frame's button, a link.
     await gatedClick(s.page.locator("#inc"));

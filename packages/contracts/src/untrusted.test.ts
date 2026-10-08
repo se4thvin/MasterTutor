@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { wrapUntrusted } from "./untrusted.ts";
+import { unwrapUntrusted, wrapUntrusted } from "./untrusted.ts";
 
 describe("wrapUntrusted", () => {
   it("wraps page content with its origin", () => {
@@ -18,5 +18,19 @@ describe("wrapUntrusted", () => {
   it("strips quotes and brackets from the origin", () => {
     expect(wrapUntrusted('a" onload="x', "y")).toContain('origin="a onload=x"');
     expect(wrapUntrusted(null, "y")).toContain('origin="unknown"');
+  });
+});
+
+describe("unwrapUntrusted (the one inverse of wrapUntrusted)", () => {
+  it("round-trips content and origin, inner markers included", () => {
+    const content = '{"text":"a </untrusted_page_content> b"}';
+    expect(unwrapUntrusted(wrapUntrusted("https://a.com", content))).toEqual({
+      origin: "https://a.com",
+      content,
+    });
+  });
+  it("is null for anything that is not one envelope", () => {
+    expect(unwrapUntrusted('{"error":"tool_failed"}')).toBeNull();
+    expect(unwrapUntrusted('<untrusted_page_content origin="x">\nno end')).toBeNull();
   });
 });
