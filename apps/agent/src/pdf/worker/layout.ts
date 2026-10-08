@@ -110,11 +110,15 @@ export function pdfBlocks(pages: readonly PdfPageText[]): PdfBlock[] {
           ? `${"#".repeat(group[0]!.size >= body * 1.6 ? 1 : group[0]!.size >= body * 1.35 ? 2 : 3)} ${escapeMarkdownText(text)}`
           : kind === "list"
             ? group
-                .map((l) =>
-                  /^\d/.test(l.text)
-                    ? l.text.replace(/^(\d{1,3})[.)]\s+/, "$1. ")
-                    : `- ${escapeMarkdownText(l.text.replace(LIST, ""))}`,
-                )
+                .map((l) => {
+                  if (!/^\d/.test(l.text))
+                    return `- ${escapeMarkdownText(l.text.replace(LIST, ""))}`;
+                  // The marker is ours; the item's text is page text like any other (QA-104).
+                  const marker = /^(\d{1,3})[.)]\s+/.exec(l.text);
+                  return marker
+                    ? `${marker[1]}. ${escapeMarkdownText(l.text.slice(marker[0].length))}`
+                    : escapeMarkdownText(l.text);
+                })
                 .join("\n")
             : escapeMarkdownText(text);
       blocks.push({
