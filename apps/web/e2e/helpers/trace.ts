@@ -79,7 +79,8 @@ const CONTENT_REASONS = new Set([
  *   subtree's own layer (ISOLATE). Chromium emits no Paint for transform or opacity changes, so
  *   compositor-only motion counts zero.
  * Content entering or leaving the page is not motion and does not count, nor does a paint in a
- * frame where scoped content entered (a new digit, a new caption). A frame where only
+ * frame where scoped content entered (a new digit, a new caption), nor a layer's first paint in
+ * the window (an element appearing, even after the motion started). A frame where only
  * frosted-glass panels painted counts against each panel's GLASS_PAINT_FRAMES instead.
  */
 export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope): MotionVerdict {
@@ -130,15 +131,22 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
   const moving = [...changedFrames].filter((at) => at >= 0);
   const started = moving.length > 0 ? Math.min(...moving) : frames.length;
   const inMotion = (at: number) => at > started;
+  // Per element (layer): its first paint in the window is it appearing, wherever the motion is by
+  // then; under slow frames a caption or cursor that arrives after the motion started is first
+  // painted inside the counted frames. Every later paint of that layer counts.
+  const seen = new Set<number>();
   let paints = 0;
   const glassFrames = new Map<number, number>(); // glass panel -> frames it painted on
-  for (const [at, layers] of painted) {
+  for (const at of [...painted.keys()].sort((a, b) => a - b)) {
+    const repainted = [...painted.get(at)!].filter((layer) => seen.has(layer));
+    for (const layer of painted.get(at)!) seen.add(layer);
+    if (repainted.length === 0) continue;
     if (!inMotion(at) || !changedFrames.has(at) || contentFrames.has(at)) continue;
-    if (![...layers].every((layer) => scope.glass.has(layer))) {
+    if (!repainted.every((layer) => scope.glass.has(layer))) {
       paints++;
       continue;
     }
-    for (const layer of layers) glassFrames.set(layer, (glassFrames.get(layer) ?? 0) + 1);
+    for (const layer of repainted) glassFrames.set(layer, (glassFrames.get(layer) ?? 0) + 1);
   }
   let glassPaints = 0;
   for (const count of glassFrames.values()) {

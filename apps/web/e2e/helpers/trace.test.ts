@@ -155,11 +155,32 @@ describe("analyzeTrace (D28, P8-28, I6)", () => {
     expect(v.paints).toBe(0);
   });
 
+  it("does not count an element's first paint, even after the motion started; its later paints count", () => {
+    const appears = window(
+      frame(10_000),
+      styled(20_000, 7),
+      paint(20_100, 8), // 8 (its own layer) shows up two frames into the motion: its first paint
+      frame(21_000),
+    );
+    expect(analyzeTrace(appears, SCOPE).paints).toBe(0);
+    const repaints = window(
+      frame(10_000),
+      styled(20_000, 7),
+      paint(20_100, 8),
+      frame(21_000),
+      styled(30_000, 8),
+      paint(30_100, 8), // then repaints as it moves: a finding
+      frame(31_000),
+    );
+    expect(analyzeTrace(repaints, SCOPE).paints).toBe(1);
+  });
+
   describe("frosted-glass panels (D49)", () => {
     // Node 8 is a glass panel in its own layer; 7 owns the subtree's layer.
     const GLASS: MotionScope = { nodes: new Set([7, 8]), glass: new Set([8]) };
     const glassFrames = (count: number, also: TraceEvent[] = []) => {
-      const events: TraceEvent[] = [frame(10_000)];
+      // The panel appears (its first paint) with the motion's first frame.
+      const events: TraceEvent[] = [paint(6_500, 8), frame(10_000)];
       for (let i = 0; i < count; i++) {
         const at = 20_000 + i * 16_600;
         events.push(styled(at, 8), paint(at + 100, 8), frame(at + 1_000));
