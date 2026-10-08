@@ -19,8 +19,8 @@ const styled = (ts: number, nodeId: number, reason = "Animation") =>
 const laidOut = (ts: number, nodeId: number, reason = "Style changed") =>
   event("LayoutInvalidationTracking", ts, { data: { nodeId, reason } });
 
-/** Nodes 7 and 8 animate; node 1 (#document) is the layer they paint in; 99 is elsewhere. */
-const SCOPE: MotionScope = { nodes: new Set([7, 8]), ancestors: new Set([1]) };
+/** Nodes 7 and 8 animate, in their own layer owned by 7 (ISOLATE); 1 is #document; 99 is elsewhere. */
+const SCOPE: MotionScope = { nodes: new Set([7, 8]) };
 const window = (...events: TraceEvent[]) => [
   mark(MOTION_MARKS.ready, 0),
   mark(MOTION_MARKS.triggered, 5_000),
@@ -52,21 +52,21 @@ describe("analyzeTrace (D28, P8-28, I6)", () => {
     expect(v.layouts).toBe(1);
   });
 
-  it("counts a paint frame only when a scoped element changed and its layer painted", () => {
+  it("counts a paint frame only when a scoped element changed and the subtree's layer painted", () => {
     const v = analyzeTrace(
       window(
         frame(10_000),
         frame(26_600),
-        styled(30_000, 7),
-        paint(30_500, 1), // a background-color change on 7, painted in the document layer
+        styled(30_000, 8),
+        paint(30_500, 7), // a background-color change on 8, painted in the subtree's layer
         frame(43_200),
         styled(45_000, 7), // a transform change: no Paint follows
         frame(60_000),
         styled(61_000, 99),
-        paint(61_500, 1), // something else repainted the layer; nothing in the scope changed
+        paint(61_500, 7), // the layer painted, but nothing in the scope changed
         frame(76_600),
         styled(77_000, 7),
-        paint(77_500, 42), // a layer the scope is not painted in
+        paint(77_500, 1), // a transform tick on 7 while a timer elsewhere repaints the document
         frame(93_200),
       ),
       SCOPE,
@@ -81,7 +81,7 @@ describe("analyzeTrace (D28, P8-28, I6)", () => {
         frame(26_600),
         laidOut(30_000, 7, "Added to layout"),
         styled(30_100, 8, "Node was inserted into tree"),
-        paint(30_500, 1),
+        paint(30_500, 7),
         frame(43_200),
       ),
       SCOPE,

@@ -28,11 +28,19 @@ export const MOTION_MARKS = {
 } as const;
 const FRAME_BUDGET_US = 16_700;
 
-/** The animated subtree's backend node ids, and the ids of its ancestors (the layers it paints in). */
+/** The animated subtree's backend node ids. traceMotion gives the subtree its own layer. */
 export interface MotionScope {
   nodes: ReadonlySet<number>;
-  ancestors: ReadonlySet<number>;
 }
+
+/**
+ * Promotes the animated subtree to its own layer for the trace. Chromium attributes a Paint to the
+ * layer, not the element, so without it the subtree paints in an ancestor's layer (often the whole
+ * document), where any unrelated repaint in the same frame, a ticking timer or a cursor elsewhere,
+ * looked like the motion's. In its own layer, a Paint of the subtree is the subtree's. `opacity`
+ * promotes without making a containing block, so fixed and sticky descendants keep their layout.
+ */
+const ISOLATE = (scope: string) => `${scope} { will-change: opacity !important }`;
 
 /** Invalidation tracking names the element whose style or layout changed (I6). */
 const INVALIDATION_CATEGORY = "disabled-by-default-devtools.timeline.invalidationTracking";
@@ -51,9 +59,9 @@ const CONTENT_REASONS = new Set([
  * count frames, from the `warmupFrames`-th frame after the trigger returned to the end mark (I6):
  * - a layout frame has a layout invalidation on a scoped element (invalidation tracking names the
  *   element even when the relayout's root is the document);
- * - a paint frame has a style or layout invalidation on a scoped element and a Paint of a layer the
- *   subtree is painted in (the scope or an ancestor). Chromium emits no Paint for transform or
- *   opacity changes, composited or not, so compositor-only motion counts zero.
+ * - a paint frame has a style or layout invalidation on a scoped element and a Paint of the
+ *   subtree's own layer (ISOLATE). Chromium emits no Paint for transform or opacity changes, so
+ *   compositor-only motion counts zero.
  * Content entering or leaving the page is not motion and does not count.
  */
 export function analyzeTrace(
@@ -95,8 +103,7 @@ export function analyzeTrace(
     if ((e.name === LAYOUT_CHANGE || e.name === STYLE_CHANGE) && motion(e)) changedFrames.add(at);
     if (e.name === LAYOUT_CHANGE && motion(e)) layoutFrames.add(at);
     const layer = node(e) ?? -1;
-    if (e.name === "Paint" && (scope.nodes.has(layer) || scope.ancestors.has(layer)))
-      paintedFrames.add(at);
+    if (e.name === "Paint" && scope.nodes.has(layer)) paintedFrames.add(at);
   }
   return {
     frames: frames.length,
@@ -119,8 +126,7 @@ async function motionScope(cdp: CDPSession, selector: string): Promise<MotionSco
   const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
   const nodes = await backendIds(cdp, root.nodeId, `${selector}, ${selector} *`);
   if (nodes.length === 0) throw new Error(`motion scope ${selector} is not on the page`);
-  const ancestors = await backendIds(cdp, root.nodeId, `:has(${selector})`);
-  return { nodes: new Set(nodes), ancestors: new Set([root.backendNodeId, ...ancestors]) };
+  return { nodes: new Set(nodes) };
 }
 
 /**
@@ -140,6 +146,9 @@ export async function traceMotion(
   const complete = new Promise<void>((resolve) =>
     cdp.once("Tracing.tracingComplete", () => resolve()),
   );
+  // Before tracing, so promoting the layer is not in the trace; a subtree the trigger mounts
+  // matches the rule too.
+  await page.addStyleTag({ content: ISOLATE(run.scope) });
   await cdp.send("Tracing.start", {
     transferMode: "ReportEvents",
     traceConfig: {
