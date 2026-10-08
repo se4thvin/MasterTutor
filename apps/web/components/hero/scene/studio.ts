@@ -23,9 +23,10 @@ export function studioTones(dark: boolean): { wall: number; floor: number } {
   return dark ? { wall: 0.16, floor: 0.04 } : { wall: 0.42, floor: 0.1 };
 }
 
-/** Theme colours the scene mirrors: the body background and the tint, signal and hero tokens. */
+/** Theme values the scene mirrors: the body background, the tint, signal and hero tokens, and the font. */
 export function readSceneTokens(): {
   bg: string;
+  font: string;
   tint: string;
   signal: string;
   aqua: string;
@@ -35,6 +36,7 @@ export function readSceneTokens(): {
   const v = (name: string) => root.getPropertyValue(name).trim();
   return {
     bg: getComputedStyle(document.body).backgroundColor,
+    font: v("--font-ui"),
     tint: v("--tint"),
     signal: v("--signal"),
     aqua: v("--hero-aqua-deep"),

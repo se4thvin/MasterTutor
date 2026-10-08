@@ -70,7 +70,7 @@ function BlockContent({ block }: { block: NoteBlock }) {
       return (
         <div className="blk-transcript">
           {block.anchor?.tStart !== undefined ? (
-            <span className="mono blk-time">[{formatTimestamp(block.anchor.tStart)}]</span>
+            <span className="tabular blk-time">[{formatTimestamp(block.anchor.tStart)}]</span>
           ) : null}
           <div>
             <BlockMarkdown markdown={block.markdown} />

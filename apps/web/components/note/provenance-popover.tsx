@@ -58,13 +58,13 @@ export function ProvenancePopover({
             {p.selector ? (
               <>
                 <dt>Selector</dt>
-                <dd className="mono">{p.selector}</dd>
+                <dd className="tabular">{p.selector}</dd>
               </>
             ) : null}
             {p.hashShort ? (
               <>
                 <dt>SHA-256</dt>
-                <dd className="mono">{p.hashShort}</dd>
+                <dd className="tabular">{p.hashShort}</dd>
               </>
             ) : null}
           </dl>

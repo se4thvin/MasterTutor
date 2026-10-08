@@ -4,6 +4,7 @@ import prettier from "eslint-config-prettier";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 import motionPlugin from "./apps/web/lint/motion-eslint-plugin.ts";
+import typographyPlugin from "./apps/web/lint/typography-eslint-plugin.ts";
 
 const ANIMATION_BANS = {
   group: ["gsap", "gsap/*", "ogl", "framer-motion", "matter-js", "@react-three/*", "@hugeicons/*"],
@@ -312,6 +313,14 @@ export default defineConfig(
       "apps/web/lint/**",
     ],
     rules: { "motion/no-raw-motion": "off", "motion/no-raw-motion-classes": "off" },
+  },
+  {
+    // Spec §11.1: one typeface. Product code only; tests and the fixture API's fake captured
+    // pages (lib/fixtures, e.g. a terminal screenshot) may spell fonts as data.
+    files: ["apps/web/{app,components,lib}/**/*.{ts,tsx}"],
+    ignores: ["apps/web/lib/fixtures/**", "apps/web/**/*.test.{ts,tsx}"],
+    plugins: { typography: typographyPlugin },
+    rules: { "typography/no-raw-font": "error" },
   },
   {
     files: ["apps/web/components/ui/icons.ts"],

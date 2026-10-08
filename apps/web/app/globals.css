@@ -39,9 +39,15 @@
   --color-danger: var(--danger);
   --color-on-danger: var(--on-danger);
   --color-danger-wash: var(--danger-wash);
+  /* One typeface (spec §11.1): no font-mono or font-serif utility exists. Preflight gives
+     code, kbd, samp and pre the default mono family, so that is SF Pro too; note code blocks set
+     SF Mono themselves (styles/note.css). */
   --font-*: initial;
   --font-sans: var(--font-ui);
-  --font-mono: var(--font-code);
+  --default-mono-font-family: var(--font-ui);
+  --font-weight-*: initial;
+  --tracking-*: initial;
+  --leading-*: initial;
   --text-*: initial;
   --radius-*: initial;
   --radius-xs: var(--r-xs);
@@ -70,9 +76,4 @@
   --breakpoint-sm: 26.3125rem;
   --breakpoint-md: 51.3125rem;
   --breakpoint-lg: 73.8125rem;
-}
-
-/* A theme key named --font-display would alias itself, so the utility reads the token directly. */
-@utility font-display {
-  font-family: var(--font-display);
 }
