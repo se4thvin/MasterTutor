@@ -109,8 +109,8 @@ export function NewTaskForm() {
             Take notes on<span className="period">…</span>
           </h1>
           <p className="nt-lede">
-            I'll open my own browser, capture the source faithfully, and ask before anything
-            consequential.
+            Add a source, or just the goal and I&apos;ll find one. I work in my own browser, capture
+            faithfully, and ask before anything consequential.
           </p>
           <div className="nt-composer">
             <label className="sr-only" htmlFor={goalId}>

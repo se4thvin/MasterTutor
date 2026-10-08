@@ -102,10 +102,47 @@ test.describe("New task", () => {
     await page.getByRole("button", { name: /^Start/ }).click();
     // Next.js keeps its own (empty) route-announcer alert; ours is the form error.
     await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveText(
-      "Describe the task or add a source.",
+      "Describe the task to start.",
     );
     await expect(page.getByLabel("Describe the task")).toBeFocused();
     expect(creates).toBe(0);
+  });
+
+  test.describe("goal only", () => {
+    // The 3D hero is not under test here: on a software-GL host its shader compile can hold the
+    // main thread for seconds (timers, navigation). hero.spec.ts covers it.
+    test.use({ reducedMotion: "reduce" });
+
+    test("starts with just a goal: no source and no allowed domain", async ({ page }) => {
+      await page.goto("/new");
+      await expect(
+        page.getByText("None yet. Every site the agent opens is a new domain."),
+      ).toBeVisible();
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      const request = page.waitForRequest("**/api/rpc/runs/create");
+      await page.getByRole("button", { name: /^Start/ }).click();
+      expect(createBody((await request).postDataJSON())).toMatchObject({
+        goal: "Find a good intro to Rust lifetimes",
+        allowedOrigins: [],
+        approvalMode: "ask",
+      });
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
+    });
+
+    test("auto mode with no allowed domain explains instead of starting", async ({ page }) => {
+      let creates = 0;
+      page.on("request", (r) => {
+        if (r.url().endsWith("/api/rpc/runs/create")) creates += 1;
+      });
+      await page.goto("/new");
+      await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
+      await page.getByRole("radio", { name: "Auto in allowed domains" }).click();
+      await page.getByRole("button", { name: /^Start/ }).click();
+      await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveText(
+        "Auto mode needs an allowed domain. Add one, or choose Ask me.",
+      );
+      expect(creates).toBe(0);
+    });
   });
 
   test("keeps the draft and explains when starting fails", async ({ page }) => {

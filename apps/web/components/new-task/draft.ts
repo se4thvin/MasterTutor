@@ -1,4 +1,5 @@
 import {
+  autoModeNeedsOrigins,
   CreateRunInput,
   DEFAULT_BUDGET,
   toOrigin,
@@ -75,9 +76,10 @@ export interface TaskDraft {
 const GOAL_MAX = 4_000;
 const ORIGINS_MAX = 50;
 
+/** Sources are optional hints: a goal alone starts a run, and the agent finds its own sources. */
 export function buildCreateRunInput(draft: TaskDraft): CreateRunInput | { error: string } {
   const text = draft.goal.trim();
-  if (!text && draft.sources.length === 0) return { error: "Describe the task or add a source." };
+  if (!text && draft.sources.length === 0) return { error: "Describe the task to start." };
   const list = draft.sources.map((s) => `- ${s.url}`).join("\n");
   const goal = draft.sources.length
     ? `${text || "Take notes on these sources."}\n\nSources:\n${list}`
@@ -87,8 +89,9 @@ export function buildCreateRunInput(draft: TaskDraft): CreateRunInput | { error:
   const origins = [
     ...new Set([...draft.sources.map((s) => s.origin), ...draft.domains].flatMap(originVariants)),
   ];
-  if (origins.length === 0) return { error: "Add a source or an allowed domain." };
   if (origins.length > ORIGINS_MAX) return { error: "Too many allowed domains (50 at most)." };
+  if (!autoModeNeedsOrigins({ approvalMode: draft.approvalMode, allowedOrigins: origins }))
+    return { error: "Auto mode needs an allowed domain. Add one, or choose Ask me." };
   const bypass = draft.approvalMode === "bypass";
   // D44: bypass is an explicit opt-in; the server refuses it without the acknowledgement too.
   if (bypass && !draft.bypassAcknowledged) {

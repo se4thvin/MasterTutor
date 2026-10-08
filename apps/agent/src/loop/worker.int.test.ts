@@ -264,6 +264,28 @@ describe("RunWorker + Supervisor", () => {
     await waitFor(async () => (await idleSlots()) === 2, { label: "slot recycled" });
   });
 
+  it("starts a goal-only run (no source, no allowed origin) on the blank page, then works toward the goal", async () => {
+    await start();
+    const name = `w${++counter}`;
+    mock.setScenarios([
+      {
+        name,
+        turns: [{ ...done, check: expectInput("Allowed origins: none yet") }],
+      },
+    ]);
+    const run = await insertRun(owner.db, {
+      workspaceId,
+      goal: `[scenario:${name}] Find a good intro to Rust lifetimes`,
+      allowedOrigins: [],
+    });
+    const browser = new FakeLoopBrowser();
+    browsers.set(run.id, browser);
+    await owner.sql.notify("run_queued", encodeNotify("run_queued", { runId: run.id }));
+    await until(run.id, (r) => r.status === "completed", "goal-only run completed");
+    expect(browser.navigations).toEqual(["about:blank"]);
+    expect(mock.requestsFor(name)).toHaveLength(1);
+  });
+
   it("sleeps a waiting run (releasing slot and downloads) and wakes it on approval", async () => {
     await start();
     const { run, browser } = await queue([click, done]);

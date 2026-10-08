@@ -111,6 +111,7 @@ async function setup(
     budget?: Budget;
     hooks?: Partial<RunHooks>;
     leaseExpired?: () => boolean;
+    allowedOrigins?: string[];
   } = {},
 ) {
   const name = `s${++counter}`;
@@ -118,6 +119,7 @@ async function setup(
   const row = await insertRun(owner.db, {
     workspaceId,
     goal: `[scenario:${name}] Do the task`,
+    allowedOrigins: options.allowedOrigins,
     status: "running",
     leaseOwner: OWNER,
     approvalMode: options.approvalMode,
@@ -380,6 +382,38 @@ describe("RunLoop (spec §5.3)", () => {
       { kind: "new_origin", status: "denied", decidedBy: "policy" },
     ]);
     expect((await status(run.id))?.allowedOrigins).toEqual(["http://site.fixtures.test"]);
+  });
+
+  it("runs a goal-only run from a blank page: told to find sources, and every site it opens asks first", async () => {
+    const search = "https://html.duckduckgo.com/html/?q=rust%20lifetimes";
+    const firstTurn: MockTurn = {
+      ...click(),
+      check: (r) => {
+        const input = JSON.stringify(r.body.input);
+        for (const text of ["Allowed origins: none yet", "search the web", "about:blank"])
+          if (!input.includes(text)) throw new Error(`no "${text}" in the first input`);
+      },
+    };
+    const { run, browser, loop, reload } = await setup(
+      [firstTurn, doneExpecting("the user allowed https://html.duckduckgo.com")],
+      { allowedOrigins: [] },
+    );
+    browser.url = "about:blank";
+    browser.computerHook = async () => {
+      browser.blocked.push({ url: search, origin: "https://html.duckduckgo.com" });
+    };
+    expect(await drive(loop)).toMatchObject({ kind: "waiting", reason: "approval" });
+    expect(browser.navigations).toEqual([]);
+    expect(await approvalRows(run.id)).toMatchObject([
+      { kind: "new_origin", status: "pending", request: { origin: "https://html.duckduckgo.com" } },
+    ]);
+    await decideApproval(run.id, "approved");
+    browser.computerHook = null;
+    const resumed = await reload();
+    await resumed.resume(new AbortController().signal);
+    expect(await drive(resumed)).toEqual({ kind: "completed" });
+    expect(browser.navigations).toEqual([search]);
+    expect((await status(run.id))?.allowedOrigins).toEqual(["https://html.duckduckgo.com"]);
   });
 
   describe("downloads (spec §9)", () => {
