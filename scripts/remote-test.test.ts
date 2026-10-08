@@ -341,25 +341,52 @@ describe("per-run snapshots of one worktree's sync (remote-test/snapshot.sh)", (
     expect(stdout.split("\n")).toEqual(["r2", "out", ""]);
   });
 
-  it("never lets a sync delete a run's results, whatever rsync honours of .gitignore (QA-039)", () => {
-    // macOS's openrsync deletes git-ignored receiver files under --delete; explicit excludes hold.
-    const { status, stdout, stderr } = snapshot(`mkdir -p mac/apps/web/e2e mac/tests/bench
+  it.runIf(hostShell)("publishes the visual baselines a ui run wrote (B1, QA-043)", () => {
+    const { status, stdout, stderr } = snapshot(`mkdir -p base/apps/web/e2e/visual.spec.ts-snapshots
+      echo old >base/apps/web/e2e/visual.spec.ts-snapshots/a.png
+      take_snapshot "$PWD/base" "$PWD/run/src" "$PWD/sync.lock"
+      echo new >run/src/apps/web/e2e/visual.spec.ts-snapshots/a.png
+      publish_results "$PWD/run/src" "$PWD/base" "$PWD/sync.lock" $SNAPSHOT_BASELINES
+      cat base/apps/web/e2e/visual.spec.ts-snapshots/a.png`);
+    expect(status, stderr).toBe(0);
+    expect(stdout.trim()).toBe("new");
+  });
+
+  it("publishes baselines from ui runs only, and fetches them without overwriting newer local ones", () => {
+    expect(host).toMatch(
+      /\[\[ "\$suite" != ui \]\] \|\| baselines="\$SNAPSHOT_BASELINES"\n.*\n {2}publish_results "\$run_dir\/src" "\$base" "\$sync_lock" \$baselines/,
+    );
+    expect(client).toContain("fetch apps/web/e2e/visual.spec.ts-snapshots --update");
+  });
+
+  // The sync runs on the client (a Mac, openrsync), so this runs where rsync exists; the CI runner
+  // image has none. The static half below runs everywhere.
+  const hasRsync = spawnSync("bash", ["-c", "command -v rsync"]).status === 0;
+  it.runIf(hasRsync)(
+    "never lets a sync delete a run's results, whatever rsync honours of .gitignore (QA-039)",
+    () => {
+      // macOS's openrsync deletes git-ignored receiver files under --delete; explicit excludes hold.
+      const { status, stdout, stderr } = snapshot(`mkdir -p mac/apps/web/e2e mac/tests/bench
       echo "test-results/" >mac/apps/web/.gitignore; echo src >mac/apps/web/e2e/a.ts; echo b >mac/tests/bench/b.ts
       for p in $SNAPSHOT_RESULTS; do mkdir -p "host/$p"; echo r >"host/$p/r"; done
       echo stale >host/apps/web/gone.ts
       rsync -a --delete --filter=':- .gitignore' $(sync_excludes) mac/ host/
       cd host && find . -type f | sort`);
-    expect(status, stderr).toBe(0);
-    expect(stdout.trim().split("\n")).toEqual([
-      "./apps/web/.gitignore",
-      "./apps/web/e2e/.out/r",
-      "./apps/web/e2e/a.ts",
-      "./apps/web/playwright-report/r",
-      "./apps/web/test-results/r",
-      "./tests/bench/.out/r",
-      "./tests/bench/b.ts",
-    ]);
-    expect(client).toContain("$(sync_excludes)");
+      expect(status, stderr).toBe(0);
+      expect(stdout.trim().split("\n")).toEqual([
+        "./apps/web/.gitignore",
+        "./apps/web/e2e/.out/r",
+        "./apps/web/e2e/a.ts",
+        "./apps/web/playwright-report/r",
+        "./apps/web/test-results/r",
+        "./tests/bench/.out/r",
+        "./tests/bench/b.ts",
+      ]);
+    },
+  );
+
+  it("syncs with the result-folder excludes (QA-039)", () => {
+    expect(client).toMatch(/^rsync -az --delete \\\n(?: .*\\\n)* .*\$\(sync_excludes\)/m);
   });
 
   it("syncs under the same per-worktree lock the host's snapshots take", () => {

@@ -10,6 +10,9 @@
 
 # Folders a suite writes results to, which remote-test.sh fetches from ~/mt-ci/<worktree>/.
 SNAPSHOT_RESULTS="apps/web/playwright-report apps/web/test-results apps/web/e2e/.out tests/bench/.out"
+# Tracked sources a ui run may rewrite (--update-snapshots). Snapshotted and synced like any source,
+# so never in SNAPSHOT_RESULTS; run-on-host.sh publishes them after a ui run (B1, QA-043).
+SNAPSHOT_BASELINES="apps/web/e2e/visual.spec.ts-snapshots"
 
 # sync_excludes: rsync args that keep remote-test.sh's sync away from the result folders. Without
 # them a sync's --delete wipes a run's published results before they are fetched: macOS's
@@ -31,11 +34,13 @@ take_snapshot() {
     "${excludes[@]}" -cf - . | tar -C "$snap" -xf -
 }
 
-# publish_results <snapshot dir> <synced dir> <sync lock>: copies the result folders a run made
-# back to where remote-test.sh fetches them (the last run of a suite wins, as before snapshots).
+# publish_results <snapshot dir> <synced dir> <sync lock> [extra folders...]: copies the result
+# folders a run made, and any extra folders, back to where remote-test.sh fetches them (the last
+# run of a suite wins, as before snapshots).
 publish_results() {
   local snap=$1 base=$2 lock=$3 path
-  for path in $SNAPSHOT_RESULTS; do
+  shift 3
+  for path in $SNAPSHOT_RESULTS "$@"; do
     [[ -d "$snap/$path" ]] || continue
     mkdir -p "$(dirname "$base/$path")"
     flock "$lock" bash -c 'rm -rf "$2" && cp -a "$1" "$2"' bash "$snap/$path" "$base/$path"
