@@ -21,6 +21,62 @@ style="position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.45)"><div style=
 <button class="at" style="left:1000px;top:38px;width:200px"
 onclick="document.cookie='consent=1; Path=/; SameSite=Lax';document.getElementById('consent').remove()">Accept</button></div></div>`;
 
+/**
+ * A small book for section discovery (Task 23, run 1): readings with sections, some activities
+ * already completed and some not. Static: grading reads it, nothing here changes.
+ */
+const LIBRARY: Record<number, { title: string; activities: number; done: number }[]> = {
+  1: [
+    { title: "1.1 Variables", activities: 2, done: 2 },
+    { title: "1.2 Types", activities: 1, done: 1 },
+  ],
+  2: [
+    { title: "2.1 Loops", activities: 2, done: 1 },
+    { title: "2.2 Functions", activities: 2, done: 2 },
+  ],
+  3: [
+    { title: "3.1 Overview", activities: 0, done: 0 },
+    { title: "3.2 Review", activities: 1, done: 1 },
+  ],
+  4: [{ title: "4.1 Beyond", activities: 1, done: 0 }],
+};
+
+function libraryPage(path: string): { title: string; body: string } | null {
+  if (path === "/library")
+    return {
+      title: "Library",
+      body: `<h1>Assignments</h1><ul>${Object.keys(LIBRARY)
+        .map((n) => `<li><a href="/library/reading/${n}">Reading ${n}</a></li>`)
+        .join("")}</ul>`,
+    };
+  const reading = /^\/library\/reading\/(\d+)$/.exec(path);
+  if (reading) {
+    const sections = LIBRARY[Number(reading[1])];
+    if (!sections) return null;
+    return {
+      title: `Reading ${reading[1]}`,
+      body: `<h1>Reading ${reading[1]}</h1><ul>${sections
+        .map(
+          (s, i) =>
+            `<li><a href="/library/chapter/${reading[1]}/section/${i + 1}">${s.title}</a></li>`,
+        )
+        .join("")}</ul><a href="/library">Back to the library</a>`,
+    };
+  }
+  const section = /^\/library\/chapter\/(\d+)\/section\/(\d+)$/.exec(path);
+  const s = section ? LIBRARY[Number(section[1])]?.[Number(section[2]) - 1] : undefined;
+  if (!s) return null;
+  const activities = Array.from(
+    { length: s.activities },
+    (_, i) =>
+      `<h2>PARTICIPATION ACTIVITY ${i + 1}</h2><p>${i < s.done ? "Activity completed" : "Not started"}</p>`,
+  ).join("");
+  return {
+    title: s.title,
+    body: `<h1>${s.title}</h1>${activities || "<p>An overview with no activities.</p>"}`,
+  };
+}
+
 function page(req: IncomingMessage, title: string, body: string): string {
   const consented = /(?:^|;\s*)consent=1(?:;|$)/.test(req.headers.cookie ?? "");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>
@@ -144,6 +200,8 @@ export async function startFixtureServer(options: {
         done.add(id as ActivityId);
         return send(res, 204);
       }
+      const library = libraryPage(url.pathname);
+      if (library) return send(res, 200, page(req, library.title, library.body));
       return send(res, 404, "Not found");
     } catch {
       return send(res, 400);

@@ -74,7 +74,38 @@ const readBook: MockTurn[] = [
   turn([{ type: "function", name: "read_page", args: { mode: "text", sinceHash: null } }]),
 ];
 
+/** Moves through the address bar only (CTRL+L, the URL, ENTER): navigation, never page input. */
+const open = (url: string) =>
+  turn([
+    {
+      type: "computer",
+      actions: [
+        { type: "keypress", keys: ["CTRL", "L"] },
+        { type: "type", text: url },
+        { type: "keypress", keys: ["ENTER"] },
+      ],
+    },
+  ]);
+const read = (mode: "text" | "interactive") =>
+  turn([{ type: "function", name: "read_page", args: { mode, sinceHash: null } }]);
+const LIBRARY = "http://bench.fixtures.test:8080/library";
+/**
+ * The grading run of the fixture library (section discovery): the index, readings 1-3, then their
+ * sections, except 3.2, which it never reads (so that section must grade unknown).
+ */
+const discoverLibrary: MockTurn[] = [
+  open(LIBRARY),
+  read("interactive"),
+  ...[1, 2, 3].flatMap((n) => [open(`${LIBRARY}/reading/${n}`), read("interactive")]),
+  ...["1/section/1", "1/section/2", "2/section/1", "2/section/2", "3/section/1"].flatMap((path) => [
+    open(`${LIBRARY}/chapter/${path}`),
+    read("text"),
+  ]),
+];
+
 SCENARIOS.push(
+  { name: "bench-readings-browser_use", turns: [...signInByRefs, done] },
+  { name: "bench-readings-verify-browser_use", turns: [...signInByRefs, ...discoverLibrary, done] },
   { name: "bench-activities-computer_use", turns: [...signInByCoordinates, ...activities, done] },
   { name: "bench-activities-browser_use", turns: [...signInByRefs, ...activities, done] },
   { name: "bench-verify-computer_use", turns: [...signInByCoordinates, ...readBook, done] },

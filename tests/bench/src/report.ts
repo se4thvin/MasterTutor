@@ -48,6 +48,7 @@ export interface SuiteRunResult {
 
 const duration = (ms: number | null) =>
   ms === null ? "–" : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+const cell = (text: string) => text.replaceAll("|", "\\|");
 const usd = (n: number) => `$${n.toFixed(2)}`;
 type Scalar = string | number | boolean | null;
 /** Flat frontmatter: scalars and string lists, so a person can edit it by hand. */
@@ -150,6 +151,18 @@ function record(r: SuiteRunResult, x: BenchmarkResult): string[] {
     `- Verdict: ${x.verdict?.summary ?? "none"}`,
     ...(x.verdict?.unmet ?? []).map((u) => `  - unmet: ${u}`),
     ...(x.verdict?.unvisited ?? []).map((u) => `  - never worked on: ${u}`),
+    ...(x.verdict?.sections?.length
+      ? [
+          "",
+          "| Reading | Section | URL | Outcome | Why |",
+          "|---|---|---|---|---|",
+          ...x.verdict.sections.map(
+            (r) =>
+              `| ${r.reading} | ${cell(r.title)} | ${r.url ?? "–"} | ${r.outcome === "passed" ? "passed" : `**${r.outcome}**`} | ${cell(r.reason)} |`,
+          ),
+          "",
+        ]
+      : []),
     `- Failure: ${x.failure ? `${x.failure.cls}: ${x.failure.reason}` : "none"}${x.ticket ? ` (${x.ticket})` : ""}`,
     ...(step && x.runId
       ? [

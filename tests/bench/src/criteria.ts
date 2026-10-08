@@ -1,24 +1,25 @@
 import type { ReadPageResult } from "@mastertutor/contracts";
 import type { RunTrace } from "./evidence.ts";
 import type { Criterion } from "./types.ts";
+import { sameDocument } from "./url.ts";
+import { discoverReadings, type DiscoveredReadingsCriterion } from "./discovery.ts";
+
+/** One discovered section's grade: where it is and why it got that outcome. Unknown never passes. */
+export interface SectionOutcome {
+  reading: number;
+  title: string;
+  url: string | null;
+  outcome: "passed" | "failed" | "unknown";
+  reason: string;
+}
 
 export interface Verdict {
   outcome: "passed" | "partial" | "failed";
   summary: string;
   unmet: string[];
   unvisited: string[];
-}
-
-export function sameDocument(a: string, b: string): boolean {
-  const norm = (u: string) => {
-    try {
-      const url = new URL(u);
-      return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
-    } catch {
-      return u;
-    }
-  };
-  return norm(a) === norm(b);
+  /** Per-section grades, for criteria graded section by section from discovery. */
+  sections?: SectionOutcome[];
 }
 
 function flatten(result: Exclude<ReadPageResult, { unchanged: true }>): string {
@@ -95,6 +96,7 @@ export function evaluate(
     };
   }
   if (verify === null) return failed("no verify run evidence");
+  if (criterion.kind === "discovered_readings") return evaluateDiscovered(criterion, main, verify);
   if (criterion.kind === "page_text") {
     const results = evidenceResults(verify, criterion.url);
     if (results.length === 0)
@@ -141,6 +143,81 @@ export function evaluate(
   };
 }
 
+function evaluateDiscovered(
+  criterion: DiscoveredReadingsCriterion,
+  main: RunTrace | null,
+  verify: RunTrace,
+): Verdict {
+  const rows: SectionOutcome[] = [];
+  const unvisited: string[] = [];
+  for (const found of discoverReadings(criterion, verify)) {
+    if (found.problem !== null) {
+      rows.push({
+        reading: found.reading,
+        title: `Reading ${found.reading}`,
+        url: found.page,
+        outcome: "unknown",
+        reason: found.problem,
+      });
+      continue;
+    }
+    for (const section of found.sections) {
+      const grade = (outcome: SectionOutcome["outcome"], reason: string) =>
+        rows.push({
+          reading: found.reading,
+          title: section.title,
+          url: section.url,
+          outcome,
+          reason,
+        });
+      const results = evidenceResults(verify, section.url);
+      if (results.length === 0) {
+        grade("unknown", "never read in the grading run");
+        continue;
+      }
+      // One result at a time, never summed (P10b-8): the best complete one, else the fullest.
+      const counts = results.map((text) => ({
+        activities: count(text, criterion.activityPattern),
+        completed: count(text, criterion.completedPattern),
+      }));
+      const best =
+        counts.find((c) => c.activities > 0 && c.completed >= c.activities) ??
+        counts.reduce((a, b) => (b.activities > a.activities ? b : a));
+      if (best.activities === 0) {
+        grade("unknown", "no activity found on the page");
+        continue;
+      }
+      const done = `${Math.min(best.completed, best.activities)}/${best.activities} activities complete`;
+      if (best.completed < best.activities) {
+        grade("failed", done);
+        continue;
+      }
+      if (!criterion.requireInteraction) {
+        grade("passed", done);
+        continue;
+      }
+      const acts = interactionsOn(main, section.url);
+      if (acts === 0) unvisited.push(section.url);
+      if (acts >= best.activities) grade("passed", `${done}, ${acts} interactions`);
+      else
+        grade(
+          "failed",
+          `${done}, but the main run worked on it ${acts} time(s), needs ${best.activities}`,
+        );
+    }
+  }
+  const passed = rows.filter((r) => r.outcome === "passed").length;
+  const unknown = rows.filter((r) => r.outcome === "unknown").length;
+  return {
+    outcome:
+      rows.length > 0 && passed === rows.length ? "passed" : passed > 0 ? "partial" : "failed",
+    summary: `${passed}/${rows.length} sections passed, ${unknown} unknown`,
+    unmet: rows.filter((r) => r.outcome !== "passed").map((r) => `${r.title}: ${r.reason}`),
+    unvisited,
+    sections: rows,
+  };
+}
+
 /**
  * A grading (verify) run must only read (P10a-24, I3): any click, type or key press on any page
  * taints it, so it cannot do the work on a page that is not graded. The one exception is the
@@ -155,7 +232,7 @@ export function verifyTainted(verify: RunTrace, signInUrl: string | null): boole
 
 /** D32 baseline: the pages already show completion; no interaction is expected from a verify run. */
 export function baselineCriterion(criterion: Criterion): Criterion {
-  return criterion.kind === "sections_complete"
+  return criterion.kind === "sections_complete" || criterion.kind === "discovered_readings"
     ? { ...criterion, requireInteraction: false }
     : criterion;
 }

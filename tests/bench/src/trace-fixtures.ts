@@ -81,6 +81,26 @@ export const readPage = (url: string, text: string): StepRow => {
   const result: ReadPageResult = { hash: "a".repeat(64), url, title: "t", text };
   return fn("read_page", wrapUntrusted(new URL(url).origin, JSON.stringify(result)));
 };
+/** An interactive read_page result listing links (name, raw href) as the agent records them. */
+export const readLinks = (
+  url: string,
+  links: readonly { name: string; href?: string }[],
+): StepRow => {
+  const result: ReadPageResult = {
+    hash: "b".repeat(64),
+    url,
+    title: "t",
+    elements: links.map((link, i) => ({
+      ref: `e${i + 1}`,
+      tag: link.href ? "a" : "button",
+      role: link.href ? "link" : "button",
+      name: link.name,
+      attrs: link.href ? { href: link.href } : {},
+      point: null,
+    })),
+  };
+  return fn("read_page", wrapUntrusted(new URL(url).origin, JSON.stringify(result)));
+};
 export const readPageFailed = (): StepRow =>
   fn("read_page", JSON.stringify({ error: "tool_failed" }));
 export const fill = (error: string | null): StepRow =>
