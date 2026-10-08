@@ -25,6 +25,13 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 # fakes) and testing.ts entries. scripts/check-agent-image.sh proves it.
 RUN find apps/agent packages -path '*/node_modules' -prune -o \
       \( -name '*.test.ts' -o -name testing -o -name testing.ts \) -print0 | xargs -0 rm -rf
+# OCR assets Node never loads (QA-093, ~45 MB): tesseract.js reads an LSTM core as .js + .wasm
+# (the .wasm.js inlines it for browsers; the non-LSTM cores serve OEMs we never ask for) and the
+# 4.0.0_best_int model (4.0.0 is the legacy one). scripts/check-agent-image.sh proves it.
+RUN find node_modules/.pnpm -path '*/node_modules/tesseract.js-core/tesseract-core*' \
+      ! -name 'tesseract-core*-lstm.js' ! -name 'tesseract-core*-lstm.wasm' -delete \
+ && find node_modules/.pnpm -path '*/node_modules/@tesseract.js-data/eng/4.0.0' -prune \
+      -exec rm -rf {} +
 
 # Workspace packages stay symlinked outside node_modules, which Node type stripping requires.
 FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS node-runtime
