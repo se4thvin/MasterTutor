@@ -444,3 +444,26 @@ describe("init on a CI slot (D48)", () => {
     );
   });
 });
+
+describe("survey (Task 23)", () => {
+  it("is a zyBooks-only reviewed continuation (D46)", () => {
+    const cmd = parseCli(
+      ["survey", "--suite", "zybooks", "--acknowledge-bypass", "--continue-after-review", PATH],
+      () => [approved],
+    );
+    expect(cmd.kind).toBe("survey");
+    if (cmd.kind !== "survey") throw new Error("not a survey");
+    expect(cmd.options).toMatchObject({
+      once: false,
+      continues: ID,
+      maxTotalUsd: 500,
+      maxRunUsd: 50,
+    });
+  });
+  it("refuses a first-run survey and a fixtures survey", () => {
+    expect(() =>
+      parseCli(["survey", "--suite", "zybooks", "--acknowledge-bypass"], () => []),
+    ).toThrow(UsageError);
+    expect(() => parseCli(["survey", "--suite", "fixtures"], () => [])).toThrow(/zybooks/);
+  });
+});
