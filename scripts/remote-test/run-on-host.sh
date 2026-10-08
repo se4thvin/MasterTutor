@@ -9,20 +9,24 @@
 # The host is SHARED with other people's production apps, so every resource is scoped to this run:
 #   - containers carry mastertutor.ci=1 and mastertutor.ci.run=<project>;
 #   - Compose stacks use the project name <project> (mt-<branch>-<rand>, or mt-qa-<worktree>);
-#   - cleanup removes only those labels and that project, never a global prune;
+#   - images a stack builds are tagged <project>, so concurrent runs never test each other's code;
+#   - cleanup removes only those labels, that project and those tags, never a global prune;
 #   - nothing is published beyond 127.0.0.1.
 # The runner uses the host network so suites reach their loopback-published containers on
 # 127.0.0.1. The code is mounted at its host path, so Compose bind mounts the suites declare
 # (relative to the repo) resolve to the same files for the host daemon.
-# Full-stack suites (e2e, smoke, qa, bench-mock) boot compose.test.yml, whose subnets and Traefik
-# port are fixed, so they hold ~/mt-ci/.runs/stack.lock: one test stack on the host at a time. qa
-# keeps its stack, and the lock, until `scripts/remote-test.sh qa --down`.
+# Stack suites (behaviour, ui, e2e, smoke, bench-mock) run concurrently: each holds a stack slot
+# (slots.sh) that gives it its own subnets and loopback ports, at most MT_CI_MAX_STACKS (default 6)
+# at a time. qa's stack outlives the run, so it keeps ~/mt-ci/.runs/stack.lock (shared with branches
+# that predate slots) and the reserved qa block, until `scripts/remote-test.sh qa --down`.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 runs_dir="$HOME/mt-ci/.runs"
 stack_lock="$runs_dir/stack.lock"
 cpus=32 # a share of the host's 88 cores; the rest belong to production apps
+# shellcheck source=slots.sh
+source "$root/scripts/remote-test/slots.sh"
 
 die() { echo "remote-test: $*" >&2; exit 2; }
 
@@ -39,6 +43,9 @@ cleanup_run() {
   [[ -z "$ids" ]] || docker network rm $ids >/dev/null
   ids="$(docker volume ls -q --filter "label=mastertutor.ci.run=$project")"
   [[ -z "$ids" ]] || docker volume rm $ids >/dev/null
+  # By tag, not ID: concurrent runs that built the same content share an image ID.
+  ids="$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=mastertutor/*:$project")"
+  [[ -z "$ids" ]] || docker image rm $ids >/dev/null 2>&1 || true
   docker image rm -f "mt-ci-agent-image-check:$project" >/dev/null 2>&1 || true
   docker image rm -f "mt-ci-drill-runtime:$project" >/dev/null 2>&1 || true
   rm -rf "${runs_dir:?}/$project" 2>/dev/null || true
@@ -74,19 +81,18 @@ fi
 suite="${1:-}" project="${2:-}"
 shift 2 || die "usage: run-on-host.sh <suite> <project> [args...]"
 [[ "$project" =~ ^mt-[a-z0-9-]{1,60}$ ]] || die "bad project name: $project"
+max_stacks="${MT_CI_MAX_STACKS:-6}"
+[[ "$max_stacks" =~ ^[1-9][0-9]?$ && "$max_stacks" -lt "$SLOT_QA" ]] || die "MT_CI_MAX_STACKS must be 1-$((SLOT_QA - 1))"
 cd "$root"
-
-pnpm_version="$(sed -n 's/.*"packageManager": "pnpm@\([0-9.]*\)".*/\1/p' package.json)"
-playwright_version="$(sed -n 's/.*"playwright-core": "\([0-9.]*\)".*/\1/p' package.json)"
-[[ -n "$pnpm_version" && -n "$playwright_version" ]] || die "cannot read pnpm/playwright versions"
-dockerfile=scripts/remote-test/runner.Dockerfile
-image_hash="$(cat "$dockerfile" <(echo "$pnpm_version $playwright_version") | sha256sum | cut -c1-12)"
-image="mt-ci-runner:$image_hash"
 
 suite_args=()
 case "$suite" in
   unit | integration | security | behaviour)
     suite_args=(--project "$suite" --maxWorkers="$cpus" "$@") ;;
+  ui)
+    # One next start serves every worker: Playwright's default (half of 88 cores) overloads it and
+    # turns timing into failures; 8 runs as fast (measured, D48). A --workers arg overrides it.
+    suite_args=(--workers=8 "$@") ;;
   e2e | qa)
     suite_args=("$@") ;;
   web-build | agent-image | smoke | bench-mock)
@@ -97,6 +103,13 @@ case "$suite" in
   qa) [[ -f scripts/qa-stack.sh ]] || die "the qa suite runs scripts/qa-stack.sh, which Phase 8 Task 8 adds" ;;
   bench-mock) [[ -f scripts/bench-mock.sh ]] || die "the bench-mock suite runs scripts/bench-mock.sh, which Phase 10 Task 22 adds" ;;
 esac
+
+pnpm_version="$(sed -n 's/.*"packageManager": "pnpm@\([0-9.]*\)".*/\1/p' package.json)"
+playwright_version="$(sed -n 's/.*"playwright-core": "\([0-9.]*\)".*/\1/p' package.json)"
+[[ -n "$pnpm_version" && -n "$playwright_version" ]] || die "cannot read pnpm/playwright versions"
+dockerfile=scripts/remote-test/runner.Dockerfile
+image_hash="$(cat "$dockerfile" <(echo "$pnpm_version $playwright_version") | sha256sum | cut -c1-12)"
+image="mt-ci-runner:$image_hash"
 
 # qa's stack outlives this script; everything else is removed when it exits.
 if [[ "$suite" != qa ]]; then trap 'cleanup_run "$project"' EXIT; fi
@@ -121,15 +134,18 @@ case "$suite" in
     fi ;;
 esac
 
-install="pnpm install --frozen-lockfile --prefer-offline --reporter=append-only"
+# One install at a time per synced worktree: concurrent suites from one worktree share node_modules.
+install="flock $root/.mt-install.lock pnpm install --frozen-lockfile --prefer-offline --reporter=append-only"
 preload="--import=$root/scripts/remote-test/testcontainers-ci.ts"
 case "$suite" in
   unit | integration | security)
     command="$install && NODE_OPTIONS=$preload exec pnpm exec vitest run \"\$@\"" ;;
   behaviour)
-    command="$install && docker build --quiet --label mastertutor.ci=1 -t mastertutor/browser-slot:local apps/browser-slot >/dev/null && NODE_OPTIONS=$preload exec pnpm exec vitest run \"\$@\"" ;;
+    command="$install && docker build --quiet --label mastertutor.ci=1 -t \"\$BEHAVIOUR_SLOT_IMAGE\" apps/browser-slot >/dev/null && NODE_OPTIONS=$preload exec pnpm exec vitest run \"\$@\"" ;;
   web-build)
     command="$install && pnpm --filter @mastertutor/web build && exec pnpm --filter @mastertutor/web check:bundle" ;;
+  ui)
+    command="$install && exec pnpm --filter @mastertutor/web test:ui \"\$@\"" ;;
   agent-image)
     command="AGENT_IMAGE_TAG=mt-ci-agent-image-check:$project exec bash scripts/check-agent-image.sh" ;;
   e2e)
@@ -144,28 +160,48 @@ case "$suite" in
     command="$install && exec bash scripts/bench-mock.sh" ;;
 esac
 
-# The behaviour stack has fixed loopback ports and a fixed subnet: one behaviour run at a time.
-# The full test stack likewise: one at a time, across e2e, smoke, qa and bench-mock.
-lock=()
-mkdir -p "$runs_dir"
+run_dir="$runs_dir/$project"
+mkdir -p "$run_dir"
+# Stack suites: a slot's subnets and ports (qa: the reserved block, legacy ports, legacy lock).
+slot_env=()
 case "$suite" in
-  behaviour) lock=(flock "$runs_dir/behaviour.lock") ;;
-  e2e | smoke | qa | bench-mock) take_stack_lock ;;
+  behaviour | ui | e2e | smoke | bench-mock)
+    acquire_slot "$max_stacks" "$runs_dir"
+    echo "remote-test: stack slot $SLOT of $max_stacks" >&2
+    while IFS= read -r var; do slot_env+=(-e "$var"); done < <(slot_networks "$SLOT"; slot_ports "$SLOT") ;;
+  qa)
+    take_stack_lock
+    while IFS= read -r var; do slot_env+=(-e "$var"); done < <(slot_networks "$SLOT_QA") ;;
 esac
-mkdir -p "$runs_dir/$project"
+case "$suite" in
+  e2e | smoke | qa | bench-mock)
+    # Traefik's live-auth address follows the run's cdp subnet (tests/e2e/compose.remote.yml).
+    prefix="$(slot_networks "${SLOT:-$SLOT_QA}" | sed -n 's/^CDP_SUBNET_PREFIX=//p')"
+    sed "s/172\.30\.231\./$prefix./g" infra/traefik/test-dynamic.yml >"$run_dir/traefik-dynamic.yml" ;;
+esac
+# web-build and ui each build apps/web/.next (production vs fixture): a per-run folder keeps
+# concurrent builds from one worktree apart.
+next_mount=()
+case "$suite" in
+  web-build | ui)
+    mkdir -p "$run_dir/next" apps/web/.next
+    next_mount=(-v "$run_dir/next:$root/apps/web/.next") ;;
+esac
 
 set +e
-"${lock[@]}" docker run --rm --init --name "$project-runner" \
+docker run --rm --init --name "$project-runner" \
   --label mastertutor.ci=1 --label "mastertutor.ci.run=$project" \
   --network host --cpus "$cpus" --memory 64g \
   --user "$(id -u):$(id -g)" --group-add "$(stat -c %g /var/run/docker.sock)" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$root:$root" -v "$runs_dir/$project:$runs_dir/$project" -w "$root" \
+  -v "$root:$root" -v "$run_dir:$run_dir" "${next_mount[@]}" -w "$root" \
   -v mt-pnpm-store:/pnpm-store -e npm_config_store_dir=/pnpm-store \
   -e HOME=/tmp -e CI=1 \
-  -e MT_CI_RUN_ID="$project" -e COMPOSE_PROJECT_NAME="$project" \
+  -e MT_CI_RUN_ID="$project" -e MT_CI_RUN_DIR="$run_dir" -e COMPOSE_PROJECT_NAME="$project" \
   -e TESTCONTAINERS_RYUK_DISABLED=true -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
-  -e BEHAVIOUR_REMOTE_HOST=1 -e BEHAVIOUR_DOWNLOADS="$runs_dir/$project/downloads" \
+  -e BEHAVIOUR_REMOTE_HOST=1 -e BEHAVIOUR_DOWNLOADS="$run_dir/downloads" \
+  -e BEHAVIOUR_SLOT_IMAGE="mastertutor/browser-slot:$project" \
+  "${slot_env[@]}" \
   "$image" bash -c "$command" bash "${suite_args[@]}"
 status=$?
 set -e
