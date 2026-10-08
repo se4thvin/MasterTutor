@@ -10,6 +10,12 @@ for name in SLOT_NAME NEKO_ADMIN_SECRET NEKO_MEMBER_SECRET CDP_ALLOWED_IP NEKO_A
   if [[ -z "${!name:-}" ]]; then echo "slot-entrypoint: $name is required" >&2; exit 64; fi
 done
 if [[ ! "$SLOT_NAME" =~ ^browser-[1-9][0-9]?$ ]]; then echo "slot-entrypoint: invalid SLOT_NAME" >&2; exit 64; fi
+# One IPv4 address or CIDR: it feeds iptables and PulseAudio's auth-ip-acl (the behaviour stack
+# uses 0.0.0.0/0 on purpose, so a CIDR must stay accepted).
+if [[ ! "$CDP_ALLOWED_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[12][0-9]|3[0-2]))?$ ]]; then
+  echo "slot-entrypoint: invalid CDP_ALLOWED_IP" >&2
+  exit 64
+fi
 if (( ${#NEKO_ADMIN_SECRET} < 32 || ${#NEKO_MEMBER_SECRET} < 32 )); then
   echo "slot-entrypoint: n.eko secrets must be at least 32 characters" >&2; exit 64
 fi
@@ -108,5 +114,10 @@ rm -rf /home/neko/Downloads /home/neko/.pki /home/neko/.cache /home/neko/.config
 find /tmp -mindepth 1 -maxdepth 1 ! -name chromium-profile -exec rm -rf {} +
 chown neko:neko /tmp/chromium-profile /downloads
 chmod 700 /tmp/chromium-profile
+
+# PulseAudio TCP for the agent's audio recorder (spec §8 transcribe). Module loading is disallowed
+# at runtime, so the module goes into default.pa before supervisord starts PulseAudio. The ACL is
+# the same address or CIDR the iptables rule admits (validated above).
+{ cat /etc/pulse/default.pa.orig; echo "load-module module-native-protocol-tcp port=4713 listen=0.0.0.0 auth-ip-acl=${CDP_ALLOWED_IP}"; } > /etc/pulse/default.pa
 
 exec "$@"

@@ -28,6 +28,9 @@ export function fakeLibraryServices(
     },
     localOcr: { text: async () => "" },
     filing: { decide: async () => ({ path: ["Inbox"], createLeaf: true }) },
+    transcriber: {
+      transcribe: async () => [{ start: 0, end: 3, text: "Welcome to the lecture.", speaker: "A" }],
+    },
     log: testLog,
     ...overrides,
     storage,
