@@ -23,3 +23,16 @@ export function decideObservability(input: {
   const credentials = `${OBSERVE_USERS.viewer}:${input.viewerPassword}`;
   return { kind: "allow", authorization: `Basic ${Buffer.from(credentials).toString("base64")}` };
 }
+
+const REFUSAL_STATUS = { forbidden: 403, unavailable: 503 } as const;
+
+/** Anything but allow, as a never-cached response: a redirect to sign in, 403 or 503. */
+export function refusalResponse(
+  decision: Exclude<ObservabilityDecision, { kind: "allow" }>,
+): Response {
+  const headers = new Headers({ "cache-control": "no-store" });
+  if (decision.kind !== "sign_in")
+    return new Response(null, { status: REFUSAL_STATUS[decision.kind], headers });
+  headers.set("location", decision.location);
+  return new Response(null, { status: 302, headers });
+}
