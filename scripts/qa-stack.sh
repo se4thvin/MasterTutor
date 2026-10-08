@@ -9,7 +9,6 @@
 #           up (T1's setup project), apply the deterministic seed as the database owner
 #   wiring  the real-stack wiring smoke (Playwright args pass through, e.g. --grep "G3 ")
 #   shoot   apps/web/e2e/stack/qa/shoot.ts --group G… --run <run-id> (Task 9)
-#   ui      fe's fixture-mode Playwright suite with visual baselines (UI_VISUAL=1); needs no stack
 #   down    laptop teardown; remote teardown is scripts/remote-test.sh qa --down
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -52,21 +51,13 @@ case "$sub" in
     runner pnpm exec playwright test --config playwright.stack.config.ts --project=setup
     runner node e2e/stack/qa/shoot.ts "$@"
     ;;
-  ui)
-    # A browser run of its own: the laptop lock unless a QA stack already holds it (remote: no-op).
-    [[ -d "$LOCAL_STACK_LOCK" && -z "${MT_CI_RUN_ID:-}" ]] || { take_stack_lock; trap release_stack_lock EXIT; }
-    pnpm install --frozen-lockfile --prefer-offline --reporter=append-only
-    # One next start serves every worker: Playwright's default (half the runner's CPUs) overloads
-    # it and turns timing into failures; 8 workers run as fast (D48). A --workers arg overrides it.
-    UI_VISUAL=1 pnpm --filter @mastertutor/web exec playwright test --workers=8 "$@"
-    ;;
   down)
     [[ -z "${MT_CI_RUN_ID:-}" ]] || { echo "qa-stack: remote teardown is scripts/remote-test.sh qa --down" >&2; exit 2; }
     KEEP_STACK=0 STACK_LOCK_HELD=1
     stop_stack "${profiles[@]}"
     ;;
   *)
-    echo "usage: scripts/qa-stack.sh <up|wiring|shoot|ui|down> [args...]" >&2
+    echo "usage: scripts/qa-stack.sh <up|wiring|shoot|down> [args...]" >&2
     exit 2
     ;;
 esac

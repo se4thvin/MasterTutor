@@ -7,12 +7,14 @@ import { expect, test } from "./helpers/test.ts";
 
 /**
  * D22 visual baselines (P8-12): every fixture-mode screen at the five project widths, light and
- * dark. Pixels depend on fonts and the OS, so baselines are made and compared only on the QA runner
- * (scripts/remote-test.sh qa ui sets UI_VISUAL=1: Linux, pinned Chromium); elsewhere this file skips.
+ * dark. Pixels depend on fonts and the OS, so baselines are made and compared only on the remote
+ * runner (scripts/remote-test.sh ui, which sets MT_CI_RUN_ID: Linux, pinned Chromium); elsewhere
+ * this file skips. A missing baseline fails (updateSnapshots "none"); write one only on purpose:
+ *   scripts/remote-test.sh ui e2e/visual.spec.ts --update-snapshots=missing
  */
 test.skip(
-  process.env.UI_VISUAL !== "1",
-  "visual baselines run on the QA runner only (scripts/remote-test.sh qa ui)",
+  !process.env["MT_CI_RUN_ID"],
+  "visual baselines run on the remote runner only (scripts/remote-test.sh ui)",
 );
 
 const NOW = new Date("2026-10-05T15:00:00Z");

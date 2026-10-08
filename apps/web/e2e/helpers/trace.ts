@@ -9,8 +9,7 @@ export interface TraceEvent {
   pid: number;
   tid: number;
   args?: {
-    data?: { message?: string; nodeId?: number };
-    endData?: { rootNode?: number; layoutRoots?: { nodeId: number }[] };
+    data?: { message?: string; nodeId?: number; reason?: string };
   };
 }
 export interface MotionVerdict {
@@ -21,30 +20,57 @@ export interface MotionVerdict {
   paints: number;
 }
 
-/** console.timeStamp labels that bound the measured window inside the trace. */
-export const MOTION_MARKS = { ready: "mt-motion-ready", end: "mt-motion-end" } as const;
+/** console.timeStamp labels: ready before the trigger, triggered right after it, end. */
+export const MOTION_MARKS = {
+  ready: "mt-motion-ready",
+  triggered: "mt-motion-triggered",
+  end: "mt-motion-end",
+} as const;
 const FRAME_BUDGET_US = 16_700;
 
+/** The animated subtree's backend node ids, and the ids of its ancestors (the layers it paints in). */
+export interface MotionScope {
+  nodes: ReadonlySet<number>;
+  ancestors: ReadonlySet<number>;
+}
+
+/** Invalidation tracking names the element whose style or layout changed (I6). */
+const INVALIDATION_CATEGORY = "disabled-by-default-devtools.timeline.invalidationTracking";
+const STYLE_CHANGE = "StyleRecalcInvalidationTracking";
+const LAYOUT_CHANGE = "LayoutInvalidationTracking";
+/** Content entering or leaving the page is not motion: a mounted dialog lays out and paints once. */
+const CONTENT_REASONS = new Set([
+  "Added to layout",
+  "Removed from layout",
+  "Node was inserted into tree",
+]);
+
 /**
- * Spec §12 / D28: no frame over 16.7 ms, and no layout or paint caused inside the animated subtree
- * (`scope`: backend DOM node ids) once the first `warmupFrames` frames after the trigger are drawn.
- * Events with no node id cannot be attributed and are not counted (P8-28).
+ * Spec §12 / D28: no frame over 16.7 ms, and no layout or paint caused by motion inside the
+ * animated subtree. Frames count from the ready mark, stamped before the trigger. Layout and paint
+ * count frames, from the `warmupFrames`-th frame after the trigger returned to the end mark (I6):
+ * - a layout frame has a layout invalidation on a scoped element (invalidation tracking names the
+ *   element even when the relayout's root is the document);
+ * - a paint frame has a style or layout invalidation on a scoped element and a Paint of a layer the
+ *   subtree is painted in (the scope or an ancestor). Chromium emits no Paint for transform or
+ *   opacity changes, composited or not, so compositor-only motion counts zero.
+ * Content entering or leaving the page is not motion and does not count.
  */
 export function analyzeTrace(
   events: readonly TraceEvent[],
-  scope: ReadonlySet<number>,
+  scope: MotionScope,
   warmupFrames = 2,
 ): MotionVerdict {
   const markAt = (message: string) =>
     events.find((e) => e.name === "TimeStamp" && e.args?.data?.message === message)?.ts;
   const start = markAt(MOTION_MARKS.ready);
+  const triggered = markAt(MOTION_MARKS.triggered);
   const end = markAt(MOTION_MARKS.end);
-  if (start === undefined || end === undefined)
+  if (start === undefined || triggered === undefined || end === undefined)
     throw new Error("trace is missing the motion marks");
-  const inWindow = (e: TraceEvent) => e.ts > start && e.ts <= end;
 
   const frames = events
-    .filter((e) => e.name === "DrawFrame" && inWindow(e))
+    .filter((e) => e.name === "DrawFrame" && e.ts > start && e.ts <= end)
     .map((e) => e.ts)
     .sort((a, b) => a - b);
   let longFrames = 0;
@@ -54,43 +80,53 @@ export function analyzeTrace(
     worst = Math.max(worst, gap);
     if (gap > FRAME_BUDGET_US) longFrames++;
   }
-  const warm = frames[warmupFrames - 1] ?? end;
-  const nodes = (e: TraceEvent): number[] => {
-    if (e.name === "Paint") return e.args?.data?.nodeId === undefined ? [] : [e.args.data.nodeId];
-    const roots = e.args?.endData?.layoutRoots?.map((r) => r.nodeId);
-    if (roots) return roots;
-    return e.args?.endData?.rootNode === undefined ? [] : [e.args.endData.rootNode];
-  };
-  const count = (name: string) =>
-    events.filter(
-      (e) => e.name === name && inWindow(e) && e.ts >= warm && nodes(e).some((n) => scope.has(n)),
-    ).length;
+  const warm = frames.filter((ts) => ts > triggered)[warmupFrames - 1] ?? end;
+  // The frame an event belongs to: the first DrawFrame at or after it.
+  const frameOf = (ts: number) => frames.findIndex((f) => f >= ts);
+  const node = (e: TraceEvent) => e.args?.data?.nodeId;
+  const motion = (e: TraceEvent) =>
+    scope.nodes.has(node(e) ?? -1) && !CONTENT_REASONS.has(e.args?.data?.reason ?? "");
+  const layoutFrames = new Set<number>();
+  const changedFrames = new Set<number>();
+  const paintedFrames = new Set<number>();
+  for (const e of events) {
+    if (e.ts < warm || e.ts > end) continue;
+    const at = frameOf(e.ts);
+    if ((e.name === LAYOUT_CHANGE || e.name === STYLE_CHANGE) && motion(e)) changedFrames.add(at);
+    if (e.name === LAYOUT_CHANGE && motion(e)) layoutFrames.add(at);
+    const layer = node(e) ?? -1;
+    if (e.name === "Paint" && (scope.nodes.has(layer) || scope.ancestors.has(layer)))
+      paintedFrames.add(at);
+  }
   return {
     frames: frames.length,
     longFrames,
     worstFrameMs: worst / 1000,
-    layouts: count("Layout"),
-    paints: count("Paint"),
+    layouts: layoutFrames.size,
+    paints: [...paintedFrames].filter((at) => changedFrames.has(at)).length,
   };
 }
 
-async function subtreeNodeIds(cdp: CDPSession, selector: string): Promise<Set<number>> {
-  const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
-  const { nodeIds } = await cdp.send("DOM.querySelectorAll", {
-    nodeId: root.nodeId,
-    selector: `${selector}, ${selector} *`,
-  });
-  if (nodeIds.length === 0) throw new Error(`motion scope ${selector} is not on the page`);
-  const ids = new Set<number>();
+async function backendIds(cdp: CDPSession, rootId: number, selector: string): Promise<number[]> {
+  const { nodeIds } = await cdp.send("DOM.querySelectorAll", { nodeId: rootId, selector });
+  const ids: number[] = [];
   for (const nodeId of nodeIds)
-    ids.add((await cdp.send("DOM.describeNode", { nodeId })).node.backendNodeId);
+    ids.push((await cdp.send("DOM.describeNode", { nodeId })).node.backendNodeId);
   return ids;
 }
 
+async function motionScope(cdp: CDPSession, selector: string): Promise<MotionScope> {
+  const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
+  const nodes = await backendIds(cdp, root.nodeId, `${selector}, ${selector} *`);
+  if (nodes.length === 0) throw new Error(`motion scope ${selector} is not on the page`);
+  const ancestors = await backendIds(cdp, root.nodeId, `:has(${selector})`);
+  return { nodes: new Set(nodes), ancestors: new Set([root.backendNodeId, ...ancestors]) };
+}
+
 /**
- * Traces one motion: tracing starts before the trigger (which may navigate, so mount animations
- * are caught, P8-27), the window runs from the ready mark to the end mark, and counts are scoped
- * to the animated subtree.
+ * Traces one motion: tracing and the ready mark come before the trigger (which may navigate, so
+ * mount animations are caught, P8-27); counts are scoped to the animated subtree. A trigger only
+ * starts the motion: it must not wait for the end state, or the motion is over before it is measured.
  */
 export async function traceMotion(
   page: Page,
@@ -108,19 +144,26 @@ export async function traceMotion(
     transferMode: "ReportEvents",
     traceConfig: {
       recordMode: "recordAsMuchAsPossible",
-      includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline.frame"],
+      includedCategories: [
+        "devtools.timeline",
+        "disabled-by-default-devtools.timeline.frame",
+        INVALIDATION_CATEGORY,
+      ],
     },
   });
   try {
-    await run.trigger(page);
+    // Ready before the trigger, so the whole motion is inside the window (I6).
     await page.evaluate((label) => console.timeStamp(label), MOTION_MARKS.ready);
+    await run.trigger(page);
+    await page.evaluate((label) => console.timeStamp(label), MOTION_MARKS.triggered);
     await page.waitForTimeout(run.durationMs);
     await page.evaluate((label) => console.timeStamp(label), MOTION_MARKS.end);
   } finally {
     await cdp.send("Tracing.end");
     await complete;
   }
-  const scope = await subtreeNodeIds(cdp, run.scope);
+  const scope = await motionScope(cdp, run.scope);
+
   await cdp.detach();
   return analyzeTrace(events, scope);
 }

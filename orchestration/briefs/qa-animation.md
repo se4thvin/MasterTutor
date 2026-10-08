@@ -17,7 +17,7 @@ Audit every UI motion for QA run **{{RUN_ID}}**. Do not edit product code. Save 
   - Inline-style duration props are not linted, and `step-start`/`step-end` are not banned.
 
 ## Procedure
-1. `scripts/remote-test.sh qa ui e2e/motion.spec.ts --project=w1440 --retries=0` (layout and paint
+1. `scripts/remote-test.sh ui e2e/motion.spec.ts --project=w1440` (layout and paint
    in each animated subtree, reduced motion), then attach `apps/web/playwright-report/` findings.
 2. Frame timing on the Mac (real GPU), under the local lock:
    `bash -c 'until mkdir /tmp/mt-behaviour.lock 2>/dev/null; do sleep 15; done; trap "rmdir /tmp/mt-behaviour.lock" EXIT; MOTION_FRAMES=1 MOTION_VIDEO=1 PW_DEV=1 pnpm --filter @mastertutor/web exec playwright test e2e/motion.spec.ts --project=w1440 --headed'`

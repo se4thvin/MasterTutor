@@ -140,6 +140,20 @@ test.describe("layout detector: 44px targets, struck-out words, run-view obstacl
     expect(await findLayoutIssues(page)).toEqual([]);
   });
 
+  test("[data-qa-allow-clip] exempts clipping only: targets and struck-out words are still checked (I1)", async ({
+    page,
+  }) => {
+    await page.setContent(`
+      <div data-qa-allow-clip style="width:40px;overflow:hidden">
+        <button style="width:30px;height:30px;padding:0">x</button>
+        <p style="width:40px">You <s>the model</s></p>
+      </div>`);
+    const issues = (await findLayoutIssues(page, { minTargetPx: 44 })).join("\n");
+    expect(issues).toContain("target smaller than 44px (30×30)");
+    expect(issues).toContain("wraps onto a second line");
+    expect(issues).not.toContain("clipped by");
+  });
+
   test("ellipsis exempts text, not a clipped control (isTextOnly sees the element itself)", async ({
     page,
   }) => {
