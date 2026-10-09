@@ -64,6 +64,8 @@ export interface StructuredRequest<S extends z.ZodType> {
   schema: S;
   /** The json_schema name (llm-mock routes on it). */
   name: string;
+  /** A hard cap on output tokens (reasoning included); a cut-off answer does not parse. */
+  maxOutputTokens?: number;
 }
 
 export interface StructuredReply<T> {
@@ -157,6 +159,7 @@ export function createOpenAI(options: {
             instructions: request.instructions,
             input: request.input,
             text: { format: zodTextFormat(request.schema, request.name) },
+            ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
           },
           requestOptions,
         );
