@@ -1,5 +1,6 @@
 export const SITE = "http://site.fixtures.test";
-export const OTHER = "http://other.fixtures.test";
+/** Another site (D51: a host of the same site as SITE would be reached without asking). */
+export const OTHER = "http://other.fixtures-isolated.test";
 /** The vault-fixture site (tests/fixtures/vault-sites; the `vault-fixtures` service in compose.test.yml). */
 export const LOGIN = "http://login.fixtures.test";
 export const BEHAVIOUR_SLOTS = ["browser-1", "browser-2"] as const;

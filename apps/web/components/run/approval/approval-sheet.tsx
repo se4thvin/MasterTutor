@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { isTyping } from "@/lib/hooks/use-hotkey.ts";
+import { LIQUID_GLASS } from "@/components/ui/liquid-glass.tsx";
 import type { ApprovalCopy } from "../model/approval-copy.ts";
 import type { PendingApproval } from "../model/run-model.ts";
 
@@ -128,7 +129,7 @@ export function ApprovalSheet({
     <div
       ref={ref}
       id={APPROVAL_SHEET_ID}
-      className="run-approval"
+      className={`run-approval ${LIQUID_GLASS}`}
       data-tone={copy.tone}
       role="alertdialog"
       aria-modal="false"

@@ -127,9 +127,9 @@ describe("SpringCheck ring", () => {
 });
 
 describe("F3/F5 art tokens", () => {
-  it("defines the agent cursor, hero palette and PiP layer once, in the light block", () => {
+  it("defines the agent cursor and PiP layer once, in the light block", () => {
     const light = blockAfter("/* light */");
-    for (const name of ["cursor", "cursor-outline", "hero-aqua", "hero-aqua-deep", "hero-bondi"]) {
+    for (const name of ["cursor", "cursor-outline"]) {
       expect(light[name], name).toMatch(/^#[0-9a-f]{6}$/);
     }
     expect(Number(light["z-pip"])).toBeLessThan(Number(light["z-scrim"]));
@@ -143,16 +143,18 @@ describe("Liquid Glass legibility over any backdrop (LiquidGlass)", () => {
     ["white", [255, 255, 255, 1]],
   ];
   /**
-   * Text on the glass, and on a selected or hovered row's fill on the glass. Secondary text is
-   * never set on a fill there (the account row lifts its email to --label on hover, shell.css).
+   * Text on the glass, and on a selected or hovered row's fill on the glass.
    */
   const ON_GLASS: Array<[string, string | null, number]> = [
     ["label", null, 4.5],
     ["label-2", null, 4.5],
     ["label", "fill", 4.5],
     ["label", "fill-2", 4.5],
-    // Row and nav icons are tinted graphics: the 1.4.11 non-text minimum.
-    ["tint-text", null, 3],
+    ["label-2", "fill-2", 4.5],
+    // Text actions on glass: menu and toast buttons, a destructive menu item.
+    ["tint-text", null, 4.5],
+    ["danger", null, 4.5],
+    ["tint-text", "fill-2", 3],
   ];
   describe.each([
     ["light", blockAfter("/* light */")],
@@ -161,8 +163,11 @@ describe("Liquid Glass legibility over any backdrop (LiquidGlass)", () => {
     const tokens = { ...blockAfter("/* light */"), ...vars };
     for (const [name, backdrop] of BACKDROPS) {
       it.each(ON_GLASS)(`%s on %s over a ${name} backdrop`, (fg, fill, min) => {
-        // Glass tint, then its sheen at full strength (the brightest point), then the row fill.
-        let back = over(parseColor(tokens["glass-liquid"] ?? ""), backdrop);
+        // The backdrop through the filter's brightness(), then the glass tint, its sheen at full
+        // strength (the brightest point), then the row fill.
+        const dim = Number(/brightness\(([\d.]+)\)/.exec(tokens["blur"] ?? "")?.[1] ?? 1);
+        const seen: Rgba = [backdrop[0] * dim, backdrop[1] * dim, backdrop[2] * dim, 1];
+        let back = over(parseColor(tokens["glass-liquid"] ?? ""), seen);
         back = over(parseColor(tokens["glass-sheen"] ?? ""), back);
         if (fill) back = over(parseColor(tokens[fill] ?? ""), back);
         expect(contrast(over(parseColor(tokens[fg] ?? ""), back), back)).toBeGreaterThanOrEqual(

@@ -89,7 +89,8 @@ interface ControlChange {
 /** Everything the Run view renders, folded from RunDetail + run_steps + RunEvents. */
 export interface RunModel {
   runId: string;
-  goal: string;
+  /** Untrusted (model output or the goal): shown as text through untrustedText only. */
+  title: string;
   status: RunStatus;
   waitReason: WaitReason | null;
   controller: Controller;
@@ -215,7 +216,7 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
   if (secure !== null && current !== null && current !== secure) secure = null;
   return {
     runId: detail.id,
-    goal: detail.goal,
+    title: detail.title,
     status: detail.status,
     waitReason: detail.waitReason,
     controller: detail.controller,
@@ -395,6 +396,8 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
       return { ...m, noteId: e.noteId, filedPath: e.path };
     case "model_fallback":
       return { ...m, model: e.to };
+    case "title":
+      return { ...m, title: e.title };
   }
 }
 
@@ -408,6 +411,7 @@ export function syncRunModel(model: RunModel, detail: RunDetail): RunModel {
   if (detail.id !== model.runId) return model;
   return {
     ...model,
+    title: detail.title,
     status: detail.status,
     waitReason: detail.waitReason,
     controller: detail.controller,

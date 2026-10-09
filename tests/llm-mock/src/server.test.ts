@@ -452,6 +452,22 @@ describe("non-Responses endpoints and structured formats", () => {
     });
     await mock.close();
   });
+  it("answers run_title on its format even when the goal carries a scenario tag", async () => {
+    const mock = await startLlmMock();
+    const res = await fetch(`${mock.url}/v1/responses`, {
+      method: "POST",
+      body: JSON.stringify({
+        model: "gpt-6-luna",
+        store: false,
+        input: [{ role: "user", content: "Goal:\n[scenario:count] notes" }],
+        text: { format: { name: "run_title" } },
+      }),
+    });
+    const body = (await res.json()) as { output: Array<{ content: Array<{ text: string }> }> };
+    expect(JSON.parse(body.output[0]!.content[0]!.text)).toEqual({ title: "Mock run title" });
+    expect(mock.requests.at(-1)!.scenario).toBeNull();
+    await mock.close();
+  });
 });
 
 describe("llm-mock scenario routing (D26, P7-8)", () => {

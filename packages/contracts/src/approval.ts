@@ -53,7 +53,13 @@ export const ApprovalRequest = z.discriminatedUnion("kind", [
     /** Set when the target form posts elsewhere: where it would send the credential. */
     postsTo: z.string().max(MAX_POSTS_TO_CHARS).optional(),
   }),
-  z.object({ kind: z.literal("new_origin"), origin: Origin, url: PageUrl }),
+  z.object({
+    kind: z.literal("new_origin"),
+    origin: Origin,
+    url: PageUrl,
+    /** The page posted a form there: approving lets the action run again; the URL is not opened. */
+    formPost: z.literal(true).optional(),
+  }),
   z.object({
     kind: z.literal("budget"),
     exceeded: z.enum(["steps", "usd", "minutes"]),

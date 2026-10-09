@@ -1,5 +1,6 @@
 import {
   StepAction,
+  fallbackRunTitle,
   type ApprovalView,
   type RunStepView,
   type RunSummary,
@@ -18,6 +19,8 @@ export function runSummaryOf(row: RunRow): RunSummary {
   return {
     id: row.id,
     goal: row.goal,
+    // Existing runs (and runs whose title model failed) show the fallback: no backfill.
+    title: row.title ?? fallbackRunTitle(row.goal),
     status: row.status,
     waitReason: row.waitReason,
     controller: row.controller,

@@ -113,6 +113,19 @@ test("long names stay inside their rows, cut with a fade, with the full name in 
   await expectCleanScreen(page);
 });
 
+test("the folder's page title wraps an unbroken name instead of running off the page", async ({
+  page,
+}) => {
+  const tree = await openTree(page);
+  await row(tree, LONG_UNBROKEN).click();
+  const title = page.getByRole("heading", { level: 1 });
+  await expect(title).toContainText(LONG_UNBROKEN);
+  const main = (await page.getByRole("main").boundingBox())!;
+  const box = (await title.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(main.x + main.width);
+  expect(await title.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+});
+
 test("a child's chevron sits under its parent's folder, and deep rows keep room for the name", async ({
   page,
 }) => {

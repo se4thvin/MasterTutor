@@ -14,9 +14,12 @@ import { Menu } from "@/components/ui/menu.tsx";
 export function MessageComposer({
   disabled,
   onSend,
+  onType,
 }: {
   disabled: boolean;
   onSend(text: string, interrupt: boolean): Promise<boolean>;
+  /** Each keystroke (Pip thinks along). */
+  onType(): void;
 }) {
   const id = useId();
   const [text, setText] = useState("");
@@ -49,6 +52,7 @@ export function MessageComposer({
           aria-describedby={disabled ? undefined : `${id}-hint`}
           aria-keyshortcuts="Enter Meta+Enter Control+Enter"
           onChange={(e) => setText(e.target.value)}
+          onInput={onType}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();

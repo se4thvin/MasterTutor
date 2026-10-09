@@ -9,14 +9,16 @@ import {
   type Usage,
   type WaitReason,
 } from "@mastertutor/contracts";
-import { runEvents, runSteps, runs, type Database } from "@mastertutor/db";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { emitRunEvent, runEvents, runSteps, runs, type Database, type DbTx } from "@mastertutor/db";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { RunRecord } from "./claim.ts";
 
 export interface RunSnapshot {
   id: string;
   workspaceId: string;
   goal: string;
+  /** The generated title; null while none is stored (the loop then asks for one). */
+  title: string | null;
   model: string;
   approvalMode: ApprovalMode;
   toolProfile: ToolProfile;
@@ -32,6 +34,7 @@ export function snapshotOf(row: RunRecord): RunSnapshot {
     id: row.id,
     workspaceId: row.workspaceId,
     goal: row.goal,
+    title: row.title ?? null,
     model: row.model,
     approvalMode: row.approvalMode,
     toolProfile: row.toolProfile,
@@ -121,4 +124,14 @@ export async function readWakeRequest(db: Database, runId: string): Promise<stri
     .from(runs)
     .where(eq(runs.id, runId));
   return row?.at ?? null;
+}
+
+/** Writes the run's title once (a stored one is never replaced) and streams it in the same transaction. */
+export async function storeRunTitle(tx: DbTx, runId: string, title: string): Promise<void> {
+  const written = await tx
+    .update(runs)
+    .set({ title })
+    .where(and(eq(runs.id, runId), isNull(runs.title)))
+    .returning({ id: runs.id });
+  if (written.length > 0) await emitRunEvent(tx, runId, { type: "title", title });
 }

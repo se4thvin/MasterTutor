@@ -50,6 +50,13 @@ const PROBES: ReadonlyArray<readonly [string, unknown, Expectation]> = [
   ["benchmarks/start", { benchmarkId: MISSING }, "not_found"],
   ["benchmarks/runs", {}, "ok"],
   ["benchmarks/grade", { benchmarkRunId: MISSING, outcome: "failed" }, "not_found"],
+  ["alerts/list", {}, "ok"],
+  ["alerts/active", {}, "ok"],
+  ["alerts/acknowledge", { id: MISSING }, "not_found"],
+  ["alerts/pushConfig", {}, "ok"],
+  // Idempotent: turning off a subscription that is not there is ok.
+  ["alerts/unsubscribe", { endpoint: "https://web.push.apple.com/probe" }, "ok"],
+  ["alerts/pushStatus", { endpoint: "https://web.push.apple.com/probe" }, "ok"],
 ];
 /** Writes that create something; the create test below cleans up after each. */
 const CREATES: Record<string, unknown> = {
@@ -67,6 +74,11 @@ const CREATES: Record<string, unknown> = {
     task: "probe",
     allowedOrigins: [SITE],
     successCriteria: "probe",
+  },
+  // The stack is plain http without VAPID keys, so a real subscribe is PRECONDITION_FAILED there.
+  "alerts/subscribe": {
+    endpoint: "https://web.push.apple.com/probe",
+    keys: { p256dh: `B${"A".repeat(86)}`, auth: "A".repeat(22) },
   },
 };
 /**

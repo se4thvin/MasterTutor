@@ -13,7 +13,7 @@ import {
   type ThinkingState,
   type ThreadItem,
 } from "../model/thread-items.ts";
-import { untrustedText } from "../model/untrusted-text.ts";
+import { untrustedText } from "@mastertutor/contracts";
 import { MessageComposer } from "./message-composer.tsx";
 import { ThreadEntry } from "./thread-entry.tsx";
 
@@ -34,6 +34,8 @@ interface ThreadProps {
   canMessage: boolean;
   /** `interrupt`: Send now (run-mode). */
   onSend(text: string, interrupt: boolean): Promise<boolean>;
+  /** Each keystroke in the composer (Pip thinks along). */
+  onType(): void;
 }
 
 /**
@@ -140,7 +142,7 @@ export function ThreadPane({ id, onHide, ...p }: ThreadProps & { id: string; onH
         />
       </div>
       <ThreadList {...p} />
-      <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />
+      <MessageComposer disabled={!p.canMessage} onSend={p.onSend} onType={p.onType} />
     </LiquidGlass>
   );
 }
@@ -182,7 +184,7 @@ export function ThreadSheet({
             p.onReview();
           }}
         />
-        <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />
+        <MessageComposer disabled={!p.canMessage} onSend={p.onSend} onType={p.onType} />
       </Sheet>
     </>
   );

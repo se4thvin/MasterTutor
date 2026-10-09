@@ -1,4 +1,5 @@
 import {
+  fallbackRunTitle,
   USAGE_MAX_RUNS,
   type SettingsView,
   type UpdateSettingsInput,
@@ -144,6 +145,7 @@ export async function usageReport(
       .select({
         runId: runs.id,
         goal: runs.goal,
+        title: runs.title,
         status: runs.status,
         usd: sql<number>`(${runs.usage}->>'usd')::float8`,
         steps: sql<number>`(${runs.usage}->>'steps')::int`,
@@ -185,7 +187,10 @@ export async function usageReport(
   const total = errors[0]?.total ?? 0;
   return {
     perDay: [...perDay],
-    perRun,
+    perRun: perRun.map(({ goal, title, ...run }) => ({
+      ...run,
+      title: title ?? fallbackRunTitle(goal),
+    })),
     stepLatencyMs: { p50: round(latency[0]?.p50), p95: round(latency[0]?.p95) },
     openaiErrorRate: total === 0 ? null : (errors[0]?.failed ?? 0) / total,
   };

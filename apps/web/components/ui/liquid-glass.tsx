@@ -1,6 +1,9 @@
 import type { HTMLAttributes, ReactNode } from "react";
 import { cx } from "@/lib/cx.ts";
 
+/** The material's classes, for elements another library renders (Base UI popups). */
+export const LIQUID_GLASS = "glass lglass";
+
 type GlassTag = "div" | "aside" | "header" | "nav" | "section";
 
 /**
@@ -14,12 +17,19 @@ type GlassTag = "div" | "aside" | "header" | "nav" | "section";
  */
 export function LiquidGlass({
   as: Tag = "div",
+  blur = true,
   className,
   children,
   ...rest
-}: { as?: GlassTag; className?: string; children: ReactNode } & HTMLAttributes<HTMLElement>) {
+}: {
+  as?: GlassTag;
+  /** false where nothing ever passes beneath (a docked sidebar): the look, without a blur pass. */
+  blur?: boolean;
+  className?: string;
+  children: ReactNode;
+} & HTMLAttributes<HTMLElement>) {
   return (
-    <Tag className={cx("glass lglass", className)} {...rest}>
+    <Tag className={cx(LIQUID_GLASS, !blur && "lglass-still", className)} {...rest}>
       {children}
     </Tag>
   );

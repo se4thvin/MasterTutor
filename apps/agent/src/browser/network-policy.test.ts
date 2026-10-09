@@ -129,19 +129,20 @@ describe("installNetworkPolicy routing", () => {
     } as unknown as BrowserContext;
     const blocked: unknown[] = [];
     await installNetworkPolicy(context, {
-      allowedOrigins: () => allowed,
+      allowsNavigation: (origin) => allowed.includes(origin),
       testMode: false,
       onBlockedNavigation: (b) => blocked.push(b),
       resolveHost: async () => ["93.184.216.34"],
     });
     const run = async (
       url: string,
-      request: { navigation: boolean; main: boolean; throws?: boolean },
+      request: { navigation: boolean; main: boolean; throws?: boolean; method?: string },
     ) => {
       const result: string[] = [];
       const route = {
         request: () => ({
           url: () => url,
+          method: () => request.method ?? "GET",
           isNavigationRequest: () => {
             if (request.throws) throw new Error("frame detached");
             return request.navigation;
@@ -174,15 +175,19 @@ describe("installNetworkPolicy routing", () => {
     } as unknown as BrowserContext;
     const blocked: unknown[] = [];
     await installNetworkPolicy(context, {
-      allowedOrigins: () => ["http://ok.test"],
+      allowsNavigation: (origin) => origin === "http://ok.test",
       testMode: false,
       onBlockedNavigation: (b) => blocked.push(b),
       resolveHost: async () => ["93.184.216.34"],
     });
     const gotos: string[] = [];
-    const hop = (url: string, options: { redirected?: boolean; main?: boolean } = {}) =>
+    const hop = (
+      url: string,
+      options: { redirected?: boolean; main?: boolean; method?: string } = {},
+    ) =>
       listeners["request"]!({
         url: () => url,
+        method: () => options.method ?? "GET",
         redirectedFrom: () => (options.redirected === false ? null : {}),
         isNavigationRequest: () => true,
         frame: () => ({
@@ -195,8 +200,23 @@ describe("installNetworkPolicy routing", () => {
     hop("http://evil.test/first", { redirected: false });
     expect(gotos).toEqual([]);
     hop("http://evil.test/landing?x=1");
-    expect(blocked).toEqual([{ url: "http://evil.test/landing?x=1", origin: "http://evil.test" }]);
-    expect(gotos).toEqual(["about:blank"]);
+    hop("http://evil.test/acs", { method: "POST" });
+    expect(blocked).toEqual([
+      { url: "http://evil.test/landing?x=1", origin: "http://evil.test" },
+      { url: "http://evil.test/acs", origin: "http://evil.test", formPost: true },
+    ]);
+    expect(gotos).toEqual(["about:blank", "about:blank"]);
+  });
+  it("asks the run's scope about each top-level document and marks a blocked form post", async () => {
+    const { run, blocked } = await harness();
+    expect(await run("http://ok.test/next", { navigation: true, main: true })).toBe("continue");
+    expect(
+      await run("http://idp.test/saml", { navigation: true, main: true, method: "POST" }),
+    ).toBe("abort");
+    expect(await run("http://idp.test/frame", { navigation: true, main: false })).toBe("continue");
+    expect(blocked).toEqual([
+      { url: "http://idp.test/saml", origin: "http://idp.test", formPost: true },
+    ]);
   });
   it("lets about:blank and non-navigation non-http requests through", async () => {
     const { run } = await harness();
@@ -223,7 +243,7 @@ describe("installNetworkPolicy routing", () => {
       on: () => undefined,
     } as unknown as BrowserContext;
     const policy = await installNetworkPolicy(context, {
-      allowedOrigins: () => ["http://ok.test"],
+      allowsNavigation: (origin) => origin === "http://ok.test",
       testMode: false,
       onBlockedNavigation: () => undefined,
       resolveHost: async () => {

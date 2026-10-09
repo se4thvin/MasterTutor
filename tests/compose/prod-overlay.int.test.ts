@@ -8,16 +8,36 @@ import {
   liveRouterRule,
   liveUploadRouterRule,
   mediaPortForSlot,
+  OBSERVABILITY_APP_PATH,
+  observabilityForwardAuthAddress,
+  observabilityRouterRule,
+  observabilitySessionRouterRule,
 } from "@mastertutor/contracts";
+import { o2OtlpEndpoint } from "@mastertutor/observability";
 import { describe, expect, it } from "vitest";
+import { generateSecrets } from "../../scripts/env-init.ts";
 import { composeConfig, type ComposeService } from "./compose-json.ts";
 import { localPreflightProblems } from "../smoke/prod-smoke.ts";
 import { PROD_LIKE_LOCAL_FILES, prodModeProblems } from "./prod-mode.ts";
 
 const DOMAIN = "notes.example.org";
 const PROD = ["compose.yml", "compose.prod.yml"] as const;
+/**
+ * compose.prod.yml requires the D50 secrets (`:?set`), even for services whose profile is off.
+ * Test values, generated here rather than added to the shared test env file.
+ */
+const OBSERVABILITY_SECRETS = Object.fromEntries(
+  Object.entries(generateSecrets()).filter(([key]) =>
+    /^(OBSERVE_|S3_OBSERVE_|VAPID_|ALERT_WEBHOOK_SECRET$)/.test(key),
+  ),
+);
 const prod = (env: Record<string, string> = {}, profiles: string[] = []) =>
-  composeConfig(".env.test", PROD, { env: { DOMAIN, ...env }, profiles });
+  composeConfig(".env.test", PROD, {
+    env: { DOMAIN, ...OBSERVABILITY_SECRETS, ...env },
+    profiles,
+  });
+/** D50: workers and slots log to the collector through Docker's fluentd driver (spec §9). */
+const CONTAINER_LOGS = /^(browser-\d+|pdf-worker|audio-capture|docling)$/;
 const config = prod();
 const slots = Object.keys(config.services)
   .filter((name) => /^browser-\d+$/.test(name))
@@ -59,6 +79,8 @@ describe("compose.prod.yml: Dokploy wiring (D41)", () => {
       "backend",
       "cdp",
       "edge",
+      "observe",
+      "telemetry",
     ]);
   });
 
@@ -275,14 +297,27 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
   });
 
   it("bounds every service's memory, CPU, processes and logs on the shared host (review I5)", () => {
-    for (const [name, service] of Object.entries(config.services)) {
+    const full = prod({}, ["pdf", "observability"]);
+    for (const [name, service] of Object.entries(full.services)) {
       expect(Number(service.mem_limit), name).toBeGreaterThan(0);
       expect(Number(service.cpus), name).toBeGreaterThan(0);
       expect(service.pids_limit, name).toBeGreaterThan(0);
-      expect(service.logging, name).toMatchObject({
-        driver: "json-file",
-        options: { "max-size": expect.any(String), "max-file": expect.any(String) },
-      });
+      if (CONTAINER_LOGS.test(name))
+        expect(service.logging, name).toMatchObject({
+          driver: "fluentd",
+          options: {
+            "fluentd-address": "127.0.0.1:24224",
+            "fluentd-async": "true",
+            mode: "non-blocking",
+            "cache-max-size": expect.any(String),
+            "cache-max-file": expect.any(String),
+          },
+        });
+      else
+        expect(service.logging, name).toMatchObject({
+          driver: "json-file",
+          options: { "max-size": expect.any(String), "max-file": expect.any(String) },
+        });
     }
     for (const slot of slots) {
       expect(Number(config.services[slot]!.mem_limit), slot).toBe(4 * 1024 ** 3);
@@ -326,13 +361,14 @@ describe("compose.prod.yml: production pins (D38, D42, D47)", () => {
       "backend",
       "cdp",
       "pdf",
+      "telemetry",
     ]);
     expect(env(pdf.services.agent).DOCLING_URL).toBe("http://docling:5001");
     expect(docling.ports ?? []).toEqual([]);
     expect(Number(docling.mem_limit)).toBeGreaterThan(0);
     expect(Number(docling.cpus)).toBeGreaterThan(0);
     expect(docling.pids_limit).toBeGreaterThan(0);
-    expect(docling.logging).toMatchObject({ driver: "json-file" });
+    expect(docling.logging).toMatchObject({ driver: "fluentd" });
     expect(prodModeProblems(pdf)).toEqual([]);
   });
 });
@@ -355,6 +391,7 @@ services:
       traefik.http.routers.mastertutor-web-http.entrypoints: !reset null
       traefik.http.routers.mastertutor-web-http.middlewares: !reset null
       traefik.http.routers.mastertutor-web-http.service: !reset null
+      traefik.http.routers.mastertutor-observability-session.tls.certresolver: !reset null
 ${[1, 2, 3, 4, 5, 6]
   .map(
     (n) =>
@@ -369,7 +406,12 @@ describe("compose.prod.yml without Dokploy (D47)", () => {
     const override = join(dir, "local.yml");
     writeFileSync(override, LOCAL_OVERRIDE);
     const local = composeConfig(".env.test", [...PROD, override], {
-      env: { DOMAIN: "localhost", TRAEFIK_ENTRYPOINT: "web", TRAEFIK_TLS: "false" },
+      env: {
+        ...OBSERVABILITY_SECRETS,
+        DOMAIN: "localhost",
+        TRAEFIK_ENTRYPOINT: "web",
+        TRAEFIK_TLS: "false",
+      },
     });
     expect(Object.entries(local.networks).filter(([, network]) => network.external)).toEqual([]);
     expect(local.networks.cdp).toMatchObject({ name: "mastertutor-cdp", internal: true });
@@ -397,7 +439,13 @@ describe("compose.prod.yml without Dokploy (D47)", () => {
 describe("the D47 bench stack", () => {
   it("is production mode: AGENT_TEST_MODE=0, no WEB_FIXTURE_API, no llm-mock", () => {
     const bench = composeConfig(".env.test", PROD_LIKE_LOCAL_FILES, {
-      env: { DOMAIN: "localhost", TRAEFIK_ENTRYPOINT: "web", TRAEFIK_TLS: "false" },
+      env: {
+        ...OBSERVABILITY_SECRETS,
+        DOMAIN: "localhost",
+        TRAEFIK_ENTRYPOINT: "web",
+        TRAEFIK_TLS: "false",
+      },
+      profiles: ["pdf", "observability"],
     });
     expect(env(bench.services.agent).AGENT_TEST_MODE).toBe("0");
     for (const [name, service] of Object.entries(bench.services)) {
@@ -413,10 +461,110 @@ describe("the D47 bench stack", () => {
   it("passes the local prod smoke's preflight (final review I1)", () => {
     expect(
       localPreflightProblems(".env.test", {
+        ...OBSERVABILITY_SECRETS,
         DOMAIN: "localhost",
         TRAEFIK_ENTRYPOINT: "web",
         TRAEFIK_TLS: "false",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("observability in production (D50)", () => {
+  const obs = prod({}, ["pdf", "observability"]);
+  const R = "traefik.http.routers.mastertutor-observability";
+  const A = "traefik.http.middlewares.mastertutor-observability-auth.forwardauth";
+
+  it("serves OpenObserve on obs.<DOMAIN> only through owner ForwardAuth (D50 ruling I-2)", () => {
+    const l = labels(obs.services.openobserve);
+    expect(l[`${R}.rule`]).toBe(observabilityRouterRule(DOMAIN));
+    expect(l[`${R}.priority`]).toBe("900");
+    expect(l[`${R}.entrypoints`]).toBe("websecure");
+    expect(l[`${R}.tls`]).toBe("true");
+    expect(l[`${R}.tls.certresolver`]).toBe("letsencrypt");
+    expect(l[`${R}.middlewares`]).toBe(
+      "mastertutor-observability-root,mastertutor-observability-auth,mastertutor-live-headers",
+    );
+    // `docker compose config` prints a literal `$` escaped as `$$`.
+    const root = "traefik.http.middlewares.mastertutor-observability-root.redirectregex";
+    expect(l[`${root}.regex`]!.replaceAll("$$", "$")).toBe("^(https?://[^/]+)/?$");
+    expect(l[`${root}.replacement`]!.replaceAll("$$", "$")).toBe("${1}/observability/web/");
+    expect(env(obs.services.openobserve).ZO_WEB_URL).toBe(`https://obs.${DOMAIN}/observability`);
+    expect(l[`${A}.address`]).toBe(observabilityForwardAuthAddress());
+    expect(l[`${A}.authResponseHeaders`]).toBe("Authorization,Cookie");
+    expect(l[`${A}.trustForwardHeader`]).toBe("false");
+    expect(l["traefik.docker.network"]).toBe("mastertutor-obs");
+    expect(obs.services.openobserve!.ports ?? []).toEqual([]);
+    expect(obs.networks["observe-edge"]).toMatchObject({ name: "mastertutor-obs", external: true });
+    const other = prod({ CDP_SUBNET_PREFIX: "10.231.7" }, ["observability"]);
+    expect(labels(other.services.openobserve)[`${A}.address`]).toBe(
+      observabilityForwardAuthAddress("10.231.7"),
+    );
+  });
+
+  it("routes the obs host's session path to web, above OpenObserve and without ForwardAuth, and leaves the app's /observability to web", () => {
+    const S = "traefik.http.routers.mastertutor-observability-session";
+    const web = labels(obs.services.web);
+    expect(web[`${S}.rule`]).toBe(observabilitySessionRouterRule(DOMAIN));
+    expect(Number(web[`${S}.priority`])).toBeGreaterThan(900);
+    expect(web[`${S}.service`]).toBe("mastertutor-web");
+    expect(web[`${S}.tls.certresolver`]).toBe("letsencrypt");
+    expect(web).not.toHaveProperty(`${S}.middlewares`);
+    const rules = Object.values(obs.services).flatMap((service) =>
+      Object.entries(labels(service))
+        .filter(([key]) => key.endsWith(".rule"))
+        .map(([, rule]) => rule),
+    );
+    const appHost = `Host(\`${DOMAIN}\`)`;
+    expect(
+      rules.filter((rule) => rule.includes(appHost) && rule.includes(OBSERVABILITY_APP_PATH)),
+    ).toEqual([]);
+  });
+
+  it("joins exactly the shared host's new external network, besides mastertutor-cdp", () => {
+    const external = Object.entries(obs.networks).filter(([, network]) => network.external);
+    expect(external.map(([key, network]) => [key, network.name]).sort()).toEqual([
+      ["cdp", "mastertutor-cdp"],
+      ["observe-edge", "mastertutor-obs"],
+    ]);
+    expect(Object.keys(obs.services.openobserve!.networks ?? {}).sort()).toEqual([
+      "observe",
+      "observe-edge",
+      "observe-store",
+    ]);
+    expect(Object.keys(obs.services.garage!.networks ?? {}).sort()).toEqual([
+      "backend",
+      "observe-store",
+    ]);
+    for (const network of ["telemetry", "observe", "observe-store"])
+      expect(obs.networks[network], network).toMatchObject({ internal: true });
+  });
+
+  it("points web and agent at the collector, the collector at OpenObserve, and the agent preloads telemetry", () => {
+    expect(env(obs.services.web).OTEL_EXPORTER_OTLP_ENDPOINT).toBe("http://otel-collector:4318");
+    expect(env(obs.services.agent).OTEL_EXPORTER_OTLP_ENDPOINT).toBe("http://otel-collector:4318");
+    expect(env(obs.services["otel-collector"]).OBSERVE_OTLP_ENDPOINT).toBe(
+      o2OtlpEndpoint("http://openobserve:5080", "default"),
+    );
+    expect(obs.services.agent!.command).toEqual([
+      "node",
+      "--import",
+      "./packages/telemetry/src/register-agent.ts",
+      "apps/agent/src/main.ts",
+    ]);
+  });
+
+  it("publishes the collector's fluent-forward port on loopback only, and nothing else new", () => {
+    expect(obs.services["otel-collector"]!.ports).toEqual([
+      expect.objectContaining({ target: 24224, published: "24224", host_ip: "127.0.0.1" }),
+    ]);
+    for (const name of ["openobserve", "observability-init"])
+      expect(obs.services[name]!.ports ?? [], name).toEqual([]);
+  });
+
+  it("keeps the workers' networks and empty env (final I8) while their logs reach the collector", () => {
+    for (const name of ["pdf-worker", "audio-capture"])
+      expect(obs.services[name]!.environment ?? {}).toEqual({});
+    expect(prodModeProblems(obs)).toEqual([]);
   });
 });

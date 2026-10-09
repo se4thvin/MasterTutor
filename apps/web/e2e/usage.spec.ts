@@ -24,7 +24,7 @@ test("usage shows totals, an accessible daily chart and per-run spend", async ({
     .getByRole("radio", { name: "7 days" })
     .click();
   await expect(bars).toHaveCount(7);
-  await expect(page.getByRole("cell", { name: /Capture the learning-rate warmup/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /Learning-rate warmup, verbatim/ })).toBeVisible();
 });
 
 test("90 days stays clean at every width", async ({ page }) => {

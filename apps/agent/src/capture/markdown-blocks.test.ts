@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { escapeMarkdownText } from "@mastertutor/contracts";
 import {
+  activityCallout,
   blockPlainText,
+  joinEnumerators,
   limitBlockSize,
   splitMarkdown,
   texOf,
@@ -112,5 +114,61 @@ describe("media and math blocks", () => {
       expect(blockPlainText({ type, markdown: "Caption text" })).toBe("");
     expect(texOf("$$\nC_6H_{12}O_6 + 6O_2\n$$")).toBe("C_6H_{12}O_6+6O_2");
     expect(texOf("plain")).toBeNull();
+  });
+});
+
+describe("joinEnumerators", () => {
+  it("joins a question number on its own line to the line it numbers, in prose and in quotes", () => {
+    expect(joinEnumerators("1)\n\nWhat is 2 + 2?\n\n2.\nNext one")).toBe(
+      "1\\) What is 2 + 2?\n\n2\\. Next one",
+    );
+    expect(joinEnumerators("> intro\n>\n> 1)\n>\n> What is 2 + 2?")).toBe(
+      "> intro\n>\n> 1\\) What is 2 + 2?",
+    );
+  });
+  it("keeps the number as verifiable text", () => {
+    expect(blockPlainText({ type: "paragraph", markdown: joinEnumerators("1)\n\nWhat?") })).toBe(
+      "1) What?",
+    );
+  });
+  it("never touches fenced code, quoted or not", () => {
+    for (const text of ["```\n1.\n\nx = 1\n```", "> ~~~\n> 2)\n> y\n> ~~~"])
+      expect(joinEnumerators(text)).toBe(text);
+    expect(joinEnumerators("```\n1.\n```\n\n1)\n\nAfter")).toBe("```\n1.\n```\n\n1\\) After");
+  });
+  it("leaves a number before structure, at the end, or across a quote boundary", () => {
+    for (const text of ["1)\n\n# Heading", "1)\n\n- item", "text\n\n3)", "> 1)\n\nOutside"])
+      expect(joinEnumerators(text)).toBe(text);
+  });
+});
+
+describe("activity callouts", () => {
+  const header = `> ${activityCallout("https://book.test/s/4#:~:text=4.4.2")}`;
+  it("builds an Obsidian callout title that links back, escaping link-breaking characters", () => {
+    expect(header).toBe("> [!example] [Interactive activity](https://book.test/s/4#:~:text=4.4.2)");
+    expect(activityCallout("https://book.test/a (b)")).toBe(
+      "[!example] [Interactive activity](https://book.test/a%20%28b%29)",
+    );
+    expect(activityCallout(null)).toBe("[!example] Interactive activity");
+  });
+  it("keeps the header out of the block's plain text, so only page text is verified", () => {
+    const markdown = `${header}\n>\n> participation activity\n>\n> **4.4.2: Overflow.**`;
+    expect(blockPlainText({ type: "quote", markdown })).toBe(
+      "participation activity 4.4.2: Overflow.",
+    );
+    expect(blockPlainText({ type: "quote", markdown: "> [!example] Interactive activity" })).toBe(
+      "",
+    );
+  });
+  it("never exempts the same words written by a page (escaped) or outside a quote's first line", () => {
+    expect(
+      blockPlainText({ type: "quote", markdown: "> \\[!example\\] Interactive activity" }),
+    ).toBe("[!example] Interactive activity");
+    expect(
+      blockPlainText({ type: "quote", markdown: "> text\n> [!example] Interactive activity" }),
+    ).toBe("text [!example] Interactive activity");
+    expect(blockPlainText({ type: "paragraph", markdown: "[!example] Interactive activity" })).toBe(
+      "[!example] Interactive activity",
+    );
   });
 });

@@ -1,4 +1,9 @@
-import { BYPASS_DECIDER, POLICY_DECIDER, compareEventIds } from "@mastertutor/contracts";
+import {
+  BYPASS_DECIDER,
+  POLICY_DECIDER,
+  compareEventIds,
+  untrustedText,
+} from "@mastertutor/contracts";
 import { APPROVAL_MODE_SHORT } from "@/components/approval-mode/modes.ts";
 import type { StatusMarkStatus } from "@/lib/status.ts";
 import type { IconName } from "@/lib/ui/vocabulary.ts";
@@ -12,7 +17,6 @@ import {
   type RunModel,
   type StepRow,
 } from "./run-model.ts";
-import { untrustedText } from "./untrusted-text.ts";
 
 /** A chat message is shown whole up to this many characters. */
 const MAX_MESSAGE = 2_000;

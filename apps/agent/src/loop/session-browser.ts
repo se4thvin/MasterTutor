@@ -18,6 +18,7 @@ import { captureModelScreenshot, WITHHELD, withheldScreenshot } from "../browser
 import { slotDownloadPath } from "../browser/download-gate.ts";
 import { BrowserSession, notAnswering } from "../browser/session.ts";
 import { settle } from "../browser/settle.ts";
+import { SignInFlow } from "../browser/sign-in-flow.ts";
 import { markStillUnguarded } from "../browser/input-guard.ts";
 import {
   applyStorageState,
@@ -75,6 +76,17 @@ export async function detectCaptcha(page: Page): Promise<boolean> {
 }
 
 const OBSERVE_ATTEMPTS = 3;
+/** Lets a navigation that cut a read short commit before the page is observed again. */
+const NAVIGATED_RETRY_MS = 250;
+const pauseFor = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A CDP read that failed because the page navigated (or swapped renderer) under it. */
+export function isNavigatedAway(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Inspected target navigated or closed|Execution context was destroyed|Cannot find context|Not attached to an active page|Frame was detached/i.test(
+    message,
+  );
+}
 
 /**
  * Reload, back and forward land on a history entry. If that entry was made by submitting a form,
@@ -112,7 +124,16 @@ export async function observeOnOnePage(
 ): Promise<Observation> {
   let url = readUrl();
   for (let attempt = 1; ; attempt++) {
-    const observation = await capture(url);
+    let observation: Observation;
+    try {
+      observation = await capture(url);
+    } catch (error) {
+      // The page navigated under a read (a sign-in posting after its act ended): observe again.
+      if (attempt >= OBSERVE_ATTEMPTS || !isNavigatedAway(error)) throw error;
+      await pauseFor(NAVIGATED_RETRY_MS);
+      url = readUrl();
+      continue;
+    }
     const now = readUrl();
     if (now === url) return observation;
     if (attempt >= OBSERVE_ATTEMPTS)
@@ -142,9 +163,11 @@ export class SessionLoopBrowser implements LoopBrowser {
   readonly #run: () => RunSnapshot;
   readonly #log: Log;
   readonly #slotName: string;
+  readonly signInFlow: SignInFlow;
 
   constructor(options: {
     session: BrowserSession;
+    signInFlow: SignInFlow;
     executor: ComputerExecutor;
     registry: ToolRegistry;
     mask: MaskSources;
@@ -154,6 +177,7 @@ export class SessionLoopBrowser implements LoopBrowser {
     slotName: string;
   }) {
     this.#slotName = options.slotName;
+    this.signInFlow = options.signInFlow;
     this.#session = options.session;
     this.#executor = options.executor;
     this.#registry = options.registry;
@@ -361,9 +385,11 @@ export function slotBrowserConnector(options: {
   return async ({ slotName, run, guard }) => {
     const baseUrl = await options.cdpBaseUrl(slotName);
     const mask = options.hooks.maskSources(run().id);
+    const signInFlow = new SignInFlow();
     const session = await BrowserSession.connect({
       cdpBaseUrl: baseUrl,
       allowedOrigins: () => run().allowedOrigins,
+      signInFlowOpen: () => signInFlow.isOpen,
       testMode: options.testMode,
       log: options.log,
       guard,
@@ -388,6 +414,7 @@ export function slotBrowserConnector(options: {
       );
       const browser = new SessionLoopBrowser({
         session,
+        signInFlow,
         executor,
         registry,
         mask,

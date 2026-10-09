@@ -3,6 +3,7 @@
 import type { InfiniteData } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, useEffect, useState, type ReactNode } from "react";
+import { AlertBanner } from "@/components/alerts/alert-banner.tsx";
 import { FolderTree } from "@/components/library/folder-tree.tsx";
 import { SearchPalette } from "@/components/library/search-palette.tsx";
 import { PipDock } from "@/components/run/pip/pip-dock.tsx";
@@ -67,6 +68,7 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
           when a page puts nothing focusable inside (axe scrollable-region-focusable). */}
       <main id="main" className="main" tabIndex={0}>
         <KillBanner />
+        <AlertBanner />
         {children}
       </main>
       {/* Beside main, not in it: the mini browser is its own region over every page (M2). */}

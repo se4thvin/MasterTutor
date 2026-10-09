@@ -27,6 +27,8 @@ import { ModelCaller } from "../llm/caller.ts";
 import { NUDGE } from "../llm/instructions.ts";
 import { FORBIDDEN_RESPONSE_FIELDS } from "../llm/openai.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
+import { createOpenAI } from "../llm/openai.ts";
+import { createRunTitler, type RunTitle, type RunTitler } from "../llm/run-title.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
@@ -113,6 +115,7 @@ async function setup(
     hooks?: Partial<RunHooks>;
     leaseExpired?: () => boolean;
     allowedOrigins?: string[];
+    titler?: RunTitler;
   } = {},
 ) {
   const name = `s${++counter}`;
@@ -140,6 +143,7 @@ async function setup(
     browser,
     hooks: withHooks(options.hooks),
     ...(options.leaseExpired ? { leaseExpired: options.leaseExpired } : {}),
+    ...(options.titler ? { titler: options.titler } : {}),
     clock: instantClock(),
     config: runtimeConfig(),
     log,
@@ -422,8 +426,8 @@ describe("RunLoop (spec §5.3)", () => {
     );
     browser.computerHook = async () => {
       browser.blocked.push({
-        url: "http://other.fixtures.test/steal",
-        origin: "http://other.fixtures.test",
+        url: "http://other.fixtures-isolated.test/steal",
+        origin: "http://other.fixtures-isolated.test",
       });
     };
     expect(await drive(loop)).toEqual({ kind: "completed" });
@@ -494,6 +498,139 @@ describe("RunLoop (spec §5.3)", () => {
       "https://html.duckduckgo.com",
       "https://doc.rust-lang.org",
     ]);
+  });
+
+  describe("navigations after the act and the site scope (D51, MH sign-in hang)", () => {
+    const IDP = "https://sso.idp-example.org";
+    const late = (browser: FakeLoopBrowser, formPost = false) => {
+      let once = true;
+      browser.observeHook = () => {
+        if (!once || browser.computerRuns.length === 0) return;
+        once = false;
+        browser.url = "chrome-error://chromewebdata/";
+        browser.blocked.push({
+          url: `${IDP}/saml/acs`,
+          origin: IDP,
+          ...(formPost ? { formPost: true as const } : {}),
+        });
+      };
+    };
+
+    it("ask mode: a sign-in that navigates after its act raises a card at the next observation", async () => {
+      const { run, browser, loop } = await setup([click(), done()]);
+      late(browser);
+      expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+      const rows = await approvalRows(run.id);
+      expect(rows.map((row) => [row.kind, row.status])).toEqual([["new_origin", "pending"]]);
+      expect(rows[0]!.request).toMatchObject({ origin: IDP, url: `${IDP}/saml/acs` });
+    });
+
+    it("bypass mode: approves it as bypass; a form post is not replayed as a GET, the model posts again", async () => {
+      const { run, browser, loop } = await setup(
+        [click(), doneExpecting("do the action that sent it")],
+        { approvalMode: "bypass" },
+      );
+      late(browser, true);
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(browser.navigations).toEqual([]);
+      expect(
+        (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
+      ).toEqual([["new_origin", "approved", "bypass"]]);
+      expect((await status(run.id))?.allowedOrigins).toContain(IDP);
+    });
+
+    it("auto mode: denies it with a recorded step and tells the model", async () => {
+      const { run, browser, loop } = await setup(
+        [click(), doneExpecting(`navigation to ${IDP} was blocked`)],
+        { approvalMode: "auto_within_allowlist" },
+      );
+      late(browser);
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect(
+        (await approvalRows(run.id)).map((row) => [row.kind, row.status, row.decidedBy]),
+      ).toEqual([["new_origin", "denied", "policy"]]);
+      expect(await phases(run.id)).toContain("approve:done");
+    });
+
+    it("keeps another host of an allowed site it reached, never one only a sign-in passed", async () => {
+      const { run, browser, loop } = await setup([click(), click(30, 40), done()], {
+        allowedOrigins: ["https://accounts.mheducation.com"],
+      });
+      browser.url = "https://accounts.mheducation.com/login";
+      const pages = ["https://newconnect.mheducation.com/home", `${IDP}/login`];
+      browser.computerHook = async () => void (browser.url = pages.shift() ?? browser.url);
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      expect((await status(run.id))?.allowedOrigins).toEqual([
+        "https://accounts.mheducation.com",
+        "https://newconnect.mheducation.com",
+      ]);
+    });
+
+    describe("the sign-in flow window", () => {
+      const fill: MockTurn = {
+        outputs: [
+          {
+            type: "function",
+            name: "fill_credential",
+            args: { alias: "school", field: "password", target: "e1" },
+          },
+        ],
+      };
+      const firstUse = async () =>
+        ({
+          kind: "credential_first_use",
+          alias: "school",
+          origin: "http://site.fixtures.test",
+        }) as const;
+
+      it("opens on a fill a person approved and closes after a few actions", async () => {
+        const { run, browser, loop, reload } = await setup([
+          fill,
+          click(),
+          click(),
+          click(),
+          done(),
+        ]);
+        browser.functionApproval = firstUse;
+        expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+        await decideApproval(run.id, "approved");
+        const resumed = await reload();
+        await resumed.resume(new AbortController().signal);
+        const open: boolean[] = [];
+        browser.computerHook = async () => {
+          open.push(browser.signInFlow.isOpen);
+          // Each click changes the page, as a sign-in does: no loop detection.
+          browser.domHash = String(open.length).repeat(64);
+        };
+        expect(await drive(resumed)).toEqual({ kind: "completed" });
+        expect(open).toEqual([true, true, false]);
+      });
+
+      it("a fill under the lasting grant (no card) opens it too", async () => {
+        const { browser, loop } = await setup([fill, done()]);
+        expect(await drive(loop)).toEqual({ kind: "completed" });
+        expect(browser.signInFlow.isOpen).toBe(true);
+      });
+
+      it("never opens on a policy approval (auto or bypass mode) or a failed fill", async () => {
+        for (const approvalMode of ["auto_within_allowlist", "bypass"] as const) {
+          const { browser, loop } = await setup([fill, done()], { approvalMode });
+          browser.functionApproval = firstUse;
+          expect(await drive(loop)).toEqual({ kind: "completed" });
+          expect(browser.signInFlow.isOpen).toBe(false);
+        }
+        const { browser, loop } = await setup([fill, done()]);
+        browser.functionHook = async () => ({
+          output: JSON.stringify({ error: "field_not_found" }),
+          notesChanged: false,
+          failed: true,
+          wait: null,
+          handOver: null,
+        });
+        expect(await drive(loop)).toEqual({ kind: "completed" });
+        expect(browser.signInFlow.isOpen).toBe(false);
+      });
+    });
   });
 
   describe("downloads (spec §9)", () => {
@@ -784,7 +921,7 @@ describe("RunLoop (spec §5.3)", () => {
       const { browser, loop } = await setup([flagged("irrelevant_domain"), done()], {
         approvalMode: "auto_within_allowlist",
       });
-      browser.url = "http://other.fixtures.test/page";
+      browser.url = "http://other.fixtures-isolated.test/page";
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
       expect(browser.executed).toEqual([]);
     });
@@ -888,7 +1025,7 @@ describe("RunLoop (spec §5.3)", () => {
   });
 
   it("carries this turn's executor notes verbatim into the context after a compaction (M7)", async () => {
-    const note = "Executor: navigation to http://other.fixtures.test was blocked";
+    const note = "Executor: navigation to http://other.fixtures-isolated.test was blocked";
     const { name, browser, loop } = await setup(
       [{ ...click(), usage: { input: 210_000 } }, click(11), done()],
       { approvalMode: "auto_within_allowlist" },
@@ -898,8 +1035,8 @@ describe("RunLoop (spec §5.3)", () => {
       if (!first) return;
       first = false;
       browser.blocked.push({
-        url: "http://other.fixtures.test/a",
-        origin: "http://other.fixtures.test",
+        url: "http://other.fixtures-isolated.test/a",
+        origin: "http://other.fixtures-isolated.test",
       });
     };
     for (let i = 0; i < 4; i++)
@@ -1049,7 +1186,10 @@ describe("RunLoop (spec §5.3)", () => {
     );
     browser.computerHook = async () => {
       browser.blocked.push(
-        { url: "http://other.fixtures.test/a", origin: "http://other.fixtures.test" },
+        {
+          url: "http://other.fixtures-isolated.test/a",
+          origin: "http://other.fixtures-isolated.test",
+        },
         { url: "http://third.fixtures.test/b", origin: "http://third.fixtures.test" },
       );
     };
@@ -1427,7 +1567,7 @@ describe("RunLoop (spec §5.3)", () => {
     );
 
     it("pauses at most once per origin: a resume without a sign-in goes on signed out, a new origin pauses once", async () => {
-      const OTHER_ORIGIN = "http://other.fixtures.test";
+      const OTHER_ORIGIN = "http://other.fixtures-isolated.test";
       const goOn = (reason: string): MockTurn => ({
         outputs: [{ type: "turn", status: "continue", reason }],
       });
@@ -1746,10 +1886,12 @@ describe("RunLoop (spec §5.3)", () => {
 
     it("a new origin blocked in the same act does not discard the code wait (M6)", async () => {
       const { run, browser, loop } = await waitingForCode();
-      browser.blocked.push({
-        url: "http://other.fixtures.test/x",
-        origin: "http://other.fixtures.test",
-      });
+      // The page navigates while the fill runs (the same act).
+      browser.functionHook = async () =>
+        void browser.blocked.push({
+          url: "http://other.fixtures-isolated.test/x",
+          origin: "http://other.fixtures-isolated.test",
+        });
       expect(await drive(loop)).toEqual({ kind: "waiting", reason: "otp" });
       expect(await status(run.id)).toMatchObject({ status: "waiting", waitReason: "otp" });
       expect((await approvalRows(run.id)).map((row) => row.kind)).not.toContain("new_origin");
@@ -1861,8 +2003,8 @@ describe("RunLoop (spec §5.3)", () => {
         if (!once) return;
         once = false;
         browser.blocked.push({
-          url: "http://other.fixtures.test/a",
-          origin: "http://other.fixtures.test",
+          url: "http://other.fixtures-isolated.test/a",
+          origin: "http://other.fixtures-isolated.test",
         });
         browser.blockedDownloads.push({
           url: "http://site.fixtures.test/files/r.csv",
@@ -1871,7 +2013,7 @@ describe("RunLoop (spec §5.3)", () => {
       };
       expect(await drive(loop)).toEqual({ kind: "completed" });
       expect(browser.executed).toHaveLength(2);
-      expect(browser.navigations).toEqual(["http://other.fixtures.test/a"]);
+      expect(browser.navigations).toEqual(["http://other.fixtures-isolated.test/a"]);
       expect(browser.allowedDownloads).toMatchObject([
         { url: "http://site.fixtures.test/files/r.csv", filename: "r.csv", approvedBy: "bypass" },
       ]);
@@ -1882,7 +2024,9 @@ describe("RunLoop (spec §5.3)", () => {
         ["new_origin", "approved", "bypass"],
         ["download", "approved", "bypass"],
       ]);
-      expect((await status(run.id))?.allowedOrigins).toContain("http://other.fixtures.test");
+      expect((await status(run.id))?.allowedOrigins).toContain(
+        "http://other.fixtures-isolated.test",
+      );
     });
 
     it("still waits for a person on a prompt-injection safety check (malicious_instructions)", async () => {
@@ -2147,5 +2291,78 @@ describe("run-mode: Send now during an act", () => {
     });
     expect((await approvalRows(run.id)).map((r) => r.status)).toEqual(["pending"]);
     expect(browser.executed).toEqual([]);
+  });
+});
+
+describe("the run title (generated off the step path)", () => {
+  /** The real titler against llm-mock; `pending` lets a test wait for its answer deterministically. */
+  function mockTitler() {
+    const real = createRunTitler(createOpenAI({ apiKey: "k", baseURL: `${mock.url}/v1` }));
+    const calls: Array<Promise<RunTitle>> = [];
+    const titler: RunTitler = {
+      generate: (run) => {
+        const call = real.generate(run);
+        calls.push(call);
+        return call;
+      },
+    };
+    return { titler, calls };
+  }
+  const titleEvents = async (runId: string) =>
+    (await owner.db.select().from(runEvents).where(eq(runEvents.runId, runId)))
+      .map((row) => row.payload)
+      .filter((event) => event.type === "title");
+  const stepSpend = async (runId: string) =>
+    (await owner.db.select().from(runSteps).where(eq(runSteps.runId, runId))).reduce(
+      (sum, step) => sum + (step.usage?.usd ?? 0),
+      0,
+    );
+
+  it("stores the title once, streams it, and charges it to the run's usage", async () => {
+    const { titler, calls } = mockTitler();
+    const { run, loop } = await setup([click(), done()], { titler });
+    expect(calls).toHaveLength(1);
+    await calls[0];
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const row = await status(run.id);
+    expect(row?.title).toBe("Mock run title");
+    expect(await titleEvents(run.id)).toEqual([{ type: "title", title: "Mock run title" }]);
+    const titleRequest = mock.requests.filter((r) => r.body.text?.format?.name === "run_title");
+    expect(titleRequest.at(-1)?.body).toMatchObject({ model: MODELS.runTitle, store: false });
+    // The title's spend is on the run (and so its budget) but on no step.
+    const spent = await stepSpend(run.id);
+    expect(row!.usage.usd).toBeGreaterThan(spent);
+    expect(row!.usage.steps).toBe(
+      (await phases(run.id)).filter((p) => p.startsWith("decide")).length,
+    );
+  });
+
+  it("never replaces a stored title, and asks nothing once a run has one", async () => {
+    const { titler, calls } = mockTitler();
+    const { run, loop, reload } = await setup([done()], { titler });
+    await calls[0];
+    // Another writer got there first (a reclaimed run's earlier worker): the title is written once.
+    await owner.db.update(runs).set({ title: "Kept title" }).where(eq(runs.id, run.id));
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect((await status(run.id))?.title).toBe("Kept title");
+    expect(await titleEvents(run.id)).toEqual([]);
+    await reload();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the fallback silently when the title model fails, and the run goes on", async () => {
+    mock.setStructured("run_title", () => ({ title: "x".repeat(200) }));
+    try {
+      const { titler, calls } = mockTitler();
+      const { run, loop } = await setup([click(), done()], { titler });
+      await expect(calls[0]).rejects.toThrow();
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      const row = await status(run.id);
+      expect(row?.title).toBeNull();
+      expect(await titleEvents(run.id)).toEqual([]);
+      expect(row!.usage.usd).toBeCloseTo(await stepSpend(run.id), 6);
+    } finally {
+      mock.setStructured("run_title", () => ({ title: "Mock run title" }));
+    }
   });
 });

@@ -21,7 +21,9 @@ shift || true
 # T1's Playwright runner container: Traefik's network namespace, ./apps/web/e2e mounted, cwd apps/web.
 runner() { "${DC[@]}" "${profiles[@]}" run --rm --no-deps -T --user "$(id -u):$(id -g)" e2e "$@"; }
 need_stack() {
-  "${DC[@]}" "${profiles[@]}" ps --status running --services | grep -qx traefik || {
+  local services
+  services="$("${DC[@]}" "${profiles[@]}" ps --status running --services)" || services=""
+  grep -qx traefik <<<"$services" || {
     echo "qa-stack: the QA stack is down; run the up subcommand first" >&2
     exit 2
   }

@@ -3,6 +3,7 @@
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { useRef, type ReactNode } from "react";
 import { cx } from "@/lib/cx.ts";
+import { LIQUID_GLASS } from "./liquid-glass.tsx";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -32,7 +33,7 @@ export function ConfirmDialog({
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className="scrim" />
         <AlertDialog.Viewport className="alert-viewport">
-          <AlertDialog.Popup className="alert" initialFocus={cancelRef}>
+          <AlertDialog.Popup className={`alert ${LIQUID_GLASS}`} initialFocus={cancelRef}>
             <AlertDialog.Title className="t-title3">{title}</AlertDialog.Title>
             <AlertDialog.Description className="alert-desc">{description}</AlertDialog.Description>
             <div className="alert-actions">

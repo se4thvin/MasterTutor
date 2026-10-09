@@ -24,6 +24,7 @@ import { emitRunEvent, returnControlToAgent, type Database } from "@mastertutor/
 import { instrument } from "@mastertutor/telemetry/instrument";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
+import { inRunScope } from "../browser/navigation-scope.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
@@ -52,6 +53,7 @@ import {
   type PendingCall,
 } from "../llm/items.ts";
 import { addUsage, usageDelta } from "../llm/pricing.ts";
+import type { RunTitle, RunTitler } from "../llm/run-title.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import { ContextOverflow, ControlHeld, Interrupted, interruptionOf } from "../runtime/errors.ts";
@@ -96,6 +98,7 @@ import {
   readWakeRequest,
   signInNeeded,
   signInPausedOrigins,
+  storeRunTitle,
   type RunSnapshot,
 } from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
@@ -129,6 +132,8 @@ export interface RunLoopDeps {
   log: Log;
   /** True once the worker's local lease deadline has passed: no model call after it (I2). */
   leaseExpired?: () => boolean;
+  /** Generates the run's title off the step path; without it the fallback title stays. */
+  titler?: RunTitler;
 }
 
 /** What running one call did: its result, and whether the run must wait for the user. */
@@ -251,6 +256,8 @@ export class RunLoop {
   #modelInFlight = false;
   /** This act stopped its batch for Send now. */
   #cutByMessage = false;
+  /** A generated title that arrived and waits for the next step boundary to be committed. */
+  #title: RunTitle | null = null;
 
   private constructor(
     deps: RunLoopDeps,
@@ -281,6 +288,7 @@ export class RunLoop {
       else if (!awaitingItem) loop.#results.set(call.callId, notRun(call, RESTARTED));
     }
     for (const decision of loop.#pending?.decided ?? []) loop.#applyDecision(decision);
+    if (run.title === null) loop.#requestTitle();
     return loop;
   }
 
@@ -343,7 +351,8 @@ export class RunLoop {
   }
 
   /** Seam 1 (spec §7.3): each phase is one mt.step span, the root of its trace (spec §7.2). */
-  step(signal: AbortSignal): Promise<StepOutcome> {
+  async step(signal: AbortSignal): Promise<StepOutcome> {
+    if (this.#title) await this.#commitTitle(this.#title);
     const phase = this.#next;
     return instrument(
       SPAN.step,
@@ -372,6 +381,39 @@ export class RunLoop {
   }
 
   /* ---------------------------------- helpers ---------------------------------- */
+
+  /**
+   * Asks for the title in parallel with the run, never on its path: the run starts under the
+   * fallback title, and a failure or timeout leaves that in place (logged, never retried here).
+   */
+  #requestTitle(): void {
+    const titler = this.#deps.titler;
+    if (!titler) return;
+    void titler.generate(this.#run).then(
+      (title) => {
+        this.#title = title;
+      },
+      (error: unknown) =>
+        this.#deps.log.warn(
+          { runId: this.#run.id, errName: error instanceof Error ? error.name : "unknown" },
+          "run title failed; the fallback title stays",
+        ),
+    );
+  }
+
+  /** At a step boundary: the title is written once and its cost joins the run's usage and budget. */
+  async #commitTitle(title: RunTitle): Promise<void> {
+    this.#title = null;
+    this.#run = {
+      ...this.#run,
+      title: title.title,
+      usage: addUsage(this.#run.usage, title.usage),
+    };
+    await this.#deps.store.commit({
+      run: { usage: this.#run.usage },
+      extra: (tx) => storeRunTitle(tx, this.#run.id, title.title),
+    });
+  }
 
   #tick(): Usage {
     const now = this.#deps.clock.now();
@@ -490,6 +532,18 @@ export class RunLoop {
     };
   }
 
+  /**
+   * A page on the same site as an allowed origin (D51 rule 2) is reached without asking; its
+   * origin joins the run's allowed origins with this observation, so the vault, saved sessions
+   * and the prompt know it. Origins a sign-in flow passed through are never kept.
+   */
+  #keepSameSiteOrigin(origin: string | null, commit: StepCommit): StepCommit {
+    const allowed = this.#run.allowedOrigins;
+    if (origin === null || allowed.includes(origin) || !inRunScope(origin, allowed)) return commit;
+    this.#run = { ...this.#run, allowedOrigins: [...allowed, origin] };
+    return { ...commit, run: { ...commit.run, allowedOrigins: this.#run.allowedOrigins } };
+  }
+
   /* --------------------------------- observe --------------------------------- */
 
   async #observe(signal: AbortSignal): Promise<StepOutcome> {
@@ -516,7 +570,9 @@ export class RunLoop {
     }
     if (stuck) return this.#wait("takeover", "stuck", commit);
     const exceeded = budgetExceeded(this.#run.usage, this.#run.budget);
-    await this.#deps.store.commit(commit);
+    await this.#deps.store.commit(this.#keepSameSiteOrigin(obs.origin, commit));
+    const blocked = await this.#blockedNavigations(signal, { wait: null, handOver: null });
+    if (blocked) return blocked;
     if (exceeded)
       return this.#ask(
         { kind: "budget", exceeded, usage: this.#run.usage, budget: this.#run.budget },
@@ -1154,6 +1210,17 @@ export class RunLoop {
     };
   }
 
+  /**
+   * A credential fill a person approved (this card, or the lasting grant only a person's approval
+   * leaves) opens the sign-in flow (D51). A policy approval (auto or bypass) never does.
+   */
+  #opensSignInFlow(call: PendingCall, executed: Executed): boolean {
+    if (call.kind !== "function" || call.name !== "fill_credential") return false;
+    if (executed.failed || executed.wait || executed.handOver) return false;
+    const decision = this.#decided.get(functionItem(call.callId));
+    return decision === undefined || isPersonDecider(decision.decidedBy);
+  }
+
   async #act(signal: AbortSignal): Promise<StepOutcome> {
     const { store, browser } = this.#deps;
     const obs = this.#obs();
@@ -1195,6 +1262,7 @@ export class RunLoop {
       const step = new StepCollector({
         usdLeft: this.#run.budget.maxUsd - this.#run.usage.usd,
       });
+      if (call.kind === "computer") browser.signInFlow.acted();
       let executed: Executed;
       try {
         executed = await this.#execute(call, signal, step);
@@ -1214,6 +1282,7 @@ export class RunLoop {
         throw error;
       }
       if (executed.failed) await this.#discard(step);
+      if (this.#opensSignInFlow(call, executed)) browser.signInFlow.open();
       ran ||= executed.ran;
       wait ??= executed.wait;
       handOver ??= executed.handOver;
@@ -1231,52 +1300,8 @@ export class RunLoop {
     }
     if (this.#cutByMessage) await this.#markInterrupted("act", "skipped");
     this.#next = "observe";
-    const blocked = browser.drainBlockedNavigations();
-    const origins = [...new Map(blocked.map((entry) => [entry.origin, entry])).values()];
-    for (const [position, entry] of origins.entries()) {
-      const request: ApprovalRequest = {
-        kind: "new_origin",
-        origin: entry.origin,
-        url: entry.url.slice(0, 4_096),
-      };
-      const decision = decideByPolicy(this.#run.approvalMode, "new_origin");
-      // Only a denial is decided here; anything else waits for a person (resume adds the origin).
-      // While a one-time code is awaited, that wait wins: the model is told and can navigate there
-      // again once signed in, which asks then (M6).
-      if (decision !== "denied" && wait) {
-        this.#notes.push(
-          `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins. Navigate there again after the one-time code to ask the user.`,
-        );
-        continue;
-      }
-      if (decision === "approved" && !wait && !handOver) {
-        // Bypass mode (D44): the origin is allowed for the rest of the run and opened. The network
-        // policy still applies to it (no private ranges). Never while the page is being handed
-        // over or a code is awaited (m4).
-        await this.#recordPolicy(request, decision);
-        this.#run = {
-          ...this.#run,
-          allowedOrigins: [...new Set([...this.#run.allowedOrigins, entry.origin])],
-        };
-        await this.#deps.store.commit({ run: { allowedOrigins: this.#run.allowedOrigins } });
-        await browser.navigate(entry.url, signal);
-        this.#notes.push(
-          `Executor: ${entry.origin} was allowed by this run's bypass mode; it is now open.`,
-        );
-        continue;
-      }
-      if (decision !== "denied") {
-        for (const other of origins.slice(position + 1))
-          this.#notes.push(
-            `Executor: navigation to ${other.origin} was blocked: it is not one of this run's allowed origins.`,
-          );
-        return this.#ask(request, { callIds: [], item: null });
-      }
-      await this.#recordPolicy(request, decision);
-      this.#notes.push(
-        `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
-      );
-    }
+    const navigationOutcome = await this.#blockedNavigations(signal, { wait, handOver });
+    if (navigationOutcome) return navigationOutcome;
     // Downloads the page started (a script, an attachment, a frame) were cancelled: each needs
     // its own approval; auto mode's policy denies them (spec §9).
     const downloads = browser.drainBlockedDownloads();
@@ -1311,6 +1336,91 @@ export class RunLoop {
     if (ran && this.#loops.recordAction(signature, obs.phash))
       return this.#wait("takeover", "stuck");
     return CONTINUE;
+  }
+
+  /**
+   * Top-level navigations the run's scope did not allow (D51), drained after each act and again
+   * after each observation: a page can navigate after its act ended (a sign-in posting once its
+   * script answered), and such a navigation must never be left without a card (MH hang). Ask mode
+   * raises a new_origin card (one at a time); bypass approves, keeps the origin and opens it; auto
+   * mode denies with a recorded step. A form post is not reopened as a GET: approving allows the
+   * origin and the model runs the action again. Returns an outcome when the run must stop here.
+   */
+  async #blockedNavigations(
+    signal: AbortSignal,
+    pausing: { wait: "otp" | null; handOver: string | null },
+  ): Promise<StepOutcome | null> {
+    const { wait, handOver } = pausing;
+    const blocked = this.#deps.browser.drainBlockedNavigations();
+    const origins = [...new Map(blocked.map((entry) => [entry.origin, entry])).values()];
+    for (const [position, entry] of origins.entries()) {
+      const request: ApprovalRequest & { kind: "new_origin" } = {
+        kind: "new_origin",
+        origin: entry.origin,
+        url: entry.url.slice(0, 4_096),
+        ...(entry.formPost ? { formPost: true as const } : {}),
+      };
+      const decision = decideByPolicy(this.#run.approvalMode, "new_origin");
+      // Only a denial is decided here; anything else waits for a person (resume adds the origin).
+      // While a one-time code is awaited, that wait wins: the model is told and can navigate there
+      // again once signed in, which asks then (M6).
+      if (decision !== "denied" && wait) {
+        this.#notes.push(
+          `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins. Navigate there again after the one-time code to ask the user.`,
+        );
+        continue;
+      }
+      if (decision === "approved" && !wait && !handOver) {
+        // Bypass mode (D44): the origin is allowed for the rest of the run and opened. The network
+        // policy still applies to it (no private ranges). Never while the page is being handed
+        // over or a code is awaited (m4).
+        await this.#recordPolicy(request, decision);
+        await this.#allowOrigin(entry.origin);
+        this.#notes.push(
+          await this.#openApproved(
+            request,
+            `${entry.origin} was allowed by this run's bypass mode`,
+            signal,
+          ),
+        );
+        continue;
+      }
+      if (decision !== "denied") {
+        for (const other of origins.slice(position + 1))
+          this.#notes.push(
+            `Executor: navigation to ${other.origin} was blocked: it is not one of this run's allowed origins.`,
+          );
+        return this.#ask(request, { callIds: [], item: null });
+      }
+      await this.#recordPolicy(request, decision);
+      this.#notes.push(
+        `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
+      );
+    }
+    return null;
+  }
+
+  async #allowOrigin(origin: string): Promise<void> {
+    this.#run = {
+      ...this.#run,
+      allowedOrigins: [...new Set([...this.#run.allowedOrigins, origin])],
+    };
+    await this.#deps.store.commit({ run: { allowedOrigins: this.#run.allowedOrigins } });
+  }
+
+  /**
+   * Opens an approved new origin (a GET); a form post is not replayed as a GET, so the model is
+   * asked to send it again. Returns the note for the model.
+   */
+  async #openApproved(
+    request: ApprovalRequest & { kind: "new_origin" },
+    allowed: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (request.formPost)
+      return `Executor: ${allowed}. The page was posting a form there, so nothing was opened: do the action that sent it (for example the submit button) again.`;
+    await this.#deps.browser.navigate(request.url, signal);
+    return `Executor: ${allowed}; it is now open.`;
   }
 
   /* --------------------------------- endings --------------------------------- */
@@ -1461,8 +1571,9 @@ export class RunLoop {
         run: { ...base.run, allowedOrigins: this.#run.allowedOrigins },
       });
       if (approved) {
-        await this.#deps.browser.navigate(request.url, signal);
-        this.#notes.push(`Executor: the user allowed ${request.origin}; it is now open.`);
+        this.#notes.push(
+          await this.#openApproved(request, `the user allowed ${request.origin}`, signal),
+        );
         this.reobserve();
       } else {
         this.#notes.push(`Executor: the user did not allow opening ${request.origin}.`);

@@ -1,6 +1,12 @@
 "use client";
 
-import { toOrigin, type ApprovalMode, type Budget, type FolderView } from "@mastertutor/contracts";
+import {
+  toOrigin,
+  type ApprovalMode,
+  type Budget,
+  type FolderView,
+  untrustedText,
+} from "@mastertutor/contracts";
 import { useId, useState, type Ref } from "react";
 import { BypassConsent } from "@/components/approval-mode/bypass-consent.tsx";
 import { APPROVAL_MODE_ITEMS, APPROVAL_MODE_TEXT } from "@/components/approval-mode/modes.ts";
@@ -10,7 +16,6 @@ import { RubberSegment } from "@/components/bits/rubber-segment.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
-import { untrustedText } from "@/components/run/model/untrusted-text.ts";
 import { buildFolderTree, flattenAll } from "@/lib/folders/tree.ts";
 import { BUDGET_PRESETS, type BudgetPreset, type SourceChip } from "./draft.ts";
 

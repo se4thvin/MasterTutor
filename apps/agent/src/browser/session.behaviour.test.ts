@@ -41,7 +41,7 @@ describe("BrowserSession", () => {
     const s = await open();
     expect(await s.goto(`${OTHER}/steal`, new AbortController().signal)).toBe(false);
     expect(s.drainBlockedNavigations()).toEqual([{ url: `${OTHER}/steal`, origin: OTHER }]);
-    expect(s.page.url()).not.toContain("other.fixtures.test");
+    expect(s.page.url()).not.toContain("other.fixtures-isolated.test");
   });
 
   it("blocks private and metadata addresses even when their origin is allowed", async () => {
@@ -91,16 +91,16 @@ describe("BrowserSession", () => {
 
   it("blocks a redirect from an allowed origin to a name that resolves privately", async () => {
     // Only the redirect target resolves privately. Without the private check the redirect would
-    // succeed: other.fixtures.test is reachable and allowlisted.
+    // succeed: other.fixtures-isolated.test is reachable and allowlisted.
     const s = await open({
       testMode: false,
       allowedOrigins: () => [SITE, OTHER],
       resolveHost: async (host) =>
-        host === "other.fixtures.test" ? ["10.0.0.5"] : ["93.184.216.34"],
+        host === "other.fixtures-isolated.test" ? ["10.0.0.5"] : ["93.184.216.34"],
     });
     s.drainPrivateConnections();
     expect(await s.goto(`${SITE}/redirect-other`, new AbortController().signal)).toBe(false);
-    expect(s.page.url()).not.toContain("other.fixtures.test");
+    expect(s.page.url()).not.toContain("other.fixtures-isolated.test");
   });
 
   it("flags a response whose connected address is private even though the name looked public", async () => {

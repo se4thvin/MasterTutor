@@ -14,6 +14,7 @@ import {
   WaitReason,
 } from "./enums.ts";
 import { IsoDateTime, SlotName, Uuid } from "./primitives.ts";
+import { RUN_TITLE_MAX } from "./run-title.ts";
 import { ReasoningSummary } from "./step-result.ts";
 import { ToolName, type ComputerAction } from "./tools.ts";
 
@@ -52,6 +53,7 @@ export const RUN_EVENT_TYPES = [
   "error",
   "filed",
   "model_fallback",
+  "title",
 ] as const;
 export type RunEventType = (typeof RUN_EVENT_TYPES)[number];
 
@@ -144,6 +146,8 @@ export const RunEvent = z.discriminatedUnion("type", [
     from: z.string().max(64),
     to: z.string().max(64),
   }),
+  /** The run's generated title, stored once (runs.title); model output, so shown as text only. */
+  z.object({ type: z.literal("title"), title: z.string().min(1).max(RUN_TITLE_MAX) }),
 ]);
 export type RunEvent = z.infer<typeof RunEvent>;
 

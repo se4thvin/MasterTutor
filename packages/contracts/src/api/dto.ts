@@ -123,6 +123,8 @@ export type RunRef = z.infer<typeof RunRef>;
 export const RunSummary = z.object({
   id: Uuid,
   goal: z.string(),
+  /** runs.title, or fallbackRunTitle(goal) while none is stored. Untrusted: shown as text. */
+  title: z.string(),
   status: RunStatus,
   waitReason: WaitReason.nullable(),
   controller: Controller,
@@ -457,7 +459,7 @@ export type UsageInput = z.infer<typeof UsageInput>;
 export const UsageReport = z.object({
   perDay: z.array(z.object({ day: IsoDate, runs: Count, usd: z.number(), steps: Count })),
   perRun: z.array(
-    z.object({ runId: Uuid, goal: z.string(), status: RunStatus, usd: z.number(), steps: Count }),
+    z.object({ runId: Uuid, title: z.string(), status: RunStatus, usd: z.number(), steps: Count }),
   ),
   stepLatencyMs: z.object({ p50: z.number().nullable(), p95: z.number().nullable() }),
   openaiErrorRate: z.number().min(0).max(1).nullable(),

@@ -1,11 +1,15 @@
+import type { PushConfig } from "@mastertutor/contracts";
 import type { EmbeddingsClient } from "@mastertutor/contracts/server";
 import type { DbHandle } from "@mastertutor/db";
 import { getDb } from "../db.ts";
+import { getWebEnv } from "../env.ts";
 import { getEmbeddingsClient } from "../openai.ts";
 import { getLiveDeps } from "../live/deps.ts";
 import type { LiveDeps } from "../live/open-live.ts";
 import { createLiveHandlers } from "../live/procedures.ts";
+import { pushConfigOf } from "../push/config.ts";
 import { getSealer, type Sealer } from "../vault/sealer.ts";
+import { createAlertProcedures } from "./alerts.ts";
 import { createBenchmarkProcedures } from "./benchmarks.ts";
 import { createLibraryProcedures } from "./library.ts";
 import { liveOs as os } from "./live-os.ts";
@@ -20,6 +24,8 @@ interface LiveRouterDeps {
   live(): LiveDeps;
   /** Query embeddings for notes.search (the shared stateless factory, D38). */
   embeddings(): EmbeddingsClient;
+  /** Whether Web Push can be offered here (VAPID keys and HTTPS, spec §13.4). */
+  push(): PushConfig;
 }
 
 /** The one RPC router of a production build (fixture builds use lib/fixtures/router.ts). */
@@ -32,6 +38,8 @@ export function createLiveRouter(deps: LiveRouterDeps) {
   const library = createLibraryProcedures({ db: deps.db, embeddings: deps.embeddings });
   /** B6: the live view and the control lock (spec §10.2, §10.3). */
   const live = createLiveHandlers(deps.live);
+  /** D50: owner-only alerts and phone alert subscriptions. */
+  const alerts = createAlertProcedures({ db: deps.db, push: deps.push });
   return os.router({
     runs: {
       ...runs,
@@ -48,6 +56,7 @@ export function createLiveRouter(deps: LiveRouterDeps) {
     settings,
     assets: library.assets,
     benchmarks,
+    alerts,
   });
 }
 
@@ -56,4 +65,5 @@ export const liveRouter = createLiveRouter({
   sealer: getSealer,
   live: getLiveDeps,
   embeddings: getEmbeddingsClient,
+  push: () => pushConfigOf(getWebEnv()),
 });

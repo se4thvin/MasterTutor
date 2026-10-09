@@ -32,6 +32,11 @@ scripts/remote-test.sh smoke          # scripts/compose-smoke.sh against the two
 scripts/remote-test.sh qa             # Phase 8 QA stack (scripts/qa-stack.sh): stays up; results come back
 scripts/remote-test.sh qa --down      # removes the QA stack and frees the stack lock
 scripts/remote-test.sh bench-mock     # Phase 10 harness self-test (scripts/bench-mock.sh; `pnpm bench:mock`)
+scripts/remote-test.sh observability  # D50 telemetry end to end (scripts/observability-stack.sh): a run's spans,
+                                      # logs and metrics reach OpenObserve, obs.<host> is owner-only, alerts reach
+                                      # the app and a stub push service, the product keeps working with the
+                                      # collector and OpenObserve stopped. Other stack suites take
+                                      # MT_CI_TELEMETRY=1 to run with telemetry on.
 scripts/remote-test.sh all            # every suite but qa at once, one table of results (below)
 ```
 

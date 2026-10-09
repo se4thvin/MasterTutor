@@ -7,7 +7,8 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
 
 ## 0. Deferred inputs (D42): needed from the user before anything below
 
-1. **Domain** (`DOMAIN`), with its DNS A record pointing at the public IP. **[approval]** — the
+1. **Domain** (`DOMAIN`), with its DNS A record pointing at the public IP, and one for
+   `obs.<domain>` (OpenObserve, D50 §13). **[approval]** — the
    user creates the record.
 2. **Git remote** for on-server GitHub builds (`main`).
 3. **Router:** forward 59001–59006 UDP and TCP to the host's LAN address. Confirm whether the
@@ -31,6 +32,8 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
 - AppArmor profile loaded (input 4).
 - `CDP_SUBNET_PREFIX=<prefix> bash infra/host/create-cdp-network.sh` (dry run), then the same
   command with `--yes`. This creates the external `mastertutor-cdp` network.
+- `bash infra/host/create-obs-network.sh` (dry run), then with `--yes`. This creates the external
+  internal `mastertutor-obs` network, which only Traefik and OpenObserve join (D50, §13).
 - **No** `ufw`, no sysctl, no other host firewall change: the router controls ingress (D41).
   Docker publishes only the six media ports; `tests/compose/prod-overlay.int.test.ts` guarantees it.
 - **Production files go up on this host only through the Dokploy app.** Any other
@@ -46,7 +49,7 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
   - `DOMAIN=<domain>`
   - `PUBLIC_URL=https://<domain>`
   - `PUBLIC_IP=<public IPv4>`
-  - `COMPOSE_PROFILES=pdf`
+  - `COMPOSE_PROFILES=pdf,observability` (D50; check-env refuses either profile missing)
   - `AUTH_SIGNUP_OPEN=0`
   - `OPENAI_API_KEY` (the single key, D36)
   - `CDP_SUBNET_PREFIX` only if 172.30.231 is taken
@@ -63,7 +66,7 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
 - **Isolated deployment OFF** (it rewrites networks), **randomize OFF**, **auto-deploy OFF**, no
   webhook: deploys are manual (D42).
 - **Never rename the app.** Volumes are `<app>_pgdata`, `<app>_garage-meta`,
-  `<app>_garage-data` and `<app>_downloads`; a rename orphans them.
+  `<app>_garage-data`, `<app>_downloads` and `<app>_openobserve-data`; a rename orphans them.
 - Environment: paste the checked file.
 - **The Domains tab stays empty.** No service joins Dokploy's shared `dokploy-network` (other
   tenants' service names would answer our bare-name lookups). `compose.prod.yml` carries web's
@@ -80,6 +83,8 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
    Traefik reaches web and the slots only over `mastertutor-cdp`, so without this attachment the
    whole app is down (404/502 for every request, not just live view). The attachment can be made
    before the first deploy, since the network exists from §2.
+   Then `bash infra/host/attach-traefik.sh --network obs` (dry run), then with `--yes`
+   **[approval]**: Traefik's only route to OpenObserve (§13).
 4. First owner: set `AUTH_SIGNUP_OPEN=1`, redeploy, sign up, then set it back to `0` and redeploy.
 
 ## 6. Backups [approval]
@@ -93,6 +98,8 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
   starts it again. Garage's metadata is SQLite (`infra/garage/garage.toml`): a hot copy can
   restore corrupt. Taking objects after the dump means every restored row's object exists
   (objects newer than the dump are harmless orphans).
+- **Volume backup:** `openobserve-data` (OpenObserve's WAL and metadata; its data files are in
+  Garage's `observability` bucket, which the Garage volumes cover), daily at 03:45.
 - **Not backed up:**
   - `downloads`: transient; finished downloads are ingested into Garage.
   - `pgdata`: the database backup covers it.
@@ -144,6 +151,7 @@ mt-drill-<random> … down -v`. This confirms the format matches the drill. If D
   Traefik's ports or env recreates `dokploy-traefik`): run `bash infra/host/attach-traefik.sh`
   (dry run). It must report "already attached … at .12"; otherwise the app is down until it is
   re-run with `--yes` **[approval]**. Then check `curl -sI https://<domain>/healthz` answers 200.
+  Do the same for `bash infra/host/attach-traefik.sh --network obs`, or `/observability` is down.
 
 ## 9. What users should know
 
@@ -201,3 +209,64 @@ input with model weights is pinned by digest, the digest verified offline on the
   - To update: pull the new tag on the CI host, read its digest, rerun the offline check
     (`--network none --read-only`, convert the fixture), then change compose.yml and
     `apps/agent/src/pdf/both-paths.int.test.ts` together.
+- `otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6`:
+  Apache-2.0.
+- `openobserve/openobserve:v1.0.4@sha256:d4a878fac1f6c56003764f7f2a1625668917388f167e222c8c810de3f54c56ba`:
+  AGPL-3.0, run unmodified as a separate service; no code is copied (D20). Telemetry, usage
+  reporting and GeoIP downloads are off, and it has no egress.
+
+## 13. Observability (D50)
+
+The whole telemetry stack is profile `observability`: `otel-collector`, `openobserve` (data in
+Garage's `observability` bucket, under its own key) and the one-shot `observability-init`, which
+re-applies users, retention, dashboards and alerts on every deploy. In order:
+
+1. **User approval** for the host and DNS changes below **[approval]**. None is run by an agent.
+2. **[operator]** DNS: an A record for `obs.<domain>` to the same public IP as `<domain>`.
+   OpenObserve lives on its own host (D50 ruling I-2); its certificate comes from the same
+   `letsencrypt` resolver once the name resolves.
+3. `bash infra/host/create-obs-network.sh` (dry run), then with `--yes` **[approval]**: the
+   external internal network `mastertutor-obs`.
+4. `bash infra/host/attach-traefik.sh --network obs` (dry run), then with `--yes`
+   **[approval]**. Re-run it whenever Dokploy recreates Traefik, like the cdp attach (§8).
+5. `COMPOSE_PROFILES=pdf,observability`.
+6. `pnpm env:init --out <file>` adds the new secrets (`OBSERVE_ROOT_PASSWORD`,
+   `OBSERVE_INGEST_PASSWORD`, `OBSERVE_VIEWER_PASSWORD`, `ALERT_WEBHOOK_SECRET`,
+   `S3_OBSERVE_ACCESS_KEY_ID`, `S3_OBSERVE_SECRET_ACCESS_KEY`, `VAPID_PUBLIC_KEY`,
+   `VAPID_PRIVATE_KEY`) to an existing file without touching its values; then
+   `pnpm deploy:check-env <file>`. OpenObserve refuses a password without a lowercase letter, an
+   uppercase letter, a digit and a special character, so set them only through env-init.
+7. After the deploy: sign in as the owner, open "Open dashboards" on the Alerts page (the app's
+   `/observability` hands off to `https://obs.<domain>/`), and check that the six "MasterTutor · …" dashboards exist. A non-owner
+   gets 403.
+8. Turn on phone alerts in the iPhone Home Screen app (Settings → Notifications).
+
+Notes:
+
+- Dashboards and alerts are code (`packages/observability`): edits made in the OpenObserve UI are
+  overwritten on the next deploy.
+- **Container logs:** slots, `pdf-worker`, `audio-capture` and `docling` log through Docker's
+  `fluentd` driver to the collector on `127.0.0.1:24224` (the only new published port, loopback
+  only). The driver is asynchronous and non-blocking, and Docker's dual-logging cache keeps
+  `docker logs` and Dokploy's log viewer working while the collector is down.
+- **Bounds:** collector 512 MB / 0.5 CPU / 128 pids; OpenObserve 2 GB / 1 CPU / 256 pids;
+  observability-init 256 MB / 0.25 CPU / 64 pids. Retention: logs 30 d, traces 15 d, metrics 90 d.
+- OpenObserve's open-source build has one user role (admin), so the ingest and viewer users are
+  admins inside OpenObserve: the ingest credential lives only in the collector and the viewer's
+  only in web's ForwardAuth answer, never in a browser. The collector's networks are internal except
+  `obs-ingest`, which exists only to publish the loopback port and has IP masquerade disabled, so
+  the collector has no route to the internet.
+- **Rotation [approval]:** change `OBSERVE_INGEST_PASSWORD`, `OBSERVE_VIEWER_PASSWORD` or
+  `ALERT_WEBHOOK_SECRET` in the env and redeploy; `observability-init` applies it.
+- **Root rotation [approval]:** OpenObserve keeps root's password after its first boot (it ignores
+  a changed `ZO_ROOT_USER_PASSWORD`), so root changes its own password through `observability-init`:
+  1. in the env file, move the current `OBSERVE_ROOT_PASSWORD` value to
+     `OBSERVE_ROOT_PASSWORD_PREVIOUS` and leave `OBSERVE_ROOT_PASSWORD=` empty; `pnpm env:init --out
+<file>` fills it with a new compliant password. Run `pnpm deploy:check-env <file>` and redeploy;
+  2. check the job: `docker compose -p <app> -f compose.yml -f compose.prod.yml ps -a observability-init`
+     must show exit 0, and its log must end with "observability ready";
+  3. remove `OBSERVE_ROOT_PASSWORD_PREVIOUS` from the env and redeploy.
+
+  If root's password and `OBSERVE_ROOT_PASSWORD` ever disagree without `_PREVIOUS`, the job logs a
+  fatal "cannot sign in as OpenObserve's root" line naming the keys and exits 1, and users,
+  dashboards and alerts are not re-applied: check its exit code after every deploy (step 2).

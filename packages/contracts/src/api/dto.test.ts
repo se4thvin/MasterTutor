@@ -251,6 +251,7 @@ describe("tool profiles and takeovers (Phase 10, P10a-3/5)", () => {
   const summary = {
     id: runId,
     goal: "g",
+    title: "g",
     status: "queued",
     waitReason: null,
     controller: "agent",
@@ -333,6 +334,8 @@ describe("tool profiles and takeovers (Phase 10, P10a-3/5)", () => {
   it("requires toolProfile on run and benchmark views, and takeovers on benchmark runs", () => {
     expect(RunSummary.safeParse(summary).success).toBe(true);
     expect(RunSummary.safeParse(without(summary, "toolProfile")).success).toBe(false);
+    // Every run view carries a title (the stored one or the fallback).
+    expect(RunSummary.safeParse(without(summary, "title")).success).toBe(false);
     expect(BenchmarkView.safeParse(benchmarkView).success).toBe(true);
     expect(BenchmarkView.safeParse(without(benchmarkView, "toolProfile")).success).toBe(false);
     expect(BenchmarkRunView.safeParse(benchmarkRun).success).toBe(true);

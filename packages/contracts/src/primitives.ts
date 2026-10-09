@@ -23,6 +23,17 @@ export const ElementRef = z.string().regex(/^e[0-9]{1,6}$/, "Expected an element
 export const DbPassword = z
   .string()
   .regex(/^[A-Za-z0-9_-]{24,128}$/, "Expected 24-128 chars of A-Z, a-z, 0-9, '_' or '-'");
+/**
+ * OpenObserve user passwords: the image refuses any without a lowercase letter, an uppercase letter,
+ * a digit and a special character (and panics at boot on a weak root one). The alphabet stays
+ * env- and compose-safe: '-' and '_' are the special characters.
+ */
+export const ObservePassword = z
+  .string()
+  .regex(
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[-_])[A-Za-z0-9_-]{32,128}$/,
+    "Expected 32-128 chars of A-Z, a-z, 0-9, '_' or '-' with at least one of each kind",
+  );
 export const GarageKeyId = z
   .string()
   .regex(/^GK[0-9a-f]{24}$/, "Expected GK followed by 24 hex chars");
