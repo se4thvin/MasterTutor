@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Budget, Usage, Plan } from "@mastertutor/contracts";
+import { Budget, Usage, Plan, Origin } from "@mastertutor/contracts";
 import { budgetExceeded } from "../guardrails/budget.ts";
 import { allowedOriginsText, approvalModeText } from "../llm/instructions.ts";
 import type { RunHooks } from "./hooks.ts";
@@ -7,16 +7,25 @@ import type { RunControl, RunSnapshot } from "./run-state.ts";
 import type { TranscriptEntry } from "./transcript.ts";
 
 /** Executor-owned bookkeeping, stored beside transcript items, never supplied by the model. */
-export const TurnContextCheckpoint = z.object({ facts: z.record(z.string(), z.string()) });
+export const TurnContextCheckpoint = z.object({
+  facts: z.record(z.string(), z.string()),
+  redirectedOrigins: z.array(Origin).default([]),
+});
 export type TurnContextCheckpoint = z.infer<typeof TurnContextCheckpoint>;
 
 /** One path for run facts (D56). Only the vault can describe credentials; no values enter here. */
 export class TurnContext {
   #announced: Record<string, string> = {};
   #facts: Record<string, string> = {};
+  #signIn: { origin: string; usable: boolean } | null = null;
+  #redirectedOrigins = new Set<string>();
 
   constructor(history: readonly TranscriptEntry[]) {
-    for (const entry of history) if (entry.turnContext) this.#announced = entry.turnContext.facts;
+    for (const entry of history) {
+      if (!entry.turnContext) continue;
+      this.#announced = entry.turnContext.facts;
+      this.#redirectedOrigins = new Set(entry.turnContext.redirectedOrigins);
+    }
   }
 
   async refresh(
@@ -48,6 +57,7 @@ export class TurnContext {
       }
     }
     this.#facts = facts;
+    this.#signIn = origin === null ? null : { origin, usable };
   }
 
   messages(full = false): string[] {
@@ -65,8 +75,26 @@ export class TurnContext {
     return changed.length === 0 ? [] : [`Executor: run context\n${changed.join("\n\n")}`];
   }
 
+  /** A saved login is system-held data, not something to ask a person for (D56). */
+  redirectTakeover(origin: string | null): string | null {
+    if (
+      origin === null ||
+      this.#signIn?.origin !== origin ||
+      !this.#signIn.usable ||
+      this.#redirectedOrigins.has(origin)
+    )
+      return null;
+    const entry = Object.entries(this.#facts).find(
+      ([key, line]) => key.startsWith("signIn/") && line.includes(` (${origin}):`),
+    );
+    if (!entry) return null;
+    const alias = entry[0].slice("signIn/".length);
+    this.#redirectedOrigins.add(origin);
+    return `Executor: a saved sign-in is available for ${origin}. Use fill_credential with alias ${alias} and the field/target described in your instructions (use_passkey for a passkey). Try the saved sign-in before asking the user to sign in manually.`;
+  }
+
   checkpoint(): TurnContextCheckpoint {
-    return { facts: { ...this.#facts } };
+    return { facts: { ...this.#facts }, redirectedOrigins: [...this.#redirectedOrigins] };
   }
 
   /** Advance only after the input was committed, so an aborted turn does not lose a delta. */

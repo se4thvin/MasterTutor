@@ -124,3 +124,99 @@ describe("goal source initialization", () => {
     expect(JSON.stringify(mock.requestsFor(h.name))).not.toContain(canary);
   });
 });
+
+const takeover = {
+  outputs: [
+    {
+      type: "turn" as const,
+      status: "need_human" as const,
+      needHuman: "takeover" as const,
+      reason: "Please sign in",
+    },
+  ],
+};
+
+describe("saved sign-in takeover guardrail", () => {
+  it.each(["ask", "auto_within_allowlist", "bypass"] as const)(
+    "redirects once to fill_credential and honors the second ask after restart (%s)",
+    async (approvalMode) => {
+      const h = await setup([takeover, takeover], {
+        approvalMode,
+        allowedOrigins: [origin],
+        hooks: vaultHooks(vault),
+      });
+      h.browser.url = `${origin}/signin`;
+      h.browser.signIn = true;
+      expect(await h.loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
+      expect(await h.loop.step(new AbortController().signal)).toEqual({ kind: "continue" });
+      expect(await drive(await h.reload())).toEqual({ kind: "waiting", reason: "takeover" });
+      expect(mock.requestsFor(h.name)).toHaveLength(2);
+      const input = JSON.stringify(mock.requestsFor(h.name)[1]?.body.input);
+      expect(input).toContain("Use fill_credential with alias zybooks");
+      expect(input.split("Executor: a saved sign-in is available").length - 1).toBe(1);
+      expect(input).not.toContain(canary);
+    },
+  );
+  it("can proceed with a credential tool after the guardrail", async () => {
+    const h = await setup(
+      [
+        takeover,
+        {
+          outputs: [
+            {
+              type: "function",
+              name: "fill_credential",
+              args: { alias: "zybooks", field: "password", target: "e1" },
+            },
+          ],
+        },
+        done(),
+      ],
+      { approvalMode: "bypass", allowedOrigins: [origin], hooks: vaultHooks(vault) },
+    );
+    h.browser.url = `${origin}/signin`;
+    expect(await drive(h.loop)).toEqual({ kind: "completed" });
+    expect(h.browser.functionRuns).toEqual([
+      { name: "fill_credential", args: { alias: "zybooks", field: "password", target: "e1" } },
+    ]);
+  });
+  it("keeps the once-per-origin limit after compaction", async () => {
+    const h = await setup([{ ...takeover, usage: { input: 210_000 } }, takeover], {
+      allowedOrigins: [origin],
+      hooks: vaultHooks(vault),
+    });
+    h.browser.url = `${origin}/signin`;
+    expect(await drive(h.loop)).toEqual({ kind: "waiting", reason: "takeover" });
+    expect(mock.requestsFor(h.name)).toHaveLength(3); // two turns and compaction
+    const last = JSON.stringify(mock.requestsFor(h.name).at(-1)?.body.input);
+    expect(last).toContain(aliasLine);
+    expect(last).toContain("fill_credential");
+    expect(last).not.toContain(canary);
+  });
+  it("does not redirect a vault item outside the run's allowed origins", async () => {
+    const h = await setup([takeover], { hooks: vaultHooks(vault) });
+    h.browser.url = `${origin}/signin`;
+    expect(await drive(h.loop)).toEqual({ kind: "waiting", reason: "takeover" });
+    expect(mock.requestsFor(h.name)).toHaveLength(1);
+  });
+  it("honors captcha requests even on an origin with a saved sign-in", async () => {
+    const h = await setup(
+      [
+        {
+          outputs: [
+            {
+              type: "turn",
+              status: "need_human",
+              needHuman: "captcha",
+              reason: "Solve the captcha",
+            },
+          ],
+        },
+      ],
+      { allowedOrigins: [origin], hooks: vaultHooks(vault) },
+    );
+    h.browser.url = `${origin}/signin`;
+    expect(await drive(h.loop)).toEqual({ kind: "waiting", reason: "captcha" });
+    expect(mock.requestsFor(h.name)).toHaveLength(1);
+  });
+});

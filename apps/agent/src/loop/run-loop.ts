@@ -879,6 +879,15 @@ export class RunLoop {
     if (!compacted) record("in", pending, null);
     record("out", call.reply.output, call.reply.id);
     const parsed = parseModelOutput(call.reply.output);
+    const credentialRedirect =
+      parsed.calls.length === 0 &&
+      parsed.turn?.status === "need_human" &&
+      parsed.turn.needHuman !== "captcha"
+        ? this.#turnContext.redirectTakeover(obs.origin)
+        : null;
+    // Commit the correction and its once-per-origin checkpoint with this decide, atomically.
+    // It enters the next request from the transcript, including after a worker restart.
+    if (credentialRedirect) record("in", [userMessage([credentialRedirect], null)], null);
     const delta = usageDelta(call.model, call.reply.usage);
     deltas.push(delta);
     this.#lastInputTokens = call.reply.usage.input;
@@ -942,6 +951,10 @@ export class RunLoop {
     }
     const turn = parsed.turn;
     if (turn?.status === "done") return this.#complete(signal);
+    if (turn?.status === "need_human" && credentialRedirect) {
+      this.#next = "observe";
+      return CONTINUE;
+    }
     if (turn?.status === "need_human")
       return this.#wait(
         turn.needHuman === "captcha" ? "captcha" : "takeover",
