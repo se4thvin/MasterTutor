@@ -65,23 +65,32 @@ beforeAll(async () => {
 describe.runIf(enabled)("telemetry reaches OpenObserve (spec §5–§11)", () => {
   it("the agent's product spans arrive with their product attributes", async () => {
     const { obs, runId } = state();
-    const spans = await waitFor(async () => {
+    // The step carries the run; its model request carries the model and the product error code.
+    const step = await waitFor(async () => {
       const hits = await search(
         obs,
         "traces",
-        `SELECT * FROM "${TRACE_STREAM}" WHERE ${o2Label(ATTR.runId)} = '${runId}'`,
+        `SELECT * FROM "${TRACE_STREAM}" WHERE ${o2Label(ATTR.runId)} = '${runId}' AND operation_name = 'mt.step'`,
       );
-      if (hits.some((h) => h["operation_name"] === "mt.model.request")) return hits;
-      throw new Error(`run spans so far: ${await seen(obs, "traces", TRACE_STREAM)}`);
+      if (hits.length > 0) return hits[0]!;
+      throw new Error(`spans so far: ${await seen(obs, "traces", TRACE_STREAM)}`);
     }, 150_000);
-    const model = spans.find((h) => h["operation_name"] === "mt.model.request")!;
+    expect(step["service_name"]).toBe("agent");
+    expect(step[o2Label(ATTR.stepPhase)]).toEqual(expect.any(String));
+    const model = await waitFor(async () => {
+      const hits = await search(
+        obs,
+        "traces",
+        `SELECT * FROM "${TRACE_STREAM}" WHERE operation_name = 'mt.model.request' AND ${o2Label(ATTR.errorCode)} = 'model_request_rejected'`,
+      );
+      return hits[0] ?? null;
+    }, 60_000);
     expect(model["service_name"]).toBe("agent");
-    expect(model[o2Label(ATTR.errorCode)]).toBe("model_request_rejected");
     expect(model["span_status"]).toBe("ERROR");
-    expect(spans.map((h) => h["operation_name"])).toContain("mt.step");
-  }, 180_000);
+    expect(model[o2Label(ATTR.modelName)]).toEqual(expect.any(String));
+  }, 240_000);
 
-  it("web's spans and both services' logs arrive", async () => {
+  it("web's spans and the agent's logs arrive (web logs only warnings and errors, none in a healthy run)", async () => {
     const { obs } = state();
     await waitFor(async () => {
       const hits = await search(
@@ -92,16 +101,15 @@ describe.runIf(enabled)("telemetry reaches OpenObserve (spec §5–§11)", () =>
       if (hits.length > 0) return true;
       throw new Error(`traces so far: ${await seen(obs, "traces", TRACE_STREAM)}`);
     }, 120_000);
-    for (const service of ["agent", "web"])
-      await waitFor(async () => {
-        const hits = await search(
-          obs,
-          "logs",
-          `SELECT * FROM "${LOG_STREAMS.app}" WHERE service_name = '${service}'`,
-        );
-        if (hits.length > 0) return true;
-        throw new Error(`logs so far: ${await seen(obs, "logs", LOG_STREAMS.app)}`);
-      }, 120_000);
+    await waitFor(async () => {
+      const hits = await search(
+        obs,
+        "logs",
+        `SELECT * FROM "${LOG_STREAMS.app}" WHERE service_name = 'agent'`,
+      );
+      if (hits.length > 0) return true;
+      throw new Error(`logs so far: ${await seen(obs, "logs", LOG_STREAMS.app)}`);
+    }, 120_000);
   }, 260_000);
 
   it("the run's metrics and the derived span metrics arrive", async () => {
