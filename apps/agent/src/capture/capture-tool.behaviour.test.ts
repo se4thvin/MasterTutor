@@ -8,6 +8,7 @@ import { seedRun } from "../testing/notes.ts";
 import { createLocalOcr } from "../browser/local-ocr.ts";
 import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { createCaptureTool } from "./capture-tool.ts";
+import { mhtmlTexts } from "./mhtml-mask.ts";
 import { pageExtract } from "./page/extract.ts";
 import { captureWorlds } from "./worlds.ts";
 
@@ -91,6 +92,81 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     }
   });
 
+  it("captures an interactive-textbook section; its left-out app UI keeps it from verified", async () => {
+    const { result, blocks, source } = await capture("textbook/index.html");
+    // The assignment box leaves the note but counts against coverage (audited in meta).
+    expect(result.fidelity).toBe("partial");
+    expect(result.coverage).toBeGreaterThan(0.85);
+    expect(result.coverage).toBeLessThan(0.98);
+    expect(source.meta).toMatchObject({ excludedTokens: expect.any(Number), mediaLost: 0 });
+    expect((source.meta as { excludedTokens: number }).excludedTokens).toBeGreaterThanOrEqual(15);
+    const callouts = blocks.filter((b) => b.type === "quote");
+    expect(callouts).toHaveLength(3);
+    for (const callout of callouts) {
+      expect(callout.markdown).toMatch(
+        /^> \[!example\] \[Interactive activity\]\(http\S+\/capture\/textbook\/index\.html#:~:text=2\.3\.\d/,
+      );
+      expect(callout.verified).toBe(true);
+    }
+    const [animation, shortAnswer, trueFalse] = callouts.map((c) => c.markdown);
+    expect(animation).toMatch(/^> !\[\]\(asset:[0-9a-f-]{36}\)$/m);
+    expect(animation).toContain("> Static figure: Step 1: Count the ones in 1011");
+    expect(animation).toContain("> 2. Choose the parity bit that makes the count even.");
+    for (const line of [
+      "> 1\\) What is the even parity bit for 0110?",
+      "> 2\\) What is the even parity bit for 1110?",
+    ])
+      expect(shortAnswer).toContain(line);
+    for (const line of [
+      "> Each received word uses even parity.",
+      "> 1\\) 10010 shows an error.\n> \n> - True\n> - False",
+      "> 2\\) Two flipped bits are always detected.\n> \n> - True\n> - False",
+    ])
+      expect(trueFalse).toContain(line);
+    for (const text of ["Students:", "expand_more", "Due:", "ones:"])
+      expect(blocks.filter((b) => b.markdown.includes(text))).toEqual([]);
+    expect(blocks.filter((b) => b.type === "heading").map((b) => b.markdown)).toEqual([
+      expect.stringMatching(/^#+ 2\.3 Parity bits$/),
+      expect.stringMatching(/^#+ Even parity$/),
+      expect.stringMatching(/^#+ Detecting errors$/),
+    ]);
+  });
+
+  it("keeps a hero figure with a button above the H1: content, never UI (review I1)", async () => {
+    const { result, blocks } = await capture("probes/hero.html");
+    expect(result.fidelity).toBe("verified");
+    expect(blocks.some((b) => b.type === "image" && b.assetId !== null)).toBe(true);
+    expect(blocks.some((b) => b.markdown.includes("Gravel bars split the Waimakariri River"))).toBe(
+      true,
+    );
+  });
+
+  it("keeps every quiz prompt and option, label[for] pairs and math options included (review I2)", async () => {
+    const { result, blocks } = await capture("probes/quiz.html");
+    const [callout] = blocks.filter((b) => b.type === "quote");
+    for (const text of [
+      "Which law relates pressure and volume at constant temperature for a fixed amount of gas?",
+      "> - Pressure doubles when volume halves\n> - Pressure halves when volume halves",
+      "> - Answer $x=2$ exactly\n> - Answer $x=3$ exactly",
+    ])
+      expect(callout?.markdown).toContain(text);
+    expect(callout?.verified).toBe(true);
+    expect(result.fidelity).toBe("verified");
+  });
+
+  it("keeps every word of a body font whose name contains 'icon' (review I3)", async () => {
+    const { result, blocks } = await capture("probes/font.html");
+    expect(result.fidelity).toBe("verified");
+    expect(blocks.map((b) => b.markdown)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^#+ Sediment$/),
+        expect.stringContaining(
+          "the *grain* size decides how far it travels before it [settles](#x)",
+        ),
+      ]),
+    );
+  });
+
   it("stores the snapshot under the step and returns the same blocks on a repeat capture", async () => {
     const first = await capture("article/index.html");
     expect(first.source.mhtmlKey).toMatch(/^snapshots\/.+\/page\.mhtml$/);
@@ -144,7 +220,7 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     expect(kept || result.fidelity !== "verified").toBe(true);
   });
 
-  it("stores no secret: MHTML skipped and no artefact holds the canary (W8)", async () => {
+  it("stores no secret: a masked MHTML, and no artefact holds the canary, raw or decoded (W8, snapshot ruling)", async () => {
     // B3 seam: a run whose vault holds the canary.
     const vault: MaskSources = {
       nodeIds: () => [],
@@ -152,11 +228,13 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       redact: (text: string) => text.replaceAll("hunter2-canary", "[secret]"),
     };
     const { source, blocks } = await capture("secret/field.html", page, vault);
-    expect(source.mhtmlKey).toBeNull();
+    expect(source.mhtmlKey).toMatch(/^snapshots\/.+\/page\.mhtml$/);
     expect(blocks.every((b) => !b.markdown.includes("hunter2-canary"))).toBe(true);
     const canary = new TextEncoder().encode("hunter2-canary");
     for (const bytes of env.storage.objects.values())
       expect(Buffer.from(bytes).includes(Buffer.from(canary))).toBe(false);
+    const mhtml = new TextDecoder().decode(env.storage.objects.get(source.mhtmlKey!)!);
+    expect(mhtmlTexts(mhtml).join("\n")).not.toContain("hunter2-canary");
   });
 
   it("refuses a page that shows a secret and leaves no rows or objects behind (D8)", async () => {

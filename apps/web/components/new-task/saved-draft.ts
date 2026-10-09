@@ -1,4 +1,4 @@
-import { toOrigin, Uuid } from "@mastertutor/contracts";
+import { TOKEN_LIKE, toOrigin, Uuid } from "@mastertutor/contracts";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { z } from "zod";
 import { BUDGET_PRESETS, parseSource, type BudgetPreset, type SourceChip } from "./draft.ts";
@@ -35,8 +35,6 @@ const SAVE_DEBOUNCE_MS = 400;
 const GOAL_MAX = 4_000;
 const LIST_MAX = 50;
 const SECRET_PARAM = /token|key|sig|secret|pass|auth|session|credential|otp|code|^[tks]$/i;
-/** A path segment that reads like a token: long, mixed-case alphanumerics with a digit, or long hex. */
-const TOKEN_SEGMENT = /^(?=[\w-]*\d)(?=[\w-]*[a-z])(?=[\w-]*[A-Z])[\w-]{20,}$|^[0-9a-fA-F]{32,}$/;
 const URL_IN_TEXT = /https?:\/\/[^\s<>"'`)\]]+/gi;
 
 const Stored = z.object({
@@ -61,7 +59,7 @@ export function mayHoldCredential(url: string): boolean {
     if (names.some((name) => SECRET_PARAM.test(name))) return true;
     return parsed.pathname
       .split("/")
-      .some((segment) => TOKEN_SEGMENT.test(decodeURIComponent(segment)));
+      .some((segment) => TOKEN_LIKE.test(decodeURIComponent(segment)));
   } catch {
     return true;
   }

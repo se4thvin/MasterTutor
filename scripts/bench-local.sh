@@ -14,7 +14,7 @@ for key in DOMAIN=localhost TRAEFIK_ENTRYPOINT=web TRAEFIK_TLS=false PUBLIC_URL=
 done
 unset WEB_FIXTURE_API AGENT_TEST_MODE OPENAI_BASE_URL # compose.prod.yml pins them; nothing may override (D47)
 until mkdir /tmp/mt-behaviour.lock 2>/dev/null; do sleep 15; done
-DC=(docker compose -p mastertutor-bench --env-file .env --env-file .env.bench --profile pdf -f compose.yml -f compose.prod.yml -f tests/bench/compose.local.yml)
+DC=(docker compose -p mastertutor-bench --env-file .env --env-file .env.bench --profile pdf --profile observability -f compose.yml -f compose.prod.yml -f tests/bench/compose.local.yml)
 trap '"${DC[@]}" stop >/dev/null 2>&1 || true; rmdir /tmp/mt-behaviour.lock' EXIT
 "${DC[@]}" up -d --build --wait --wait-timeout 900
 curl -fsS http://localhost:18080/healthz >/dev/null

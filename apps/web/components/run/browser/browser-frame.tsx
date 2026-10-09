@@ -1,6 +1,6 @@
 "use client";
 
-import { stepScreenshotPath } from "@mastertutor/contracts";
+import { stepScreenshotPath, untrustedText } from "@mastertutor/contracts";
 import { useId, useRef, type ReactNode } from "react";
 import { AgentCursor } from "../cursor/agent-cursor.tsx";
 import { toViewport, type Point } from "../cursor/cursor-path.ts";
@@ -21,7 +21,6 @@ import {
   type StepRow,
 } from "../model/run-model.ts";
 import type { TakeoverState } from "../model/takeover.ts";
-import { untrustedText } from "../model/untrusted-text.ts";
 import { useElementSize } from "../use-element-size.ts";
 import { Banners } from "./banners.tsx";
 import { Caption } from "./caption.tsx";

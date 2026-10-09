@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Node services. Two targets:
-#   node-runtime: agent, migrate, garage-init (TS via Node type stripping);
+#   node-runtime: agent, migrate, garage-init, observability-init (TS via Node type stripping);
 #   web: the Next.js standalone server.
 FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS base
 ENV CI=true NEXT_TELEMETRY_DISABLED=1
@@ -20,7 +20,8 @@ RUN pnpm --filter @mastertutor/web build
 FROM fetch AS runtime-build
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --offline --prod --store-dir /pnpm/store --filter "@mastertutor/agent..."
+    pnpm install --frozen-lockfile --offline --prod --store-dir /pnpm/store \
+      --filter "@mastertutor/agent..." --filter "@mastertutor/observability..."
 # Test code never ships (M7): test files, testing/ helpers (a --no-sandbox Chromium launcher,
 # fakes) and testing.ts entries. scripts/check-agent-image.sh proves it.
 RUN find apps/agent packages -path '*/node_modules' -prune -o \

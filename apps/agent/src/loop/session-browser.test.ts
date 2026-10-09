@@ -71,4 +71,32 @@ describe("observeOnOnePage (review M7)", () => {
     expect(first.screenshot.dropped && second.screenshot.dropped).toBe(true);
     expect(perceptualDistance(first.phash, second.phash)).toBe(Number.POSITIVE_INFINITY);
   });
+
+  it("observes again when the page navigates under a read (the MH sign-in post), and only then", async () => {
+    const urls = ["http://a.test/login", "http://a.test/home", "http://a.test/home"];
+    let reads = 0;
+    const captured: string[] = [];
+    const readUrl = () => urls[Math.min(reads++, urls.length - 1)]!;
+    let first = true;
+    const obs = await observeOnOnePage(readUrl, async (url) => {
+      captured.push(url);
+      if (first) {
+        first = false;
+        throw new Error("Protocol error (Runtime.evaluate): Inspected target navigated or closed");
+      }
+      return capture(url);
+    });
+    expect(captured).toEqual(["http://a.test/login", "http://a.test/home"]);
+    expect(obs.url).toBe("http://a.test/home");
+    await expect(
+      observeOnOnePage(readUrl, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    await expect(
+      observeOnOnePage(readUrl, async () => {
+        throw new Error("Execution context was destroyed");
+      }),
+    ).rejects.toThrow("Execution context was destroyed");
+  });
 });

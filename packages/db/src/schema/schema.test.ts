@@ -19,9 +19,10 @@ const config = (table: PgTable) => getTableConfig(table);
 const columns = (table: PgTable) => config(table).columns.map((column) => column.name);
 
 describe("schema", () => {
-  it("defines exactly the spec tables plus benchmarks and the object-deletion queue", () => {
+  it("defines exactly the spec tables plus benchmarks, the object-deletion queue and alerts", () => {
     expect(tables.map((table) => config(table).name).sort()).toEqual([
       "account",
+      "alerts",
       "approvals",
       "assets",
       "benchmark_runs",
@@ -34,6 +35,7 @@ describe("schema", () => {
       "notes",
       "object_deletions",
       "otp_codes",
+      "push_subscriptions",
       "run_events",
       "run_steps",
       "run_transcript",

@@ -74,6 +74,10 @@ export type PushSubscriptionInput = z.infer<typeof PushSubscriptionInput>;
 export const PushEndpointRef = z.object({ endpoint: z.string().min(1).max(2_048) });
 export type PushEndpointRef = z.infer<typeof PushEndpointRef>;
 
+/** Whether the server still holds this browser's subscription (a push service 404/410 drops it). */
+export const PushStatus = z.object({ registered: z.boolean() });
+export type PushStatus = z.infer<typeof PushStatus>;
+
 /** Whether this server can send pushes (VAPID keys and HTTPS), and the key browsers subscribe with. */
 export const PushConfig = z.object({ available: z.boolean(), publicKey: z.string().nullable() });
 export type PushConfig = z.infer<typeof PushConfig>;

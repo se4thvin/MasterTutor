@@ -375,7 +375,8 @@
       color: var(--label-2);
     }
   }
-  .kill-banner {
+  .kill-banner,
+  .alert-banner {
     display: flex;
     flex-wrap: wrap;
     align-items: center;

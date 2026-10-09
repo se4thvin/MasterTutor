@@ -64,7 +64,7 @@ const Inspect = z.array(
 
 export async function assertProdMode(compose: readonly string[]): Promise<void> {
   const config = composeConfig([".env", ".env.bench"], PROD_LIKE_LOCAL_FILES, {
-    profiles: ["pdf"],
+    profiles: ["pdf", "observability"],
   });
   const [cmd, ...args] = compose;
   const ps = (await run(cmd!, [...args, "ps", "--format", "json"])).stdout

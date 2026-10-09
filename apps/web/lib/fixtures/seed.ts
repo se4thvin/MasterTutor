@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  ALERT_LABELS,
   DEFAULT_BUDGET,
   EMPTY_USAGE,
   MODELS,
@@ -598,6 +599,7 @@ function runs(): RunSummary[] {
   const run = (
     n: number,
     goal: string,
+    title: string,
     status: RunStatus,
     usd: number,
     steps: number,
@@ -607,6 +609,7 @@ function runs(): RunSummary[] {
   ): RunSummary => ({
     id: ids.run(n),
     goal,
+    title,
     status,
     waitReason: null,
     controller: "agent",
@@ -624,6 +627,7 @@ function runs(): RunSummary[] {
     run(
       2,
       "Capture the learning-rate warmup article verbatim",
+      "Learning-rate warmup, verbatim",
       "completed",
       1.12,
       41,
@@ -650,5 +654,15 @@ export function createSeed(): FixtureState {
     runs: runs(),
     runScope: {},
     decidedApprovals: [],
+    // One past alert for the Alerts list; acknowledged, so no banner shows by default.
+    alerts: [
+      {
+        id: "a1e7a1e7-0000-4000-8000-000000000001",
+        rule: "run_failed",
+        label: ALERT_LABELS.run_failed,
+        firedAt: "2026-09-30T14:05:00.000Z",
+        acknowledgedAt: "2026-09-30T14:20:00.000Z",
+      },
+    ],
   };
 }
