@@ -315,6 +315,16 @@ export default defineConfig(
     },
   },
   {
+    // Fixture-capable API entry points retain their server import permission.
+    files: ["apps/web/app/api/rpc/*/route.ts", "apps/web/app/api/assets/*/route.ts"],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
+        server: true,
+        fixtures: false,
+      }),
+    },
+  },
+  {
     // Server-side web tests and the instrumentation hook are server code: they may use the
     // Node-only contracts and telemetry (D50) like the code they test or start.
     files: [

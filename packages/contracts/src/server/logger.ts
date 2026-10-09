@@ -1,4 +1,5 @@
 import pino, { type DestinationStream, type Logger } from "pino";
+export type { Logger };
 import { CREDENTIAL_FIELDS, VAULT_SECRET_FIELDS } from "../enums.ts";
 import type { LogLevel } from "../env.ts";
 import { logCorrelation, otelLogStream } from "./log-bridge.ts";

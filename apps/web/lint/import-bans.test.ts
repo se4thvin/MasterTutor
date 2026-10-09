@@ -99,12 +99,14 @@ describe("server-only contracts stay out of web client code (Task 0 review M1)",
         expect(await rules(code, file)).toContain("no-restricted-imports");
     },
   );
-  it.each(["apps/web/lib/server/x.ts", "apps/web/app/api/x/route.ts"])(
-    "allows them on the server: %s",
-    async (file) => {
-      for (const code of imports) expect(await rules(code, file)).toEqual([]);
-    },
-  );
+  it.each([
+    "apps/web/lib/server/x.ts",
+    "apps/web/app/api/x/route.ts",
+    "apps/web/app/api/rpc/[[...rest]]/route.ts",
+    "apps/web/app/api/assets/[...path]/route.ts",
+  ])("allows them on the server: %s", async (file) => {
+    for (const code of imports) expect(await rules(code, file)).toEqual([]);
+  });
 });
 
 describe("dynamic import of the OpenAI SDK (Task 0 review M3)", () => {
