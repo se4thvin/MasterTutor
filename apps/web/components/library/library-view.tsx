@@ -3,7 +3,7 @@
 import type { NoteSummary, SourceKind } from "@mastertutor/contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { RubberSegment, type SegmentItem } from "@/components/bits/rubber-segment.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
@@ -111,6 +111,14 @@ const { Component: MoveSheet, usePrefetch: usePrefetchMoveSheet } = lazyComponen
 );
 
 const URL_WRITE_DEBOUNCE_MS = 250;
+
+/**
+ * The query, kind and view live in the URL but only this client view reads them (the page has no
+ * server state for them), so they are written with the History API: useSearchParams follows it at
+ * once. router.replace would first fetch the page from the server, so under load the URL, and the
+ * view that follows it, lagged the typing by a server round trip.
+ */
+const replaceUrl = (href: string) => window.history.replaceState(null, "", href);
 const KIND_ITEMS: SegmentItem<"all" | SourceKind>[] = [
   { value: "all", label: "All" },
   { value: "web", label: "Web" },
@@ -123,7 +131,6 @@ const VIEW_ITEMS: SegmentItem<LibraryViewMode>[] = [
 ];
 
 export function LibraryView() {
-  const router = useRouter();
   const { params, folders } = useLibraryScope();
   const notes = useInfiniteQuery(
     orpc.notes.list.infiniteOptions({
@@ -145,8 +152,7 @@ export function LibraryView() {
         ? n.folderId === null
         : n.folderId === params.folder,
   );
-  const set = (patch: Partial<LibraryParams>) =>
-    router.replace(libraryHref({ ...params, ...patch }), { scroll: false });
+  const set = (patch: Partial<LibraryParams>) => replaceUrl(libraryHref({ ...params, ...patch }));
 
   // The URL owns the query. `draft` is only what is being typed before the debounced URL write
   // lands; it is dropped once the URL catches up or the folder changes, so a folder click and
@@ -174,7 +180,7 @@ export function LibraryView() {
     const folder = latest.current.folder;
     writeTimer.current = setTimeout(() => {
       if (latest.current.folder !== folder) return;
-      router.replace(libraryHref({ ...latest.current, q: value }), { scroll: false });
+      replaceUrl(libraryHref({ ...latest.current, q: value }));
     }, URL_WRITE_DEBOUNCE_MS);
   };
   const clearQuery = () => {

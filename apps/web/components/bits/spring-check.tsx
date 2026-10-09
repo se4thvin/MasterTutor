@@ -67,14 +67,16 @@ export function SpringCheck({
       <m.span className="scheck-box" style={{ scale: box }}>
         <span className="scheck-ring" aria-hidden="true" />
         <m.span className="scheck-fill" aria-hidden="true" style={{ scale: fill }} />
-        <m.svg
+        {/* The span moves, not the <svg>: scaling an SVG root repaints it every frame (D28). */}
+        <m.span
           className="scheck-tick"
-          viewBox="0 0 24 24"
           aria-hidden="true"
           style={{ opacity: tickOpacity, scale: tickScale }}
         >
-          <path d="M5 12.5l4.5 4.5L19 7.5" />
-        </m.svg>
+          <svg viewBox="0 0 24 24">
+            <path d="M5 12.5l4.5 4.5L19 7.5" />
+          </svg>
+        </m.span>
       </m.span>
       <span className="scheck-label">
         <m.span style={{ opacity: strike ? word : 1 }}>{text}</m.span>

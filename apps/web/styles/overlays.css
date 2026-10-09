@@ -197,7 +197,13 @@
       width: min(22.25rem, calc(100vw - 4rem));
     }
   }
+  /* Each toast's enter and exit spring (toast-provider.tsx), on its own layer like .toast (D28). */
+  .toast-slot {
+    will-change: transform, opacity;
+  }
   .toast {
+    /* Dragged and faded by springs on the main thread (D28): its own layer keeps them off paint. */
+    will-change: transform, opacity;
     position: relative;
     display: flex;
     align-items: center;

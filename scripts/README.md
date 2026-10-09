@@ -61,7 +61,8 @@ then go to `http://localhost:18080`. Hold `/tmp/mt-behaviour.lock` while a local
 Output streams back and the script exits with the suite's exit code. Ctrl-C tears the run down.
 
 `all` syncs once, starts every suite but qa at the same time, each as its own project, and prints
-one table: suite, pass/FAIL, seconds and test counts. It exits non-zero if any suite failed. Each
+one table: suite, pass/FAIL, seconds and test counts. Behaviour, the longest suite, runs as three
+Vitest shards (`--shard=i/3`), each on its own stack; their counts add up to a single run's. It exits non-zero if any suite failed. Each
 suite's full log stays in the temp folder it names.
 
 What happens:

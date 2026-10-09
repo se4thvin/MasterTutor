@@ -72,6 +72,8 @@ describe("remote test runner (D45, X4, D48)", () => {
 
   it("runs every suite but the long-lived qa stack under `all`", () => {
     expect(allSuites).toEqual(suites.filter((suite) => suite !== "qa"));
+    expect(client).toMatch(/^behaviour_shards=[2-9]$/m);
+    expect(client).toContain('entries+=("behaviour --shard=$i/$behaviour_shards")');
     expect(readme).toContain("scripts/remote-test.sh all");
   });
 
@@ -130,6 +132,18 @@ describe("remote test runner (D45, X4, D48)", () => {
       expect(result.status, args.join(" ")).toBe(2);
       expect(result.stderr, args.join(" ")).toMatch(/^remote-test: /);
     }
+  });
+
+  it("runs ui in a network namespace of its own: Chromium aborts loads when host networks change", () => {
+    expect(host).toContain('[[ "$suite" == ui ]] && runner_network=bridge');
+    expect(host).toContain('--network "$runner_network"');
+  });
+
+  it("runs unit with fewer workers inside all, never with a longer timeout", () => {
+    expect(client).toMatch(/^all_unit_workers=[1-9]\d?$/m);
+    expect(client).toContain('entries+=("unit --maxWorkers=$all_unit_workers")');
+    expect(host).toContain('[[ "$arg" == --maxWorkers* ]] && workers=()');
+    expect(client + host).not.toMatch(/testTimeout|--timeout/);
   });
 
   it("keeps the legacy stack lock for qa only; stack suites hold a slot instead", () => {

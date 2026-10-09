@@ -62,7 +62,7 @@
     left: 0;
     width: 1.25rem;
     height: 1.25rem;
-    will-change: transform;
+    will-change: transform, opacity;
     transition-property: opacity;
     transition-duration: var(--motion-dur-base);
     transition-timing-function: var(--motion-ease-out);
@@ -440,6 +440,9 @@
     height: 100%;
     object-fit: contain;
     opacity: 0;
+    /* Fades in and out (D28): a layer of its own is painted while transparent, so a fade never
+       paints its content the frame it starts. */
+    will-change: opacity;
     /* Even transparent, it sits over the live frame: it must never take the user's clicks. */
     pointer-events: none;
     transition-property: opacity;
@@ -461,6 +464,8 @@
     inset: 0;
     z-index: 4;
     opacity: 0;
+    /* As .run-shot: painted while transparent, so the fade in is compositor-only (D28). */
+    will-change: opacity;
     pointer-events: none;
     transition-property: opacity;
     transition-duration: var(--motion-dur-panel);
@@ -556,6 +561,10 @@
        Visibility stays visible for the whole fade, so the exit still plays. */
     visibility: hidden;
     opacity: 0;
+    /* It slides and fades in (D28): a layer of its own, so the frame beneath never repaints as the
+       transition promotes and drops one. Its glass no longer blurs (only .lglass does), so the
+       backdrop filter no longer gives it that layer. */
+    will-change: translate, opacity;
     transition-property: translate, opacity, visibility;
     transition-duration: var(--motion-spring-dur), var(--motion-dur-base), var(--motion-dur-base);
     transition-timing-function:
@@ -655,6 +664,8 @@
     overflow: hidden;
   }
   .run-caption-line {
+    /* Animated by a spring on the main thread (D28): its own layer keeps each frame off layout and paint. */
+    will-change: transform, opacity;
     position: absolute;
     inset: 0;
     overflow: hidden;
@@ -1334,6 +1345,8 @@
       inset: 0;
       background: var(--label);
       transform-origin: left;
+      /* A persistent layer: the scaleX transition never promotes and drops one (a repaint each). */
+      will-change: transform;
       transition-property: transform;
       transition-duration: var(--motion-dur-panel);
       transition-timing-function: var(--motion-ease-out);
@@ -1962,6 +1975,8 @@
     }
   }
   .run-pip-screen {
+    /* Animated by a spring on the main thread (D28): its own layer keeps each frame off layout and paint. */
+    will-change: transform;
     position: relative;
     width: 35rem;
     aspect-ratio: 16 / 10;

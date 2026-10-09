@@ -138,6 +138,8 @@ export class BrowserSession {
   #inProcess = new WeakMap<Frame, string>();
   #blocked: BlockedNavigation[] = [];
   #privateHits: PrivateConnection[] = [];
+  /** The page leaving a private address (#onPrivateConnection); goto waits for it when blocked. */
+  #leaving: Promise<void> = Promise.resolve();
   #policy: NetworkPolicy | null = null;
   #adopting: Promise<void> | null = null;
   #downloads: DownloadGate | null = null;
@@ -619,12 +621,17 @@ export class BrowserSession {
         signal,
       );
       await abortable(this.#policy?.settled() ?? Promise.resolve(), signal);
-      return this.#privateHits.length === hitsBefore;
+      if (this.#privateHits.length === hitsBefore) return true;
+      // Blocked: the page is already leaving (#onPrivateConnection). Report it only once it has
+      // left, so nothing the caller reads next comes from the private page.
+      await abortable(this.#leaving, signal);
+      return false;
     } catch {
       if (signal.aborted) throw signal.reason;
       this.#log.debug({ errorCode: "navigation_failed" }, "navigation failed");
       // A navigation still waiting for its answer would stall every later step: stop it.
       await this.stopStuckNavigation(signal, 0);
+      if (this.#privateHits.length !== hitsBefore) await abortable(this.#leaving, signal);
       return false;
     }
   }
@@ -650,7 +657,11 @@ export class BrowserSession {
   #onPrivateConnection(hit: PrivateConnection): void {
     this.#privateHits.push(hit);
     this.#log.warn({ errorCode: "private_connection" }, "response from a private address");
-    if (hit.topLevel) void this.#page.goto("about:blank").catch(() => undefined);
+    if (hit.topLevel)
+      this.#leaving = this.#page.goto("about:blank").then(
+        () => undefined,
+        () => undefined,
+      );
   }
 
   #adopt(page: Page): void {

@@ -22,26 +22,34 @@ export function OtpCard({ runId, host }: { runId: string; host: string }) {
   const [attempt, setAttempt] = useState(0);
   // The run often resumes (and this card leaves) before or in the same render as submitOtp's
   // answer: the confirmation then goes to a toast, so the person still sees where the code went
-  // (review M3). A layout effect clears `mounted` during the commit that removes the card.
+  // (review M3). Decided where the card leaves, not a frame later: the run's events are applied in
+  // a requestAnimationFrame flush, so a resume batched with the answer could unmount the card after
+  // such a check, and "sent" was then never shown anywhere.
   const toast = useToast();
   const mounted = useRef(true);
+  const accepted = useRef(false); // submitOtp answered
+  const shown = useRef(false); // "sent" reached the screen on this card
+  const confirmElsewhere = () => toast({ title: PHASE_TEXT.sent, icon: "codeOtp" });
+  useLayoutEffect(() => {
+    if (phase === "sent") shown.current = true;
+  }, [phase]);
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      if (accepted.current && !shown.current) confirmElsewhere();
     };
+    // Mount and unmount only: the toast function is the provider's, stable for the card's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const submit = (code: string) => {
     setSealed(code.length);
     setPhase("sending");
     api.runs.submitOtp({ runId, code }).then(
       () => {
-        setPhase("sent");
-        // Checked after the next frame: a resume batched with this answer unmounts the card before
-        // "sent" is ever painted.
-        requestAnimationFrame(() => {
-          if (!mounted.current) toast({ title: PHASE_TEXT.sent, icon: "codeOtp" });
-        });
+        accepted.current = true;
+        if (mounted.current) setPhase("sent");
+        else confirmElsewhere();
       },
       () => {
         setSealed(null);

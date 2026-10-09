@@ -32,6 +32,21 @@ export async function settle(page: Page): Promise<void> {
     while (![...document.querySelectorAll(".toast")].every(shown) && performance.now() < deadline) {
       await new Promise(requestAnimationFrame);
     }
+    // Motion's springs and exits run on requestAnimationFrame and write inline styles; an exiting
+    // element (a caption crossfading out) stays mounted until its exit ends. Wait until no inline
+    // style changes and no element comes or goes for two frames, counted in frames rather than
+    // wall time so a busy host waits longer instead of checking mid-exit (bounded at 300 frames for
+    // a rAF loop that never rests).
+    const snapshot = () =>
+      [...document.querySelectorAll("[style]")].map((el) => el.getAttribute("style")).join("|") +
+      `#${document.getElementsByTagName("*").length}`;
+    let previous = snapshot();
+    for (let frames = 0, still = 0; still < 2 && frames < 300; frames++) {
+      await new Promise(requestAnimationFrame);
+      const next = snapshot();
+      still = next === previous ? still + 1 : 0;
+      previous = next;
+    }
   });
 }
 

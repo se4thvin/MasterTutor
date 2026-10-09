@@ -13,8 +13,9 @@
 #   - cleanup removes only those labels, that project and those tags, never a global prune;
 #   - nothing is published beyond 127.0.0.1.
 # The runner uses the host network so suites reach their loopback-published containers on
-# 127.0.0.1. The code is mounted at its host path, so Compose bind mounts the suites declare
-# (relative to the repo) resolve to the same files for the host daemon.
+# 127.0.0.1; ui alone needs nothing there (its server runs beside its browsers) and gets a network
+# namespace of its own (below). The code is mounted at its host path, so Compose bind mounts the
+# suites declare (relative to the repo) resolve to the same files for the host daemon.
 # Stack suites (behaviour, ui, e2e, smoke, bench-mock) run concurrently: each holds a stack slot
 # (slots.sh) that gives it its own subnets and loopback ports, at most MT_CI_MAX_STACKS (default 6)
 # at a time. qa's stack outlives the run, so it keeps ~/mt-ci/.runs/stack.lock (shared with branches
@@ -90,7 +91,10 @@ cd "$root"
 suite_args=()
 case "$suite" in
   unit | integration | security | behaviour)
-    suite_args=(--project "$suite" --maxWorkers="$cpus" "$@") ;;
+    # Our worker default unless the caller chose one (all runs unit with fewer).
+    workers=(--maxWorkers="$cpus")
+    for arg in "$@"; do [[ "$arg" == --maxWorkers* ]] && workers=(); done
+    suite_args=(--project "$suite" "${workers[@]}" "$@") ;;
   ui)
     # One next start serves every worker: Playwright's default (half of 88 cores) overloads it and
     # turns timing into failures; 8 runs as fast (measured, D48). A --workers arg overrides it.
@@ -202,10 +206,17 @@ case "$suite" in
     prefix="$(slot_networks "${SLOT:-$SLOT_QA}" | sed -n 's/^CDP_SUBNET_PREFIX=//p')"
     sed "s/172\.30\.231\./$prefix./g" infra/traefik/test-dynamic.yml >"$run_dir/traefik-dynamic.yml" ;;
 esac
+# Chromium aborts every request in flight with ERR_NETWORK_CHANGED when the network interfaces it
+# sees change, and on the host network they change whenever any run creates or removes a Docker
+# network: concurrent stacks failed ui page loads at random. ui's browsers and server share the
+# runner, so it runs in the default bridge network's own namespace, where nothing else changes.
+runner_network=host
+[[ "$suite" == ui ]] && runner_network=bridge
+
 set +e
 docker run --rm --init --name "$project-runner" \
   --label mastertutor.ci=1 --label "mastertutor.ci.run=$project" \
-  --network host --cpus "$cpus" --memory 64g \
+  --network "$runner_network" --cpus "$cpus" --memory 64g \
   --user "$(id -u):$(id -g)" --group-add "$(stat -c %g /var/run/docker.sock)" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$runs_dir:$runs_dir" -w "$root" \

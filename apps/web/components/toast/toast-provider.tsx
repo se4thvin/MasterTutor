@@ -53,6 +53,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {toasts.map((t) => (
             <m.div
               key={t.id}
+              className="toast-slot"
               initial={{ opacity: 0, y: 24 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 24 }}
