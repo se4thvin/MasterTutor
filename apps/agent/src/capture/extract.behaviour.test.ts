@@ -66,6 +66,17 @@ describe("pageExtract", () => {
     expect(extract.sourceText).not.toContain("Glucose");
   });
 
+  it("uses the same anchor and source order for page and element captures", async () => {
+    const { worlds } = await extractDocs();
+    const snippets = [{ head: "Cellular respiration converts", tail: "" }];
+    const [full] = await worlds.call(pageLocateBlocks, [snippets]);
+    expect(full?.selector).toBeTruthy();
+    await worlds.call(pageExtract, [{ scope: "element", selector: full!.selector }]);
+    const [partial] = await worlds.call(pageLocateBlocks, [snippets]);
+    expect(partial).toEqual(full);
+    expect(full?.domOrder?.length).toBeGreaterThan(0);
+  });
+
   it("measures the whole page minus chrome, and collects TeX annotations", async () => {
     const { extract } = await extractDocs();
     expect(extract.pageText).toContain("Cellular respiration converts glucose");
@@ -87,7 +98,9 @@ describe("pageExtract", () => {
     ]);
     expect(located[0]?.selector).toMatch(/#content > p/);
     expect(located[0]?.xpath).toMatch(/^\/html\[1\]\/body\[1\]\/article\[1\]\/p\[1\]$/);
-    expect(located[1]!.start!).toBeGreaterThan(located[0]!.end!);
+    expect(located[1]!.domOrder!.at(-1)).toBeGreaterThan(located[0]!.domOrder!.at(-1)!);
+    expect(located[0]!.start).toBe(0);
+    expect(located[1]!.start).toBe(0);
     expect(located[2]).toMatchObject({ selector: null, xpath: null });
     expect(located[2]?.start).not.toBeNull();
     expect(located[3]).toEqual({ selector: null, xpath: null, start: null, end: null });

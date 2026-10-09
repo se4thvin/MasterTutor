@@ -8,12 +8,21 @@ import {
   type BlockType,
   type SourceKind,
 } from "@mastertutor/contracts";
-import { type DbLike, noteBlocks, notes, refreshNoteQuality, runs, sources } from "@mastertutor/db";
+import {
+  type DbLike,
+  noteBlocks,
+  notes,
+  objectDeletions,
+  refreshNoteQuality,
+  runs,
+  sources,
+} from "@mastertutor/db";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { containsSecret, type MaskSources } from "../browser/masking.ts";
 import type { StepWriter, ToolContext } from "../tools/types.ts";
 import type { Embedder } from "./embedder.ts";
 import { sha256Hex } from "./hash.ts";
+import { stageCaptureBlocks, type CaptureRow } from "./capture-blocks.ts";
 import { keysBetween, positionOrder } from "./positions.ts";
 
 export interface RunScope {
@@ -147,6 +156,8 @@ export class NoteWriter {
   protected readonly db: DbLike;
   protected readonly embedder: Embedder;
   /** Blocks staged in a step but not committed yet, per note: later appends in that step see them (W10). */
+  readonly #captures = new WeakMap<StepWriter, Map<string, CaptureRow[]>>();
+  readonly #sources = new WeakMap<StepWriter, Map<string, ExistingSource>>();
   readonly #documents = new WeakMap<StepWriter, Map<string, string>>();
   readonly #pending = new WeakMap<StepWriter, Map<string, PlacedBlock[]>>();
 
@@ -245,7 +256,10 @@ export class NoteWriter {
     noteId: string,
     kind: SourceKind,
     url: string,
+    step?: StepWriter,
   ): Promise<ExistingSource | null> {
+    const pending = step ? this.#sources.get(step)?.get(JSON.stringify([noteId, kind, url])) : null;
+    if (pending) return pending;
     const [source] = await this.db
       .select({ id: sources.id, meta: sources.meta })
       .from(sources)
@@ -274,8 +288,18 @@ export class NoteWriter {
       throw new NoteWriteError("unsupported_url", "only http(s) sources");
     // A URL can echo a secret (a GET login form); B3's redactor also reads percent-encoded tokens.
     screenValue(w.secrets, [draft.url, draft.canonicalUrl, draft.title, draft.meta]);
+    let pendingSources = this.#sources.get(w.step);
+    if (!pendingSources) {
+      pendingSources = new Map();
+      this.#sources.set(w.step, pendingSources);
+    }
+    pendingSources.set(JSON.stringify([draft.noteId, draft.kind, draft.url]), {
+      sourceId: id,
+      meta: draft.meta,
+      blockIds: [],
+    });
     w.step.defer(async (tx) => {
-      await tx.insert(sources).values({
+      const values = {
         id,
         workspaceId: w.scope.workspaceId,
         kind: draft.kind,
@@ -288,7 +312,23 @@ export class NoteWriter {
         screenshotKey: draft.screenshotKey,
         snapshotSha256: draft.snapshotSha256,
         meta: { ...draft.meta, noteId: draft.noteId },
-      });
+      };
+      const [old] = await tx
+        .select({ mhtmlKey: sources.mhtmlKey, screenshotKey: sources.screenshotKey })
+        .from(sources)
+        .where(and(eq(sources.id, id), eq(sources.workspaceId, w.scope.workspaceId)));
+      await tx
+        .insert(sources)
+        .values(values)
+        .onConflictDoUpdate({ target: sources.id, set: values });
+      const retired = [old?.mhtmlKey, old?.screenshotKey].filter(
+        (key): key is string => !!key && key !== values.mhtmlKey && key !== values.screenshotKey,
+      );
+      if (retired.length)
+        await tx
+          .insert(objectDeletions)
+          .values(retired.map((key) => ({ key })))
+          .onConflictDoNothing();
     });
     return id;
   }
@@ -340,6 +380,56 @@ export class NoteWriter {
       options.sourceId,
       options.blocks.map((draft, i) => ({ draft, position: keys[i] ?? "" })),
     );
+  }
+
+  /** Captures update one source instead of appending another copy to the note. */
+  async captureBlocks(
+    w: WriteContext,
+    options: {
+      noteId: string;
+      sourceId: string;
+      blocks: readonly BlockDraft[];
+      whole: boolean;
+    },
+  ): Promise<string[]> {
+    await this.#assertWritable(w, options.noteId);
+    for (const draft of options.blocks) {
+      if (draft.markdown.length > MAX_BLOCK_CHARS)
+        throw new NoteWriteError("block_too_large", "block too large");
+      screenText(w.secrets, draft.markdown);
+      if (draft.anchor) {
+        screenValue(w.secrets, draft.anchor);
+        Anchor.parse(draft.anchor);
+      }
+    }
+    let captures = this.#captures.get(w.step);
+    if (!captures) {
+      captures = new Map();
+      this.#captures.set(w.step, captures);
+    }
+    const previous =
+      captures.get(options.noteId) ??
+      (await this.db
+        .select()
+        .from(noteBlocks)
+        .where(eq(noteBlocks.noteId, options.noteId))
+        .orderBy(positionOrder));
+    const result = await stageCaptureBlocks(
+      this.embedder,
+      w,
+      {
+        ...options,
+        blocks: options.blocks.map((block) => ({
+          ...block,
+          anchor: block.anchor ? Anchor.parse(block.anchor) : null,
+        })),
+      },
+      previous,
+    );
+    captures.set(options.noteId, result.rows);
+    for (const source of this.#sources.get(w.step)?.values() ?? [])
+      if (source.sourceId === options.sourceId) source.blockIds = result.blockIds;
+    return result.blockIds;
   }
 
   /** Video layout (spec §8): one source's blocks ordered by (tStart, heading < keyframe < text). */

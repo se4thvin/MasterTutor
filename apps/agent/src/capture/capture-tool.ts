@@ -37,7 +37,7 @@ export interface PersistDraft {
   contentSha256: string;
   snapshot: Snapshot | null;
   meta: Record<string, unknown>;
-  /** Page-scope captures of an unchanged page return the earlier blocks instead of duplicating them. */
+  /** A whole-document capture replaces stale captured blocks; partial scopes merge by anchor. */
   dedupe: boolean;
 }
 
@@ -82,21 +82,17 @@ export async function persistCapture(
       lede: draft.lede,
       document: { kind: draft.kind, url: draft.url },
     });
-    if (draft.dedupe) {
-      const existing = await services.writer.findSource(w.scope, noteId, draft.kind, draft.url);
-      if (existing && existing.meta.contentSha256 === draft.contentSha256) {
-        return {
-          noteId,
-          blockIds: existing.blockIds,
-          coverage: Number(existing.meta.coverage ?? draft.coverage),
-          fidelity: (existing.meta.fidelity as Fidelity | undefined) ?? captureFidelity(draft),
-        };
-      }
-    }
-    const sourceId = randomUUID();
+    const existing = await services.writer.findSource(
+      w.scope,
+      noteId,
+      draft.kind,
+      draft.url,
+      w.step,
+    );
+    const sourceId = existing?.sourceId ?? randomUUID();
     const fidelity = captureFidelity(draft);
     const keys = draft.snapshot
-      ? snapshotKeys(sourceId, draft.snapshot)
+      ? snapshotKeys(randomUUID(), draft.snapshot)
       : { mhtmlKey: null, screenshotKey: null };
     const faviconAssetId = await storeFavicon(services, ctx, draft.faviconUrl);
     services.writer.stageSource(
@@ -127,10 +123,10 @@ export async function persistCapture(
       },
       sourceId,
     );
-    const blockIds = await services.writer.appendBlocks(w, {
+    const blockIds = await services.writer.captureBlocks(w, {
       noteId,
       sourceId,
-      afterBlockId: null,
+      whole: draft.dedupe,
       blocks: draft.blocks,
     });
     services.writer.stageQuality(w, noteId, draft.coverage);
