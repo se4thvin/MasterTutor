@@ -1,0 +1,23 @@
+test_restore (unittest.loader._FailedTest.test_restore) ... ERROR
+test_epoch_is_not_shell_code (test_start_line.StartTests.test_epoch_is_not_shell_code) ... ok
+test_line_length_is_bounded_before_parsing (test_start_line.StartTests.test_line_length_is_bounded_before_parsing) ... ok
+
+======================================================================
+ERROR: test_restore (unittest.loader._FailedTest.test_restore)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_restore
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/unittest/loader.py", line 394, in _find_test_path
+    module = self._get_module_from_name(name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/loader.py", line 337, in _get_module_from_name
+    __import__(name)
+  File "/home/coursebite/mt-vm-p0/houndshark-vm-p0/spikes/agent-vm/guest/test_restore.py", line 3, in <module>
+    from restore import parse_identity
+ModuleNotFoundError: No module named 'restore'
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.001s
+
+FAILED (errors=1)

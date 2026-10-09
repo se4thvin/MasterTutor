@@ -1,0 +1,8 @@
+Guest parser/identity tests on coursebite: 3/3 PASS
+Real guest init: kernel panic RED → golden/30 restores GREEN after mounting /proc before umount.
+pnpm typecheck: PASS
+pnpm lint: PASS
+Repository units (same secret-free negative name filter as P0.2):
+2310 passed, 1 failed, 9 skipped; 321 files passed, 1 failed, 2 skipped.
+Existing failure: tests/security/inventory.test.ts, Observer guard absent from INVENTORY.
+No application/DB package touched; DB integration inapplicable.
