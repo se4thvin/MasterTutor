@@ -1,3 +1,4 @@
+import { PersonDecider } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import { RunDetail } from "@mastertutor/contracts";
 import { ids } from "@/lib/fixtures/ids.ts";
@@ -336,7 +337,12 @@ describe("a finished run's failure, opened later (D35, review M4)", () => {
 
 describe("run-mode: mode changes and message delivery", () => {
   it("takes the mode from approval_mode_changed and keeps each change for the thread", () => {
-    const change = rec({ type: "approval_mode_changed", from: "ask", to: "bypass", by: "u-1" });
+    const change = rec({
+      type: "approval_mode_changed",
+      from: "ask",
+      to: "bypass",
+      by: PersonDecider.parse("u-1"),
+    });
     const model = applyRunEvents(base(), [change]);
     expect(model.approvalMode).toBe("bypass");
     expect(model.modeChanges).toEqual([

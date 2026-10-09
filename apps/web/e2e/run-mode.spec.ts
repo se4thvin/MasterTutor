@@ -1,3 +1,4 @@
+import { PersonDecider } from "@mastertutor/contracts";
 import type { Page } from "@playwright/test";
 import { rec, recordedDetail } from "../lib/fixtures/run-recording.ts";
 import { findLayoutIssues } from "./helpers/layout-qa.ts";
@@ -28,7 +29,7 @@ test.describe("run-mode: change the approval mode mid-run", () => {
       type: "approval_mode_changed",
       from: "ask",
       to: "auto_within_allowlist",
-      by: VIEWER_ID,
+      by: PersonDecider.parse(VIEWER_ID),
     });
     await emit(page, [change]);
     const time = new Date(change.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -62,7 +63,12 @@ test.describe("run-mode: change the approval mode mid-run", () => {
     ]);
     await expect(page.getByRole("note", { name: "Bypass mode" })).toBeVisible();
     await emit(page, [
-      rec({ type: "approval_mode_changed", from: "ask", to: "bypass", by: VIEWER_ID }),
+      rec({
+        type: "approval_mode_changed",
+        from: "ask",
+        to: "bypass",
+        by: PersonDecider.parse(VIEWER_ID),
+      }),
     ]);
     await expect(thread(page).getByText("You switched to Bypass")).toBeVisible();
     await expect(page.getByRole("note", { name: "Bypass mode" })).toBeVisible();

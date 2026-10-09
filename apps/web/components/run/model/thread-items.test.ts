@@ -1,3 +1,4 @@
+import { PersonDecider } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import {
   RECORDED_APPROVAL_ID,
@@ -417,12 +418,17 @@ describe("thread conversation (fe-run-chat)", () => {
 
 describe("run-mode thread entries", () => {
   it("shows a mode change as a system line with the wall-clock time: You, or Someone else", () => {
-    const mine = rec({ type: "approval_mode_changed", from: "ask", to: "bypass", by: VIEWER });
+    const mine = rec({
+      type: "approval_mode_changed",
+      from: "ask",
+      to: "bypass",
+      by: PersonDecider.parse(VIEWER),
+    });
     const theirs = rec({
       type: "approval_mode_changed",
       from: "bypass",
       to: "auto_within_allowlist",
-      by: "someone-else",
+      by: PersonDecider.parse("someone-else"),
     });
     const items = threadItems(applyRunEvents(base(), [mine, theirs]), [], VIEWER).filter(
       (i) => i.kind === "mode",
