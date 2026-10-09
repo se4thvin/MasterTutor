@@ -1,4 +1,4 @@
-import type { ExtractOptions, PageExtract, PageFrame, PageMedia } from "./types.ts";
+import type { ExtractOptions, PageActivity, PageExtract, PageFrame, PageMedia } from "./types.ts";
 
 declare const Defuddle: new (
   doc: Document,
@@ -22,9 +22,11 @@ declare const Readability: new (
 /** Capture-world extraction (spec §7.3): flatten into a detached document, then Defuddle → Readability → text. */
 export function pageExtract(options: ExtractOptions): PageExtract {
   const lib = globalThis.__mtLib;
-  if (!lib) throw new Error("lib_missing");
+  const finder = globalThis.__mtStructure;
+  if (!lib || !finder) throw new Error("lib_missing");
   const media: PageMedia[] = [];
   const rawTables: string[] = [];
+  const activities: PageActivity[] = [];
   const frames: PageFrame[] = [];
   /** The live iframe behind each MTFRAME placeholder, resolved to its CDP frame id in Node. */
   const frameElements: Element[] = [];
@@ -169,6 +171,23 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     };
     return walk(table).replace(/>\s+</g, "><");
   };
+  const squash = (value: string) => value.replace(/\s+/g, " ").trim();
+  const renderedText = (el: Element) => {
+    const parts: string[] = [];
+    lib.walkRendered(
+      el,
+      null,
+      (_node, text) => parts.push(text),
+      () => parts.push(" "),
+    );
+    return squash(parts.join(""));
+  };
+  const NEUTRAL: Record<string, string> = {
+    LABEL: "span",
+    FORM: "div",
+    FIELDSET: "div",
+    LEGEND: "p",
+  };
   const placeholder = (parent: Node, text: string) => {
     const p = out.createElement("p");
     p.textContent = text;
@@ -202,6 +221,45 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     liveRoot = document.body;
   }
 
+  const structure = finder.analyse(liveRoot);
+  const scoped = options.scope !== "page";
+  /** App UI above the main heading; only a whole-page capture leaves it out. */
+  const excluded: ReadonlySet<Element> = scoped ? new Set() : structure.excluded;
+  const pageUrl = abs(location.href.split("#")[0], ["http:", "https:"]);
+  /** A fresh token per capture, so page text can never pose as an activity placeholder. */
+  const activityToken = `MTACTIVITY${[...crypto.getRandomValues(new Uint8Array(8))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}N`;
+  /** Inside an activity callout, headings become bold lines so they do not compete with the section's. */
+  let activityDepth = 0;
+
+  /** Children in order; consecutive choice options become one list of their labels. */
+  /** Labels cloned as part of an option (a `label[for]` beside its bare control). */
+  const optionLabels = new Set([...structure.options.values()].flatMap((parts) => parts.slice(1)));
+  /** Children in order; consecutive choice options become one list, each item a clone of its parts. */
+  const cloneChildren = (node: Element, into: Node): void => {
+    let list: Element | null = null;
+    for (const child of [...(lib.shadowOf(node) ?? node).childNodes]) {
+      if (child instanceof Element && optionLabels.has(child)) continue; // cloned with its control
+      const parts = child instanceof Element ? structure.options.get(child) : undefined;
+      if (parts === undefined) {
+        if (child instanceof Element || (child.textContent ?? "").trim()) list = null;
+        cloneInto(child, into);
+        continue;
+      }
+      if (range && !range.intersectsNode(child)) continue;
+      if (!list) list = into.appendChild(out.createElement("ul"));
+      const item = list.appendChild(out.createElement("li"));
+      for (const part of parts) cloneInto(part, item);
+      if (!(item.textContent ?? "").trim() && !item.querySelector("math, img")) {
+        const control = (child as Element).matches("input, [role]")
+          ? (child as Element)
+          : (child as Element).querySelector("input, [role]");
+        item.textContent = control?.getAttribute("aria-label") ?? "";
+      }
+    }
+  };
+
   const cloneInto = (node: Node, parent: Node): void => {
     if (range && !range.intersectsNode(node)) return;
     if (node.nodeType === Node.TEXT_NODE) {
@@ -219,6 +277,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       for (const child of [...node.childNodes]) cloneInto(child, parent);
       return;
     }
+    if (excluded.has(node)) return;
     const tag = node.tagName;
     if (node.matches(lib.MATH_SELECTOR)) {
       parent.appendChild(out.importNode(node, true));
@@ -291,8 +350,50 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       );
       return;
     }
+    // MathJax 2 keeps each formula's TeX in a script beside its render; Defuddle reads it from
+    // there. A script in the detached document never runs.
+    if (tag === "SCRIPT" && /^math\/tex/i.test(node.getAttribute("type") ?? "")) {
+      const script = parent.appendChild(out.createElement("script"));
+      script.setAttribute("type", node.getAttribute("type")!);
+      script.textContent = node.textContent;
+      return;
+    }
     if (lib.SKIP_TAGS.has(tag) || node instanceof SVGElement) return;
-    if (!lib.visible(node)) return;
+    if (!lib.visible(node) || lib.isIconGlyph(node)) return;
+    if (structure.drawings.has(node)) {
+      const r = node.getBoundingClientRect();
+      mediaImg(
+        parent,
+        {
+          index: media.length,
+          kind: "element",
+          url: null,
+          svg: null,
+          dataUrl: null,
+          alt: node.getAttribute("aria-label") ?? "",
+          rect: lib.docRect(node),
+          selector: lib.cssPath(node),
+          figure: r.width >= 120 && r.height >= 80,
+          fixed: isFixed(node),
+        },
+        node,
+      );
+      for (const part of structure.hiddenParts(node)) cloneInto(part, parent);
+      return;
+    }
+    if (structure.activities.has(node)) {
+      const heading = node.querySelector("h1, h2, h3, h4, h5, h6");
+      activities.push({ title: heading ? renderedText(heading) : "", url: pageUrl });
+      const quote = parent.appendChild(out.createElement("blockquote"));
+      placeholder(quote, `${activityToken}${activities.length - 1}`);
+      activityDepth++;
+      try {
+        cloneChildren(node, quote);
+      } finally {
+        activityDepth--;
+      }
+      return;
+    }
     if (tag === "IMG") {
       const img = node as HTMLImageElement;
       mediaImg(
@@ -319,13 +420,24 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       placeholder(parent, `MTRAWTABLE${index}`);
       return;
     }
+    // GFM tables have no caption: it goes just above the table as its own line.
+    if (tag === "CAPTION") return;
+    const caption = tag === "TABLE" ? (node as HTMLTableElement).caption : null;
+    if (caption && lib.visible(caption)) {
+      const line = parent.appendChild(out.createElement("p"));
+      for (const child of [...caption.childNodes]) cloneInto(child, line);
+    }
     if (tag === "SLOT") {
       const assigned = (node as HTMLSlotElement).assignedNodes({ flatten: true });
       for (const child of assigned.length ? assigned : [...node.childNodes])
         cloneInto(child, parent);
       return;
     }
-    const copy = out.createElement(tag.toLowerCase());
+    const asTitle = activityDepth > 0 && /^H[1-6]$/.test(tag);
+    // Defuddle deletes form markup (label, form, fieldset, legend), and with it question prompts
+    // and option text: neutral elements keep their content.
+    const name = asTitle ? "p" : (NEUTRAL[tag] ?? tag.toLowerCase());
+    const copy = out.createElement(name);
     for (const attr of [...node.attributes]) {
       if (/^on/i.test(attr.name) || attr.name === "style" || attr.name === "srcset") continue;
       try {
@@ -336,7 +448,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     }
     parent.appendChild(copy);
     liveOf.set(copy, node);
-    for (const child of [...(lib.shadowOf(node) ?? node).childNodes]) cloneInto(child, copy);
+    cloneChildren(node, asTitle ? copy.appendChild(out.createElement("strong")) : copy);
   };
 
   if (liveRoot === document.body) {
@@ -345,7 +457,6 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     cloneInto(liveRoot, out.body);
   }
 
-  const scoped = options.scope !== "page";
   const looseOptions = {
     contentSelector: "body",
     removeLowScoring: false,
@@ -401,7 +512,6 @@ export function pageExtract(options: ExtractOptions): PageExtract {
   // content is the main landmark or an article when the page has one; never chrome, an aside or
   // a logo (a home page's logo h1 often repeats document.title).
   if (!scoped && engine === "defuddle") {
-    const squash = (value: string) => value.replace(/\s+/g, " ").trim();
     const fold = (value: string) => squash(value).toLocaleLowerCase();
     const titles = new Set([result?.title ?? "", document.title].map(fold).filter(Boolean));
     const MAIN = "main, [role=main], article";
@@ -412,16 +522,6 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       for (let at: Element | null = el; at; at = at.parentElement)
         if (lib.isChrome(at)) return false;
       return true;
-    };
-    const renderedText = (el: Element) => {
-      const parts: string[] = [];
-      lib.walkRendered(
-        el,
-        null,
-        (_node, text) => parts.push(text),
-        () => parts.push(" "),
-      );
-      return squash(parts.join(""));
     };
     for (const h1 of document.querySelectorAll("h1")) {
       if (!lib.visible(h1) || !inMainContent(h1)) continue;
@@ -465,22 +565,39 @@ export function pageExtract(options: ExtractOptions): PageExtract {
   );
   const sourceText = tidy(rootParts);
   let pageText = sourceText;
+  let excludedText = "";
   if (!scoped) {
+    // App UI left out of the note still counts here: nothing proves it is not content, so a note
+    // that drops it can never read verified. Drawings count as their picture (media accounting).
     const pageParts: string[] = [];
     lib.walkRendered(
       document.body,
       null,
       (_node, text) => pageParts.push(text),
       () => pageParts.push("\n"),
-      lib.isChrome,
+      (el) => lib.isChrome(el) || structure.drawings.has(el),
     );
     pageText = tidy(pageParts);
+    const excludedParts: string[] = [];
+    for (const el of excluded)
+      lib.walkRendered(
+        el,
+        null,
+        (_node, text) => excludedParts.push(text),
+        () => excludedParts.push("\n"),
+        lib.isChrome,
+      );
+    excludedText = tidy(excludedParts);
   }
   // Anchors are located in the whole scope (the body for a page), not only in Defuddle's root:
   // the note keeps blocks from anywhere on the page.
   globalThis.__mtCapture = { root: liveRoot, range, frames: frameElements };
   const texScope: ParentNode = scoped ? liveRoot : document;
-  const mathTex = [...texScope.querySelectorAll('annotation[encoding="application/x-tex"]')]
+  const mathTex = [
+    ...texScope.querySelectorAll(
+      'annotation[encoding="application/x-tex"], script[type^="math/tex"]',
+    ),
+  ]
     .map((annotation) => (annotation.textContent ?? "").trim())
     .filter((tex) => tex.length > 0);
 
@@ -508,6 +625,9 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     mathTex,
     media,
     rawTables,
+    activities,
+    activityToken,
+    excludedText,
     frames,
     smallFrames,
   };

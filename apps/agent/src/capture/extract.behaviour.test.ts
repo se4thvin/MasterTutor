@@ -174,4 +174,91 @@ describe("pageExtract", () => {
       expect(extract.markdown).not.toContain("# Acme Widgets");
     }
   });
+
+  describe("an interactive-textbook section (app shell, activities)", () => {
+    async function extractTextbook() {
+      await session.goto(`${FIXTURES}/capture/textbook/index.html`, signal);
+      await preparePage(session, signal);
+      await session.page.evaluate(() => document.fonts.ready);
+      const worlds = await captureWorlds(session);
+      return worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    }
+
+    it("drops ligature icons everywhere, and the app UI above the heading from the note only", async () => {
+      const extract = await extractTextbook();
+      // Drawn as single glyphs by the page's ligature font (no "icon" in its name): not text.
+      for (const glyph of ["expand_more", "expand_less", "thumb_up", "thumb_down"])
+        for (const field of [extract.markdown, extract.pageText])
+          expect(field).not.toContain(glyph);
+      // The assignment box leaves the note but still counts: nothing proves it is not content.
+      for (const text of ["Students:", "Due: 03/14/2031", "Activities:"]) {
+        expect(extract.markdown).not.toContain(text);
+        expect(extract.pageText).toContain(text);
+        expect(extract.excludedText).toContain(text);
+      }
+      expect(extract.markdown).toMatch(/^#+ 2\.3 Parity bits$/m);
+      expect(extract.markdown).toContain("With even parity, the sender picks the extra bit");
+    });
+
+    it("keeps a drawing of positioned text as one element picture, not its labels", async () => {
+      const extract = await extractTextbook();
+      const drawings = extract.media.filter((m) => m.kind === "element");
+      expect(drawings).toHaveLength(1);
+      expect(drawings[0]).toMatchObject({ figure: true, rect: expect.any(Object) });
+      for (const field of [extract.markdown, extract.pageText])
+        expect(field).not.toMatch(/^ones:$/m);
+      // A control's label is page text, and the note keeps it.
+      expect(extract.markdown).toContain("2x speed");
+      // The screen-reader description beside it is text, and stays.
+      expect(extract.markdown).toContain("Static figure: Step 1: Count the ones in 1011");
+    });
+
+    it("renders each activity as one quote: placeholder, label, bold title, numbered prompts, options", async () => {
+      const extract = await extractTextbook();
+      expect(extract.activities.map((a) => a.title)).toEqual([
+        "2.3.1: Computing an even parity bit.",
+        "2.3.2: Even parity.",
+        "2.3.3: Parity checks.",
+      ]);
+      expect(extract.activities.every((a) => a.url?.endsWith("/capture/textbook/index.html"))).toBe(
+        true,
+      );
+      const quoted = extract.markdown.split("\n").filter((line) => line.startsWith(">"));
+      expect(extract.activityToken).toMatch(/^MTACTIVITY[0-9a-f]{16}N$/);
+      const third = quoted.slice(
+        quoted.findIndex((line) => line === `> ${extract.activityToken}2`),
+      );
+      expect(third).toEqual(
+        expect.arrayContaining([
+          "> participation activity",
+          "> **2.3.3: Parity checks.**",
+          "> 10010 shows an error.",
+          "> - True",
+          "> - False",
+        ]),
+      );
+      expect(quoted).toContain("> 1)");
+      expect(extract.markdown).not.toMatch(/^#+ 2\.3\.\d/m);
+      expect(extract.markdown).toMatch(/^#+ Detecting errors$/m);
+    });
+
+    it("keeps the words of a body font whose name contains 'icon' (review I3)", async () => {
+      await session.goto(`${FIXTURES}/capture/probes/font.html`, signal);
+      const worlds = await captureWorlds(session);
+      const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+      expect(extract.markdown).toMatch(/^#+ Sediment$/m);
+      expect(extract.markdown).toContain("the *grain* size");
+      expect(extract.markdown).toContain("[settles](#x)");
+      expect(extract.pageText).toContain("Sediment");
+    });
+
+    it("keeps MathJax 2 TeX and table captions", async () => {
+      const extract = await extractTextbook();
+      expect(extract.mathTex).toContain("p = d_1 \\oplus d_2 \\oplus \\cdots \\oplus d_n");
+      expect(extract.markdown).toContain("$p = d_1 \\oplus d_2 \\oplus \\cdots \\oplus d_n$");
+      expect(extract.markdown).toMatch(
+        /Table 2\.3\.1: Even parity bits for three data bits\.\n\n\| Data \| Parity bit \|/,
+      );
+    });
+  });
 });
