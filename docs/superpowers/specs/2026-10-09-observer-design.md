@@ -1,6 +1,6 @@
 # Observer Agent: Design Spec
 
-_Decision D52 (`orchestration/STATE.md`), approved by the user. It builds on D34, D36–D39, D44 and D46–D50, which still apply in full. `CLAUDE.md` is binding. Primary inputs: the three research runs `orchestration/runs/2026-10-09-01-research-observer-integration-map/report.md` (cited as **[IM §n]**), `…-02-research-observer-copilot/report.md` (**[CP §n]**) and `…-03-research-observer-guard/report.md` (**[GD §n]**)._
+_Decision D52 (`orchestration/STATE.md`), approved by the user, extended by D53b (the document designer, §15) and bound by D54 (never reword, never invent). It builds on D34, D36–D39, D44 and D46–D50, which still apply in full. `CLAUDE.md` is binding. Primary inputs: the three research runs `orchestration/runs/2026-10-09-01-research-observer-integration-map/report.md` (cited as **[IM §n]**), `…-02-research-observer-copilot/report.md` (**[CP §n]**) and `…-03-research-observer-guard/report.md` (**[GD §n]**)._
 
 **Plan:** `docs/superpowers/plans/2026-10-09-observer.md`.
 
@@ -8,10 +8,14 @@ _Decision D52 (`orchestration/STATE.md`), approved by the user. It builds on D34
 
 ## 1. Goal and scope
 
-The Observer is a second AI role that watches the browser agent and answers the owner's questions about it. It has two roles built on one shared core:
+The Observer is a second AI role. It watches the browser agent, answers the owner's questions about it, and lays out the notes it captures. It has three roles built on one shared core:
 
 - **Guard.** It lives inside the agent's run loop. It reviews risky or suspicious steps from metadata only, and it can only add friction: flag, ask a person, or block. It never approves anything.
 - **Copilot.** It lives in a separate least-privilege service. The owner asks it questions about runs, spend, errors and alerts in a chat panel in the app. It answers from read-only, cited queries over Postgres views, OpenObserve and a code snapshot.
+- **Document designer (D53b, §15).** It lives in the agent. It chooses each note's layout spec from the note's structure metadata only, never its text:
+  - a deterministic rules baseline is written with the capture;
+  - for ambiguous notes, a cached, fail-open `gpt-6-luna` second opinion follows;
+  - the notes reader renders the result.
 
 In scope:
 
@@ -20,6 +24,13 @@ In scope:
 - The Guard: triggers, two-stage review, monotone composition, deny-and-continue, shadow and enforce, the trajectory watcher, run-view surfacing, telemetry and alerts (§6).
 - The Copilot: the `observer` service, migration 0015's role and views, fixed query templates, typed tools, citations, streaming, replay storage, caps, owner-only routing and the chat UI (§7).
 - Evaluation: red-team fixtures, benign replay, a golden question set and regression gates (§9).
+- The document designer, the producer side of D53b: the summariser, the rules engine, the baseline, the optional model refinement, the fingerprint cache, telemetry and the blind evaluation (§15). The consumer side belongs to the notes-redesign plan (`docs/superpowers/plans/2026-10-09-notes-redesign.md`, Tasks 0.1–0.2 and Track A):
+  - the `LayoutSpec` contract;
+  - the `notes.layout_*` columns and `saveNoteLayout`;
+  - the reader;
+  - the `note_layout` event;
+  - the swap policy;
+  - the person's override.
 
 Out of scope:
 
@@ -46,6 +57,11 @@ Out of scope:
 | O11 | Copilot answers are cited. Charts are drawn from stored rows. Conversations are replayed statelessly (D37). Run goals and captions are sent only on a per-question opt-in. |
 | O12 | Copilot daily cap of $3 by default. Prompt-cache retention is pinned to in-memory where the API supports it. |
 | O13 | Every OpenAI call goes through the single wrapper with `store:false` (D38). No new OpenAI tool (D39). |
+| O14 | The document designer receives note **structure** only: bucketed counts, enums and the rules' own spec. It never receives text, titles, URLs or ids (D53b). |
+| O15 | Every designer output is a strict `LayoutSpec`, made of enums and booleans only, and is re-parsed and normalised before it is stored. The designer never writes `note_blocks` and can neither emit nor alter note text (D54). |
+| O16 | The baseline is deterministic and written in the capture's quality-refresh transaction. The model call is off the capture path, is charged to the run (budget and the D46 cap), and fails open to the baseline. |
+| O17 | A person's layout always wins. The designer never overwrites it. |
+| O18 | The model path stays off until a blind side-by-side evaluation shows it wins at least 60% of decided pairs on ambiguous notes, and the user agrees. |
 
 ## 3. What already exists and is reused
 
@@ -136,11 +152,11 @@ Task 0 lands first in the Foundation track, and the Foundation track merges befo
 
 ```
 @mastertutor/contracts       leaf (zod, pino, openai only in server/openai.ts)
-@mastertutor/observer        → contracts, zod, node:crypto   (pure core; subpaths ".", "./guard", "./copilot")
+@mastertutor/observer        → contracts, zod, node:crypto   (pure core; subpaths ".", "./guard", "./copilot", "./designer")
 @mastertutor/telemetry       → contracts, @opentelemetry/*  (unchanged)
 @mastertutor/observability   → contracts, zod  (provisioning; NEW runtime-safe subpath "./query")
 @mastertutor/db              → contracts, telemetry/record  (NEW queries/observer.ts, queries/copilot.ts, queries/guard.ts)
-apps/agent                   → contracts, db, storage, sealing, telemetry, observer/guard (NEW)
+apps/agent                   → contracts, db, storage, sealing, telemetry, observer/guard, observer/designer (NEW)
 apps/observer (NEW)          → contracts, db, telemetry, observer/copilot, observability/query, @prometheus-io/lezer-promql
 apps/web (server)            → contracts, db, storage, sealing, telemetry   (never imports observer or observability)
 apps/web (client)            → contracts (Copilot DTOs, CopilotEvent)
@@ -149,7 +165,7 @@ apps/web (client)            → contracts (Copilot DTOs, CopilotEvent)
 Rules, enforced by `packages/telemetry/src/boundaries.test.ts` and ESLint `no-restricted-imports`:
 
 - `packages/observer` imports only `.`, `node:`, `zod` and `@mastertutor/contracts`.
-- `apps/agent` imports `@mastertutor/observer/guard` only, never `/copilot`.
+- `apps/agent` imports `@mastertutor/observer/guard` and `/designer` only, never `/copilot`. Nothing else imports `/designer`.
 - `apps/observer` imports `@mastertutor/observer/copilot` and the root, never `/guard`. Nothing imports `apps/observer`.
 - `@mastertutor/observability` may be imported by a running service only through `./query`, and only by `apps/observer`. This amends the D50 rule "never imported by a running service" [IM §0.3] for one read-only subpath. Provisioning code stays unreachable from services.
 - `apps/web` never imports `@mastertutor/observer` or `@mastertutor/observability`.
@@ -612,6 +628,9 @@ The spike pins every `[unverified]` item before code depends on it. It writes `o
 | Copilot reached without the owner | ForwardAuth plus internal bearer plus same-origin writes; fixture build denies | `authorize.test.ts`, `auth.test.ts`, `observability` stack test |
 | Prompt injection in telemetry misleads the owner | Taint by default, opt-in for untrusted text, citations with raw rows, server-side citation check | `citations.test.ts`, `conversation.int.test.ts` (opt-in), golden injection canaries |
 | Data stored at OpenAI | `store:false`, no identifiers, handles instead of UUIDs, in-memory cache retention | `openai.test.ts`, behaviour data-policy guard |
+| Page text, or an injection aimed at the designer, reaches the designer model | `DesignerInput` is strict, with no free-text field; `assertStructureOnly` runs before send; a hostile note and its benign twin give identical requests | `summarize.test.ts`, `note-layouts.int.test.ts` (canary) |
+| The designer emits styles, URLs or text, or alters the note (D54) | Enum-only `LayoutSpec`, re-parsed and normalised; the renderer maps values onto `data-*` attributes only (notes spec R6); no `note_blocks` write path | `designer.test.ts` (D54 property), `note-layouts.int.test.ts` (block hash unchanged) |
+| The designer runs up cost | Per-run charge, `DESIGNER_DAILY_USD` guard, one call per fingerprint per run, cache across notes, off by default | `designer.test.ts`, `run-loop.int.test.ts` |
 
 ## 12. Performance budget
 
@@ -619,6 +638,7 @@ The spike pins every `[unverified]` item before code depends on it. It writes `o
 - A triggered turn adds one screen call; the review call happens only on `review`. The spike measures the latency. The expected cost is under 5% of run spend [GD §3.1], measured on the shadow run (`guard_reviews.usd` against `runs.usage.usd`).
 - The watcher is entirely off the hot path. Its listener does O(1) work per event.
 - The Copilot is a separate process, so its load never shares the agent's or web's event loop.
+- The designer adds three indexed reads and pure code (under 1 ms) to the capture's quality-refresh transaction. Its model call, at most 4 s, never runs on a step path. A note almost always opens with its final layout already stored.
 
 ## 13. Changes to existing files
 
@@ -633,6 +653,7 @@ The spike pins every `[unverified]` item before code depends on it. It writes `o
 | Observer service | `apps/observer/**` (new) |
 | Web | `app/api/observer-auth/route.ts` (new), `lib/server/observer/authorize.ts` (new), `lib/server/rpc/same-origin.ts` (re-export removed), `lib/server/runs/service.ts`, `app/(app)/observer/page.tsx` (new), `components/observer/**` (new), `components/run/model/{approval-copy,timeline-items,run-model}.ts`, `components/run/run-header.tsx`, `components/alerts/alerts-view.tsx`, `components/shell/*` (nav item), `components/new-task/*` (shadow option), `next.config.ts` (CSP), `lib/fixtures/*`, `styles/observer.css` (new) |
 | Compose and infra | `compose.yml`, `compose.prod.yml`, `tests/bench/compose.local.yml`, `Dockerfile` (target `observer`), `infra/otel/collector.yaml` (dimensions), `infra/traefik/test-dynamic.yml` |
+| Designer (§15) | contracts `designer.ts` (new), `constants.ts`, `telemetry.ts`, `env.ts`; `packages/observer/src/designer/**` (new); db `queries/designer.ts` (new; no migration); agent `notes/layout/**` (new), `notes/note-writer.ts`, `loop/{run-loop,worker,supervisor}.ts`, `library.ts`, `main.ts`; `tests/llm-mock/src/server.ts`; `tests/designer-eval/**` (new) |
 | Tests and scripts | `tests/compose/prod-mode.ts`, `tests/llm-mock/src/*`, `tests/fixtures/**`, `tests/observer-eval/**` (new), `tests/bench/src/config.ts`, `scripts/env-init.ts`, `scripts/deploy/check-env.ts`, `scripts/remote-test.sh`, `scripts/remote-test/run-on-host.sh`, `vitest.config.ts`, `eslint.config.js`, `orchestration/BUILD-OURSELVES.md` |
 
 ## 14. Decisions the user should know about
@@ -649,3 +670,144 @@ The spike pins every `[unverified]` item before code depends on it. It writes `o
 10. **The Copilot uses `gpt-6.1-sol`** (priced, proven on our key) unless the spike shows a better latency and cost trade-off.
 11. **`observer-eval` is the first remote suite that needs the real OpenAI key.** It is opt-in, never part of `all`, capped at $2 a run, and the key travels to the host on stdin into a tmpfs env file. It is never on a command line or in a log.
 12. **`data_egress` meets D51.** Same-site hosts are reached without asking and are outside `allowedOrigins`, so typing text read on the allowed site into a same-site host is exactly what the rule catches in Auto mode.
+13. **The document designer ships rules-only.** Its model path (`DESIGNER_MODEL`) turns on by default only after the blind evaluation (§15.8) and your yes.
+14. **The designer adds no table or migration.** Its cache is the notes plan's `notes.layout_fingerprint`. Its daily loop guard ($0.50) lives in the agent's memory and resets on restart; run budgets remain the real limit.
+15. **Late layout refinements are silent.** There is no "layout updated" affordance (§15.5).
+
+## 15. Document designer (D53b)
+
+The primary input is `orchestration/runs/2026-10-09-04-research-document-designer/report.md`, cited as **[DD §n]**. The preset signals come from `orchestration/runs/2026-10-09-05-research-notes-ux/report.md` §6, cited as **[NR §6]**. The plan's Track D (Tasks D1–D8) implements this section. The consumer is the notes-redesign plan (`docs/superpowers/plans/2026-10-09-notes-redesign.md`), cited as **[NP Task n]**.
+
+### 15.1 What it is, and what it is not
+
+The designer is a **parameteriser of one fixed, hand-built reader**. It is not a generator of UI [DD §0]. For each note it picks one `LayoutSpec` [NP Task 0.1]:
+- a preset: `textbook_section`, `lecture_video`, `research_paper` or `article`;
+- twelve knobs, each an enum value or a boolean.
+
+The reader maps every value through an exhaustive `Record` onto `data-*` attributes. No value is ever interpolated into styles, classes or markup. The vocabulary is finite and every value is rendered by the reader's own tests, so "safe" means *tested*, not *trusted* [DD §2.4].
+
+**Ownership.**
+
+| Producer (this spec, Observer Track D) | Consumer (notes plan) |
+|---|---|
+| `packages/observer/src/designer/`: `summarize` (blocks → `NoteStructure`), `rules` (preset, margin), `normalize`, `fingerprint`, `designer`, `prompt` | `packages/contracts/src/note-layout.ts` [NP 0.1]: `LayoutSpec`, `LAYOUT_PRESET_SPECS`, `LayoutSource`, `NoteStructure`, `bucketOf`; `isActivityCallout` in `markdown.ts` |
+| `packages/contracts/src/designer.ts`: `DesignerInput`, `StructureBlock`, constants | `notes.layout_spec`, `layout_source`, `layout_fingerprint`, `layout_version` (migration 0016), `saveNoteLayout` and `setUserLayout` [NP 0.2] |
+| The baseline write in the capture transaction; the model refinement; its cost | The reader, the `note_layout` SSE event (from `note_changed`), the swap policy, the Layout menu [NP Track A] |
+| `packages/db/src/queries/designer.ts`: the structure loader and the cache lookup | |
+| `mt.observer.design`, `mt.layout.designs` | The reader's own metrics |
+
+`saveNoteLayout` is the only write path. It never replaces a `user` row, and it notifies `note_changed` in the same transaction. **One requirement on the notes plan:** `saveNoteLayout` must accept a transaction (`DbLike`), because the designer writes inside the capture's quality-refresh transaction.
+
+### 15.2 Open items from the research, resolved
+
+| [DD §9] item | Resolution |
+|---|---|
+| 1. Is "activity" a structure signal? | **Yes, as a count, with no new block type.** Capture already writes each interactive activity as a `quote` block that starts with the `[!example] Interactive activity` callout. The notes plan moves its detector to `packages/contracts/src/markdown.ts` (`isActivityCallout`). The summariser counts matches into `NoteStructure.activities` (bucketed). The callout's text and link never reach the designer model. |
+| 2. Timing and budget | **The baseline is written in the capture's quality-refresh transaction; the model runs after the commit and off path.** Its cost is charged to the run at the next step boundary, or in the completion commit. It therefore counts toward the run budget and the D46 cap, like the run title (§15.5). On top of that, a daily loop guard, `DESIGNER_DAILY_USD = 0.5`, is held in the agent's memory. |
+| 3. Mid-read swaps | **Silent.** There is no "layout updated" affordance. The notes plan's swap policy applies a late refinement only if the person has not started reading; otherwise it applies on the next open [NP Task A8]. Because a cache hit is resolved inside the capture transaction, a late refinement happens only on the first ambiguous note of a given shape. |
+| 4. Win-rate bar | At least 60% of decided pairs, with at least 20 decided pairs, on ambiguous notes, in a blind side-by-side comparison (§15.8). |
+
+### 15.3 Input: structure only (O14)
+
+`summarize(blocks, sourceKinds)` produces `NoteStructure` [NP 0.1]. It holds:
+- the version and the dominant source kind (youtube, then pdf, then web);
+- log2 buckets of sources, words, blocks and each block type;
+- the deepest heading level;
+- booleans for numbered headings, an Abstract heading, a References section, captioned figures and timecodes;
+- buckets of display math and activities.
+
+- **Where text is read.** `summarize` is the only designer code that sees block Markdown, which it receives from `loadStructureBlocks` (type, text, origin and whether the block is timed). It only counts words, and it matches the first line of each heading against fixed patterns. Nothing it reads is copied into the result. The agent's own commentary blocks add no words or headings.
+- **What the model receives.** `DesignerInput` is `strictObject({ version, structure: NoteStructure, baseline: LayoutSpec, margin: "high" | "low" })`. Every string field is an enum.
+- **Checked before send.** `assertStructureOnly` walks the value before every send, as a second check on top of the schemas:
+  - every string must be in `DESIGNER_TOKENS` (the enum vocabularies);
+  - every number must be an integer from 0 to 16;
+  - nothing may be null.
+
+  If the check fails, nothing is sent and the outcome is `redacted`.
+
+### 15.4 Baseline, margin, normalisation and cache
+
+- **Preset rules** (`choosePreset`, first match wins, [DD §4.2], [NR §6]):
+  1. `lecture_video`: YouTube, timecodes, or transcript or keyframe blocks;
+  2. `research_paper`: a PDF with an abstract or references section, or with numbered headings plus display math, captioned figures or tables;
+  3. `textbook_section`: activities, numbered headings at depth ≥ 2, ≥ 2 display equations, or ≥ 2 code blocks;
+  4. `article`: everything else.
+- **Baseline.** `rulesLayout(s)` is `normalizeLayout(LAYOUT_PRESET_SPECS[choosePreset(s)], s)`. It is pure and takes under 1 ms.
+- **Margin.** It is the share of perturbations under which `choosePreset` keeps its answer. Each *present* bucket moves one step down and one step up, one at a time. Zero buckets (certain absences), booleans (detected facts) and the source kind are never perturbed.
+  - The margin is `high` only when no perturbation changes the preset.
+  - Example: a 40-block web page with one display equation is `low`, because a second equation would make it a textbook section.
+- **Normalisation** (`normalizeLayout`): pure and idempotent. It changes knobs only, never the preset, and it applies to every spec, whether from the rules, the cache or the model:
+  1. an outline needs at least 4 headings, otherwise it is `none` [NR §6];
+  2. `outlineDepth: "h3"` needs a heading of depth 3 or more;
+  3. a transcript rail needs timecodes or transcript blocks, otherwise `plain`;
+  4. `math: "display_cards"` needs display math, otherwise `inline`.
+- **Plausibility.** A model answer may refine the rules but never contradict the source: `lecture_video` needs YouTube, timecodes, or transcript or keyframe blocks. An implausible answer is `invalid`.
+- **Eligibility for a model call:** all of these must hold:
+  - `DESIGNER_MODEL` is on;
+  - the margin is `low`;
+  - the note has at least 8 blocks;
+  - no cached answer exists;
+  - this run has not tried this fingerprint;
+  - fewer than 2 refinements are in flight for the run.
+- **Fingerprint cache.** The fingerprint is `sha256(model ‖ canonical DesignerInput)`. It is stored with every designer write in `notes.layout_fingerprint`. A model answer is found again by looking up any note in the workspace with the same fingerprint and `layout_source = 'model'` (the notes plan's partial index). Calls therefore tend to zero over time [DD §4.3], with **no table of the designer's own**. Bumping `DESIGNER_VERSION` invalidates the cache.
+
+### 15.5 Timing, cost and failure (O16, O17)
+
+1. **In the capture's quality-refresh transaction** (`NoteWriter.stageQuality`, after `refreshNoteQuality`):
+   1. `loadStructureBlocks`, `summarize`, then `planDesign`;
+   2. stop if the stored layout is the person's (`user`);
+   3. `cachedModelLayout`, then `storedChoice`: a valid cached model answer wins, otherwise the baseline;
+   4. `saveNoteLayout` with source `rules` or `model`, and the fingerprint, only when something differs from what is stored.
+
+   The cost is pure code plus three indexed reads.
+2. **After the commit** (`StepWriter.afterCommit`), an eligible note *starts* `refineDesign` and returns immediately. Nothing waits on the step path.
+3. **`refineDesign`** runs these checks, in order:
+   1. the run's `usdLeft` and the daily guard, each against `DESIGNER_CALL_MAX_USD`;
+   2. `assertStructureOnly`;
+   3. one `gpt-6-luna` call through the single wrapper:
+      - `store:false`;
+      - `zodTextFormat(LayoutSpec, "layout_spec")`, strict;
+      - luna's spike-pinned reasoning effort (`GUARD_REASONING`);
+      - `max_output_tokens = 300`;
+      - a 4 s timeout;
+   4. a strict re-parse, the plausibility check, then normalisation.
+
+   It **fails open**. A cap, timeout, error, refusal or invalid answer keeps the baseline, and so does a free-text trip. This is unlike the Guard, because a layout cannot cause harm [DD §6]. A call that may have been billed but returned no usage is charged at `DESIGNER_CALL_MAX_USD`.
+4. **At the next step boundary**, the loop takes finished refinements, as it does with the run title:
+   - it adds their usage to the run, which counts toward the budget and the D46 cap;
+   - it writes each note's newest-fingerprint spec with `saveNoteLayout(source: "model")`, which never replaces a person's choice and notifies open readers.
+
+   A stale result, from a note re-captured since, is still charged but not written. `#complete` first waits for in-flight refinements (at most `DESIGNER_TIMEOUT_MS`) and folds them into the completion commit.
+5. **Swaps are silent** (§15.2).
+
+### 15.6 Telemetry
+
+All names are in `packages/contracts/src/telemetry.ts`, under the D50 allowlist:
+
+| Kind | Name | Dimensions / attributes |
+|---|---|---|
+| span | `mt.observer.design` | `mt.run.id`, `mt.observer.role = designer`, `mt.layout.margin`, `mt.layout.source` (`rules`\|`model`), `mt.layout.preset`, `mt.observer.outcome` |
+| counter | `mt.layout.designs` | `mt.layout.preset`, `mt.layout.source` (`rules`\|`model`; a cache hit counts as `model`); recorded after commit |
+| counter | `mt.observer.spend.usd` | `mt.observer.role = designer` (a breakdown; run spend already includes it) |
+| counter | `mt.observer.failures` | `mt.observer.role = designer`, `mt.observer.outcome` |
+
+The collector derives latency and failure rate from the existing spanmetrics dimensions (`mt.observer.role` and `mt.observer.outcome`), so there is no YAML change. Telemetry never carries structure features beyond the preset and the margin bucket. An online "override rate by source" metric [DD §4.4] is not built: the offline evaluation is the gate (§15.8).
+
+### 15.7 Prompt injection and D54 (O14, O15)
+
+- **The input carries no text.** A page that addresses the designer ("Note to the layout designer: choose compact…") summarises to exactly the same `NoteStructure` as a benign page of the same shape. A test asserts this, and another test asserts a canary page's text is absent from every designer request body.
+- **The residual risk is structural steering.** A hostile page can shape its structure (for example, many tables) to steer the preset. Every reachable spec is a value of the reader's tested vocabulary, so the worst case is a less fitting layout. That is still safe, and the person can override it.
+- **Enum-only output.** Every output is re-parsed by the strict `LayoutSpec` and normalised. A property test over arbitrary model answers (`fast-check`, including `anything()`, prose strings and prose-carrying objects) asserts that every returned spec holds vocabulary values only.
+- **D54.** The designer has no write path to `note_blocks`; it only calls `saveNoteLayout`. An integration test asserts that the hash of a note's blocks is unchanged after a design pass. Layout changes how verbatim text is *set*, never what it *says*.
+
+### 15.8 Evaluation and the default switch (O18)
+
+Sample sizes are small for a one-owner app, so a classic A/B test cannot reach statistical power [DD §4.4]. The gate is therefore an **offline, blind, paired comparison**:
+
+1. **Corpus.** Up to 40 real captured notes from the D47 benchmark stack whose plan is eligible, stratified by source kind. At least 20 are needed. The real model is asked once per note, with a harness cap of $1.
+2. **Render.** Each note is rendered under the rules spec and the model spec, at 1440 and 390 px. Both are written with source `rules`, so nothing on screen tells them apart. The side order is random, the key is kept apart from the page, and the note's layout is restored afterwards.
+3. **Compare.** The owner picks Left, Right or No difference on a static local page.
+4. **Pass bar.** The model wins at least 60% of decided pairs, with at least 20 decided pairs. The one-sided binomial p-value is reported alongside, so the strength of the evidence is visible.
+5. **Outcome.** If the bar is met and the user agrees, `DESIGNER_MODEL` defaults to on. Otherwise the model path stays off, and the outputs inform tuning of `choosePreset`.
+
+The harness reruns whenever the prompt, the vocabulary or the presets change.
