@@ -19,7 +19,8 @@ export const STACK_COMPOSE: Record<StackName, readonly string[]> = {
     "-f",
     "compose.test.yml",
   ],
-  // D47: production compose and images (docling pdf profile, D42); the local override covers only domain and TLS.
+  // D47: production compose and images (docling pdf profile, D42; observability, D50); the local
+  // override covers only domain and TLS, and keeps the workers' logs local.
   local: [
     "docker",
     "compose",
@@ -31,6 +32,8 @@ export const STACK_COMPOSE: Record<StackName, readonly string[]> = {
     ".env.bench",
     "--profile",
     "pdf",
+    "--profile",
+    "observability",
     "-f",
     "compose.yml",
     "-f",

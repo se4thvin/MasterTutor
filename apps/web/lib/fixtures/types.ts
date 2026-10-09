@@ -1,4 +1,5 @@
 import type {
+  AlertView,
   FolderView,
   NoteBlock,
   NoteSummary,
@@ -30,6 +31,7 @@ export interface FixtureState {
   runScope: Record<string, { allowedOrigins: string[]; targetFolderId: string | null }>;
   /** Approvals already decided in this namespace: a second decision is CONFLICT, as live. */
   decidedApprovals: string[];
+  alerts: AlertView[];
 }
 
 export interface FixtureContext extends SessionContext {

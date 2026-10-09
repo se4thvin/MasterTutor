@@ -8,6 +8,9 @@
 #   - Networks: Dokploy's external mastertutor-cdp becomes a local one.
 #   - Docker Desktop has no AppArmor profile, so slots keep seccomp (and Chromium's own sandbox) only.
 #   - Media ports stay on loopback (PUBLIC_IP=127.0.0.1).
+#   - Observability (D50): Traefik joins a local mastertutor-obs; OpenObserve is obs.localhost
+#     (http, no certresolver, like web). The workers log to json-file, because
+#     Docker Desktop's daemon runs in a VM where 127.0.0.1:24224 is not the collector (spec §16).
 # Never add test services or test env here. tests/compose/prod-overlay.int.test.ts checks prod mode.
 services:
   traefik:
@@ -35,35 +38,67 @@ services:
       edge: {}
       cdp:
         ipv4_address: 172.30.231.12
+      observe-edge: {}
 
   web:
+    environment:
+      MT_DEPLOYMENT: bench
     labels:
       traefik.http.routers.mastertutor-web.tls.certresolver: !reset null
       traefik.http.routers.mastertutor-web-http.rule: !reset null
       traefik.http.routers.mastertutor-web-http.entrypoints: !reset null
       traefik.http.routers.mastertutor-web-http.middlewares: !reset null
       traefik.http.routers.mastertutor-web-http.service: !reset null
+      traefik.http.routers.mastertutor-observability-session.tls.certresolver: !reset null
+
+  openobserve:
+    environment:
+      ZO_WEB_URL: http://obs.localhost:18080/observability
+    labels:
+      traefik.http.routers.mastertutor-observability.tls.certresolver: !reset null
+
+  agent:
+    environment:
+      MT_DEPLOYMENT: bench
+
+  pdf-worker:
+    logging: !override &local-logs
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+  audio-capture:
+    logging: *local-logs
+  docling:
+    logging: *local-logs
 
   browser-1:
     security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    logging: *local-logs
     ports: !override ["127.0.0.1:59001:59001/udp", "127.0.0.1:59001:59001/tcp"]
   browser-2:
     security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    logging: *local-logs
     ports: !override ["127.0.0.1:59002:59002/udp", "127.0.0.1:59002:59002/tcp"]
   browser-3:
     security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    logging: *local-logs
     ports: !override ["127.0.0.1:59003:59003/udp", "127.0.0.1:59003:59003/tcp"]
   browser-4:
     security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    logging: *local-logs
     ports: !override ["127.0.0.1:59004:59004/udp", "127.0.0.1:59004:59004/tcp"]
   browser-5:
     security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    logging: *local-logs
     ports: !override ["127.0.0.1:59005:59005/udp", "127.0.0.1:59005:59005/tcp"]
   browser-6:
     security_opt: !override ["seccomp=./apps/browser-slot/seccomp/chromium.json"]
+    logging: *local-logs
     ports: !override ["127.0.0.1:59006:59006/udp", "127.0.0.1:59006:59006/tcp"]
 
 networks:
+  observe-edge: !override
+    name: mastertutor-obs
+    internal: true
   cdp: !override
     name: mastertutor-cdp
     internal: true

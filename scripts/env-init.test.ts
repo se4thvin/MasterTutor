@@ -1,8 +1,15 @@
 import { readFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
-import { Base64Key32, DbPassword, GarageKeyId, GarageSecret } from "@mastertutor/contracts";
+import {
+  Base64Key32,
+  DbPassword,
+  GarageKeyId,
+  GarageSecret,
+  ObservabilityInitEnv,
+} from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import { ENV_DEFAULTS, fillEnv, generateSecrets, resolveOutPath } from "./env-init.ts";
+import { vapidPairMatches } from "./lib/vapid.ts";
 
 describe("generateSecrets", () => {
   it("produces values that satisfy the env contracts", () => {
@@ -120,5 +127,32 @@ describe(".gitignore (re-review N3)", () => {
         file,
       ).toBe(true);
     }
+  });
+});
+
+describe("observability secrets (D50)", () => {
+  it("generates every observability secret in its contract shape", () => {
+    const s = generateSecrets();
+    expect(GarageKeyId.safeParse(s.S3_OBSERVE_ACCESS_KEY_ID).success).toBe(true);
+    expect(GarageSecret.safeParse(s.S3_OBSERVE_SECRET_ACCESS_KEY).success).toBe(true);
+    expect(vapidPairMatches(s.VAPID_PUBLIC_KEY!, s.VAPID_PRIVATE_KEY!)).toBe(true);
+    // ObservePassword: OpenObserve refuses weak passwords, and panics at boot on a weak root one.
+    expect(
+      ObservabilityInitEnv.safeParse({
+        OBSERVE_ROOT_PASSWORD: s.OBSERVE_ROOT_PASSWORD,
+        OBSERVE_INGEST_PASSWORD: s.OBSERVE_INGEST_PASSWORD,
+        OBSERVE_VIEWER_PASSWORD: s.OBSERVE_VIEWER_PASSWORD,
+        ALERT_WEBHOOK_SECRET: s.ALERT_WEBHOOK_SECRET,
+      }).success,
+    ).toBe(true);
+    expect(
+      new Set([s.OBSERVE_ROOT_PASSWORD, s.OBSERVE_INGEST_PASSWORD, s.OBSERVE_VIEWER_PASSWORD]).size,
+    ).toBe(3);
+  });
+
+  it("refuses a half-present VAPID pair", () => {
+    expect(() => fillEnv("VAPID_PUBLIC_KEY=Bx\n", generateSecrets())).toThrow(
+      "VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set together",
+    );
   });
 });

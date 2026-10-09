@@ -2,9 +2,11 @@
 # Connects Dokploy's Traefik to mastertutor-cdp at .12, so the /live routers reach slot n.eko on
 # 8080 (spec §10.2). Slots accept 8080 only from .10 (agent), .11 (web) and .12 (Traefik), so any
 # other address silently breaks live view: this script refuses it.
+# With --network obs it instead attaches Traefik to mastertutor-obs (D50, spec §12), with no fixed
+# address: nothing there filters on Traefik's address, and only OpenObserve shares that network.
 # OPERATOR STEP, only after the user approves this host change (D41, D42). Re-run whenever Dokploy
 # recreates its Traefik container. Without --yes it prints the command and changes nothing.
-# Usage: bash infra/host/attach-traefik.sh [--yes]
+# Usage: bash infra/host/attach-traefik.sh [--network obs] [--yes]
 set -euo pipefail
 TRAEFIK_CONTAINER="${TRAEFIK_CONTAINER:-dokploy-traefik}"
 NETWORK=mastertutor-cdp
@@ -18,14 +20,41 @@ for octet in "$a" "$b" "$c"; do
 done
 WANT="$PREFIX.12"
 APPLY=0
-case "$*" in
-  "") ;;
-  --yes) APPLY=1 ;;
-  *)
-    echo "usage: attach-traefik.sh [--yes]" >&2
-    exit 2
-    ;;
-esac
+TARGET=cdp
+usage() {
+  echo "usage: attach-traefik.sh [--network obs] [--yes]" >&2
+  exit 2
+}
+while (($# > 0)); do
+  case "$1" in
+    --yes) APPLY=1 ;;
+    --network)
+      [[ "${2:-}" == obs ]] || usage
+      TARGET=obs
+      shift
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+if [[ "$TARGET" == obs ]]; then
+  NETWORK=mastertutor-obs
+  current="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$TRAEFIK_CONTAINER")"
+  if [[ -n "$current" ]]; then
+    echo "$TRAEFIK_CONTAINER already attached to $NETWORK"
+    exit 0
+  fi
+  cmd=(docker network connect "$NETWORK" "$TRAEFIK_CONTAINER")
+  if [[ "$APPLY" != "1" ]]; then
+    echo "would run: ${cmd[*]}"
+    echo "re-run with --yes once the user has approved this host change"
+    exit 0
+  fi
+  "${cmd[@]}"
+  echo "attached $TRAEFIK_CONTAINER to $NETWORK"
+  exit 0
+fi
 
 current="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$TRAEFIK_CONTAINER")"
 if [[ -n "$current" ]]; then

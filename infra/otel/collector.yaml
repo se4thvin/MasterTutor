@@ -1,0 +1,185 @@
+# OTel Collector (D50, spec §10). Product names come from packages/contracts/src/telemetry.ts;
+# tests/observability/collector-config.test.ts pins this file to them. Regexes use POSIX classes,
+# not backslashes, so YAML and OTTL escaping never change their meaning.
+# OBSERVE_OTLP_ENDPOINT includes OpenObserve's base path (o2OtlpEndpoint, packages/observability).
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  basicauth/openobserve:
+    client_auth:
+      username: ingest@mastertutor.internal
+      password: ${env:OBSERVE_INGEST_PASSWORD}
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        max_request_body_size: 4194304
+  fluentforward:
+    endpoint: 0.0.0.0:24224
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  batch:
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+    timeout: 2s
+  filter/health:
+    error_mode: ignore
+    traces:
+      span:
+        - attributes["http.route"] == "/healthz"
+        - attributes["next.route"] == "/healthz"
+  # Pass 2 of the secret scrub (pass 1 is the SDK allowlist and pino's redaction).
+  attributes/scrub:
+    actions:
+      - pattern: (?i).*(password|passwd|secret|token|cookie|authorization|api[_-]?key|otp|totp|sealed|pin)$
+        action: delete
+  transform/scrub:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_all_patterns(attributes, "value", "(?i)bearer[[:space:]]+[a-z0-9._~+/=-]+", "****")
+          - replace_all_patterns(attributes, "value", "sk-[A-Za-z0-9_-]{16,}", "****")
+          - replace_all_patterns(attributes, "value", "eyJ[A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}", "****")
+          - replace_all_patterns(attributes, "value", "(?i)basic[[:space:]]+[a-z0-9+/=]{8,}", "****")
+          - replace_all_patterns(attributes, "value", "(NEKO_SESSION|live_slot|better-auth[.][a-z_]+)=[^;[:space:]]+", "****")
+    # The same five patterns as the span list, on log attributes and bodies.
+    log_statements:
+      - context: log
+        statements:
+          - replace_all_patterns(attributes, "value", "(?i)bearer[[:space:]]+[a-z0-9._~+/=-]+", "****")
+          - replace_all_patterns(attributes, "value", "sk-[A-Za-z0-9_-]{16,}", "****")
+          - replace_all_patterns(attributes, "value", "eyJ[A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}", "****")
+          - replace_all_patterns(attributes, "value", "(?i)basic[[:space:]]+[a-z0-9+/=]{8,}", "****")
+          - replace_all_patterns(attributes, "value", "(NEKO_SESSION|live_slot|better-auth[.][a-z_]+)=[^;[:space:]]+", "****")
+          - replace_pattern(body, "(?i)bearer[[:space:]]+[a-z0-9._~+/=-]+", "****")
+          - replace_pattern(body, "sk-[A-Za-z0-9_-]{16,}", "****")
+          - replace_pattern(body, "eyJ[A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}", "****")
+          - replace_pattern(body, "(?i)basic[[:space:]]+[a-z0-9+/=]{8,}", "****")
+          - replace_pattern(body, "(NEKO_SESSION|live_slot|better-auth[.][a-z_]+)=[^;[:space:]]+", "****")
+  # Base telemetry → product telemetry (spec §10).
+  transform/product:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["mt.dependency"], "openai") where attributes["server.address"] == "api.openai.com"
+          - set(attributes["mt.dependency"], "s3") where attributes["server.address"] == "garage"
+          - set(attributes["mt.dependency"], "docling") where attributes["server.address"] == "docling"
+          - set(attributes["mt.dependency"], "pdf-worker") where attributes["server.address"] == "pdf-worker"
+          - set(attributes["mt.dependency"], "audio-capture") where attributes["server.address"] == "audio-capture"
+          - set(attributes["mt.dependency"], "neko") where IsMatch(attributes["server.address"], "^browser-[0-9]+$")
+          - set(attributes["mt.dependency"], "push") where IsMatch(attributes["server.address"], "(push[.]apple[.]com|fcm[.]googleapis[.]com|push[.]services[.]mozilla[.]com|notify[.]windows[.]com)$")
+          - set(name, Concat([attributes["mt.dependency"], attributes["http.request.method"]], " ")) where attributes["mt.dependency"] != nil and kind == SPAN_KIND_CLIENT
+          - delete_key(attributes, "url.full")
+          - delete_key(attributes, "url.path")
+          - delete_key(attributes, "url.query")
+          - delete_key(attributes, "http.target")
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["mt.service"], attributes["container_name"]) where attributes["container_name"] != nil
+          - replace_pattern(attributes["mt.service"], "^/?[a-z0-9_.-]+?-(browser-[0-9]+|pdf-worker|audio-capture|docling)-[0-9]+$", "$$1")
+  # Keep every error, every product error code and every slow trace; sample the rest at 10%.
+  tail_sampling:
+    decision_wait: 20s
+    num_traces: 20000
+    expected_new_traces_per_sec: 50
+    policies:
+      - name: errors
+        type: status_code
+        status_code: { status_codes: [ERROR] }
+      - name: product-error-codes
+        type: string_attribute
+        string_attribute: { key: mt.error.code, values: [".+"], enabled_regex_matching: true }
+      - name: slow
+        type: latency
+        latency: { threshold_ms: 15000 }
+      - name: baseline
+        type: probabilistic
+        probabilistic: { sampling_percentage: 10 }
+
+connectors:
+  forward/sample: {}
+  spanmetrics:
+    namespace: mt.span
+    histogram:
+      unit: ms
+      explicit:
+        buckets: [5ms, 25ms, 100ms, 250ms, 1s, 2500ms, 5s, 15s, 60s]
+    dimensions:
+      - name: mt.step.phase
+      - name: mt.step.outcome
+      - name: mt.tool.name
+      - name: mt.tool.outcome
+      - name: mt.model.name
+      - name: mt.error.code
+      - name: mt.capture.fidelity
+      - name: mt.slot.name
+      - name: mt.takeover.outcome
+      - name: mt.dependency
+    metrics_flush_interval: 30s
+
+exporters:
+  otlphttp/openobserve:
+    endpoint: ${env:OBSERVE_OTLP_ENDPOINT}
+    auth: { authenticator: basicauth/openobserve }
+    sending_queue: { enabled: true, queue_size: 2000 }
+    retry_on_failure: { enabled: true, max_elapsed_time: 120s }
+  otlphttp/app-logs:
+    endpoint: ${env:OBSERVE_OTLP_ENDPOINT}
+    auth: { authenticator: basicauth/openobserve }
+    headers:
+      stream-name: mastertutor
+    sending_queue: { enabled: true, queue_size: 2000 }
+    retry_on_failure: { enabled: true, max_elapsed_time: 120s }
+  otlphttp/container-logs:
+    endpoint: ${env:OBSERVE_OTLP_ENDPOINT}
+    auth: { authenticator: basicauth/openobserve }
+    headers:
+      stream-name: containers
+    sending_queue: { enabled: true, queue_size: 2000 }
+    retry_on_failure: { enabled: true, max_elapsed_time: 120s }
+
+service:
+  extensions: [health_check, basicauth/openobserve]
+  telemetry:
+    logs: { level: warn }
+    # The collector's own export failures and queue sizes, through its own OTLP receiver.
+    metrics:
+      level: basic
+      readers:
+        - periodic:
+            interval: 30000
+            exporter:
+              otlp:
+                protocol: http/protobuf
+                endpoint: http://localhost:4318/v1/metrics
+  pipelines:
+    traces/ingest:
+      receivers: [otlp]
+      processors:
+        [memory_limiter, filter/health, attributes/scrub, transform/scrub, transform/product]
+      exporters: [spanmetrics, forward/sample]
+    traces/sample:
+      receivers: [forward/sample]
+      processors: [tail_sampling, batch]
+      exporters: [otlphttp/openobserve]
+    metrics:
+      receivers: [otlp, spanmetrics]
+      processors: [memory_limiter, attributes/scrub, batch]
+      exporters: [otlphttp/openobserve]
+    logs/app:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/scrub, transform/scrub, batch]
+      exporters: [otlphttp/app-logs]
+    logs/containers:
+      receivers: [fluentforward]
+      processors: [memory_limiter, transform/scrub, transform/product, batch]
+      exporters: [otlphttp/container-logs]

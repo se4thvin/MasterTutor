@@ -269,3 +269,25 @@ describe("fixture runs (F3)", () => {
     ]);
   });
 });
+
+describe("fixture alerts", () => {
+  it("lists the seeded (acknowledged) alert and reports push unavailable on http", async () => {
+    const { api } = client();
+    expect((await api.alerts.active({})).items).toEqual([]);
+    const listed = await api.alerts.list({ limit: 10, cursor: null });
+    expect(listed.items.map((a) => a.label)).toEqual(["A run failed"]);
+    expect(await api.alerts.pushConfig({})).toEqual({ available: false, publicKey: null });
+    expect(await api.alerts.pushStatus({ endpoint: "https://web.push.apple.com/x" })).toEqual({
+      registered: false,
+    });
+    await expect(
+      api.alerts.subscribe({
+        endpoint: "https://web.push.apple.com/abc",
+        keys: { p256dh: `B${"A".repeat(86)}`, auth: "A".repeat(22) },
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    await expect(
+      api.alerts.acknowledge({ id: "11111111-1111-4111-8111-111111111111" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});

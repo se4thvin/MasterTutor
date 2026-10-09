@@ -1,0 +1,31 @@
+# Telemetry on a test stack (D50, spec §16): `scripts/remote-test.sh observability`, or any stack
+# suite with MT_CI_TELEMETRY=1 (scripts/lib/test-stack.sh). Never part of a default test stack.
+# The secrets come from the generated env file (scripts/lib/test-stack.sh obs_env_file), so web,
+# the e2e runner and observability-init agree.
+services:
+  web:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      MT_DEPLOYMENT: test
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set by scripts/lib/test-stack.sh}
+      OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:?set by scripts/lib/test-stack.sh}
+  e2e:
+    environment:
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set by scripts/lib/test-stack.sh}
+      OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:?set by scripts/lib/test-stack.sh}
+  agent:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      MT_DEPLOYMENT: test
+  # The shared host runs other stacks and production: an ephemeral loopback port, not 24224.
+  otel-collector:
+    ports: !override
+      - "127.0.0.1::24224/tcp"
+  # Traefik waits for the provisioning, so `up --wait` waits for it too (a one-shot nothing
+  # depends on counts as a failure there) and a failed provisioning fails the stack.
+  traefik:
+    depends_on:
+      observability-init:
+        condition: service_completed_successfully
+    networks:
+      observe-edge: {}
