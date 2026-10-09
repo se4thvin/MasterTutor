@@ -91,6 +91,30 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     }
   });
 
+  it("captures an interactive-textbook section as a verified study note", async () => {
+    const { result, blocks } = await capture("textbook/index.html");
+    expect(result.coverage).toBeGreaterThanOrEqual(0.98);
+    expect(result.fidelity).toBe("verified");
+    const callouts = blocks.filter((b) => b.type === "quote");
+    expect(callouts).toHaveLength(3);
+    for (const callout of callouts) {
+      expect(callout.markdown).toMatch(
+        /^> \[!example\] \[Interactive activity\]\(http\S+\/capture\/textbook\/index\.html#:~:text=2\.3\.\d/,
+      );
+      expect(callout.verified).toBe(true);
+    }
+    expect(callouts[0]!.markdown).toMatch(/^> !\[\]\(asset:[0-9a-f-]{36}\)$/m);
+    expect(callouts[1]!.markdown).toContain("> 1\\) What is the even parity bit for 0110?");
+    expect(callouts[2]!.markdown).toContain("> - True\n> - False");
+    for (const text of ["Students:", "expand_more", "Due:", "ones:", "2x speed"])
+      expect(blocks.filter((b) => b.markdown.includes(text))).toEqual([]);
+    expect(blocks.filter((b) => b.type === "heading").map((b) => b.markdown)).toEqual([
+      expect.stringMatching(/^#+ 2\.3 Parity bits$/),
+      expect.stringMatching(/^#+ Even parity$/),
+      expect.stringMatching(/^#+ Detecting errors$/),
+    ]);
+  });
+
   it("stores the snapshot under the step and returns the same blocks on a repeat capture", async () => {
     const first = await capture("article/index.html");
     expect(first.source.mhtmlKey).toMatch(/^snapshots\/.+\/page\.mhtml$/);

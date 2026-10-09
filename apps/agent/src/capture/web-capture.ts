@@ -16,7 +16,9 @@ import { NoteWriteError, screenValue, type BlockDraft } from "../notes/note-writ
 import { ToolError, type ToolContext } from "../tools/types.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
 import {
+  activityCallout,
   blockPlainText,
+  joinEnumerators,
   limitBlockSize,
   splitMarkdown,
   texOf,
@@ -68,6 +70,7 @@ export type AssembledBlock =
     }
   | { kind: "frame"; index: number };
 
+const ACTIVITY = /^> MTACTIVITY(\d+)$/m;
 const MEDIA_TOKEN = /!\[([^\]]*)\]\(https:\/\/mt-media\.invalid\/(\d+)\)/g;
 const ONLY_MEDIA = /^\s*(?:!\[[^\]]*\]\(https:\/\/mt-media\.invalid\/\d+\)\s*)+$/;
 const OPAQUE_TILES = 3;
@@ -75,14 +78,15 @@ const OPAQUE_TILES = 3;
 /**
  * Resolves the extraction placeholders into blocks (pure). A block made only of images becomes one
  * image or figure block per stored image, with the image in `assetId` and only the caption in the
- * Markdown (decision 14). Images inside text stay inline as `![alt](asset:<id>)`.
+ * Markdown (decision 14). Images inside text stay inline as `![alt](asset:<id>)`. An activity's
+ * placeholder becomes its callout header, linking to the activity's title on its page.
  */
 export function assembleBlocks(
   extract: PageExtract,
   stored: ReadonlyMap<number, StoredMedia>,
 ): AssembledBlock[] {
   const out: AssembledBlock[] = [];
-  for (const block of splitMarkdown(extract.markdown)) {
+  for (const block of splitMarkdown(joinEnumerators(extract.markdown))) {
     const trimmed = block.markdown.trim();
     const table = /^MTRAWTABLE(\d+)$/.exec(trimmed);
     if (table) {
@@ -123,6 +127,11 @@ export function assembleBlocks(
       continue;
     }
     const markdown = block.markdown
+      .replace(ACTIVITY, (_match, index: string) => {
+        const activity = extract.activities[Number(index)];
+        const fragment = activity ? textFragment(activity.title) : null;
+        return activityCallout(activity?.url ? `${activity.url}${fragment ?? ""}` : null);
+      })
       .replace(MEDIA_TOKEN, (_match, alt: string, index: string) => {
         const media = stored.get(Number(index));
         const id = media?.assetId ?? media?.screenshotAssetId;

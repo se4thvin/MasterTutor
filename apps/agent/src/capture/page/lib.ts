@@ -167,6 +167,16 @@ export function pageInstallLib(): void {
     }
     return `/${parts.join("/")}`;
   };
+  // Icon-font ligatures (`<i class="material-icons">expand_more</i>`) and aria-hidden glyphs are
+  // drawn as symbols: one token of text that no reader sees as a word.
+  const ICON_FONT = /icon|^["']?material symbols/i;
+  const isIconGlyph = (el: Element): boolean => {
+    if (el.childElementCount > 0) return false;
+    const text = (el.textContent ?? "").trim();
+    if (!text || text.length > 40 || /\s/.test(text)) return false;
+    if (el.getAttribute("aria-hidden") === "true") return true;
+    return ICON_FONT.test(getComputedStyle(el).fontFamily.split(",")[0] ?? "");
+  };
   const isChrome = (el: Element): boolean => {
     const role = el.getAttribute("role");
     if (role && CHROME_ROLES.has(role)) return true;
@@ -246,7 +256,7 @@ export function pageInstallLib(): void {
           node.matches(MATH_SELECTOR)
         )
           return;
-        if (!visible(node) || skip?.(node)) return;
+        if (!visible(node) || isIconGlyph(node) || skip?.(node)) return;
         if (node.tagName === "BR") {
           onBreak();
           return;
@@ -276,6 +286,7 @@ export function pageInstallLib(): void {
     cssPath,
     xpathOf,
     isChrome,
+    isIconGlyph,
     sanitizeSvg,
     walkRendered,
   };

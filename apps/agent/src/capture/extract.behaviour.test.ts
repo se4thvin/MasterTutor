@@ -174,4 +174,77 @@ describe("pageExtract", () => {
       expect(extract.markdown).not.toContain("# Acme Widgets");
     }
   });
+
+  describe("an interactive-textbook section (app shell, activities)", () => {
+    async function extractTextbook() {
+      await session.goto(`${FIXTURES}/capture/textbook/index.html`, signal);
+      await preparePage(session, signal);
+      const worlds = await captureWorlds(session);
+      return worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    }
+
+    it("leaves out icon ligatures and the app UI above the section heading, in the note and in coverage", async () => {
+      const extract = await extractTextbook();
+      for (const text of [
+        "assignment",
+        "expand_more",
+        "Students:",
+        "Due: 03/14/2031",
+        "Activities:",
+      ])
+        for (const field of [extract.markdown, extract.pageText]) expect(field).not.toContain(text);
+      for (const glyph of ["thumb_up", "expand_less"])
+        expect(extract.pageText).not.toContain(glyph);
+      expect(extract.markdown).toMatch(/^#+ 2\.3 Parity bits$/m);
+      expect(extract.markdown).toContain("With even parity, the sender picks the extra bit");
+    });
+
+    it("keeps a drawing of positioned text as one element picture, not its labels", async () => {
+      const extract = await extractTextbook();
+      const drawings = extract.media.filter((m) => m.kind === "element");
+      expect(drawings).toHaveLength(1);
+      expect(drawings[0]).toMatchObject({ figure: true, rect: expect.any(Object) });
+      for (const field of [extract.markdown, extract.pageText]) {
+        expect(field).not.toMatch(/^ones:$/m);
+        expect(field).not.toContain("2x speed");
+      }
+      // The screen-reader description beside it is text, and stays.
+      expect(extract.markdown).toContain("Static figure: Step 1: Count the ones in 1011");
+    });
+
+    it("renders each activity as one quote: placeholder, label, bold title, numbered prompts, options", async () => {
+      const extract = await extractTextbook();
+      expect(extract.activities.map((a) => a.title)).toEqual([
+        "2.3.1: Computing an even parity bit.",
+        "2.3.2: Even parity.",
+        "2.3.3: Parity checks.",
+      ]);
+      expect(extract.activities.every((a) => a.url?.endsWith("/capture/textbook/index.html"))).toBe(
+        true,
+      );
+      const quoted = extract.markdown.split("\n").filter((line) => line.startsWith(">"));
+      const third = quoted.slice(quoted.findIndex((line) => line === "> MTACTIVITY2"));
+      expect(third).toEqual(
+        expect.arrayContaining([
+          "> participation activity",
+          "> **2.3.3: Parity checks.**",
+          "> 10010 shows an error.",
+          "> - True",
+          "> - False",
+        ]),
+      );
+      expect(quoted).toContain("> 1)");
+      expect(extract.markdown).not.toMatch(/^#+ 2\.3\.\d/m);
+      expect(extract.markdown).toMatch(/^#+ Detecting errors$/m);
+    });
+
+    it("keeps MathJax 2 TeX and table captions", async () => {
+      const extract = await extractTextbook();
+      expect(extract.mathTex).toContain("p = d_1 \\oplus d_2 \\oplus \\cdots \\oplus d_n");
+      expect(extract.markdown).toContain("$p = d_1 \\oplus d_2 \\oplus \\cdots \\oplus d_n$");
+      expect(extract.markdown).toMatch(
+        /Table 2\.3\.1: Even parity bits for three data bits\.\n\n\| Data \| Parity bit \|/,
+      );
+    });
+  });
 });

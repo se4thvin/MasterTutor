@@ -1,0 +1,267 @@
+<!doctype html>
+<!--
+  An interactive-textbook section (an app shell, not an article): icon-font ligatures, an
+  assignment summary with a dropdown above the section heading, activity cards (an animation
+  drawn with absolutely positioned text and a screen-reader static figure, a short-answer
+  question set with "1)" labels, a true/false set), a captioned figure and table, MathJax 2
+  TeX, and a feedback footer. The pattern of a real capture whose markup was not stored.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Section 2.3 - Digital Logic Primer</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+      }
+      .icon {
+        font-family: "Material Icons";
+        font-style: normal;
+        font-weight: normal;
+      }
+      .layout {
+        display: flex;
+      }
+      nav {
+        width: 240px;
+      }
+      main {
+        flex: 1;
+        max-width: 800px;
+        padding: 16px;
+      }
+      .chip {
+        display: inline-block;
+        padding: 0 6px;
+        border-radius: 50%;
+        background: #ddd;
+      }
+      .stage {
+        position: relative;
+        width: 640px;
+        height: 220px;
+        border: 1px solid #ccc;
+        background: #fff;
+      }
+      .stage .t {
+        position: absolute;
+        font: 18px monospace;
+      }
+      .alt-figure {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top-toolbar">
+      <button><i class="icon">menu</i></button>
+      <span>My library &gt; Digital Logic Primer &gt; 2.3: Parity bits</span>
+      <button><i class="icon">help</i> Help</button>
+    </header>
+    <div class="layout">
+      <nav aria-label="Table of contents">
+        <ol>
+          <li>2.2 Binary codes</li>
+          <li>2.3 Parity bits</li>
+        </ol>
+      </nav>
+      <main id="main">
+        <div class="section-page">
+          <div class="assignment-summary">
+            <i class="icon">assignment</i>
+            <div class="assignment-text">
+              <div>Students:</div>
+              <div>
+                This section is part of 1 assignment:
+                <div class="dropdown">
+                  <button aria-haspopup="listbox" aria-expanded="false">
+                    Weekly reading 2 <i class="icon">expand_more</i>
+                  </button>
+                </div>
+              </div>
+              <div>Activities:</div>
+              <div class="legend">
+                <div class="chip">P</div>
+                <div>Participation</div>
+                <div class="chip">C</div>
+                <div>Challenge</div>
+              </div>
+              <div>Due: 03/14/2031, 11:59 PM</div>
+            </div>
+          </div>
+
+          <h1>2.3 Parity bits</h1>
+          <h3>Even parity</h3>
+          <p>
+            A parity bit is one extra bit sent with a group of data bits so the receiver can notice
+            a single flipped bit. With even parity, the sender picks the extra bit so the total
+            count of ones is even.
+          </p>
+          <p>
+            The parity bit of n data bits is their exclusive OR:
+            <span class="MathJax_Preview"></span
+            ><span class="MathJax" role="presentation"
+              ><span class="math"><span>p = d1 ⊕ … ⊕ dn</span></span></span
+            >
+            <script type="math/tex">
+              p = d_1 \oplus d_2 \oplus \cdots \oplus d_n
+            </script>
+          </p>
+
+          <div class="activity">
+            <div class="card-top">
+              <span class="card-label">participation activity</span>
+              <h2>2.3.1: Computing an even parity bit.</h2>
+            </div>
+            <div class="animation">
+              <div class="controls">
+                <button>Start</button>
+                <label><input type="checkbox" /> 2x speed</label>
+              </div>
+              <div class="stage">
+                <div class="t" style="left: 20px; top: 20px">data</div>
+                <div class="t" style="left: 120px; top: 20px">1011</div>
+                <div class="t" style="left: 220px; top: 20px">ones:</div>
+                <div class="t" style="left: 320px; top: 20px">3</div>
+                <div class="t" style="left: 20px; top: 80px">odd</div>
+                <div class="t" style="left: 120px; top: 80px">so</div>
+                <div class="t" style="left: 220px; top: 80px">p =</div>
+                <div class="t" style="left: 320px; top: 80px">1</div>
+                <div class="t" style="left: 20px; top: 140px">sent:</div>
+                <div class="t" style="left: 120px; top: 140px">10111</div>
+              </div>
+              <div class="alt-figure">
+                <p>
+                  Static figure: Step 1: Count the ones in 1011: there are 3. Step 2: Three is odd,
+                  so the parity bit is 1 and 10111 is sent.
+                </p>
+              </div>
+              <div class="captions">
+                <button>Captions <i class="icon">expand_less</i></button>
+                <ol>
+                  <li>Count the ones in the data bits.</li>
+                  <li>Choose the parity bit that makes the count even.</li>
+                </ol>
+              </div>
+            </div>
+            <button class="feedback">Feedback?</button>
+          </div>
+
+          <figure>
+            <img
+              src="../docs/img/diagram-400.svg"
+              alt="Parity generator built from XOR gates"
+              width="300"
+              height="150"
+            />
+            <figcaption>Figure 2.3.1: A four-bit even parity generator.</figcaption>
+          </figure>
+
+          <table>
+            <caption>
+              Table 2.3.1: Even parity bits for three data bits.
+            </caption>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Parity bit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>000</td>
+                <td>0</td>
+              </tr>
+              <tr>
+                <td>011</td>
+                <td>0</td>
+              </tr>
+              <tr>
+                <td>111</td>
+                <td>1</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="activity">
+            <div class="card-top">
+              <span class="card-label">participation activity</span>
+              <h2>2.3.2: Even parity.</h2>
+            </div>
+            <div class="question-set">
+              <div class="question">
+                <div class="question-number">1)</div>
+                <div class="question-body">
+                  <div class="prompt">What is the even parity bit for 0110?</div>
+                  <textarea aria-label="Answer"></textarea><button>Check</button
+                  ><button>Show answer</button>
+                </div>
+              </div>
+              <div class="question">
+                <div class="question-number">2)</div>
+                <div class="question-body">
+                  <div class="prompt">What is the even parity bit for 1110?</div>
+                  <textarea aria-label="Answer"></textarea><button>Check</button
+                  ><button>Show answer</button>
+                </div>
+              </div>
+            </div>
+            <button class="feedback">Feedback?</button>
+          </div>
+
+          <h3>Detecting errors</h3>
+          <p>
+            The receiver recounts the ones. An odd count means some bit flipped on the way; an even
+            count means no single-bit error happened, though two flips cancel out and go unnoticed.
+          </p>
+
+          <div class="activity">
+            <div class="card-top">
+              <span class="card-label">participation activity</span>
+              <h2>2.3.3: Parity checks.</h2>
+            </div>
+            <p>Each received word uses even parity.</p>
+            <div class="question-set">
+              <div class="question">
+                <div class="question-number">1)</div>
+                <div class="question-body">
+                  <div class="prompt">10010 shows an error.</div>
+                  <div class="choices" role="radiogroup">
+                    <label><input type="radio" name="q1" /> True</label>
+                    <label><input type="radio" name="q1" /> False</label>
+                  </div>
+                </div>
+              </div>
+              <div class="question">
+                <div class="question-number">2)</div>
+                <div class="question-body">
+                  <div class="prompt">Two flipped bits are always detected.</div>
+                  <div class="choices" role="radiogroup">
+                    <label><input type="radio" name="q2" /> True</label>
+                    <label><input type="radio" name="q2" /> False</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button class="feedback">Feedback?</button>
+          </div>
+
+          <div class="section-footer">
+            <div>
+              How was this section?
+              <button><i class="icon">thumb_up</i></button> |
+              <button><i class="icon">thumb_down</i></button>
+            </div>
+            <button>Provide section feedback</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>
