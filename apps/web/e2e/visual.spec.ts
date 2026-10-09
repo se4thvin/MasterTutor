@@ -40,6 +40,15 @@ async function loaded(page: Page): Promise<void> {
     await page.waitForTimeout(50);
   }
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  // Pip's arrival wave is over and its poster is decoded: the shot shows Pip at rest.
+  await expect(page.locator('.pip[data-state="waving"]')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page
+        .locator("img.pip-poster")
+        .evaluateAll((imgs) => imgs.every((i) => (i as HTMLImageElement).naturalWidth > 0)),
+    )
+    .toBe(true);
 }
 
 async function expectScreenshots(page: Page, name: string): Promise<void> {
@@ -51,8 +60,6 @@ async function expectScreenshots(page: Page, name: string): Promise<void> {
       fullPage: true,
       animations: "disabled",
       caret: "hide",
-      // The 3D hero is a canvas; its poster and reduced-motion path are hero.spec.ts's job.
-      mask: [page.locator("canvas")],
       maxDiffPixelRatio: 0.002,
     });
   }

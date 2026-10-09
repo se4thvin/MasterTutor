@@ -7,11 +7,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  HERO_BUDGET_KB,
+  MASCOT_BUDGET_KB,
   compareFirstLoad,
-  compareHeroBundle,
+  compareMascotBundle,
   measureFirstLoad,
-  measureHeroBundle,
+  measureMascotBundle,
   type FirstLoadBaseline,
 } from "./first-load.ts";
 
@@ -38,19 +38,19 @@ if (process.argv.includes("--write-baseline")) {
   writeFileSync(baselineUrl, `${JSON.stringify(next, null, 2)}\n`);
   console.log(`Baseline written (${Object.keys(current).length} routes).`);
 } else {
-  const hero = measureHeroBundle(nextDir);
+  const mascot = measureMascotBundle(nextDir);
   console.log(
-    `hero (lazy three)        ${hero.kb.toFixed(1).padStart(7)} kB gz  (${hero.files.length} chunk(s), budget ${HERO_BUDGET_KB} kB)`,
+    `mascot (lazy three)      ${mascot.kb.toFixed(1).padStart(7)} kB gz  (${mascot.files.length} chunk(s), budget ${MASCOT_BUDGET_KB} kB)`,
   );
   const findings = [
     ...compareFirstLoad(current, previous),
-    ...compareHeroBundle(hero, HERO_BUDGET_KB),
+    ...compareMascotBundle(mascot, MASCOT_BUDGET_KB),
   ];
   if (findings.length) {
     console.error(`First-load JS budget exceeded (${findings.length}):\n${findings.join("\n")}`);
     process.exit(1);
   }
   console.log(
-    `First-load JS within budget (+${previous.budgetKb} kB gz per route); hero within ${HERO_BUDGET_KB} kB.`,
+    `First-load JS within budget (+${previous.budgetKb} kB gz per route); mascot within ${MASCOT_BUDGET_KB} kB.`,
   );
 }

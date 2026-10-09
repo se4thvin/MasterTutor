@@ -4,9 +4,9 @@ import { DEFAULT_BUDGET, type ApprovalMode, type SourceKind } from "@mastertutor
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { emitHero, heroCaptureFloor } from "@/components/hero/hero-events.ts";
-import { Hero3D } from "@/components/hero/hero-3d.tsx";
 import { useFolders } from "@/components/library/use-folders.ts";
+import { PipLazy } from "@/components/mascot/pip-lazy.tsx";
+import { pipStartFloor, usePipMachine } from "@/components/mascot/use-pip-machine.ts";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
@@ -34,6 +34,9 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
   const toast = useToast();
   const goalId = useId();
   const goalRef = useRef<HTMLTextAreaElement>(null);
+  const [pipState, sendPip] = usePipMachine({ doze: true, arrive: true });
+  // Pip looks at the goal field while the person types in it.
+  const [goalCenter, setGoalCenter] = useState<{ x: number; y: number } | null>(null);
   const settings = useQuery(orpc.settings.get.queryOptions({ input: {} }));
   const folders = useFolders();
   const [goal, setGoal] = useState("");
@@ -93,14 +96,15 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
     }
     setError(null);
     setBusy(true);
-    emitHero("start");
+    sendPip({ type: "start" });
     try {
-      const [run] = await Promise.all([api.runs.create(input), heroCaptureFloor()]);
+      const [run] = await Promise.all([api.runs.create(input), pipStartFloor()]);
       // Only a created run retires the draft; a failed start keeps it (and the page) as it was.
       savedDraft.clear();
       router.push(`/runs/${run.id}`);
     } catch (failure) {
       setBusy(false);
+      sendPip({ type: "startFailed" });
       toast({ title: startErrorCopy(failure), tone: "danger" });
     }
   }
@@ -146,9 +150,11 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
               aria-invalid={goalError ? true : undefined}
               aria-describedby={goalError ? `${goalId}-error` : undefined}
               onChange={(e) => setGoal(e.target.value)}
-              onInput={() => emitHero("type")}
-              onFocus={() => emitHero("focus", true)}
-              onBlur={() => emitHero("focus", false)}
+              onInput={() => sendPip({ type: "type" })}
+              onFocus={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setGoalCenter({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+              }}
             />
             {sources.length ? (
               <ul className="nt-chips" aria-label="Sources">
@@ -223,7 +229,7 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
                 key={suggestion}
                 onClick={() => {
                   setGoal(suggestion);
-                  emitHero("type");
+                  sendPip({ type: "type" });
                   goalRef.current?.focus();
                 }}
               >
@@ -233,7 +239,12 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
           </div>
         </div>
         <div className="nt-hero">
-          <Hero3D />
+          <PipLazy
+            state={pipState}
+            size="hero"
+            lookAt={pipState === "attentive" ? goalCenter : null}
+            onPoke={() => sendPip({ type: "poke" })}
+          />
         </div>
       </section>
       <OptionsGrid

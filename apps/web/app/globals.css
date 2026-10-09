@@ -11,7 +11,7 @@
 @import "../styles/settings.css";
 @import "../styles/run.css";
 @import "../styles/new-task.css";
-@import "../styles/hero.css";
+@import "../styles/mascot.css";
 
 @theme inline {
   --color-*: initial;
