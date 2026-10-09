@@ -1,6 +1,8 @@
 import { parser } from "@prometheus-io/lezer-promql";
 import { ATTR, DERIVED_METRIC, METRIC, o2StreamName } from "@mastertutor/contracts/telemetry";
 
+import { promqlBudgetError, type QueryRange } from "./promql-budget.ts";
+
 export type QueryCheck = { ok: true } | { ok: false; error: string };
 
 const HISTOGRAM_PARTS = ["_bucket", "_sum", "_count"] as const;
@@ -34,7 +36,9 @@ const MAX_QUERY = 2_000;
  * Parses with the official grammar, then checks every metric selector and label against the
  * registry. Errors list the valid names so the model can correct itself (spec §7.4).
  */
-export function checkPromql(query: string): QueryCheck {
+export function checkPromql(query: string, range?: QueryRange): QueryCheck {
+  const now = Math.floor(Date.now() / 1000);
+  const evaluation = range ?? { start: now, end: now, step: 1 };
   if (query.length === 0 || query.length > MAX_QUERY)
     return { ok: false, error: `PromQL must be 1–${MAX_QUERY} characters.` };
   const tree = parser.parse(query);
@@ -62,5 +66,6 @@ export function checkPromql(query: string): QueryCheck {
       return undefined;
     },
   });
+  error ??= promqlBudgetError(query, tree.topNode, evaluation);
   return error ? { ok: false, error } : { ok: true };
 }

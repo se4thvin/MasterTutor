@@ -66,7 +66,7 @@ export function createQueryProxyServer(o2: O2Query, token: string): Server {
             ? null
             : body,
       );
-      if (!parsed.success || !checkPromql(parsed.data.query).ok)
+      if (!parsed.success || !checkPromql(parsed.data.query, parsed.data.range).ok)
         return json(res, 400, { error: "invalid_query" });
       return json(res, 200, await o2.range(parsed.data.query, parsed.data.range, signal));
     } catch {

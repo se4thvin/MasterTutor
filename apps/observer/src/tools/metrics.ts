@@ -9,8 +9,6 @@ export const metricsQuery =
   async (raw, ctx) => {
     const args = MetricsQueryArgs.safeParse(raw);
     if (!args.success) return invalid(args.error.issues.map((i) => i.message).join("; "));
-    const check = checkPromql(args.data.promql);
-    if (!check.ok) return invalid(check.error, { promql: args.data.promql });
     const hours = Math.min(
       args.data.rangeHours ?? COPILOT_LIMITS.metricDefaultHours,
       COPILOT_LIMITS.metricMaxHours,
@@ -22,6 +20,8 @@ export const metricsQuery =
       args.data.stepSeconds ?? 15,
       Math.ceil((end - start) / (COPILOT_LIMITS.points - 1)),
     );
+    const check = checkPromql(args.data.promql, { start, end, step });
+    if (!check.ok) return invalid(check.error, { promql: args.data.promql });
     const table = await o2.range(args.data.promql, { start, end, step }, ctx.signal);
     return {
       summary: `metrics ${hours} h`,

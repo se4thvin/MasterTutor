@@ -208,3 +208,29 @@ it("authenticates every query route and leaves health checks available", async (
   expect((await fetch(url + "/healthz")).status).toBe(200);
   expect(calls).toEqual([]);
 });
+
+it("refuses whole-expression budget bypasses before upstream access on both PromQL routes", async () => {
+  const { calls, post } = await fixture();
+  const time = 1_000_000_000;
+  for (const query of [
+    "sum_over_time((mt_runs_ended)[365d:1s])",
+    "rate(mt_runs_ended[91d])",
+    "max_over_time((rate(mt_runs_ended[50d]))[50d:1d])",
+    "rate(mt_runs_ended[80d] offset 20d)",
+    `mt_runs_ended @ ${time - 91 * 86400}`,
+  ]) {
+    expect((await post("/query", { query, time })).status).toBe(400);
+    expect(
+      (await post("/query_range", { query, range: { start: time, end: time, step: 1 } })).status,
+    ).toBe(400);
+  }
+  expect(
+    (
+      await post("/query_range", {
+        query: "rate(mt_runs_ended[2d])",
+        range: { start: time, end: time + 89 * 86400, step: 86400 },
+      })
+    ).status,
+  ).toBe(400);
+  expect(calls).toEqual([]);
+});

@@ -55,7 +55,7 @@ describe("Copilot tools (spec §7.5)", () => {
   it("clamps the range and picks a step for at most 300 points", async () => {
     calls.length = 0;
     await tools.metrics_query(
-      { promql: "sum(increase(mt_runs_ended[1h]))", rangeHours: 2_160, stepSeconds: 15 },
+      { promql: "sum(increase(mt_runs_ended[1h]))", rangeHours: 2_136, stepSeconds: 15 },
       ctx(),
     );
     const [, range] = calls[0]!.args as [string, { start: number; end: number; step: number }];
@@ -174,4 +174,16 @@ describe("Copilot tools (spec §7.5)", () => {
       ).outcome,
     ).toBe("invalid");
   });
+});
+
+it("refuses effective lookback and subquery budgets before the metrics adapter", async () => {
+  calls.length = 0;
+  for (const [promql, rangeHours] of [
+    ["sum(increase(mt_runs_ended[1h]))", 2160],
+    ["sum_over_time((mt_runs_ended)[365d:1s])", 1],
+  ] as const) {
+    const result = await tools.metrics_query({ promql, rangeHours, stepSeconds: 15 }, ctx());
+    expect(result.outcome).toBe("invalid");
+  }
+  expect(calls).toEqual([]);
 });

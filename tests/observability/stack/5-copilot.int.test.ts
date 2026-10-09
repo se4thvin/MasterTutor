@@ -73,8 +73,18 @@ describe.runIf(enabled)("Copilot routing (spec §7.2)", () => {
       });
       const unauthorized = await fetch(process.env.OBSERVER_QUERY_URL + '/search', {method:'POST',body:'invalid'});
       const wrong = await fetch(process.env.OBSERVER_QUERY_URL + '/query_range', {method:'POST',headers:{authorization:'Bearer wrong'},body:'invalid'});
+      const budgetStatuses = [];
+      for (const query of ['sum_over_time((mt_runs_ended)[365d:1s])',
+        'rate(mt_runs_ended[80d] offset 20d)',
+        'max_over_time((max_over_time((mt_runs_ended)[20m:1m]))[20m:1m])']) {
+        const reply = await fetch(process.env.OBSERVER_QUERY_URL + '/query_range', {
+          method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+process.env.OBSERVER_QUERY_TOKEN},
+          body:JSON.stringify({query,range:{start:1000000000,end:1000000000,step:1}})
+        });
+        budgetStatuses.push(reply.status);
+      }
       const admin = await fetch(process.env.OBSERVER_QUERY_URL + '/api/default/users', {method:'DELETE'});
-      console.log(JSON.stringify({noSecret,direct,search:proxy.status,denied:denied.status,admin:admin.status,unauthorized:unauthorized.status,wrong:wrong.status}));
+      console.log(JSON.stringify({noSecret,direct,search:proxy.status,denied:denied.status,admin:admin.status,unauthorized:unauthorized.status,wrong:wrong.status,budgetStatuses}));
     `,
     ]);
     expect(JSON.parse(result)).toEqual({
@@ -85,6 +95,7 @@ describe.runIf(enabled)("Copilot routing (spec §7.2)", () => {
       admin: 404,
       unauthorized: 401,
       wrong: 401,
+      budgetStatuses: [400, 400, 400],
     });
   });
   it("does not accept proxy requests on its OpenObserve-facing interface", () => {
