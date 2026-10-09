@@ -1,5 +1,6 @@
 import {
   encodeNotify,
+  PersonDecider,
   TERMINAL_RUN_STATUSES,
   type ApprovalEdit,
   type ApprovalMode,
@@ -14,6 +15,7 @@ import {
   runSteps,
   runs,
   settings,
+  user,
   type DbHandle,
 } from "@mastertutor/db";
 import { and, asc, eq, notInArray, sql } from "drizzle-orm";
@@ -85,6 +87,11 @@ export async function startBehaviourAgent(
   const storage = createMemoryStorage();
   const [existing] = await owner.db.select({ id: settings.workspaceId }).from(settings).limit(1);
   const workspaceId = existing?.id ?? (await seedWorkspace(owner.db));
+  // The person who decides approvals: a real user row, so a lasting vault grant can name it (D52).
+  await owner.db
+    .insert(user)
+    .values({ id: BEHAVIOUR_USER, name: "Behaviour", email: "behaviour-user@example.test" })
+    .onConflictDoNothing();
   await owner.db.update(settings).set({ killSwitch: false });
   // Runs an earlier file seeded and leased by hand (leaseSlotForTest) stay claimable, and a claim
   // takes them before queued runs: this agent would spend its slots, and a restart each, on them.
@@ -190,6 +197,9 @@ export async function waitForRun(
   );
 }
 
+/** Decides approvals in behaviour tests; startBehaviourAgent seeds its user row. */
+export const BEHAVIOUR_USER = PersonDecider.parse("behaviour-user");
+
 export async function decideApproval(
   agent: BehaviourAgent,
   runId: string,
@@ -198,7 +208,7 @@ export async function decideApproval(
 ) {
   await agent.web.db
     .update(approvals)
-    .set({ status, decidedBy: "behaviour-user", decidedAt: sql`now()`, edit: edit ?? null })
+    .set({ status, decidedBy: BEHAVIOUR_USER, decidedAt: sql`now()`, edit: edit ?? null })
     .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")));
   await agent.web.db
     .update(runs)

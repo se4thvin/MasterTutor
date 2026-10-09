@@ -3,7 +3,9 @@ import {
   EMPTY_USAGE,
   MODELS,
   SLOT_NAME_PATTERN,
+  deciderShapeSql,
   type ApprovalEdit,
+  type Decider,
   type ApprovalRequest,
   type Budget,
   type Plan,
@@ -34,6 +36,7 @@ import {
   approvalModeEnum,
   approvalStatusEnum,
   controllerEnum,
+  observerModeEnum,
   runStatusEnum,
   slotStateEnum,
   stepPhaseEnum,
@@ -80,6 +83,8 @@ export const runs = pgTable(
     /** Who last opened the live view (openLive): their open n.eko session is closed on sign-out. */
     liveViewerId: text("live_viewer_id"),
     approvalMode: approvalModeEnum("approval_mode").notNull().default("ask"),
+    /** Guard rollout (D52, spec §6.8): shadow records only. */
+    observerMode: observerModeEnum("observer_mode").notNull().default("enforce"),
     toolProfile: toolProfileEnum("tool_profile").notNull().default("browser_use"),
     model: text("model").notNull().default(MODELS.agentPrimary),
     previousResponseId: text("previous_response_id"),
@@ -118,7 +123,7 @@ export const runs = pgTable(
   ],
 );
 
-const runRef = () =>
+export const runRef = () =>
   uuid("run_id")
     .notNull()
     .references(() => runs.id, { onDelete: "cascade" });
@@ -177,12 +182,16 @@ export const approvals = pgTable(
     request: jsonb("request").$type<ApprovalRequest>().notNull(),
     status: approvalStatusEnum("status").notNull().default("pending"),
     edit: jsonb("edit").$type<ApprovalEdit>(),
-    /** A user id, or "policy" when approvalMode decided it. */
-    decidedBy: text("decided_by"),
+    /** A user id or a machine decider (MACHINE_DECIDERS, spec §4). */
+    decidedBy: text("decided_by").$type<Decider>(),
     decidedAt: tstz("decided_at"),
     createdAt: createdAt(),
   },
-  (t) => [index("approvals_run_status_idx").on(t.runId, t.status)],
+  (t) => [
+    index("approvals_run_status_idx").on(t.runId, t.status),
+    // Input validation at the trust boundary (spec §4): a user id or a machine decider, nothing else.
+    check("approvals_decided_by_ck", sql.raw(deciderShapeSql(`"approvals"."decided_by"`))),
+  ],
 );
 
 export const downloads = pgTable("downloads", {

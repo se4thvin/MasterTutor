@@ -2,7 +2,7 @@ import { MODELS, VIEWPORT } from "@mastertutor/contracts";
 import sharp from "sharp";
 import { z } from "zod";
 import type { StatelessOpenAI } from "../llm/openai.ts";
-import { ocrTileUsage, usageDelta } from "../llm/pricing.ts";
+import { billedUsageOf, ocrTileUsage, usageDelta } from "../llm/pricing.ts";
 import type { StepWriter } from "../tools/types.ts";
 
 export interface OcrModel {
@@ -55,27 +55,34 @@ export function createOcrModel(openai: Pick<StatelessOpenAI, "responses">): OcrM
         signal.throwIfAborted();
         // Checked before each call, as transcription does: the loop checks only between steps.
         if (step.usdLeft() < ocrTileUsage().usd) throw new OcrBudgetExhausted();
-        const reply = await openai.responses.parse(
-          {
-            model: MODELS.agentPrimary,
-            instructions: INSTRUCTIONS,
-            input: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "input_image",
-                    image_url: `data:image/png;base64,${Buffer.from(tile).toString("base64")}`,
-                    detail: "high",
-                  },
-                ],
-              },
-            ],
-            schema: OcrText,
-            name: "ocr_text",
-          },
-          { signal },
-        );
+        const reply = await openai.responses
+          .parse(
+            {
+              model: MODELS.agentPrimary,
+              instructions: INSTRUCTIONS,
+              input: [
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "input_image",
+                      image_url: `data:image/png;base64,${Buffer.from(tile).toString("base64")}`,
+                      detail: "high",
+                    },
+                  ],
+                },
+              ],
+              schema: OcrText,
+              name: "ocr_text",
+            },
+            { signal },
+          )
+          .catch((error: unknown) => {
+            // An unparseable answer is billed: it counts toward the run's budget, then fails.
+            const billed = billedUsageOf(error);
+            if (billed) step.addUsage(billed);
+            throw error;
+          });
         step.addUsage(usageDelta(reply.model, { ...reply.tokens, cacheWrite: 0 }, 0));
         const text = reply.parsed.markdown.trim();
         if (text) parts.push(text);

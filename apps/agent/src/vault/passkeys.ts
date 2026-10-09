@@ -1,6 +1,7 @@
 import {
   toOrigin,
   type ApprovalRequest,
+  type Decider,
   type UsePasskeyArgs,
   type UsePasskeyResult,
 } from "@mastertutor/contracts";
@@ -142,7 +143,7 @@ export function createPasskeys(deps: VaultDeps, options: { armMs?: number } = {}
     ctx: ToolContext,
     item: VaultItemRecord,
     entry: Armed,
-    approver: string,
+    approver: Decider,
   ) {
     try {
       // Keep the sign counter current; some relying parties reject a counter that goes backwards.
@@ -236,7 +237,7 @@ export function createPasskeys(deps: VaultDeps, options: { armMs?: number } = {}
     },
     async use(ctx, args) {
       const item = await findVaultItemByAlias(deps.db, ctx.workspaceId, args.alias);
-      const audit = (action: "passkey" | "denied", outcome: string, approver: string | null) =>
+      const audit = (action: "passkey" | "denied", outcome: string, approver: Decider | null) =>
         appendVaultAudit(deps.db, {
           workspaceId: ctx.workspaceId,
           itemId: item?.id ?? null,

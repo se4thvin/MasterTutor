@@ -71,6 +71,16 @@ describe("RunEvent", () => {
       },
       model_fallback: { type: "model_fallback", from: "gpt-6-astra", to: "gpt-6.1-sol" },
       title: { type: "title", title: "Notes on two's complement (zyBooks 4.4)" },
+      guard: {
+        type: "guard",
+        verdict: "block",
+        category: "data_exfiltration",
+        stage: "review",
+        rollout: "enforce",
+        applied: true,
+        items: 1,
+        flows: 1,
+      },
     };
     expect(Object.keys(samples).sort()).toEqual([...RUN_EVENT_TYPES].sort());
     for (const type of RUN_EVENT_TYPES) expect(RunEvent.parse(samples[type]).type).toBe(type);

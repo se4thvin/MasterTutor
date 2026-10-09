@@ -40,6 +40,14 @@ export const APPROVAL_MODES = ["ask", "auto_within_allowlist", "bypass"] as cons
 export const ApprovalMode = z.enum(APPROVAL_MODES);
 export type ApprovalMode = z.infer<typeof ApprovalMode>;
 
+/**
+ * How the Guard's verdicts apply to a run (D52, spec §6.8): enforce (default) changes decisions;
+ * shadow only records what it would have done (calibration; an acknowledged, badged opt-in).
+ */
+export const OBSERVER_MODES = ["shadow", "enforce"] as const;
+export const ObserverMode = z.enum(OBSERVER_MODES);
+export type ObserverMode = z.infer<typeof ObserverMode>;
+
 export const STEP_PHASES = ["observe", "decide", "approve", "act"] as const;
 export const StepPhase = z.enum(STEP_PHASES);
 export type StepPhase = z.infer<typeof StepPhase>;
@@ -55,6 +63,10 @@ export const APPROVAL_KINDS = [
   "credential_first_use",
   "new_origin",
   "budget",
+  /** Data read on one origin typed into another, outside the allowlist (D52, spec §6.3). */
+  "data_egress",
+  /** The Guard escalated or blocked an action, or holds the run (D52, spec §6.6). */
+  "observer",
 ] as const;
 export const ApprovalKind = z.enum(APPROVAL_KINDS);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;

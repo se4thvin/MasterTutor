@@ -3,6 +3,7 @@ import {
   FillCredentialResult,
   ReadPageArgs,
   ReadPageResult,
+  PersonDecider,
 } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
@@ -140,7 +141,7 @@ describe("ToolRegistry", () => {
     });
     const approval: CallApproval = {
       kind: "credential_first_use",
-      decidedBy: "user-1",
+      decidedBy: PersonDecider.parse("user-1"),
       label: null,
       decidedAt: null,
     };

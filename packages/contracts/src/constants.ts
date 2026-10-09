@@ -11,6 +11,12 @@ export const MODELS = {
    * key (D1: the cheap high-volume one) and already proven on strict JSON (filing).
    */
   runTitle: "gpt-6-luna",
+  /** Guard stage 1 (D52): the cheap screen on every triggered turn. */
+  observerGuardScreen: "gpt-6-luna",
+  /** Guard stage 2, only on a screen's "review" (spike §10: p95 2.4 s at effort low). */
+  observerGuardReview: "gpt-6.1-sol",
+  /** The Copilot's conversation model (spec §14 decision 10). */
+  observerCopilot: "gpt-6.1-sol",
   transcription: "gpt-4o-transcribe-diarize",
   embeddings: "text-embedding-3-small",
 } as const;

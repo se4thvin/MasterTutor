@@ -1,8 +1,10 @@
 import {
+  AGENT_DECIDER,
   ApprovalEdit,
   ApprovalRequest,
   type ApprovalStatus,
   CallResult,
+  type Decider,
 } from "@mastertutor/contracts";
 import { approvals, otpCodes, runEvents, runSteps, type Database } from "@mastertutor/db";
 import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
@@ -25,7 +27,7 @@ export const ItemDecision = z.object({
   target: z.string().nullable().default(null),
   /** The approved element's record context digest (TargetDescription.context), R29-3. */
   context: z.string().nullable().default(null),
-  /** Who decided: the user's id, or POLICY_DECIDER. Null on rows written before this field. */
+  /** Who decided: a user id or a machine decider (spec §4). Null on rows written before this field. */
   decidedBy: z.string().nullable().default(null),
   /** When it was decided (ms since the epoch); null on rows written before this field. */
   decidedAt: z.number().nullable().default(null),
@@ -64,7 +66,7 @@ export async function insertApprovals(
     request: ApprovalRequest;
     status: "pending" | "approved" | "denied";
   }>,
-  decidedBy: string | null,
+  decidedBy: Decider | null,
 ): Promise<void> {
   if (rows.length === 0) return;
   await tx.insert(approvals).values(
@@ -112,7 +114,7 @@ export async function loadApprovalDecision(
 export async function markApprovalSuperseded(tx: Tx, id: string): Promise<void> {
   await tx
     .update(approvals)
-    .set({ status: "superseded", decidedBy: "agent", decidedAt: sql`now()` })
+    .set({ status: "superseded", decidedBy: AGENT_DECIDER, decidedAt: sql`now()` })
     .where(
       and(
         eq(approvals.id, id),

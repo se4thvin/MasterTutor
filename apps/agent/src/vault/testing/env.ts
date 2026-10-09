@@ -1,3 +1,4 @@
+import { PersonDecider } from "@mastertutor/contracts";
 import type { ImapConfig, TypedSecretField } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { createDb, createVaultItem, ensureWorkspaceMember, type DbHandle } from "@mastertutor/db";
@@ -44,7 +45,7 @@ export interface VaultTestEnv {
   web: DbHandle;
   agent: DbHandle;
   workspaceId: string;
-  userId: string;
+  userId: PersonDecider;
   keys: VaultKeyPair;
   log: CapturedLog;
   newRun(allowedOrigins?: string[]): Promise<string>;
@@ -59,7 +60,7 @@ export async function startVaultTestEnv(): Promise<VaultTestEnv> {
   const owner = createDb(testDb.ownerUrl, { max: 2 });
   const web = createDb(testDb.webUrl, { max: 2 });
   const agent = createDb(testDb.agentUrl, { max: 4 });
-  const userId = "vault-test-user";
+  const userId = PersonDecider.parse("vault-test-user");
   await owner.sql`insert into "user" (id, name, email) values (${userId}, 'Vault Tester', 'vault@example.test')`;
   const { workspaceId } = await ensureWorkspaceMember(web.db, userId);
   const keys = await vaultKeyPairFromPrivate((await generateVaultKeyPair()).privateKeyBase64);

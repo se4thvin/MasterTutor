@@ -1,6 +1,5 @@
 import {
   TERMINAL_RUN_STATUSES,
-  UserId,
   isPersonDecider,
   type ApprovalDecisionInput,
   type ApprovalEdit,
@@ -251,7 +250,7 @@ export async function decideRunApproval(
   scope: RunScope,
   input: ApprovalDecisionInput,
 ): Promise<void> {
-  if (!UserId.safeParse(scope.actor).success || !isPersonDecider(scope.actor))
+  if (!isPersonDecider(scope.actor))
     throw new ServiceError("forbidden", "Only a person can decide an approval.");
   await db.transaction(async (tx) => {
     const [target] = await tx

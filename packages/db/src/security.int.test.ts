@@ -25,6 +25,8 @@ beforeAll(async () => {
   [{ id: runId }] = (await owner`
     insert into runs (workspace_id, goal, allowed_origins)
     values (${workspaceId}, 'goal', ${["https://example.com"]}) returning id`) as [{ id: string }];
+  // A lasting grant names a real user (vault_grants.approved_by references "user", D52).
+  await owner`insert into "user" (id, name, email) values ('u-1', 'U', 'u-1@example.test')`;
   await owner`insert into vault_audit (workspace_id, item_id, alias, action, outcome)
               values (${workspaceId}, ${itemId}, 'site', 'create', 'ok')`;
   await owner`insert into browser_sessions (workspace_id, alias, origin, sealed_state)

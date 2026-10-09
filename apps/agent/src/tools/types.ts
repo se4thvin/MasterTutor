@@ -1,4 +1,11 @@
-import type { ApprovalRequest, FunctionToolName, RunEvent, Usage } from "@mastertutor/contracts";
+import type {
+  ApprovalRequest,
+  FunctionToolName,
+  PersonDecider,
+  POLICY_DECIDER,
+  RunEvent,
+  Usage,
+} from "@mastertutor/contracts";
 import type { ToolAttributes } from "@mastertutor/contracts/telemetry";
 import type { DbTx } from "@mastertutor/db";
 import type { z } from "zod";
@@ -10,8 +17,8 @@ import type { Log } from "../runtime/types.ts";
 export interface CallApproval {
   /** The approval request's kind, e.g. "credential_first_use". */
   kind: string;
-  /** The deciding user's id, or POLICY_DECIDER for auto mode. */
-  decidedBy: string;
+  /** The deciding user's id, or POLICY_DECIDER for any machine decision. */
+  decidedBy: PersonDecider | typeof POLICY_DECIDER;
   /**
    * What the approved card named beyond its kind, so the tool can check it still holds at act
    * time (credential_first_use: the form destination it showed, or null when it showed none).

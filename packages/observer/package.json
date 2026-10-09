@@ -1,0 +1,19 @@
+{
+  "name": "@mastertutor/observer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./guard": "./src/guard/index.ts",
+    "./copilot": "./src/copilot/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mastertutor/contracts": "workspace:*",
+    "zod": "4.6.5"
+  }
+}

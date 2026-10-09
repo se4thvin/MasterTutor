@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { Budget, Usage } from "./budget.ts";
 import type { ApprovalKind, ApprovalMode } from "./enums.ts";
+import { GuardCategory } from "./observer.ts";
+import { OBSERVER_ROLES } from "./telemetry.ts";
 import { Alias, Origin, Uuid } from "./primitives.ts";
 import { ComputerAction } from "./tools.ts";
 
@@ -19,7 +21,7 @@ export const MAX_POSTS_TO_CHARS = 4_096;
 const ScreenshotKey = z.string().min(1).max(1_024).nullable();
 const RecordExcerpt = z.string().max(240).nullable().optional();
 
-export const ApprovalRequest = z.discriminatedUnion("kind", [
+export const ApprovalSubject = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("risky_click"),
     action: ComputerAction,
@@ -66,6 +68,38 @@ export const ApprovalRequest = z.discriminatedUnion("kind", [
     usage: Usage,
     budget: Budget,
   }),
+  /** Typed text read on one origin, going to another outside the allowlist (spec §6.3). */
+  z.object({
+    kind: z.literal("data_egress"),
+    action: ComputerAction,
+    url: PageUrl,
+    fromOrigin: Origin,
+    toOrigin: Origin,
+    chars: z.number().int().min(0).max(100_000),
+    screenshotKey: ScreenshotKey,
+  }),
+]);
+export type ApprovalSubject = z.infer<typeof ApprovalSubject>;
+export type DataEgressRequest = Extract<ApprovalSubject, { kind: "data_egress" }>;
+
+/**
+ * The Guard stopped an action (escalate, or block in ask mode) or holds the run (subject null).
+ * The rationale is model output: shown as untrusted text on the card only (spec §6.10).
+ */
+export const ObserverRequest = z.object({
+  kind: z.literal("observer"),
+  verdict: z.enum(["escalate", "block"]),
+  category: GuardCategory,
+  rationale: z.string().max(300),
+  subject: ApprovalSubject.nullable(),
+  url: PageUrl,
+  screenshotKey: ScreenshotKey,
+});
+export type ObserverRequest = z.infer<typeof ObserverRequest>;
+
+export const ApprovalRequest = z.discriminatedUnion("kind", [
+  ...ApprovalSubject.options,
+  ObserverRequest,
 ]);
 export type ApprovalRequest = z.infer<typeof ApprovalRequest>;
 
@@ -117,6 +151,8 @@ export const AUTO_MODE_DECISIONS = {
   credential_first_use: "approved",
   new_origin: "denied",
   budget: "ask",
+  data_egress: "ask",
+  observer: "ask",
 } as const satisfies Record<ApprovalKind, PolicyDecision>;
 
 /**
@@ -126,7 +162,8 @@ export const AUTO_MODE_DECISIONS = {
  * invariants: a prompt-injection safety check still waits for a person (decideSafetyChecks); a
  * bypass decision is never a person's (vault fills stay on the item's exact origin, an off-origin
  * form still needs a person, no lasting vault grant); the network policy, sandbox, kill switch,
- * takeover and secret masking do not depend on the approval mode at all.
+ * takeover and secret masking do not depend on the approval mode at all. `data_egress` is approved
+ * (D52, user decision). An `observer` request always waits for a person.
  */
 export const BYPASS_DECISIONS = {
   risky_click: "approved",
@@ -135,20 +172,88 @@ export const BYPASS_DECISIONS = {
   credential_first_use: "approved",
   new_origin: "approved",
   budget: "ask",
+  data_egress: "approved",
+  observer: "ask",
 } as const satisfies Record<ApprovalKind, PolicyDecision>;
 
 export const POLICY_DECIDER = "policy";
 /** decided_by of a decision bypass mode made (D44). */
 export const BYPASS_DECIDER = "bypass";
+/** decided_by of a Guard block (D52). Never a person: see isPersonDecider. */
+export const OBSERVER_DECIDER = "observer";
+/** decided_by of an approval the loop superseded (the page changed, or a takeover). */
+export const AGENT_DECIDER = "agent";
+
+/**
+ * Every decider that is not a person: the one closed list (D52 prerequisite, spec §4). A new
+ * machine decider is added here or cannot be written (Decider is the write type), so it can never
+ * inherit a person's powers (lasting vault grants, off-origin fills, unguarded typing).
+ */
+export const MACHINE_DECIDERS = [
+  POLICY_DECIDER,
+  BYPASS_DECIDER,
+  OBSERVER_DECIDER,
+  AGENT_DECIDER,
+] as const;
+export type MachineDecider = (typeof MACHINE_DECIDERS)[number];
+const MACHINE: ReadonlySet<string> = new Set(MACHINE_DECIDERS);
+
+/**
+ * Names no person's id may take, in any letter case: every machine decider plus every Observer role
+ * (D52), so a role can never be written, or read back, as a person's decision.
+ */
+export const RESERVED_DECIDERS = [...MACHINE_DECIDERS, ...OBSERVER_ROLES] as const;
+const RESERVED: ReadonlySet<string> = new Set(RESERVED_DECIDERS);
+
+/**
+ * The shape of a user id: Better Auth ids (32 alphanumerics) and test ids (user-1, fixture-user).
+ * The SQL CHECKs use this exact source (personDeciderSql, deciderShapeSql).
+ */
+export const PERSON_ID_SOURCE = "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$";
+const PERSON_ID = new RegExp(PERSON_ID_SOURCE);
+
+/** A person's decision: a user id, never a machine decider in any letter case. */
+export const PersonDecider = z
+  .string()
+  .regex(PERSON_ID)
+  .refine((value) => !RESERVED.has(value.toLowerCase()), "A reserved decider is not a person")
+  .brand<"PersonDecider">();
+export type PersonDecider = z.infer<typeof PersonDecider>;
+/** What approvals.decided_by may be written as. */
+export type Decider = MachineDecider | PersonDecider;
+
+export function isMachineDecider(value: string | null | undefined): value is MachineDecider {
+  return typeof value === "string" && MACHINE.has(value);
+}
 
 /** Who the policy decides as in this mode: recorded in approvals.decided_by. */
-export function policyDecider(mode: ApprovalMode): string {
+export function policyDecider(mode: ApprovalMode): MachineDecider {
   return mode === "bypass" ? BYPASS_DECIDER : POLICY_DECIDER;
 }
 
-/** A decision made by a person (a user id), not by the auto or bypass policy. */
-export function isPersonDecider(decidedBy: string | null): boolean {
-  return decidedBy !== null && decidedBy !== POLICY_DECIDER && decidedBy !== BYPASS_DECIDER;
+/** Allow-check (spec §4): true only for a user id. Unknown strings are not people. */
+export function isPersonDecider(decidedBy: string | null | undefined): decidedBy is PersonDecider {
+  return typeof decidedBy === "string" && PersonDecider.safeParse(decidedBy).success;
+}
+
+export type DeciderClass = MachineDecider | "person" | "unknown";
+
+/** The class of a decider for display and telemetry: never the user id itself. */
+export function deciderClass(decidedBy: string | null | undefined): DeciderClass {
+  if (isMachineDecider(decidedBy)) return decidedBy;
+  return isPersonDecider(decidedBy) ? "person" : "unknown";
+}
+
+const quoted = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
+
+/** SQL: `column` holds a person's id (vault grants). Built from the constants above (one source). */
+export function personDeciderSql(column: string): string {
+  return `${column} ~ '${PERSON_ID_SOURCE}' AND lower(${column}) NOT IN (${quoted(RESERVED_DECIDERS)})`;
+}
+
+/** SQL: `column` is empty or shaped like a decider (approvals.decided_by input validation). */
+export function deciderShapeSql(column: string): string {
+  return `${column} IS NULL OR ${column} ~ '${PERSON_ID_SOURCE}'`;
 }
 
 export function decideByPolicy(mode: ApprovalMode, kind: ApprovalKind): PolicyDecision {

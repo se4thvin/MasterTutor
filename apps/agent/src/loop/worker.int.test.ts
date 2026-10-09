@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeNotify } from "@mastertutor/contracts";
+import { encodeNotify, PersonDecider } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
   approvals,
@@ -222,7 +222,7 @@ async function sendMessage(id: string, text: string) {
 async function approve(id: string) {
   await owner.db
     .update(approvals)
-    .set({ status: "approved", decidedBy: "user-1" })
+    .set({ status: "approved", decidedBy: PersonDecider.parse("user-1") })
     .where(and(eq(approvals.runId, id), eq(approvals.status, "pending")));
   await owner.db
     .update(runs)
@@ -310,7 +310,7 @@ describe("RunWorker + Supervisor", () => {
     await waitFor(() => !existsSync(join(downloadsDir, run.id)), { label: "downloads cleared" });
     await owner.db
       .update(approvals)
-      .set({ status: "approved", decidedBy: "user-1" })
+      .set({ status: "approved", decidedBy: PersonDecider.parse("user-1") })
       .where(eq(approvals.runId, run.id));
     await owner.db.update(runs).set({ wakeRequestedAt: new Date() }).where(eq(runs.id, run.id));
     await owner.sql.notify(

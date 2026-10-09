@@ -1,4 +1,9 @@
-import { CreateRunInput, encodeNotify, type RunSummary } from "@mastertutor/contracts";
+import {
+  CreateRunInput,
+  encodeNotify,
+  type PersonDecider,
+  type RunSummary,
+} from "@mastertutor/contracts";
 import { folders, runs, settings, type Database } from "@mastertutor/db";
 import { and, eq, sql } from "drizzle-orm";
 import { ServiceError } from "../service-error.ts";
@@ -8,7 +13,7 @@ import { runSummaryOf } from "./views.ts";
 /** Who acts and where: the viewer's workspace (workspaceScoped) and their user id. */
 export interface RunScope {
   workspaceId: string;
-  actor: string;
+  actor: PersonDecider;
 }
 
 /**
@@ -49,6 +54,7 @@ export async function createRun(
         workspaceId: scope.workspaceId,
         goal: valid.goal,
         approvalMode: valid.approvalMode,
+        observerMode: valid.observerMode,
         toolProfile: valid.toolProfile,
         budget: valid.budget ?? workspace.defaultBudget,
         allowedOrigins: [...new Set(valid.allowedOrigins)],
