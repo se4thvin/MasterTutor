@@ -535,8 +535,12 @@ networks:
   observe-edge:
     internal: true
   # Only so the collector can publish its loopback fluent-forward port (spec §4.2): Docker cannot
-  # publish a port from a container on internal networks only.
-  obs-ingest: {}
+  # publish a port from a container on internal networks only. No IP masquerade, so the collector
+  # (it parses untrusted log lines and holds an OpenObserve credential) has no route out
+  # (review I2, tests/observability/collector-config.int.test.ts).
+  obs-ingest:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 volumes:
   pgdata: {}

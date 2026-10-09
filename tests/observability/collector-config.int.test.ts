@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 import { gunzipSync } from "node:zlib";
 import { GenericContainer, TestContainers, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { composeConfig } from "../compose/compose-json.ts";
 
 const IMAGE =
   "otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6";
@@ -190,6 +191,79 @@ describe("collector pipeline (spec §10)", () => {
       expect(body).not.toContain(CANARY);
     } finally {
       execFileSync("docker", ["rm", "-f", name]);
+    }
+  }, 60_000);
+
+  it("obs-ingest: the loopback-published port works, but nothing gets out (review I2)", async () => {
+    const options = composeConfig(".env.test", ["compose.yml"], { profiles: ["observability"] })
+      .networks["obs-ingest"]!.driver_opts!;
+    const id = randomUUID().slice(0, 8);
+    const network = `mt-ci-obs-ingest-${id}`;
+    const listener = `mt-ci-obs-listener-${id}`;
+    const runId = process.env["MT_CI_RUN_ID"];
+    const labels = runId
+      ? ["--label", "mastertutor.ci=1", "--label", `mastertutor.ci.run=${runId}`]
+      : [];
+    const egress = (net: string) =>
+      execFileSync(
+        "docker",
+        [
+          "run",
+          "--rm",
+          ...labels,
+          "--network",
+          net,
+          "busybox:1.37",
+          "sh",
+          "-c",
+          "nc -w 5 1.1.1.1 80 </dev/null && echo out || echo blocked",
+        ],
+        { encoding: "utf8" },
+      ).trim();
+    execFileSync("docker", [
+      "network",
+      "create",
+      ...labels,
+      ...Object.entries(options).flatMap(([key, value]) => ["-o", `${key}=${value}`]),
+      network,
+    ]);
+    try {
+      expect(egress("bridge")).toBe("out"); // the host itself has egress, so the next line means something
+      expect(egress(network)).toBe("blocked");
+      execFileSync("docker", [
+        "run",
+        "-d",
+        "--name",
+        listener,
+        ...labels,
+        "--network",
+        network,
+        "-p",
+        "127.0.0.1::24224",
+        "busybox:1.37",
+        "sh",
+        "-c",
+        "while true; do echo ok | nc -l -p 24224; done",
+      ]);
+      const port = Number(
+        execFileSync("docker", ["port", listener, "24224/tcp"], { encoding: "utf8" })
+          .trim()
+          .split(":")
+          .pop(),
+      );
+      await new Promise((r) => setTimeout(r, 1_000)); // the listener starts
+      const reply = await new Promise<string>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1");
+        let data = "";
+        socket
+          .on("data", (chunk) => (data += chunk.toString()))
+          .on("end", () => resolve(data.trim()))
+          .on("error", reject);
+      });
+      expect(reply).toBe("ok");
+    } finally {
+      execFileSync("docker", ["rm", "-f", listener], { stdio: "ignore" });
+      execFileSync("docker", ["network", "rm", network], { stdio: "ignore" });
     }
   }, 60_000);
 });

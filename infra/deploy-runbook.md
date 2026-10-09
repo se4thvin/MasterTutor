@@ -248,8 +248,10 @@ Notes:
 - **Bounds:** collector 512 MB / 0.5 CPU / 128 pids; OpenObserve 2 GB / 1 CPU / 256 pids;
   observability-init 256 MB / 0.25 CPU / 64 pids. Retention: logs 30 d, traces 15 d, metrics 90 d.
 - OpenObserve's open-source build has one user role (admin), so the ingest and viewer users are
-  admins inside OpenObserve: the ingest credential lives only in the collector, on internal
-  networks, and the viewer's only in web's ForwardAuth answer, never in a browser.
+  admins inside OpenObserve: the ingest credential lives only in the collector and the viewer's
+  only in web's ForwardAuth answer, never in a browser. The collector's networks are internal except
+  `obs-ingest`, which exists only to publish the loopback port and has IP masquerade disabled, so
+  the collector has no route to the internet.
 - **Rotation [approval]:** change an `OBSERVE_*` password or `ALERT_WEBHOOK_SECRET` in the env and
   redeploy; `observability-init` applies it. The root password is OpenObserve's boot credential:
   change it in OpenObserve first (as root), then in the env.

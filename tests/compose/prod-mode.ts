@@ -174,6 +174,8 @@ function workerProblems(config: ComposeConfig, name: string, rule: WorkerRule): 
 
 const DIGEST = /@sha256:[0-9a-f]{64}$/;
 const OBSERVE_NETWORKS = ["telemetry", "observe", "observe-store", "observe-edge"] as const;
+/** The collector's one non-internal network (it publishes the fluent-forward port): no outbound NAT. */
+export const NO_MASQUERADE = { "com.docker.network.bridge.enable_ip_masquerade": "false" } as const;
 
 /**
  * D50: applied when the observability profile runs (check-env requires it in production).
@@ -211,6 +213,15 @@ function observabilityProblems(config: ComposeConfig): string[] {
     if (network && network.external !== true && network.internal !== true)
       problems.push(`networks.${name}: must be internal (D50)`);
   }
+  const ingest = config.networks["obs-ingest"];
+  if (
+    collector &&
+    ingest &&
+    Object.entries(NO_MASQUERADE).some(([key, value]) => ingest.driver_opts?.[key] !== value)
+  )
+    problems.push(
+      "networks.obs-ingest: must disable IP masquerade, so the collector has no egress (D50)",
+    );
   return problems;
 }
 

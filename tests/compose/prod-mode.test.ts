@@ -261,6 +261,9 @@ describe("observability rules (D50)", () => {
     };
     for (const n of ["telemetry", "observe", "observe-store", "observe-edge"])
       config.networks[n] = { internal: true };
+    config.networks["obs-ingest"] = {
+      driver_opts: { "com.docker.network.bridge.enable_ip_masquerade": "false" },
+    };
     return config;
   };
 
@@ -284,6 +287,7 @@ describe("observability rules (D50)", () => {
     collector.image = "otel/opentelemetry-collector-contrib:latest";
     collector.read_only = false;
     config.networks.observe = { internal: false };
+    config.networks["obs-ingest"] = {};
     expect(prodModeProblems(config)).toEqual([
       "openobserve.ports: must publish nothing (D50)",
       "openobserve.image: must be pinned by digest (D50)",
@@ -298,6 +302,7 @@ describe("observability rules (D50)", () => {
       "otel-collector.image: must be pinned by digest (D50)",
       "otel-collector.read_only: must be true (D50)",
       "networks.observe: must be internal (D50)",
+      "networks.obs-ingest: must disable IP masquerade, so the collector has no egress (D50)",
     ]);
   });
 });
