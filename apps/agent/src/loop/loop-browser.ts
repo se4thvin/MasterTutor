@@ -12,6 +12,7 @@ import type { BlockedNavigation } from "../browser/network-policy.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { ModelScreenshot } from "../browser/screenshot.ts";
 import type { BrowserSession } from "../browser/session.ts";
+import type { SignInFlow } from "../browser/sign-in-flow.ts";
 import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
 import type { ActionGate, ComputerRun } from "../tools/computer.ts";
 import type { ToolRun } from "../tools/registry.ts";
@@ -34,6 +35,8 @@ export interface Observation {
 
 /** Everything the loop needs from a browser; the real one is SessionLoopBrowser (Task 17). */
 export interface LoopBrowser {
+  /** The approved sign-in's window for passing through another site (D51); the loop drives it. */
+  readonly signInFlow: SignInFlow;
   observe(signal: AbortSignal): Promise<Observation>;
   /** `signal`: the run's (a takeover or kill ends the classification at once). */
   targetFor(

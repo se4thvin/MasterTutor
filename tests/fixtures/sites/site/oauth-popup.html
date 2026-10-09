@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OAuth popup fixture</title>
+  </head>
+  <body>
+    <!-- "Sign in with a provider": the window opens after the page asked its server (async). -->
+    <button id="provider" style="margin: 40px; width: 220px; height: 40px">Sign in with Provider</button>
+    <script>
+      document.getElementById("provider").addEventListener("click", async () => {
+        await fetch("/index.html");
+        window.open("http://other.fixtures-isolated.test/index.html", "oauth", "width=500,height=600");
+      });
+      // Without a click: a normal Chrome profile blocks this one.
+      if (location.hash === "#unasked")
+        setTimeout(() => window.open("http://other.fixtures-isolated.test/index.html", "spam"), 300);
+    </script>
+  </body>
+</html>
