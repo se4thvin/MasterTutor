@@ -8,6 +8,7 @@ import {
   OBSERVER_DECIDER,
   PERSON_ID_SOURCE,
   PersonDecider,
+  RESERVED_DECIDERS,
   decideByPolicy,
   decideSafetyChecks,
   deciderClass,
@@ -20,6 +21,7 @@ import {
 } from "./approval.ts";
 import { APPROVAL_KINDS, APPROVAL_MODES, type ApprovalKind } from "./enums.ts";
 import { DEFAULT_BUDGET, EMPTY_USAGE } from "./budget.ts";
+import { OBSERVER_ROLES } from "./telemetry.ts";
 
 describe("isRiskyLabel", () => {
   it.each([
@@ -231,6 +233,14 @@ describe("deciders are allow-checked (D52 prerequisite, spec §4)", () => {
     expect(isPersonDecider("agent")).toBe(false);
   });
 
+  it("reserves every Observer role: none is ever a person's decision", () => {
+    for (const role of OBSERVER_ROLES) {
+      expect(isPersonDecider(role), role).toBe(false);
+      expect(isPersonDecider(role.toUpperCase()), role).toBe(false);
+      expect(RESERVED_DECIDERS, role).toContain(role);
+    }
+  });
+
   it("accepts user ids only", () => {
     for (const id of ["user-1", "fixture-user", "user_7f3a9c", "Qw3rTy0123456789AbCdEfGhIjKlMnOp"])
       expect(isPersonDecider(id), id).toBe(true);
@@ -267,7 +277,7 @@ describe("deciders are allow-checked (D52 prerequisite, spec §4)", () => {
 
   it("builds the SQL person rule from the same constants", () => {
     expect(personDeciderSql('"t"."c"')).toBe(
-      `"t"."c" ~ '${PERSON_ID_SOURCE}' AND lower("t"."c") NOT IN ('policy', 'bypass', 'observer', 'agent')`,
+      `"t"."c" ~ '${PERSON_ID_SOURCE}' AND lower("t"."c") NOT IN ('policy', 'bypass', 'observer', 'agent', 'guard', 'watcher', 'copilot')`,
     );
     expect(deciderShapeSql('"t"."c"')).toBe(`"t"."c" IS NULL OR "t"."c" ~ '${PERSON_ID_SOURCE}'`);
   });

@@ -1,4 +1,4 @@
-import { DEFAULT_BUDGET } from "@mastertutor/contracts";
+import { DEFAULT_BUDGET, PersonDecider } from "@mastertutor/contracts";
 import { createDb, ensureWorkspaceMember, type DbHandle } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { createRouterClient } from "@orpc/server";
@@ -23,7 +23,7 @@ let owner: DbHandle;
 let web: DbHandle;
 let workspaceId: string;
 let otherWorkspaceId: string;
-const scope = () => ({ workspaceId, actor: viewer.id });
+const scope = () => ({ workspaceId, actor: PersonDecider.parse(viewer.id) });
 const client = () =>
   createRouterClient(
     { benchmarks: createBenchmarkProcedures({ db: () => web }) },
@@ -74,7 +74,11 @@ describe("benchmarks service", () => {
   it("starts a run through Task 0's createRun, in one transaction, with the benchmark's mode and profile", async () => {
     const view = await createBenchmark(web.db, workspaceId, input("start-test"));
     await expect(
-      startBenchmark(web.db, { workspaceId: otherWorkspaceId, actor: viewer.id }, view.id),
+      startBenchmark(
+        web.db,
+        { workspaceId: otherWorkspaceId, actor: PersonDecider.parse(viewer.id) },
+        view.id,
+      ),
     ).rejects.toBeInstanceOf(BenchmarkNotFound);
     const started = await startBenchmark(web.db, scope(), view.id);
     const [run] =

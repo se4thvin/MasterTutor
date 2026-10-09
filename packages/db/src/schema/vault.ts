@@ -1,8 +1,14 @@
-import { personDeciderSql, type ImapConfig } from "@mastertutor/contracts";
+import {
+  personDeciderSql,
+  type Decider,
+  type ImapConfig,
+  type PersonDecider,
+} from "@mastertutor/contracts";
 import { sql } from "drizzle-orm";
 import { check, index, jsonb, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
 import { bytea, createdAt, id, tstz, updatedAt } from "./columns.ts";
 import { vaultAuditActionEnum, vaultSecretFieldEnum } from "./enums.ts";
+import { user } from "./auth.ts";
 import { runs } from "./runs.ts";
 import { workspaces } from "./workspace.ts";
 
@@ -54,7 +60,11 @@ export const vaultGrants = pgTable(
     id: id(),
     itemId: itemRef(),
     origin: text("origin").notNull(),
-    approvedBy: text("approved_by").notNull(),
+    /** Only a person's grant lasts: a real user (FK) of user-id shape (CHECK), D44, D52. */
+    approvedBy: text("approved_by")
+      .$type<PersonDecider>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
     approvedAt: tstz("approved_at").notNull().defaultNow(),
     createdAt: createdAt(),
   },
@@ -110,7 +120,7 @@ export const vaultAudit = pgTable(
     field: text("field"),
     action: vaultAuditActionEnum("action").notNull(),
     runId: uuid("run_id"),
-    approvedBy: text("approved_by"),
+    approvedBy: text("approved_by").$type<Decider>(),
     outcome: text("outcome").notNull(),
     at: tstz("at").notNull().defaultNow(),
   },

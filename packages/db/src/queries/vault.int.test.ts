@@ -1,4 +1,4 @@
-import { MACHINE_DECIDERS, personDeciderSql } from "@mastertutor/contracts";
+import { PersonDecider, RESERVED_DECIDERS, personDeciderSql } from "@mastertutor/contracts";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
@@ -36,14 +36,17 @@ let web: DbHandle;
 let agent: DbHandle;
 let workspaceId: string;
 let otherWorkspaceId: string;
-const userId = "u-vault";
+const userId = PersonDecider.parse("u-vault");
 const origin = "https://learn.zybooks.com";
 const bytes = (n: number) => new Uint8Array([n, n, n]);
 let aliasCounter = 0;
 
 /** Every test makes its own item, so tests pass alone, reordered or shuffled (review 10). */
 async function newItem(
-  options: { secrets?: Parameters<typeof createVaultItem>[1]["secrets"]; grantedBy?: string } = {},
+  options: {
+    secrets?: Parameters<typeof createVaultItem>[1]["secrets"];
+    grantedBy?: PersonDecider;
+  } = {},
 ): Promise<{ id: string; alias: string }> {
   const alias = `item-${++aliasCounter}`;
   const { id } = await createVaultItem(web.db, {
@@ -295,7 +298,11 @@ describe("agent side (as agent_role)", () => {
     const { id } = await newItem();
     expect(await getVaultGrantApprover(agent.db, id, origin)).toBeNull();
     await insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: userId });
-    await insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: "someone-else" });
+    await insertVaultGrant(agent.db, {
+      itemId: id,
+      origin,
+      approvedBy: PersonDecider.parse("someone-else"),
+    });
     expect(await getVaultGrantApprover(agent.db, id, origin)).toBe(userId);
   });
 
@@ -369,7 +376,11 @@ describe("agent side (as agent_role)", () => {
 
   it("reads a machine or malformed approver as no human grant, without leaning on the CHECK (B3 final review, D52)", async () => {
     // The CHECK keeps such rows out; the queries must state the rule themselves too.
-    const notPeople = [...MACHINE_DECIDERS, "Observer", "user 1", "user:1"];
+    const notPeople = [...RESERVED_DECIDERS, "Observer", "user 1", "user:1"];
+    // Real user rows with those ids, so only the queries' own rule can keep them out (the FK on
+    // approved_by would otherwise refuse the insert first).
+    for (const [n, id] of notPeople.entries())
+      await owner.sql`insert into "user" (id, name, email) values (${id}, 'N', ${`not-person-${n}@example.test`})`;
     await owner.sql`alter table vault_grants drop constraint vault_grants_human_approver`;
     try {
       for (const decider of notPeople) {
@@ -387,6 +398,7 @@ describe("agent side (as agent_role)", () => {
       }
     } finally {
       await owner.sql`delete from vault_grants where approved_by in ${owner.sql(notPeople)}`;
+      await owner.sql`delete from "user" where id in ${owner.sql(notPeople)}`;
       await owner.sql.unsafe(
         `alter table vault_grants add constraint vault_grants_human_approver check (${personDeciderSql("approved_by")})`,
       );
@@ -399,7 +411,8 @@ describe("agent side (as agent_role)", () => {
       owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, 'policy')`,
     ).rejects.toThrow(/vault_grants_human_approver/);
     await expect(
-      insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: "policy" }),
+      // The type refuses this write; the CHECK refuses it even when a cast slips through.
+      insertVaultGrant(agent.db, { itemId: id, origin, approvedBy: "policy" as PersonDecider }),
     ).rejects.toThrow();
     expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin })).toBe(false);
   });
@@ -420,8 +433,10 @@ describe("agent side (as agent_role)", () => {
     );
     const { id, alias } = await newItem();
     await owner.sql.begin(async (tx) => {
-      // As a database that ran 0002 only: no CHECK yet, and a policy grant already written.
+      // As a database that ran 0002 only: no CHECK or user FK (0015) yet, and a policy grant
+      // already written.
       await tx`alter table vault_grants drop constraint vault_grants_human_approver`;
+      await tx`alter table vault_grants drop constraint vault_grants_approved_by_user_id_fk`;
       await tx`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, 'policy')`;
       for (const statement of migration.split("--> statement-breakpoint"))
         await tx.unsafe(statement);

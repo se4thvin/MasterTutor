@@ -21,7 +21,7 @@ import {
 } from "@mastertutor/db";
 import { and, eq, isNull } from "drizzle-orm";
 import type { StatelessOpenAI } from "../llm/openai.ts";
-import { usageDelta } from "../llm/pricing.ts";
+import { billedUsageOf, usageDelta } from "../llm/pricing.ts";
 import type { Log } from "../runtime/types.ts";
 import type { StepWriter } from "../tools/types.ts";
 import type { NoteWriter, RunScope } from "./note-writer.ts";
@@ -70,20 +70,27 @@ export function filingPrompt(input: {
 export function createFilingModel(openai: Pick<StatelessOpenAI, "responses">): FilingModel {
   return {
     async decide(input, { signal, step }) {
-      const reply = await openai.responses.parse(
-        {
-          model: MODELS.filing,
-          instructions: INSTRUCTIONS,
-          input: [{ role: "user", content: filingPrompt(input) }],
-          schema: FilingDecision,
-          name: "filing_decision",
-        },
-        {
-          signal: signal
-            ? AbortSignal.any([signal, AbortSignal.timeout(FILING_TIMEOUT_MS)])
-            : AbortSignal.timeout(FILING_TIMEOUT_MS),
-        },
-      );
+      const reply = await openai.responses
+        .parse(
+          {
+            model: MODELS.filing,
+            instructions: INSTRUCTIONS,
+            input: [{ role: "user", content: filingPrompt(input) }],
+            schema: FilingDecision,
+            name: "filing_decision",
+          },
+          {
+            signal: signal
+              ? AbortSignal.any([signal, AbortSignal.timeout(FILING_TIMEOUT_MS)])
+              : AbortSignal.timeout(FILING_TIMEOUT_MS),
+          },
+        )
+        .catch((error: unknown) => {
+          // An unparseable answer is billed: it counts toward the run's budget, then fails.
+          const billed = billedUsageOf(error);
+          if (billed) step.addUsage(billed);
+          throw error;
+        });
       // The D38 wrapper reports no cache writes.
       step.addUsage(usageDelta(reply.model, { ...reply.tokens, cacheWrite: 0 }, 0));
       return reply.parsed;

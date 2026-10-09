@@ -1,4 +1,4 @@
-import { MACHINE_DECIDERS } from "@mastertutor/contracts";
+import { RESERVED_DECIDERS } from "@mastertutor/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "./client.ts";
 import { createVaultItem } from "./queries/vault.ts";
@@ -35,11 +35,27 @@ async function newRunAndItem() {
 describe("decider CHECKs (spec §4, migration 0015)", () => {
   it("refuses every machine decider as a lasting vault grant", async () => {
     const { itemId } = await newRunAndItem();
-    for (const decider of [...MACHINE_DECIDERS, "Observer", "POLICY"])
+    for (const decider of [...RESERVED_DECIDERS, "Observer", "POLICY"])
       await expect(
         owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${itemId}, ${`https://${decider}.test`}, ${decider})`,
         decider,
       ).rejects.toThrow(/vault_grants_human_approver/);
+  });
+
+  it("refuses a well-shaped approver who is not a real user (FK, D52)", async () => {
+    const { itemId } = await newRunAndItem();
+    await expect(
+      owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${itemId}, 'https://ghost.test', 'ghost-user')`,
+    ).rejects.toThrow(/vault_grants_approved_by_user_id_fk/);
+  });
+
+  it("drops a grant when its approver's account is deleted", async () => {
+    const { itemId, userId } = await newRunAndItem();
+    await owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${itemId}, 'https://gone.test', ${userId})`;
+    await owner.sql`delete from "user" where id = ${userId}`;
+    expect(await owner.sql`select 1 from vault_grants where approved_by = ${userId}`).toHaveLength(
+      0,
+    );
   });
 
   it("accepts a user id as a grant approver", async () => {

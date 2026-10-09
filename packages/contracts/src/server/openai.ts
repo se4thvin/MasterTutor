@@ -73,6 +73,21 @@ export interface StructuredRequest<S extends z.ZodType> {
   reasoningEffort?: "none" | "low";
 }
 
+/**
+ * A structured answer that came back but did not parse (prose, cut off, off-schema). OpenAI bills
+ * it all the same, so it carries the usage: callers charge it, then fail closed. Never the text.
+ */
+export class StructuredParseError extends Error {
+  readonly model: string;
+  readonly tokens: TokenCounts;
+  constructor(model: string, tokens: TokenCounts) {
+    super("The structured reply did not match its schema");
+    this.name = "StructuredParseError";
+    this.model = model;
+    this.tokens = tokens;
+  }
+}
+
 export interface StructuredReply<T> {
   parsed: T;
   model: string;
@@ -169,11 +184,14 @@ export function createOpenAI(options: {
           },
           requestOptions,
         );
-        return {
-          parsed: request.schema.parse(JSON.parse(outputText(response))),
-          model: response.model,
-          tokens: tokensOf(response),
-        };
+        const tokens = tokensOf(response);
+        let parsed: z.output<typeof request.schema>;
+        try {
+          parsed = request.schema.parse(JSON.parse(outputText(response)));
+        } catch {
+          throw new StructuredParseError(response.model, tokens);
+        }
+        return { parsed, model: response.model, tokens };
       },
     },
     embeddings: {

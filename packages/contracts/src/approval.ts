@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Budget, Usage } from "./budget.ts";
 import type { ApprovalKind, ApprovalMode } from "./enums.ts";
 import { GuardCategory } from "./observer.ts";
+import { OBSERVER_ROLES } from "./telemetry.ts";
 import { Alias, Origin, Uuid } from "./primitives.ts";
 import { ComputerAction } from "./tools.ts";
 
@@ -198,6 +199,13 @@ export type MachineDecider = (typeof MACHINE_DECIDERS)[number];
 const MACHINE: ReadonlySet<string> = new Set(MACHINE_DECIDERS);
 
 /**
+ * Names no person's id may take, in any letter case: every machine decider plus every Observer role
+ * (D52), so a role can never be written, or read back, as a person's decision.
+ */
+export const RESERVED_DECIDERS = [...MACHINE_DECIDERS, ...OBSERVER_ROLES] as const;
+const RESERVED: ReadonlySet<string> = new Set(RESERVED_DECIDERS);
+
+/**
  * The shape of a user id: Better Auth ids (32 alphanumerics) and test ids (user-1, fixture-user).
  * The SQL CHECKs use this exact source (personDeciderSql, deciderShapeSql).
  */
@@ -208,7 +216,7 @@ const PERSON_ID = new RegExp(PERSON_ID_SOURCE);
 export const PersonDecider = z
   .string()
   .regex(PERSON_ID)
-  .refine((value) => !MACHINE.has(value.toLowerCase()), "A machine decider is not a person")
+  .refine((value) => !RESERVED.has(value.toLowerCase()), "A reserved decider is not a person")
   .brand<"PersonDecider">();
 export type PersonDecider = z.infer<typeof PersonDecider>;
 /** What approvals.decided_by may be written as. */
@@ -240,7 +248,7 @@ const quoted = (values: readonly string[]) => values.map((value) => `'${value}'`
 
 /** SQL: `column` holds a person's id (vault grants). Built from the constants above (one source). */
 export function personDeciderSql(column: string): string {
-  return `${column} ~ '${PERSON_ID_SOURCE}' AND lower(${column}) NOT IN (${quoted(MACHINE_DECIDERS)})`;
+  return `${column} ~ '${PERSON_ID_SOURCE}' AND lower(${column}) NOT IN (${quoted(RESERVED_DECIDERS)})`;
 }
 
 /** SQL: `column` is empty or shaped like a decider (approvals.decided_by input validation). */

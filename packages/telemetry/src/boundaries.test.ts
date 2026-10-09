@@ -50,10 +50,10 @@ describe("module dependency map (plan: no cycles, spec §4.3)", () => {
         expect(spec, file).toMatch(/^(\.|node:|zod$|@mastertutor\/contracts)/);
   });
 
-  it("the agent reaches the observer core through ./guard and ./layout only", () => {
+  it("the agent reaches the observer core through ./guard only", () => {
     for (const file of files("apps/agent/src"))
       for (const spec of imports(file).filter((s) => s.startsWith("@mastertutor/observer")))
-        expect(spec, file).toMatch(/^@mastertutor\/observer(\/guard|\/layout)?$/);
+        expect(spec, file).toMatch(/^@mastertutor\/observer(\/guard)?$/);
   });
 
   it("the observer service uses ./copilot and observability/query only, and nothing imports it", () => {

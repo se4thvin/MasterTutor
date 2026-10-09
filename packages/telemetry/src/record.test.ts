@@ -125,11 +125,11 @@ describe("run event recorders (spec §5.3, seam 6)", () => {
   });
 
   it("counts observer spend and failures by role, never more", async () => {
-    recordObserverSpend("layout", 0.01);
+    recordObserverSpend("copilot", 0.01);
     recordObserverSpend("guard", 0);
     recordObserverFailure("guard", "timeout");
     expect(await telemetry.metric(METRIC.observerSpend.name)).toEqual([
-      { value: 0.01, attributes: { "mt.observer.role": "layout" } },
+      { value: 0.01, attributes: { "mt.observer.role": "copilot" } },
     ]);
     expect(await telemetry.metric(METRIC.observerFailures.name)).toEqual([
       { value: 1, attributes: { "mt.observer.role": "guard", "mt.observer.outcome": "timeout" } },

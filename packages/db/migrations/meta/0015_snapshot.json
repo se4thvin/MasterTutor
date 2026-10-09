@@ -2576,6 +2576,19 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "vault_grants_approved_by_user_id_fk": {
+          "name": "vault_grants_approved_by_user_id_fk",
+          "tableFrom": "vault_grants",
+          "tableTo": "user",
+          "columnsFrom": [
+            "approved_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2593,7 +2606,7 @@
       "checkConstraints": {
         "vault_grants_human_approver": {
           "name": "vault_grants_human_approver",
-          "value": "\"vault_grants\".\"approved_by\" ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower(\"vault_grants\".\"approved_by\") NOT IN ('policy', 'bypass', 'observer', 'agent')"
+          "value": "\"vault_grants\".\"approved_by\" ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower(\"vault_grants\".\"approved_by\") NOT IN ('policy', 'bypass', 'observer', 'agent', 'guard', 'watcher', 'copilot')"
         }
       },
       "isRLSEnabled": false

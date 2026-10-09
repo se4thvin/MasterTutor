@@ -1,4 +1,9 @@
-import { isPersonDecider, toOrigin, type ApprovalRequest } from "@mastertutor/contracts";
+import {
+  isPersonDecider,
+  toOrigin,
+  type ApprovalRequest,
+  type Decider,
+} from "@mastertutor/contracts";
 import { getVaultGrantApprover, insertVaultGrant, type VaultItemRecord } from "@mastertutor/db";
 import type { VaultDeps } from "./context.ts";
 import type { CallApproval } from "./runtime.ts";
@@ -29,7 +34,7 @@ export async function approvedBy(
   approval: CallApproval | null,
   item: VaultItemRecord,
   pageUrl: string,
-): Promise<string | null> {
+): Promise<Decider | null> {
   if (toOrigin(pageUrl) !== item.origin) return null;
   if (approval?.kind === "credential_first_use") {
     // Only a person's approval is a lasting grant; a policy (auto or bypass) one is for this call.

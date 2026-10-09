@@ -1,6 +1,6 @@
 // Throwaway spike (Observer spec §10). Not shipped, not imported.
 // Run from the repo root with the key in the environment (never printed):
-//   OPENAI_API_KEY=... node orchestration/runs/2026-10-09-05-spike-observer/spike.ts
+//   OPENAI_API_KEY=... node orchestration/runs/2026-10-09-07-spike-observer/spike.ts
 // Prints timings, booleans, token counts and error statuses only: never a key, a prompt or an answer.
 // Every call goes through the D38 wrapper (store:false, no identifiers). Stops itself at $0.90.
 import { readFileSync } from "node:fs";

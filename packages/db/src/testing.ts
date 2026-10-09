@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { RunStatus, WaitReason } from "@mastertutor/contracts";
+import { PersonDecider, type RunStatus, type WaitReason } from "@mastertutor/contracts";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
 import type { Sql } from "postgres";
@@ -57,8 +57,8 @@ export async function startTestDatabase(options: { slots?: string[] } = {}): Pro
 export async function seedMember(
   db: Database,
   options: { workspaceId?: string; role?: "owner" | "member" } = {},
-): Promise<{ userId: string; workspaceId: string }> {
-  const userId = `user_${randomUUID().replaceAll("-", "")}`;
+): Promise<{ userId: PersonDecider; workspaceId: string }> {
+  const userId = PersonDecider.parse(`user_${randomUUID().replaceAll("-", "")}`);
   await db.insert(user).values({ id: userId, name: "Test", email: `${userId}@example.test` });
   const workspaceId =
     options.workspaceId ??

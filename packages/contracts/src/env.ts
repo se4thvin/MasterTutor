@@ -11,7 +11,7 @@ import {
 import { SlotList } from "./constants.ts";
 import { DEFAULT_CDP_SUBNET_PREFIX } from "./live.ts";
 import { ALERT_WEBHOOK_INTERNAL_URL, OBSERVE_INTERNAL_URL } from "./observability.ts";
-import { OBSERVER_DAILY_USD, OBSERVER_PORT } from "./observer.ts";
+import { COPILOT_LIMITS, OBSERVER_PORT } from "./observer.ts";
 
 export const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 export const LogLevel = z.enum(LOG_LEVELS);
@@ -192,7 +192,7 @@ export const ObserverEnv = z.object({
   OBSERVER_INTERNAL_TOKEN: Secret,
   OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
   OBSERVE_COPILOT_PASSWORD: ObservePassword,
-  OBSERVER_DAILY_USD: z.coerce.number().positive().max(100).default(OBSERVER_DAILY_USD.copilot),
+  OBSERVER_DAILY_USD: z.coerce.number().positive().max(100).default(COPILOT_LIMITS.dailyUsdDefault),
   OBSERVER_PORT: z.coerce.number().int().min(1).max(65_535).default(OBSERVER_PORT),
   /** Built into the image by build-code-index.ts (spec §7.5). */
   OBSERVER_CODE_INDEX: z.string().min(1).default("/app/code-index.json"),

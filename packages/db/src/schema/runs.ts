@@ -5,6 +5,7 @@ import {
   SLOT_NAME_PATTERN,
   deciderShapeSql,
   type ApprovalEdit,
+  type Decider,
   type ApprovalRequest,
   type Budget,
   type Plan,
@@ -182,7 +183,7 @@ export const approvals = pgTable(
     status: approvalStatusEnum("status").notNull().default("pending"),
     edit: jsonb("edit").$type<ApprovalEdit>(),
     /** A user id or a machine decider (MACHINE_DECIDERS, spec §4). */
-    decidedBy: text("decided_by"),
+    decidedBy: text("decided_by").$type<Decider>(),
     decidedAt: tstz("decided_at"),
     createdAt: createdAt(),
   },

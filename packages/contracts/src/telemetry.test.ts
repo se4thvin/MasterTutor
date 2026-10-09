@@ -73,8 +73,8 @@ describe("Observer names (spec §6.11)", () => {
     ])
       expect(SPANMETRIC_DIMENSIONS).toContain(dimension);
   });
-  it("leaves room for the document designer (D53b): a layout role and spend purpose", () => {
-    expect(OBSERVER_ROLES).toEqual(["guard", "watcher", "copilot", "layout"]);
-    expect(SPEND_PURPOSES).toEqual(["run", "copilot", "layout"]);
+  it("names the roles and charges everything but the Copilot to the run", () => {
+    expect(OBSERVER_ROLES).toEqual(["guard", "watcher", "copilot"]);
+    expect(SPEND_PURPOSES).toEqual(["run", "copilot"]);
   });
 });

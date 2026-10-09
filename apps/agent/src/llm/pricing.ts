@@ -8,6 +8,7 @@ import {
   type TokenUsage,
   type Usage,
 } from "@mastertutor/contracts";
+import { StructuredParseError } from "./openai.ts";
 
 export function usageDelta(model: string, tokens: TokenUsage, steps = 1): Usage {
   return {
@@ -18,6 +19,13 @@ export function usageDelta(model: string, tokens: TokenUsage, steps = 1): Usage 
     usd: costUsd(model, tokens),
     activeMs: 0,
   };
+}
+
+/** What a structured call that did not parse still cost (it is billed), or null for other errors. */
+export function billedUsageOf(error: unknown): Usage | null {
+  return error instanceof StructuredParseError
+    ? usageDelta(error.model, { ...error.tokens, cacheWrite: 0 }, 0)
+    : null;
 }
 
 export function addUsage(a: Usage, b: Usage): Usage {

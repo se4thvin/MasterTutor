@@ -7,8 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./guard": "./src/guard/index.ts",
-    "./copilot": "./src/copilot/index.ts",
-    "./layout": "./src/layout/index.ts"
+    "./copilot": "./src/copilot/index.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

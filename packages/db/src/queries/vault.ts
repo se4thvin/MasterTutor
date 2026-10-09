@@ -1,6 +1,8 @@
 import {
-  MACHINE_DECIDERS,
+  RESERVED_DECIDERS,
   PERSON_ID_SOURCE,
+  type Decider,
+  type PersonDecider,
   TERMINAL_RUN_STATUSES,
   encodeNotify,
   type ImapConfig,
@@ -83,7 +85,7 @@ export interface VaultAuditInsert {
   field: string | null;
   action: VaultAuditAction;
   runId: string | null;
-  approvedBy: string | null;
+  approvedBy: Decider | null;
   outcome: string;
 }
 
@@ -258,7 +260,7 @@ export async function createVaultItem(
     label: string;
     imap: ImapConfig | null;
     secrets: readonly SealedField[];
-    actor: string;
+    actor: PersonDecider;
   },
 ): Promise<{ id: string; createdAt: Date }> {
   try {
@@ -305,7 +307,7 @@ export async function createVaultItem(
 
 export async function setVaultSecret(
   db: Database,
-  input: { workspaceId: string; itemId: string; secret: SealedField; actor: string },
+  input: { workspaceId: string; itemId: string; secret: SealedField; actor: PersonDecider },
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const item = await getVaultItem(tx, input.workspaceId, input.itemId);
@@ -327,7 +329,7 @@ export async function setVaultSecret(
 
 export async function removeVaultSecret(
   db: Database,
-  input: { workspaceId: string; itemId: string; field: VaultSecretField; actor: string },
+  input: { workspaceId: string; itemId: string; field: VaultSecretField; actor: PersonDecider },
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const item = await getVaultItem(tx, input.workspaceId, input.itemId);
@@ -375,7 +377,7 @@ export async function deleteBrowserSessions(
 
 export async function deleteVaultItem(
   db: Database,
-  input: { workspaceId: string; itemId: string; actor: string },
+  input: { workspaceId: string; itemId: string; actor: PersonDecider },
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const item = await getVaultItem(tx, input.workspaceId, input.itemId);
@@ -402,7 +404,7 @@ export async function deleteVaultItem(
 
 export async function forgetBrowserSession(
   db: Database,
-  input: { workspaceId: string; alias: string; origin: string; actor: string },
+  input: { workspaceId: string; alias: string; origin: string; actor: PersonDecider },
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const removed = await deleteBrowserSessions(tx, input);
@@ -520,14 +522,14 @@ export async function consumeOtpCode(db: DbExecutor, runId: string): Promise<Uin
  */
 const humanApprover = and(
   sql`${vaultGrants.approvedBy} ~ ${PERSON_ID_SOURCE}`,
-  notInArray(sql`lower(${vaultGrants.approvedBy})`, [...MACHINE_DECIDERS]),
+  notInArray(sql`lower(${vaultGrants.approvedBy})`, [...RESERVED_DECIDERS]),
 )!;
 
 export async function getVaultGrantApprover(
   db: DbExecutor,
   itemId: string,
   origin: string,
-): Promise<string | null> {
+): Promise<PersonDecider | null> {
   const [row] = await db
     .select({ approvedBy: vaultGrants.approvedBy })
     .from(vaultGrants)
@@ -538,7 +540,7 @@ export async function getVaultGrantApprover(
 
 export async function insertVaultGrant(
   db: DbExecutor,
-  input: { itemId: string; origin: string; approvedBy: string },
+  input: { itemId: string; origin: string; approvedBy: PersonDecider },
 ): Promise<void> {
   await db.insert(vaultGrants).values(input).onConflictDoNothing();
 }

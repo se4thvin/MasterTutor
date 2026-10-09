@@ -134,8 +134,11 @@ export const DEPENDENCIES = [
   "push",
 ] as const;
 export type Dependency = (typeof DEPENDENCIES)[number];
-/** The Observer's roles (D52, D53b); layout is the document designer, reserved by Track F. */
-export const OBSERVER_ROLES = ["guard", "watcher", "copilot", "layout"] as const;
+/**
+ * The Observer's roles (D52). Track D adds the document designer (D53b). Each is also a reserved
+ * name that can never be a person's decider (RESERVED_DECIDERS in ./approval.ts).
+ */
+export const OBSERVER_ROLES = ["guard", "watcher", "copilot"] as const;
 export type ObserverRole = (typeof OBSERVER_ROLES)[number];
 export const OBSERVER_OUTCOMES = [
   "ok",
@@ -147,11 +150,8 @@ export const OBSERVER_OUTCOMES = [
   "capped",
 ] as const;
 export type ObserverOutcome = (typeof OBSERVER_OUTCOMES)[number];
-/**
- * run: everything a run pays (agent, title, Guard); copilot: the owner's chat (spec §6.11);
- * layout: the document designer's refinements (D53b).
- */
-export const SPEND_PURPOSES = ["run", "copilot", "layout"] as const;
+/** run: everything a run pays (agent, title, Guard, designer); copilot: the owner's chat (spec §6.11). */
+export const SPEND_PURPOSES = ["run", "copilot"] as const;
 export type SpendPurpose = (typeof SPEND_PURPOSES)[number];
 
 /** A product error code: what instrument() records instead of a message (spec §7.1). */

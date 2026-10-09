@@ -1,4 +1,4 @@
-import { POLICY_DECIDER } from "@mastertutor/contracts";
+import { POLICY_DECIDER, type PersonDecider } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import type { Frame, Page } from "playwright-core";
 import type { VaultDeps } from "../context.ts";
@@ -108,7 +108,10 @@ export function refMap(tb: TestBrowser): {
 }
 
 /** A person approved a credential_first_use card; `postsTo` is the destination it named, if any. */
-export const humanApproval = (userId: string, postsTo: string | null = null): CallApproval => ({
+export const humanApproval = (
+  userId: PersonDecider,
+  postsTo: string | null = null,
+): CallApproval => ({
   kind: "credential_first_use",
   decidedBy: userId,
   label: postsTo,

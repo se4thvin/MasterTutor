@@ -1,7 +1,10 @@
 -- D52 prerequisite (spec §4): deciders are allow-checked. No machine decider is a lasting grant.
 ALTER TABLE "vault_grants" DROP CONSTRAINT "vault_grants_human_approver";--> statement-breakpoint
-DELETE FROM "vault_grants" WHERE NOT ("vault_grants"."approved_by" ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower("vault_grants"."approved_by") NOT IN ('policy', 'bypass', 'observer', 'agent'));--> statement-breakpoint
-ALTER TABLE "vault_grants" ADD CONSTRAINT "vault_grants_human_approver" CHECK ("vault_grants"."approved_by" ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower("vault_grants"."approved_by") NOT IN ('policy', 'bypass', 'observer', 'agent'));--> statement-breakpoint
+DELETE FROM "vault_grants" WHERE NOT ("vault_grants"."approved_by" ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower("vault_grants"."approved_by") NOT IN ('policy', 'bypass', 'observer', 'agent', 'guard', 'watcher', 'copilot'));--> statement-breakpoint
+ALTER TABLE "vault_grants" ADD CONSTRAINT "vault_grants_human_approver" CHECK ("vault_grants"."approved_by" ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower("vault_grants"."approved_by") NOT IN ('policy', 'bypass', 'observer', 'agent', 'guard', 'watcher', 'copilot'));--> statement-breakpoint
+-- A lasting grant names a real person: approved_by references "user" (a deleted user's grants go).
+DELETE FROM "vault_grants" WHERE NOT EXISTS (SELECT 1 FROM "user" WHERE "user"."id" = "vault_grants"."approved_by");--> statement-breakpoint
+ALTER TABLE "vault_grants" ADD CONSTRAINT "vault_grants_approved_by_user_id_fk" FOREIGN KEY ("approved_by") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "approvals" ADD CONSTRAINT "approvals_decided_by_ck" CHECK ("approvals"."decided_by" IS NULL OR "approvals"."decided_by" ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$');--> statement-breakpoint
 -- D52 Observer (spec §6, §7): drizzle-kit's diff for the schema below, then the hand-written views.
 CREATE SCHEMA "observer";
@@ -90,7 +93,7 @@ CREATE VIEW "observer"."approvals" WITH (security_barrier = true) AS
   SELECT id, run_id, step_seq, kind, status,
          CASE WHEN decided_by IS NULL THEN NULL
               WHEN decided_by IN ('policy', 'bypass', 'observer', 'agent') THEN decided_by
-              WHEN decided_by ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower(decided_by) NOT IN ('policy', 'bypass', 'observer', 'agent') THEN 'person'
+              WHEN decided_by ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' AND lower(decided_by) NOT IN ('policy', 'bypass', 'observer', 'agent', 'guard', 'watcher', 'copilot') THEN 'person'
               ELSE 'unknown' END AS decider,
          decided_at, created_at
   FROM "public"."approvals";--> statement-breakpoint
