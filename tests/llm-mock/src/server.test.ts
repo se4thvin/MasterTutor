@@ -555,3 +555,34 @@ describe("llm-mock scenario routing (D26, P7-8)", () => {
     ]);
   });
 });
+
+it("routes Guard answers by goal without consuming the agent turn, and records the nonce", async () => {
+  mock = await startLlmMock({
+    scenarios: [
+      {
+        name: "guard-probe",
+        turns: [{ outputs: [{ type: "turn", status: "done", reason: "ok" }] }],
+        guard: () => ({
+          screen: "review",
+          review: { verdict: "block", category: "other", itemKeys: ["i1"], rationale: "x" },
+        }),
+      },
+    ],
+  });
+  const response = await post({
+    model: "gpt-6-luna",
+    text: { format: { name: "guard_screen" } },
+    input: [
+      { role: "user", content: JSON.stringify({ goal: "[scenario:guard-probe#abc] Notes" }) },
+    ],
+  });
+  expect(response.status).toBe(200);
+  const output = response.body.output as Array<{ content: Array<{ text: string }> }>;
+  expect(JSON.parse(output[0]!.content[0]!.text)).toEqual({ decision: "review" });
+  expect(mock.requestsFor("guard-probe", "abc")).toHaveLength(1);
+  const agent = await post({
+    model: "gpt-6-astra",
+    input: userInput("[scenario:guard-probe#abc] Notes"),
+  });
+  expect(agent.status).toBe(200);
+});

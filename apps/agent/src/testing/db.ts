@@ -1,5 +1,6 @@
 import type {
   ApprovalMode,
+  ObserverMode,
   Budget,
   Controller,
   RunStatus,
@@ -28,6 +29,7 @@ export interface InsertRunOptions {
   status?: RunStatus;
   waitReason?: WaitReason | null;
   approvalMode?: ApprovalMode;
+  observerMode?: ObserverMode;
   toolProfile?: ToolProfile;
   budget?: Budget;
   controller?: Controller;
@@ -46,6 +48,7 @@ export async function insertRun(db: Database, options: InsertRunOptions): Promis
       status: options.status ?? "queued",
       waitReason: options.waitReason ?? null,
       approvalMode: options.approvalMode ?? "ask",
+      ...(options.observerMode ? { observerMode: options.observerMode } : {}),
       toolProfile: options.toolProfile ?? "browser_use",
       controller: options.controller ?? "agent",
       controlUserId: options.controller === "user" ? (options.controlUserId ?? "test-user") : null,

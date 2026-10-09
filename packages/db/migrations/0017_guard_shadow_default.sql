@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ALTER COLUMN "observer_mode" SET DEFAULT 'shadow';

@@ -90,15 +90,11 @@ export const CreateRunInput = z
     approvalMode: ApprovalMode.default("ask"),
     toolProfile: ToolProfile.default("browser_use"),
     bypassAcknowledged: BypassAcknowledged,
-    /** Guard rollout (spec §6.8): shadow records only and must be acknowledged, like bypass. */
-    observerMode: ObserverMode.default("enforce"),
+    /** Guard rollout: Shadow records only during the default rollout. */
+    observerMode: ObserverMode.default("shadow"),
     observerShadowAcknowledged: z.literal(true).optional(),
   })
   .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED)
-  .refine((input) => input.observerMode !== "shadow" || input.observerShadowAcknowledged === true, {
-    message: "Shadow mode needs observerShadowAcknowledged: true (the user saw the warning)",
-    path: ["observerShadowAcknowledged"],
-  })
   .refine(autoModeNeedsOrigins, {
     message: "Auto mode needs at least one allowed origin",
     path: ["allowedOrigins"],
@@ -509,7 +505,7 @@ export const CreateBenchmarkInput = z
   })
   .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED);
 export type CreateBenchmarkInput = z.infer<typeof CreateBenchmarkInput>;
-export const BenchmarkRef = z.object({ benchmarkId: Uuid });
+export const BenchmarkRef = z.object({ benchmarkId: Uuid, observerMode: ObserverMode.optional() });
 export type BenchmarkRef = z.infer<typeof BenchmarkRef>;
 export const StartBenchmarkResult = z.object({ benchmarkRunId: Uuid, runId: Uuid });
 export type StartBenchmarkResult = z.infer<typeof StartBenchmarkResult>;

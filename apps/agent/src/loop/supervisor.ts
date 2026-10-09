@@ -1,3 +1,4 @@
+import type { StepGuardFactory } from "../guardrails/observer/types.ts";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -37,6 +38,7 @@ export interface SupervisorOptions {
   browserControl?: BrowserControl;
   /** Generates each run's short title (main wires the real one; tests may leave it out). */
   titler?: RunTitler;
+  guards?: StepGuardFactory;
 }
 
 /** LISTENs, sweeps, claims and runs one RunWorker per claimed run (spec §5.2). */
@@ -194,6 +196,7 @@ export class Supervisor {
         log: this.#options.log,
         connect: this.#connect,
         titler: this.#options.titler,
+        guards: this.#options.guards,
       },
       claim,
     );

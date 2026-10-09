@@ -21,7 +21,7 @@ const knownLabels = new Set<string>([
 ]);
 
 describe("dashboards as code (spec §8, §11)", () => {
-  it("has the six dashboards the spec names", () => {
+  it("has the seven dashboards the spec names", () => {
     expect(DASHBOARDS.map((d) => d.title)).toEqual([
       "MasterTutor · System health",
       "MasterTutor · Runs and agent",
@@ -29,6 +29,7 @@ describe("dashboards as code (spec §8, §11)", () => {
       "MasterTutor · Capture fidelity",
       "MasterTutor · Slots and live view",
       "MasterTutor · Errors",
+      "MasterTutor · Observer",
     ]);
   });
 
@@ -59,4 +60,16 @@ describe("dashboards as code (spec §8, §11)", () => {
     expect(built.tabs[0]!.panels.length).toBe(DASHBOARDS[1]!.panels.length);
     expect(built.tabs[0]!.panels[0]!.queries[0]!.fields.filter).toEqual(O2_EMPTY_PANEL_FILTER);
   });
+});
+it("has an Observer dashboard over the mt.observer names (spec §6.11)", () => {
+  const observer = DASHBOARDS.find((d) => d.title === "MasterTutor · Observer");
+  expect(observer?.panels.map((p) => p.title)).toEqual([
+    "Verdicts",
+    "Categories",
+    "Failures",
+    "Overrides",
+    "Observer spend (USD)",
+    "Spend by purpose (USD)",
+    "Review p95 by stage (ms)",
+  ]);
 });

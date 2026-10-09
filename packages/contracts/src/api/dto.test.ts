@@ -391,9 +391,12 @@ describe("RunStepView.reasoning (fe-run-chat)", () => {
 });
 
 describe("observer mode (spec §6.8)", () => {
-  it("defaults to enforce and needs an acknowledgement for shadow", () => {
-    expect(CreateRunInput.parse({ goal: "g" }).observerMode).toBe("enforce");
-    expect(CreateRunInput.safeParse({ goal: "g", observerMode: "shadow" }).success).toBe(false);
+  it("defaults to shadow and permits explicit rollout selection", () => {
+    expect(CreateRunInput.parse({ goal: "g" }).observerMode).toBe("shadow");
+    expect(CreateRunInput.safeParse({ goal: "g", observerMode: "shadow" }).success).toBe(true);
+    expect(CreateRunInput.parse({ goal: "g", observerMode: "enforce" }).observerMode).toBe(
+      "enforce",
+    );
     expect(
       CreateRunInput.parse({ goal: "g", observerMode: "shadow", observerShadowAcknowledged: true })
         .observerMode,

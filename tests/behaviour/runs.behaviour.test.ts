@@ -1,4 +1,4 @@
-import { POLICY_DECIDER } from "@mastertutor/contracts";
+import { POLICY_DECIDER, GuardInput, TrajectoryDigest } from "@mastertutor/contracts";
 import { approvals, browserSlots } from "@mastertutor/db";
 import { eq } from "drizzle-orm";
 import { chromium, type Page } from "playwright-core";
@@ -29,7 +29,7 @@ const CI_BOUND_MS = 2_000;
 let agent: BehaviourAgent;
 let checked = 0;
 beforeAll(async () => {
-  agent = await startBehaviourAgent();
+  agent = await startBehaviourAgent({ guard: true });
 });
 afterAll(async () => {
   await agent?.stop();
@@ -41,6 +41,15 @@ afterEach(() => {
     expect(request.path).toBe("/v1/responses");
     expect(request.body.store).toBe(false);
     for (const field of FORBIDDEN_RESPONSE_FIELDS) expect(request.body).not.toHaveProperty(field);
+    const name = (request.body.text as { format?: { name?: string } } | undefined)?.format?.name;
+    if (name?.startsWith("guard_")) {
+      expect(request.body).not.toHaveProperty("prompt_cache_retention");
+      const inputs = request.body.input as Array<{ content: string }>;
+      const input = JSON.parse(inputs[0]!.content) as unknown;
+      expect(GuardInput.safeParse(input).success || TrajectoryDigest.safeParse(input).success).toBe(
+        true,
+      );
+    }
   }
   checked = agent.mock.requests.length;
 });
@@ -616,4 +625,47 @@ describe("agent behaviour on real slots (spec §12)", () => {
       { label: "slots idle", timeoutMs: 90_000, intervalMs: 250 },
     );
   }, 240_000);
+});
+
+it("guard-bypass-risky: shadow reviews a Buy now action on a real slot without changing policy", async () => {
+  const name = "guard-bypass-risky";
+  agent.mock.setScenarios([
+    {
+      name,
+      turns: [readInteractive, clickNamed("Buy now"), done],
+      guard: () => ({
+        screen: "review",
+        review: {
+          verdict: "block",
+          category: "destructive_or_financial",
+          itemKeys: ["i1"],
+          rationale: "Simulated purchase.",
+        },
+      }),
+    },
+  ]);
+  const runId = await createRun(agent, `[scenario:${name}] ${SITE}/observer-risky.html`, {
+    approvalMode: "bypass",
+  });
+  const run = await waitForRun(
+    agent,
+    runId,
+    (r) => r.status === "completed",
+    "Guard shadow run completed",
+  );
+  expect(run.observerMode).toBe("shadow");
+  expect(
+    agent.mock
+      .requestsFor(name)
+      .some(
+        (r) =>
+          (r.body.text as { format?: { name?: string } } | undefined)?.format?.name ===
+          "guard_screen",
+      ),
+  ).toBe(true);
+  expect(
+    (await events(agent, runId)).some(
+      (e) => e.type === "guard" && e.verdict === "block" && !e.applied,
+    ),
+  ).toBe(true);
 });

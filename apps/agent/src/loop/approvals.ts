@@ -2,6 +2,7 @@ import {
   AGENT_DECIDER,
   ApprovalEdit,
   ApprovalRequest,
+  GuardTurnState,
   type ApprovalStatus,
   CallResult,
   type Decider,
@@ -36,6 +37,8 @@ export type ItemDecision = z.infer<typeof ItemDecision>;
 
 export const ApproveStepResult = z.object({
   approvalId: z.uuid(),
+  /** Remaining tightening decisions survive approval cards and restart. */
+  guardTurn: GuardTurnState.nullable().default(null),
   callIds: z.array(z.string()),
   /** The risky item this approval is for; null for run-level approvals (budget, new origin). */
   item: z.string().nullable(),

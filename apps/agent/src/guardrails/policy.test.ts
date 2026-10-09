@@ -226,3 +226,44 @@ describe("downloads (spec §9)", () => {
     });
   });
 });
+
+describe("data_egress (spec §6.3)", () => {
+  const label = (provenance: "other_origin" | "same_origin", sourceOrigin: string) => () => ({
+    provenance,
+    sourceOrigin,
+    chars: 40,
+  });
+  const type = { type: "type", text: "x".repeat(40) } as const;
+  const field = target({ tag: "input", formKind: "other", editable: true });
+
+  it("asks when text read on A is typed into B outside the allowlist, before any other need", () => {
+    const need = needsApproval({ type: "type", text: "line\n" }, field, {
+      pageOrigin: "https://b.test",
+      allowedOrigins: ["https://a.test"],
+      label: label("other_origin", "https://a.test"),
+    });
+    expect(need).toMatchObject({
+      kind: "data_egress",
+      fromOrigin: "https://a.test",
+      toOrigin: "https://b.test",
+    });
+  });
+  it("same-origin typing is never data_egress", () => {
+    expect(
+      needsApproval(type, field, {
+        pageOrigin: "https://a.test",
+        allowedOrigins: ["https://a.test"],
+        label: label("same_origin", "https://a.test"),
+      }),
+    ).toBeNull();
+  });
+  it("an allowed destination is not data_egress (the Guard still reviews it)", () => {
+    expect(
+      needsApproval(type, field, {
+        pageOrigin: "https://b.test",
+        allowedOrigins: ["https://a.test", "https://b.test"],
+        label: label("other_origin", "https://a.test"),
+      }),
+    ).toBeNull();
+  });
+});

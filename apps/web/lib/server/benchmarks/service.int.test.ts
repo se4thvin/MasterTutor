@@ -211,3 +211,13 @@ describe("benchmarks service", () => {
     expect(() => mapBenchmarkError(other)).toThrow(other);
   });
 });
+
+it("defaults benchmark attempts to shadow and accepts an explicit per-attempt enforce override", async () => {
+  const view = await createBenchmark(web.db, workspaceId, input("guard-rollout"));
+  const shadow = await startBenchmark(web.db, scope(), view.id);
+  const enforced = await startBenchmark(web.db, scope(), view.id, undefined, "enforce");
+  const [a] = await owner.sql`select observer_mode from runs where id = ${shadow.runId}`;
+  const [b] = await owner.sql`select observer_mode from runs where id = ${enforced.runId}`;
+  expect(a?.observer_mode).toBe("shadow");
+  expect(b?.observer_mode).toBe("enforce");
+});

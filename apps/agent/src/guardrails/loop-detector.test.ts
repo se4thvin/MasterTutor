@@ -30,3 +30,10 @@ describe("LoopDetector (spec §5.5)", () => {
     expect(detector.recordObservation({ ...same, notesChanged: true })).toBe(false);
   });
 });
+
+it("reports pressure as the larger of the repeat count and the no-progress streak", () => {
+  const detector = new LoopDetector();
+  detector.recordObservation({ url: "u", domHash: "d", notesChanged: false });
+  detector.recordObservation({ url: "u", domHash: "d", notesChanged: false });
+  expect(detector.pressure).toBe(1);
+});

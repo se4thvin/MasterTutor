@@ -13,3 +13,10 @@ export async function assertConcurrencyFitsSlots(db: Database, slotCount: number
   const problem = concurrencyProblem(await getMaxConcurrency(db), slotCount);
   if (problem) throw new Error(problem);
 }
+
+import type { StepGuardFactory } from "./guardrails/observer/types.ts";
+
+/** D52: production never runs without the Guard (no permanent no-op, D39). */
+export function assertGuardWired(deps: { guards?: StepGuardFactory }): void {
+  if (!deps.guards) throw new Error("The Guard is not wired (D52)");
+}

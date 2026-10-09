@@ -15,6 +15,7 @@ import { parseArgs, promisify } from "node:util";
 import {
   AUTO_HAND_BACK_IDLE_MS,
   TOOL_PROFILES,
+  OBSERVER_MODES,
   Uuid,
   type ToolProfile,
 } from "@mastertutor/contracts";
@@ -134,6 +135,7 @@ export function parseCli(
       only: { type: "string", multiple: true },
       mock: { type: "boolean", default: false },
       "approval-mode": { type: "string" },
+      "observer-mode": { type: "string" },
       "acknowledge-bypass": { type: "boolean", default: false },
       "max-total-usd": { type: "string" },
       "max-run-usd": { type: "string" },
@@ -180,6 +182,10 @@ export function parseCli(
     values["approval-mode"] === undefined
       ? null
       : oneOf(BENCH_APPROVAL_MODES, "--approval-mode", values["approval-mode"]);
+  const observerMode =
+    values["observer-mode"] === undefined
+      ? "shadow"
+      : oneOf(OBSERVER_MODES, "--observer-mode", values["observer-mode"]);
   if (approvalMode === "bypass" && !values["acknowledge-bypass"])
     throw new UsageError("--approval-mode bypass needs --acknowledge-bypass (D44)");
   const tracks: readonly ToolProfile[] =
@@ -232,6 +238,7 @@ export function parseCli(
       tracks,
       only: values.only ?? null,
       approvalMode,
+      observerMode,
       bypassAcknowledged: values["acknowledge-bypass"],
       maxTotalUsd,
       maxRunUsd,
