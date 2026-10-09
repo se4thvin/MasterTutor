@@ -83,6 +83,20 @@ describe("Copilot tools (spec §7.5)", () => {
     expect(range.endUs - range.startUs).toBeLessThanOrEqual(168 * 3_600_000_000);
     expect(size).toBe(200);
   });
+  it("never queries or trusts a declared stream whose parsed source differs", async () => {
+    calls.length = 0;
+    const result = await tools.telemetry_search(
+      {
+        stream: "mastertutor",
+        sql: 'SELECT containers.body AS "from mastertutor where" FROM mastertutor, containers LIMIT 1',
+        rangeHours: null,
+      },
+      ctx(),
+    );
+    expect(result.outcome).toBe("invalid");
+    expect(result.rows).toEqual([]);
+    expect(calls).toEqual([]);
+  });
   it("never shows a UUID to the model: rows carry handles", async () => {
     const run = await tools.run_traces({ run: "R1", limit: 10 }, ctx());
     expect(JSON.stringify(run.rows)).not.toContain(RUN);

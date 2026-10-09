@@ -40,3 +40,35 @@ it("refuses comma sources, qualified sources, subqueries and unions", () => {
   ])
     expect(checkSql(sql, "mastertutor").ok, sql).toBe(false);
 });
+
+// Security review's exact cross-stream/taint bypass.
+it("refuses source syntax hidden behind a quoted projection alias", () => {
+  expect(
+    checkSql(
+      'SELECT containers.body AS "from mastertutor where" FROM mastertutor, containers LIMIT 1',
+      "mastertutor",
+    ).ok,
+  ).toBe(false);
+});
+it("treats quoted aliases and strings as data, not source clauses", () => {
+  for (const sql of [
+    'SELECT body AS "from containers where" FROM mastertutor',
+    'SELECT body AS "select, join; --" FROM "mastertutor"',
+    `SELECT 'it''s from containers' AS "a""from" FROM mastertutor`,
+  ])
+    expect(checkSql(sql, "mastertutor")).toEqual({ ok: true });
+});
+it("rejects nested sources, CTEs, comments and malformed quotes", () => {
+  for (const sql of [
+    'SELECT body AS "from mastertutor where" FROM containers',
+    "SELECT * FROM mastertutor, mastertutor",
+    "SELECT * FROM (SELECT * FROM mastertutor)",
+    "SELECT * FROM mastertutor WHERE body IN (SELECT body FROM containers)",
+    "WITH x AS (SELECT * FROM mastertutor) SELECT * FROM x",
+    "SELECT * FROM mastertutor INTERSECT SELECT * FROM mastertutor",
+    "SELECT * FROM mastertutor /* comment */",
+    'SELECT "unclosed FROM mastertutor',
+    "SELECT 'unclosed FROM mastertutor",
+  ])
+    expect(checkSql(sql, "mastertutor").ok, sql).toBe(false);
+});
