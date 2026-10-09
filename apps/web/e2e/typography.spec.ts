@@ -45,6 +45,7 @@ const SCREENS: Array<[string, (page: Page) => Promise<unknown>]> = [
   ["vault", (page) => page.goto("/vault")],
   ["audit", (page) => page.goto("/settings/audit")],
   ["usage chart", (page) => page.goto("/settings/usage")],
+  ["alerts", (page) => page.goto("/settings/alerts")],
   ["design system", (page) => page.goto("/design")],
 ];
 

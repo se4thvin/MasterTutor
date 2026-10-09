@@ -25,7 +25,7 @@ function goodEnv(): Record<string, string> {
     DOMAIN: "notes.example.org",
     PUBLIC_URL: "https://notes.example.org",
     PUBLIC_IP: "8.8.4.4",
-    COMPOSE_PROFILES: "pdf",
+    COMPOSE_PROFILES: "pdf,observability",
     AUTH_SIGNUP_OPEN: "0",
   };
 }
@@ -131,6 +131,35 @@ describe("checkProductionEnv", () => {
     } finally {
       delete process.env.PUBLIC_IP;
     }
+  });
+
+  it("requires the observability profile and a matching VAPID pair (D50)", async () => {
+    const values = {
+      ...goodEnv(),
+      COMPOSE_PROFILES: "pdf",
+      VAPID_PUBLIC_KEY: generateSecrets().VAPID_PUBLIC_KEY!,
+    };
+    const problems = await checkProductionEnv(envFile(values));
+    expect(problems).toContain("COMPOSE_PROFILES: must include observability (D50)");
+    expect(problems).toContain("VAPID_PUBLIC_KEY: does not match VAPID_PRIVATE_KEY");
+    expectNoValues(problems, values);
+  });
+
+  it("reports a missing observability secret by key", async () => {
+    const values = goodEnv();
+    delete values.OBSERVE_ROOT_PASSWORD;
+    const problems = await checkProductionEnv(envFile(values));
+    expect(problems).toContain("OBSERVE_ROOT_PASSWORD: required");
+    expectNoValues(problems, values);
+  });
+
+  it("refuses an OpenObserve password the image would refuse, naming the key only", async () => {
+    const values = { ...goodEnv(), OBSERVE_INGEST_PASSWORD: "a".repeat(40) };
+    const problems = await checkProductionEnv(envFile(values));
+    expect(problems.some((p) => p.startsWith("observability-init.OBSERVE_INGEST_PASSWORD"))).toBe(
+      true,
+    );
+    expectNoValues(problems, values);
   });
 });
 

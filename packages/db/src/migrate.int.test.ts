@@ -16,10 +16,10 @@ afterAll(async () => {
 });
 
 describe("runMigrations", () => {
-  it("creates all 28 tables and the vector extension", async () => {
+  it("creates all 30 tables and the vector extension", async () => {
     const tables =
       await owner`select count(*)::int as n from pg_tables where schemaname = 'public'`;
-    expect(tables[0]?.n).toBe(28);
+    expect(tables[0]?.n).toBe(30);
     const ext = await owner`select extname from pg_extension where extname = 'vector'`;
     expect(ext).toHaveLength(1);
   });

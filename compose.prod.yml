@@ -1,5 +1,5 @@
 # Production overlay (spec §13, D41, D42). Dokploy runs it as a docker-compose app (not a stack),
-# isolated deployment OFF, randomize OFF, auto-deploy OFF, with COMPOSE_PROFILES=pdf:
+# isolated deployment OFF, randomize OFF, auto-deploy OFF, with COMPOSE_PROFILES=pdf,observability:
 #   docker compose -p <app> -f compose.yml -f compose.prod.yml up -d --build --remove-orphans
 # Never rename the app: volumes are <app>_pgdata etc. (infra/deploy-runbook.md).
 # Bring these files up on the Dokploy host ONLY through the Dokploy app: a second project would
@@ -28,6 +28,22 @@ x-logging: &logging
       max-size: 10m
       max-file: "3"
 
+# D50: workers and slots log to the collector (spec §9). Async and non-blocking, so a down
+# collector never stops or slows a container; Docker's dual-logging cache keeps `docker logs` and
+# Dokploy's log viewer working (tests/observability/collector-config.int.test.ts).
+x-container-logs: &container-logs
+  logging:
+    driver: fluentd
+    options:
+      fluentd-address: "127.0.0.1:24224"
+      fluentd-async: "true"
+      mode: non-blocking
+      max-buffer-size: 4m
+      tag: "mt.{{.Name}}"
+      cache-disabled: "false"
+      cache-max-size: 10m
+      cache-max-file: "3"
+
 x-live-middlewares: &live-middlewares
   traefik.enable: "true"
   traefik.docker.network: mastertutor-cdp
@@ -41,7 +57,7 @@ x-live-middlewares: &live-middlewares
 
 # Six slots: 24 GiB and 12 CPUs in all, the bulk of the app's share of the host.
 x-slot-prod: &slot-prod
-  <<: *logging
+  <<: *container-logs
   image: mastertutor/browser-slot:prod
   mem_limit: 4g
   cpus: 2
@@ -72,6 +88,9 @@ services:
     mem_limit: 512m
     cpus: 0.5
     pids_limit: 128
+    environment:
+      S3_OBSERVE_ACCESS_KEY_ID: ${S3_OBSERVE_ACCESS_KEY_ID:?set S3_OBSERVE_ACCESS_KEY_ID}
+      S3_OBSERVE_SECRET_ACCESS_KEY: ${S3_OBSERVE_SECRET_ACCESS_KEY:?set S3_OBSERVE_SECRET_ACCESS_KEY}
 
   migrate:
     <<: *node-runtime-prod
@@ -87,6 +106,11 @@ services:
     pids_limit: 512
     environment:
       OPENAI_BASE_URL: ""
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:?set VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?set VAPID_PRIVATE_KEY}
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set ALERT_WEBHOOK_SECRET}
+      OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:?set OBSERVE_VIEWER_PASSWORD}
     labels:
       traefik.enable: "true"
       traefik.docker.network: mastertutor-cdp
@@ -104,6 +128,14 @@ services:
       traefik.http.routers.mastertutor-web-http.service: mastertutor-web
       traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.scheme: https
       traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.permanent: "true"
+      # obs.${DOMAIN}/api/observability/session is web's (the owner's hand-off to the obs host, D50):
+      # above the OpenObserve router, without its ForwardAuth.
+      traefik.http.routers.mastertutor-observability-session.rule: "Host(`obs.${DOMAIN:?set DOMAIN}`) && Path(`/api/observability/session`)"
+      traefik.http.routers.mastertutor-observability-session.priority: "950"
+      traefik.http.routers.mastertutor-observability-session.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-observability-session.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-observability-session.tls.certresolver: letsencrypt
+      traefik.http.routers.mastertutor-observability-session.service: mastertutor-web
 
   agent:
     <<: *node-runtime-prod
@@ -116,19 +148,66 @@ services:
       OPENAI_BASE_URL: ""
       # Production always runs profile pdf (COMPOSE_PROFILES=pdf, scripts/deploy/check-env.ts).
       DOCLING_URL: http://docling:5001
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
 
-  # Bounds and hardening are in compose.yml; production adds the image tag and log limits.
+  # Bounds and hardening are in compose.yml; production adds the image tag and its logs (D50).
   pdf-worker:
-    <<: *node-runtime-prod
+    <<: [*container-logs, *node-runtime-prod]
 
-  # Bounds and hardening are in compose.yml; production adds the image tag and log limits.
+  # Bounds and hardening are in compose.yml; production adds the image tag and its logs (D50).
   audio-capture:
-    <<: *logging
+    <<: *container-logs
     image: mastertutor/audio-capture:prod
 
-  # Bounds and hardening are in compose.yml; production adds the shared host's log limits.
+  # Bounds and hardening are in compose.yml; production adds its logs (D50).
   docling:
+    <<: *container-logs
+
+  # Bounds and hardening are in compose.yml; production adds the secret and log limits (D50).
+  otel-collector:
     <<: *logging
+    environment:
+      OBSERVE_INGEST_PASSWORD: ${OBSERVE_INGEST_PASSWORD:?set OBSERVE_INGEST_PASSWORD}
+
+  observability-init:
+    <<: *node-runtime-prod
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 64
+    environment:
+      OBSERVE_ROOT_PASSWORD: ${OBSERVE_ROOT_PASSWORD:?set OBSERVE_ROOT_PASSWORD}
+      OBSERVE_INGEST_PASSWORD: ${OBSERVE_INGEST_PASSWORD:?set OBSERVE_INGEST_PASSWORD}
+      OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:?set OBSERVE_VIEWER_PASSWORD}
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set ALERT_WEBHOOK_SECRET}
+
+  # OpenObserve on its own host, obs.${DOMAIN} (D50 ruling I-2): owner-only through ForwardAuth to
+  # web's static cdp address (spec §12), with observabilityRouterRule() and
+  # observabilityForwardAuthAddress() exactly (tests/compose/prod-overlay.int.test.ts). Its one path
+  # web serves, /api/observability/session, has its own router on web. Traefik reaches OpenObserve
+  # over mastertutor-obs (infra/host/create-obs-network.sh); OpenObserve publishes no port.
+  openobserve:
+    <<: *logging
+    environment:
+      ZO_ROOT_USER_PASSWORD: ${OBSERVE_ROOT_PASSWORD:?set OBSERVE_ROOT_PASSWORD}
+      ZO_S3_ACCESS_KEY: ${S3_OBSERVE_ACCESS_KEY_ID:?set S3_OBSERVE_ACCESS_KEY_ID}
+      ZO_S3_SECRET_KEY: ${S3_OBSERVE_SECRET_ACCESS_KEY:?set S3_OBSERVE_SECRET_ACCESS_KEY}
+      ZO_WEB_URL: https://obs.${DOMAIN:?set DOMAIN}/observability
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: mastertutor-obs
+      traefik.http.routers.mastertutor-observability.rule: "Host(`obs.${DOMAIN:?set DOMAIN}`)"
+      traefik.http.routers.mastertutor-observability.priority: "900"
+      traefik.http.routers.mastertutor-observability.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-observability.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-observability.tls.certresolver: letsencrypt
+      traefik.http.routers.mastertutor-observability.middlewares: mastertutor-observability-root,mastertutor-observability-auth,mastertutor-live-headers
+      traefik.http.routers.mastertutor-observability.service: mastertutor-observability
+      traefik.http.services.mastertutor-observability.loadbalancer.server.port: "5080"
+      traefik.http.middlewares.mastertutor-observability-auth.forwardauth.address: "http://${CDP_SUBNET_PREFIX:-172.30.231}.11:3000/api/observability/auth"
+      traefik.http.middlewares.mastertutor-observability-auth.forwardauth.authResponseHeaders: Authorization,Cookie
+      traefik.http.middlewares.mastertutor-observability-auth.forwardauth.trustForwardHeader: "false"
+      traefik.http.middlewares.mastertutor-observability-root.redirectregex.regex: "^(https?://[^/]+)/?$$"
+      traefik.http.middlewares.mastertutor-observability-root.redirectregex.replacement: "$${1}/observability/web/"
 
   browser-1:
     <<: *slot-prod
@@ -256,3 +335,8 @@ networks:
     external: true
     internal: !reset null
     ipam: !reset null
+  # Created internal on the host (infra/host/create-obs-network.sh); Traefik and OpenObserve only.
+  observe-edge:
+    name: mastertutor-obs
+    external: true
+    internal: !reset null

@@ -114,9 +114,11 @@ describe("compose.yml", () => {
   it("isolates networks", () => {
     expect(base.networks.cdp?.internal).toBe(true);
     expect(nets(base.services.postgres!)).toEqual(["backend"]);
-    expect(nets(base.services.garage!)).toEqual(["backend"]);
-    expect(nets(base.services.web!)).toEqual(["backend", "cdp", "edge"]);
-    expect(nets(base.services.agent!)).toEqual(["audio", "backend", "cdp", "pdf"]);
+    expect(nets(base.services.garage!)).toEqual(["backend", "observe-store"]);
+    expect(nets(base.services.web!)).toEqual(["backend", "cdp", "edge", "observe", "telemetry"]);
+    expect(nets(base.services.agent!)).toEqual(["audio", "backend", "cdp", "pdf", "telemetry"]);
+    for (const network of ["telemetry", "observe", "observe-store"])
+      expect(base.networks[network]?.internal, network).toBe(true);
     expect(base.services.agent!.networks!.cdp!.ipv4_address).toBe("172.30.231.10");
     expect(base.services.web!.networks!.cdp!.ipv4_address).toBe("172.30.231.11");
     expect(base.services.agent!.cap_drop).toEqual(["ALL"]);
