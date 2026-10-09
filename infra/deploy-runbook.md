@@ -7,7 +7,8 @@ host, Dokploy, DNS or the router, and runs only after the user explicitly approv
 
 ## 0. Deferred inputs (D42): needed from the user before anything below
 
-1. **Domain** (`DOMAIN`), with its DNS A record pointing at the public IP. **[approval]** — the
+1. **Domain** (`DOMAIN`), with its DNS A record pointing at the public IP, and one for
+   `obs.<domain>` (OpenObserve, D50 §13). **[approval]** — the
    user creates the record.
 2. **Git remote** for on-server GitHub builds (`main`).
 3. **Router:** forward 59001–59006 UDP and TCP to the host's LAN address. Confirm whether the
@@ -220,22 +221,25 @@ The whole telemetry stack is profile `observability`: `otel-collector`, `openobs
 Garage's `observability` bucket, under its own key) and the one-shot `observability-init`, which
 re-applies users, retention, dashboards and alerts on every deploy. In order:
 
-1. **User approval** for the two host changes below **[approval]**. Neither is run by an agent.
-2. `bash infra/host/create-obs-network.sh` (dry run), then with `--yes` **[approval]**: the
+1. **User approval** for the host and DNS changes below **[approval]**. None is run by an agent.
+2. **[operator]** DNS: an A record for `obs.<domain>` to the same public IP as `<domain>`.
+   OpenObserve lives on its own host (D50 ruling I-2); its certificate comes from the same
+   `letsencrypt` resolver once the name resolves.
+3. `bash infra/host/create-obs-network.sh` (dry run), then with `--yes` **[approval]**: the
    external internal network `mastertutor-obs`.
-3. `bash infra/host/attach-traefik.sh --network obs` (dry run), then with `--yes`
+4. `bash infra/host/attach-traefik.sh --network obs` (dry run), then with `--yes`
    **[approval]**. Re-run it whenever Dokploy recreates Traefik, like the cdp attach (§8).
-4. `COMPOSE_PROFILES=pdf,observability`.
-5. `pnpm env:init --out <file>` adds the new secrets (`OBSERVE_ROOT_PASSWORD`,
+5. `COMPOSE_PROFILES=pdf,observability`.
+6. `pnpm env:init --out <file>` adds the new secrets (`OBSERVE_ROOT_PASSWORD`,
    `OBSERVE_INGEST_PASSWORD`, `OBSERVE_VIEWER_PASSWORD`, `ALERT_WEBHOOK_SECRET`,
    `S3_OBSERVE_ACCESS_KEY_ID`, `S3_OBSERVE_SECRET_ACCESS_KEY`, `VAPID_PUBLIC_KEY`,
    `VAPID_PRIVATE_KEY`) to an existing file without touching its values; then
    `pnpm deploy:check-env <file>`. OpenObserve refuses a password without a lowercase letter, an
    uppercase letter, a digit and a special character, so set them only through env-init.
-6. After the deploy: sign in as the owner, open `/observability/` (through the Alerts page's
-   "Open dashboards"), and check that the six "MasterTutor · …" dashboards exist. A non-owner
+7. After the deploy: sign in as the owner, open "Open dashboards" on the Alerts page (the app's
+   `/observability` hands off to `https://obs.<domain>/`), and check that the six "MasterTutor · …" dashboards exist. A non-owner
    gets 403.
-7. Turn on phone alerts in the iPhone Home Screen app (Settings → Notifications).
+8. Turn on phone alerts in the iPhone Home Screen app (Settings → Notifications).
 
 Notes:
 

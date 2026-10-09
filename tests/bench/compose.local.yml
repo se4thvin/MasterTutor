@@ -8,7 +8,8 @@
 #   - Networks: Dokploy's external mastertutor-cdp becomes a local one.
 #   - Docker Desktop has no AppArmor profile, so slots keep seccomp (and Chromium's own sandbox) only.
 #   - Media ports stay on loopback (PUBLIC_IP=127.0.0.1).
-#   - Observability (D50): Traefik joins a local mastertutor-obs. The workers log to json-file, because
+#   - Observability (D50): Traefik joins a local mastertutor-obs; OpenObserve is obs.localhost
+#     (http, no certresolver, like web). The workers log to json-file, because
 #     Docker Desktop's daemon runs in a VM where 127.0.0.1:24224 is not the collector (spec §16).
 # Never add test services or test env here. tests/compose/prod-overlay.int.test.ts checks prod mode.
 services:
@@ -48,6 +49,13 @@ services:
       traefik.http.routers.mastertutor-web-http.entrypoints: !reset null
       traefik.http.routers.mastertutor-web-http.middlewares: !reset null
       traefik.http.routers.mastertutor-web-http.service: !reset null
+      traefik.http.routers.mastertutor-observability-session.tls.certresolver: !reset null
+
+  openobserve:
+    environment:
+      ZO_WEB_URL: http://obs.localhost:18080/observability
+    labels:
+      traefik.http.routers.mastertutor-observability.tls.certresolver: !reset null
 
   agent:
     environment:

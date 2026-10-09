@@ -128,6 +128,14 @@ services:
       traefik.http.routers.mastertutor-web-http.service: mastertutor-web
       traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.scheme: https
       traefik.http.middlewares.mastertutor-https-redirect.redirectscheme.permanent: "true"
+      # obs.${DOMAIN}/api/observability/session is web's (the owner's hand-off to the obs host, D50):
+      # above the OpenObserve router, without its ForwardAuth.
+      traefik.http.routers.mastertutor-observability-session.rule: "Host(`obs.${DOMAIN:?set DOMAIN}`) && Path(`/api/observability/session`)"
+      traefik.http.routers.mastertutor-observability-session.priority: "950"
+      traefik.http.routers.mastertutor-observability-session.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-observability-session.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-observability-session.tls.certresolver: letsencrypt
+      traefik.http.routers.mastertutor-observability-session.service: mastertutor-web
 
   agent:
     <<: *node-runtime-prod
@@ -172,31 +180,34 @@ services:
       OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:?set OBSERVE_VIEWER_PASSWORD}
       ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set ALERT_WEBHOOK_SECRET}
 
-  # /observability: owner-only through ForwardAuth to web's static cdp address (spec §12), with
-  # observabilityRouterRule() and observabilityForwardAuthAddress() exactly
-  # (tests/compose/prod-overlay.int.test.ts). Traefik reaches OpenObserve over mastertutor-obs
-  # (infra/host/create-obs-network.sh), and OpenObserve publishes no port.
+  # OpenObserve on its own host, obs.${DOMAIN} (D50 ruling I-2): owner-only through ForwardAuth to
+  # web's static cdp address (spec §12), with observabilityRouterRule() and
+  # observabilityForwardAuthAddress() exactly (tests/compose/prod-overlay.int.test.ts). Its one path
+  # web serves, /api/observability/session, has its own router on web. Traefik reaches OpenObserve
+  # over mastertutor-obs (infra/host/create-obs-network.sh); OpenObserve publishes no port.
   openobserve:
     <<: *logging
     environment:
       ZO_ROOT_USER_PASSWORD: ${OBSERVE_ROOT_PASSWORD:?set OBSERVE_ROOT_PASSWORD}
       ZO_S3_ACCESS_KEY: ${S3_OBSERVE_ACCESS_KEY_ID:?set S3_OBSERVE_ACCESS_KEY_ID}
       ZO_S3_SECRET_KEY: ${S3_OBSERVE_SECRET_ACCESS_KEY:?set S3_OBSERVE_SECRET_ACCESS_KEY}
+      ZO_WEB_URL: https://obs.${DOMAIN:?set DOMAIN}/observability
     labels:
       traefik.enable: "true"
       traefik.docker.network: mastertutor-obs
-      traefik.http.routers.mastertutor-observability.rule: "Host(`${DOMAIN:?set DOMAIN}`) && PathRegexp(`^/observability(/|$$)`)"
+      traefik.http.routers.mastertutor-observability.rule: "Host(`obs.${DOMAIN:?set DOMAIN}`)"
       traefik.http.routers.mastertutor-observability.priority: "900"
       traefik.http.routers.mastertutor-observability.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
       traefik.http.routers.mastertutor-observability.tls: ${TRAEFIK_TLS:-true}
-      traefik.http.routers.mastertutor-observability.middlewares: mastertutor-observability-slash,mastertutor-observability-auth,mastertutor-live-headers
+      traefik.http.routers.mastertutor-observability.tls.certresolver: letsencrypt
+      traefik.http.routers.mastertutor-observability.middlewares: mastertutor-observability-root,mastertutor-observability-auth,mastertutor-live-headers
       traefik.http.routers.mastertutor-observability.service: mastertutor-observability
       traefik.http.services.mastertutor-observability.loadbalancer.server.port: "5080"
       traefik.http.middlewares.mastertutor-observability-auth.forwardauth.address: "http://${CDP_SUBNET_PREFIX:-172.30.231}.11:3000/api/observability/auth"
       traefik.http.middlewares.mastertutor-observability-auth.forwardauth.authResponseHeaders: Authorization,Cookie
       traefik.http.middlewares.mastertutor-observability-auth.forwardauth.trustForwardHeader: "false"
-      traefik.http.middlewares.mastertutor-observability-slash.redirectregex.regex: "^(https?://[^/]+/observability)$$"
-      traefik.http.middlewares.mastertutor-observability-slash.redirectregex.replacement: "$${1}/"
+      traefik.http.middlewares.mastertutor-observability-root.redirectregex.regex: "^(https?://[^/]+)/?$$"
+      traefik.http.middlewares.mastertutor-observability-root.redirectregex.replacement: "$${1}/observability/web/"
 
   browser-1:
     <<: *slot-prod

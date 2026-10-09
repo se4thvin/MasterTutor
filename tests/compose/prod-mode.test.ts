@@ -250,7 +250,7 @@ describe("observability rules (D50)", () => {
       networks: { observe: {}, "observe-store": {}, "observe-edge": {} },
       labels: {
         "traefik.http.routers.mastertutor-observability.middlewares":
-          "mastertutor-observability-slash,mastertutor-observability-auth,mastertutor-live-headers",
+          "mastertutor-observability-root,mastertutor-observability-auth,mastertutor-live-headers",
       },
     };
     config.services["otel-collector"] = {

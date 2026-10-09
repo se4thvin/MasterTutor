@@ -8,8 +8,10 @@ import {
   liveRouterRule,
   liveUploadRouterRule,
   mediaPortForSlot,
+  OBSERVABILITY_APP_PATH,
   observabilityForwardAuthAddress,
   observabilityRouterRule,
+  observabilitySessionRouterRule,
 } from "@mastertutor/contracts";
 import { o2OtlpEndpoint } from "@mastertutor/observability";
 import { describe, expect, it } from "vitest";
@@ -389,6 +391,7 @@ services:
       traefik.http.routers.mastertutor-web-http.entrypoints: !reset null
       traefik.http.routers.mastertutor-web-http.middlewares: !reset null
       traefik.http.routers.mastertutor-web-http.service: !reset null
+      traefik.http.routers.mastertutor-observability-session.tls.certresolver: !reset null
 ${[1, 2, 3, 4, 5, 6]
   .map(
     (n) =>
@@ -472,16 +475,21 @@ describe("observability in production (D50)", () => {
   const R = "traefik.http.routers.mastertutor-observability";
   const A = "traefik.http.middlewares.mastertutor-observability-auth.forwardauth";
 
-  it("routes /observability to OpenObserve only through owner ForwardAuth, below /live", () => {
+  it("serves OpenObserve on obs.<DOMAIN> only through owner ForwardAuth (D50 ruling I-2)", () => {
     const l = labels(obs.services.openobserve);
-    // `docker compose config` prints a literal `$` escaped as `$$`.
-    expect(l[`${R}.rule`]!.replaceAll("$$", "$")).toBe(observabilityRouterRule(DOMAIN));
+    expect(l[`${R}.rule`]).toBe(observabilityRouterRule(DOMAIN));
     expect(l[`${R}.priority`]).toBe("900");
     expect(l[`${R}.entrypoints`]).toBe("websecure");
     expect(l[`${R}.tls`]).toBe("true");
+    expect(l[`${R}.tls.certresolver`]).toBe("letsencrypt");
     expect(l[`${R}.middlewares`]).toBe(
-      "mastertutor-observability-slash,mastertutor-observability-auth,mastertutor-live-headers",
+      "mastertutor-observability-root,mastertutor-observability-auth,mastertutor-live-headers",
     );
+    // `docker compose config` prints a literal `$` escaped as `$$`.
+    const root = "traefik.http.middlewares.mastertutor-observability-root.redirectregex";
+    expect(l[`${root}.regex`]!.replaceAll("$$", "$")).toBe("^(https?://[^/]+)/?$");
+    expect(l[`${root}.replacement`]!.replaceAll("$$", "$")).toBe("${1}/observability/web/");
+    expect(env(obs.services.openobserve).ZO_WEB_URL).toBe(`https://obs.${DOMAIN}/observability`);
     expect(l[`${A}.address`]).toBe(observabilityForwardAuthAddress());
     expect(l[`${A}.authResponseHeaders`]).toBe("Authorization,Cookie");
     expect(l[`${A}.trustForwardHeader`]).toBe("false");
@@ -492,6 +500,25 @@ describe("observability in production (D50)", () => {
     expect(labels(other.services.openobserve)[`${A}.address`]).toBe(
       observabilityForwardAuthAddress("10.231.7"),
     );
+  });
+
+  it("routes the obs host's session path to web, above OpenObserve and without ForwardAuth, and leaves the app's /observability to web", () => {
+    const S = "traefik.http.routers.mastertutor-observability-session";
+    const web = labels(obs.services.web);
+    expect(web[`${S}.rule`]).toBe(observabilitySessionRouterRule(DOMAIN));
+    expect(Number(web[`${S}.priority`])).toBeGreaterThan(900);
+    expect(web[`${S}.service`]).toBe("mastertutor-web");
+    expect(web[`${S}.tls.certresolver`]).toBe("letsencrypt");
+    expect(web).not.toHaveProperty(`${S}.middlewares`);
+    const rules = Object.values(obs.services).flatMap((service) =>
+      Object.entries(labels(service))
+        .filter(([key]) => key.endsWith(".rule"))
+        .map(([, rule]) => rule),
+    );
+    const appHost = `Host(\`${DOMAIN}\`)`;
+    expect(
+      rules.filter((rule) => rule.includes(appHost) && rule.includes(OBSERVABILITY_APP_PATH)),
+    ).toEqual([]);
   });
 
   it("joins exactly the shared host's new external network, besides mastertutor-cdp", () => {
