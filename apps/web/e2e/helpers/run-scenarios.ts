@@ -12,7 +12,15 @@ export interface RunScenario {
 
 async function openReplay(page: Page) {
   if (isPhone(page)) await page.getByRole("button", { name: /^Open thread/ }).click();
-  await page.getByRole("button", { name: "Replay step: Clicked “Log in”" }).click();
+  const row = page.getByRole("button", { name: "Replay step: Clicked “Log in”" });
+  await row.waitFor();
+  // The thread's content loads lazily and pins itself to its end once its fonts have laid out:
+  // choose the row only after that, so where the list stands when it is clicked is always the same.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+  });
+  await row.click();
   if (isPhone(page)) {
     await page.keyboard.press("Escape");
     // The tap that chose the row leaves the pointer where the frame's shield now sits (Pip in the
