@@ -14,7 +14,7 @@ test("reader shows source strip, title and every block type, clean everywhere", 
   await expect(page.locator(".hljs-keyword").first()).toBeVisible();
   await expect(page.getByRole("table").first()).toBeVisible();
   await expect(page.getByRole("img", { name: /Figure 2/ })).toBeVisible();
-  await expect(page.getByText("Agent's note").first()).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Agent's note" })).toHaveCount(0);
   await expectCleanScreen(page);
 });
 

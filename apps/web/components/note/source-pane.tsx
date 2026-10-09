@@ -42,7 +42,7 @@ export function SourcePane({
     refs.current.get(activeBlockId)?.scrollIntoView({ block: "nearest" });
   }, [activeBlockId, split]);
 
-  const captured = detail.blocks.filter((b) => b.origin !== "model");
+  const captured = detail.blocks.filter((b) => b.origin !== "user");
   const source = detail.sources[0];
   return (
     <section className="src-pane" aria-label="Captured source">

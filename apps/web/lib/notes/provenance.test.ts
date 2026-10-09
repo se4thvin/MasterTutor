@@ -70,13 +70,18 @@ describe("provenance", () => {
       expect(review(origin), origin).not.toContain("image");
     }
   });
-  it("marks edits and agent notes", () => {
+  it("marks user edits", () => {
     expect(provenanceOf({ ...base, edited: true, originalMarkdown: "x" }, source).status).toBe(
       "edited",
     );
-    expect(calloutFor({ ...base, origin: "model", type: "commentary" })?.lead).toBe(
-      "Agent's note.",
-    );
+  });
+  it("keeps user writing separate from captured source provenance", () => {
+    const writing = { ...base, origin: "user" as const, sourceId: null, anchor: null };
+    expect(provenanceOf(writing, source)).toMatchObject({
+      originLabel: "Written by you",
+      openUrl: null,
+    });
+    expect(calloutFor(writing)).toBeNull();
   });
   it("cites video time and PDF pages", () => {
     const t = {
@@ -107,8 +112,6 @@ describe("showsVerifyCheck (T21: ocr_model or not yet verified)", () => {
     ["unverified page text", { origin: "dom", verified: false }, true],
     ["OCR, before verifying", { origin: "ocr_model", verified: false }, true],
     ["OCR, after verifying (stays visible)", { origin: "ocr_model", verified: true }, true],
-    ["unverified agent note", { origin: "model", verified: false }, true],
-    ["verified agent note", { origin: "model", verified: true }, false],
   ] as const)("%s", (_name, patch, shown) => {
     expect(showsVerifyCheck({ ...base, ...patch })).toBe(shown);
   });

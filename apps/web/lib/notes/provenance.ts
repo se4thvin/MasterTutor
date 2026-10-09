@@ -3,7 +3,7 @@ import type { BlockOrigin, NoteBlock, SourceView } from "@mastertutor/contracts"
 import type { BadgeTone, IconName } from "@/lib/ui/vocabulary.ts";
 import { formatTimestamp } from "./format.ts";
 
-type ProvenanceStatus = "verified" | "needs_review" | "edited" | "model";
+type ProvenanceStatus = "verified" | "needs_review" | "edited";
 
 const ORIGIN_LABEL: Record<BlockOrigin, string> = {
   dom: "Page text",
@@ -11,7 +11,6 @@ const ORIGIN_LABEL: Record<BlockOrigin, string> = {
   captions: "Uploader captions",
   asr: "Transcribed audio",
   ocr_model: "Read from an image",
-  model: "Written by the agent",
   user: "Written by you",
 };
 
@@ -19,11 +18,9 @@ const STATUS: Record<ProvenanceStatus, { label: string; icon: IconName; tone: Ba
   verified: { label: "Verified", icon: "verified", tone: "ok" },
   needs_review: { label: "Needs review", icon: "needsReview", tone: "warn" },
   edited: { label: "Edited by you", icon: "edited", tone: "tint" },
-  model: { label: "Agent's note", icon: "agentNote", tone: "neutral" },
 };
 
 export function statusOf(block: NoteBlock): ProvenanceStatus {
-  if (block.origin === "model") return "model";
   if (!block.verified) return "needs_review";
   if (block.edited) return "edited";
   return "verified";
@@ -58,7 +55,7 @@ export function provenanceOf(block: NoteBlock, source: SourceView | undefined) {
         : null;
   let openUrl: string | null = null;
   const page = source ? safePageUrl(source.url) : null;
-  if (source && page && block.origin !== "model") {
+  if (source && page && block.origin !== "user") {
     if (source.kind === "youtube" && a?.tStart !== undefined) {
       page.searchParams.set("t", `${Math.floor(a.tStart)}s`);
       openUrl = page.toString();
@@ -102,9 +99,6 @@ export function calloutFor(
   }
   if (status === "edited") {
     return { lead: "Edited by you.", text: "The captured original is kept.", status };
-  }
-  if (status === "model") {
-    return { lead: "Agent's note.", text: "Written by the agent, not captured.", status };
   }
   if (block.anchor?.tStart !== undefined && block.type === "keyframe") {
     return {

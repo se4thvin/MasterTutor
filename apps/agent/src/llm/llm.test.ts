@@ -408,7 +408,7 @@ describe("OpenAI client against llm-mock", () => {
     await mock?.close();
     mock = undefined;
   });
-  it("sends exactly the 7 tools, store:false with no identifiers, encrypted reasoning, medium effort, auto summaries and the agent_turn format", async () => {
+  it("sends exactly the 6 tools, store:false with no identifiers, encrypted reasoning, medium effort, auto summaries and the agent_turn format", async () => {
     mock = await startLlmMock({
       scenarios: [
         { name: "wire", turns: [{ outputs: [{ type: "turn", status: "done", reason: "ok" }] }] },
@@ -430,7 +430,7 @@ describe("OpenAI client against llm-mock", () => {
     const functions = (body.tools ?? []).filter((tool) => tool.type === "function") as Array<{
       strict?: boolean;
     }>;
-    expect(functions).toHaveLength(6);
+    expect(functions).toHaveLength(5);
     for (const tool of functions) expect(tool.strict).toBe(true);
     expect(body).toMatchObject({
       store: false,

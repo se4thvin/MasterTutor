@@ -3,7 +3,7 @@ import type { BlockOrigin, Fidelity } from "./enums.ts";
 /** Note coverage at or above this can be `verified` (spec §7.5). */
 export const VERIFIED_COVERAGE = 0.98;
 
-/** Origins whose text came from a source. `model` (annotate) and `user` are never verified against one. */
+/** Origins whose text came from a source. `user` text is never verified against one. */
 export const CAPTURED_ORIGINS = [
   "dom",
   "pdf",

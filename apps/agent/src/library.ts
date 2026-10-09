@@ -1,6 +1,5 @@
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
-import { createAnnotateTool } from "./capture/annotate-tool.ts";
 import { createCaptureTool } from "./capture/capture-tool.ts";
 import { sharedLocalOcr, type LocalOcr } from "./browser/local-ocr.ts";
 import { createOcrModel, type OcrModel } from "./capture/opaque.ts";
@@ -32,7 +31,7 @@ export interface LibraryDeps {
   log: Log;
 }
 
-/** Everything capture, annotate, video, PDF and filing need; built once per agent process. */
+/** Everything capture, video, PDF and filing need; built once per agent process. */
 export interface LibraryServices {
   db: Database;
   writer: NoteWriter;
@@ -73,11 +72,7 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 /** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through composeRunHooks. */
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
   return {
-    functionTools: [
-      register(createCaptureTool(services)),
-      register(createAnnotateTool(services)),
-      register(createVideoTool(services)),
-    ],
+    functionTools: [register(createCaptureTool(services)), register(createVideoTool(services))],
     // Caption tracks the player fetched stay readable for the video tool (preflight Q5).
     responseLog: isTimedtextUrl,
     async onComplete({ run, log, step, signal }) {
