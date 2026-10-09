@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, type PointerEvent, type ReactNode } fro
 import { Icon, type IconName } from "@/components/ui/icon.tsx";
 import { cx } from "@/lib/cx.ts";
 import { durations, fuse, transitions } from "@/lib/motion-tokens.ts";
+import { LIQUID_GLASS } from "@/components/ui/liquid-glass.tsx";
 
 type SwipeToastCloseReason = "timeout" | "swipe" | "action" | "close" | "escape";
 
@@ -174,7 +175,7 @@ export function SwipeToast({
   return (
     <m.div
       ref={cardRef}
-      className={cx("toast glass", tone === "danger" && "toast-danger")}
+      className={cx("toast", LIQUID_GLASS, tone === "danger" && "toast-danger")}
       role="group"
       aria-label="Notification"
       tabIndex={0}

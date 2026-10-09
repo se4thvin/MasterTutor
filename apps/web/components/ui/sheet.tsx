@@ -2,7 +2,9 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import type { ReactNode, RefObject } from "react";
+import { cx } from "@/lib/cx.ts";
 import { Icon } from "./icon.tsx";
+import { LIQUID_GLASS } from "./liquid-glass.tsx";
 
 interface SheetProps {
   open: boolean;
@@ -29,7 +31,7 @@ export function Sheet({
       <Dialog.Portal>
         <Dialog.Backdrop className="scrim" />
         <Dialog.Viewport className="sheet-viewport">
-          <Dialog.Popup className="sheet glass" initialFocus={initialFocus}>
+          <Dialog.Popup className={cx("sheet", LIQUID_GLASS)} initialFocus={initialFocus}>
             <div className="sheet-grabber" aria-hidden="true" />
             <div className="sheet-head">
               <Dialog.Title className="t-title2">{title}</Dialog.Title>
