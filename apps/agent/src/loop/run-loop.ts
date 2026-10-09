@@ -63,7 +63,7 @@ import {
 import { UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL } from "../tools/computer.ts";
 import type { CallApproval } from "../tools/types.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
-import { NUDGE, agentInstructions, approvalModeText, goalText } from "../llm/instructions.ts";
+import { NUDGE, agentInstructions, goalText } from "../llm/instructions.ts";
 import {
   callSignature,
   computerCallOutput,
@@ -123,6 +123,7 @@ import {
   signInPausedOrigins,
   storeRunTitle,
   type RunSnapshot,
+  type RunControl,
 } from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
 import { StepCollector } from "./step-collector.ts";
@@ -133,6 +134,8 @@ import {
   unansweredCalls,
   type TranscriptEntry,
 } from "./transcript.ts";
+
+import { TurnContext } from "./turn-context.ts";
 
 type Phase = "observe" | "decide" | "approve" | "act";
 
@@ -292,6 +295,11 @@ export class RunLoop {
   readonly #provenance: ProvenanceStore;
   #guard: StepGuard | null = null;
   #guardTurn: GuardTurnState | null = null;
+  #turnContext = new TurnContext([]);
+  #control: Pick<RunControl, "controller" | "waitReason"> = {
+    controller: "agent",
+    waitReason: null,
+  };
 
   private constructor(
     deps: RunLoopDeps,
@@ -310,6 +318,8 @@ export class RunLoop {
     const transcript = await loadTranscript(deps.db, run.id);
     const loop = new RunLoop(deps, run, transcript.length === 0, lastUserEventId(transcript));
     loop.#history = transcript;
+    loop.#turnContext = new TurnContext(transcript);
+    loop.#control = (await readRunControl(deps.db, run.id)) ?? loop.#control;
     for (const entry of transcript)
       if (entry.item.type === "function_call_output" && typeof entry.item.output === "string")
         loop.#provenance.ingestToolOutput(entry.item.output);
@@ -366,7 +376,12 @@ export class RunLoop {
   useApprovalMode(mode: ApprovalMode): void {
     if (mode === this.#run.approvalMode) return;
     this.#run = { ...this.#run, approvalMode: mode };
-    this.#notes.push(`Executor: the user changed the approval mode. ${approvalModeText(mode)}`);
+  }
+
+  /** Already loaded by the worker at the step boundary: no extra context query. */
+  useRunControl(control: RunControl): void {
+    this.useApprovalMode(control.approvalMode);
+    this.#control = control;
   }
 
   /**
@@ -594,6 +609,7 @@ export class RunLoop {
       ...commit,
       transition: { from: ["running"], to: "waiting", waitReason: reason, reason: text },
     });
+    this.#control = { ...this.#control, waitReason: reason };
     this.#loops.reset();
     this.markIdle();
     return { kind: "waiting", reason };
@@ -654,7 +670,9 @@ export class RunLoop {
   /* --------------------------------- observe --------------------------------- */
 
   async #observe(signal: AbortSignal): Promise<StepOutcome> {
-    const { obs, commit } = await this.#capture(signal);
+    const captured = await this.#capture(signal);
+    const { obs } = captured;
+    const commit = this.#keepSameSiteOrigin(obs.origin, captured.commit);
     // Scrolling reveals new content: a new scroll position counts as progress.
     const stuck = this.#loops.recordObservation({
       url: obs.url,
@@ -677,7 +695,7 @@ export class RunLoop {
     }
     if (stuck) return this.#wait("takeover", "stuck", commit);
     const exceeded = budgetExceeded(this.#run.usage, this.#run.budget);
-    await this.#deps.store.commit(this.#keepSameSiteOrigin(obs.origin, commit));
+    await this.#deps.store.commit(commit);
     const blocked = await this.#blockedNavigations(signal, { wait: null, handOver: null });
     if (blocked) return blocked;
     if (exceeded)
@@ -727,7 +745,8 @@ export class RunLoop {
       }
     }
     const texts = [
-      ...(this.#firstTurn ? [goalText(this.#run, extra)] : []),
+      ...(this.#firstTurn ? [goalText(this.#run)] : []),
+      ...extra,
       ...notes,
       ...this.#notes,
       ...userTexts,
@@ -749,7 +768,8 @@ export class RunLoop {
     const messages = await loadUserMessages(db, runId, this.#userCursor);
     const cursor = messages.at(-1)?.id ?? this.#userCursor;
     this.#interruptSeen = newerId(this.#interruptSeen, cursor);
-    const extra = this.#firstTurn ? await hooks.promptContext(this.#run) : [];
+    await this.#turnContext.refresh({ ...this.#run }, obs.origin, this.#control, hooks);
+    const extra = this.#turnContext.messages();
     const userTexts = messages.map((message) => `Message from the user: ${message.text}`);
     const { items: pending, carried } = this.#buildInput(obs, userTexts, extra);
     const history = this.#history;
@@ -761,13 +781,16 @@ export class RunLoop {
       responseId: string | null,
       mark?: "compaction" | "seed",
     ) => {
-      for (const item of items)
+      for (const [index, item] of items.entries())
         transcript.push({
           dir,
           item: item as Record<string, unknown>,
           responseId,
           userEventId: dir === "in" ? cursor : null,
           ...(mark ? { mark } : {}),
+          ...(dir === "in" && mark !== "compaction" && index === items.length - 1
+            ? { turnContext: this.#turnContext.checkpoint() }
+            : {}),
         });
     };
     // Every model call, compaction included, first re-checks who holds control (spec §10.3).
@@ -799,9 +822,7 @@ export class RunLoop {
       const items = seedFromSummary(compacted.summary, {
         pageText: this.#pageHeader(obs),
         screenshotKey: this.#screenshotKey!,
-        // The first turn's context (the vault's alias list) is not in the summary: send it again,
-        // so a re-login after compaction still knows which aliases exist.
-        carried: [...(await hooks.promptContext(this.#run)), ...carried],
+        carried: [...this.#turnContext.messages(true), ...carried],
       });
       record("in", items, null, "seed");
       return items;
@@ -907,6 +928,7 @@ export class RunLoop {
       events,
     });
     this.#history.push(...stored);
+    this.#turnContext.accept();
     this.#userCursor = cursor;
     this.#firstTurn = false;
     this.#notes = [];
@@ -1844,6 +1866,7 @@ export class RunLoop {
     const pending = this.#pending;
     if (!pending) {
       await this.#deps.store.commit({ transition: TO_RUNNING });
+      this.#control = { controller: "agent", waitReason: null };
       this.reobserve();
       return CONTINUE;
     }
@@ -2141,6 +2164,7 @@ export class RunLoop {
           }
         : {}),
     });
+    this.#control = { controller: "user", waitReason: control?.waitReason ?? "takeover" };
     this.markIdle();
   }
 
@@ -2150,6 +2174,7 @@ export class RunLoop {
    * or solved the CAPTCHA themselves, and a code submitted meanwhile is used by the next fill.
    */
   async markHandBack(): Promise<void> {
+    this.#control = { controller: "agent", waitReason: null };
     await this.#deps.store.commit({
       events: [{ type: "control", holder: "agent" }],
       transition: TO_RUNNING,

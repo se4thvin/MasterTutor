@@ -20,7 +20,12 @@ import {
   type ModelReply,
   type ModelRequest,
 } from "./client.ts";
-import { agentInstructions, goalText } from "./instructions.ts";
+import {
+  agentInstructions,
+  goalText,
+  allowedOriginsText,
+  approvalModeText,
+} from "./instructions.ts";
 import { callSignature, describeCall, parseModelOutput } from "./items.ts";
 import { MODEL_PRICES, costUsd } from "@mastertutor/contracts";
 import { addUsage, usageDelta } from "./pricing.ts";
@@ -251,41 +256,30 @@ describe("parseModelOutput reasoning summaries (fe-run-chat)", () => {
   });
 });
 
-describe("goalText", () => {
-  it("states the goal, the allowlist and the approval mode", () => {
-    const text = goalText(
-      { goal: "Do X", allowedOrigins: ["https://a.com"], approvalMode: "auto_within_allowlist" },
-      ["Vault aliases: zybooks"],
-    );
+describe("run instructions", () => {
+  it("keeps goal text verbatim and emits run facts through their own helpers", () => {
+    expect(goalText({ goal: "Do X" })).toBe("Task from the user:\nDo X");
+    expect(allowedOriginsText(["https://a.com"])).toContain("https://a.com");
+    expect(approvalModeText("auto_within_allowlist")).toContain("approved automatically");
+  });
+  it("gives source-finding guidance only with no allowed origins", () => {
+    const text = allowedOriginsText([]);
     for (const part of [
-      "Do X",
-      "https://a.com",
-      "approved automatically",
-      "Vault aliases: zybooks",
+      "Allowed origins: none yet",
+      "blank page",
+      "https://html.duckduckgo.com/html/?q=",
+      "uddg",
+      "open the destination directly with CTRL+L",
     ])
       expect(text).toContain(part);
-  });
-  it("tells a goal-only run it starts on a blank page and must find its own sources", () => {
-    const text = goalText(
-      { goal: "Find a good intro to Rust lifetimes", allowedOrigins: [], approvalMode: "ask" },
-      [],
+    expect(allowedOriginsText(["https://learn.example.edu"])).not.toMatch(
+      /duckduckgo|search the web|find sources|none yet/i,
     );
-    expect(text).toContain("Allowed origins: none yet");
-    expect(text).toContain("blank page");
-    expect(text).toContain("https://html.duckduckgo.com/html/?q=");
-    // Result links go through a redirector on another origin: open the destination directly.
-    expect(text).toContain("uddg");
-    expect(text).toContain("open the destination directly with CTRL+L");
-    expect(text).toContain("risky actions wait for the user's approval");
   });
-  it("never sends the search guidance to a run with allowed origins (benchmarks, sourced runs)", () => {
-    for (const approvalMode of ["ask", "auto_within_allowlist", "bypass"] as const) {
-      const text = goalText(
-        { goal: "Do X", allowedOrigins: ["https://learn.example.edu"], approvalMode },
-        [],
-      );
-      expect(text).not.toMatch(/duckduckgo|search the web|find sources|not limits|none yet/i);
-    }
+});
+
+describe("source guidance stays in turn context", () => {
+  it("never adds search guidance to the system instructions", () => {
     for (const profile of ["computer_use", "browser_use"] as const) {
       const instructions = agentInstructions(profile);
       expect(instructions).not.toMatch(/duckduckgo|Finding sources|not limits/i);

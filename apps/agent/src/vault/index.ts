@@ -30,7 +30,10 @@ export interface VaultOptions {
 export interface Vault {
   /** fill_credential and use_passkey, each with its own approve-phase card. */
   readonly tools: readonly RegisteredTool[];
-  promptContext(run: { workspaceId: string; allowedOrigins: readonly string[] }): Promise<string[]>;
+  promptContext(
+    run: { workspaceId: string; allowedOrigins: readonly string[] },
+    currentOrigin?: string | null,
+  ): Promise<string[]>;
   /** A saved sign-in (vault item) exists for this allowed origin. */
   hasSignIn(
     run: { workspaceId: string; allowedOrigins: readonly string[] },
@@ -68,18 +71,29 @@ export function createVault(options: VaultOptions): Vault {
     passkey: (ctx, args) => passkeys.use(ctx, args),
     passkeyApproval: (ctx, args) => passkeys.approval(ctx, args),
   });
-  /** The items this run may use: those pinned to one of its allowed origins. */
-  const runItems = async (run: { workspaceId: string; allowedOrigins: readonly string[] }) =>
-    (await listVaultItemRecords(options.db, run.workspaceId)).filter((item) =>
-      run.allowedOrigins.includes(item.origin),
-    );
+  // A step's snapshot is immutable. Reuse its one metadata query across promptContext/hasSignIn.
+  // Weak keys expire with the snapshot; a later step sees vault additions/removals too.
+  const metadata = new WeakMap<object, ReturnType<typeof listVaultItemRecords>>();
+  const itemsFor = (run: { workspaceId: string }) => {
+    let items = metadata.get(run);
+    if (!items) {
+      items = listVaultItemRecords(options.db, run.workspaceId);
+      metadata.set(run, items);
+    }
+    return items;
+  };
   return {
     tools: [register(fill), register(passkey)],
     async hasSignIn(run, origin) {
-      return (await runItems(run)).some((item) => item.origin === origin);
+      return (
+        run.allowedOrigins.includes(origin) &&
+        (await itemsFor(run)).some((item) => item.origin === origin)
+      );
     },
-    async promptContext(run) {
-      const items = (await runItems(run)).sort((a, b) => a.alias.localeCompare(b.alias));
+    async promptContext(run, currentOrigin) {
+      const items = (await itemsFor(run))
+        .filter((item) => run.allowedOrigins.includes(item.origin) || item.origin === currentOrigin)
+        .sort((a, b) => a.alias.localeCompare(b.alias));
       if (items.length === 0) return [];
       // Aliases, origins and field names only (D38 rule 3): never labels, usernames or values.
       const lines = items.map((item) => {
@@ -110,7 +124,7 @@ export function vaultHooks(vault: Vault): Partial<RunHooks> {
     functionTools: vault.tools,
     maskSources: (runId) => vault.maskSources(runId),
     sessionStore: vault.sessions,
-    promptContext: (run) => vault.promptContext(run),
+    promptContext: (run, origin) => vault.promptContext(run, origin),
     hasSignIn: (run, origin) => vault.hasSignIn(run, origin),
     onClick: (run, click) => vault.sessions.onClick(run, click),
     onReleased: (runId) => vault.forgetRun(runId),

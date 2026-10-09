@@ -199,17 +199,32 @@ async function handBackTo(id: string) {
 }
 /** A clock whose sleeps (the idle → sleep timer) end only when the test says so. */
 function gatedClock() {
-  const sleepers: Array<() => void> = [];
+  const sleepers = new Set<() => void>();
   const clock: Clock = {
     now: () => Date.now(),
     sleep: (_ms, signal) =>
       new Promise<void>((resolve, reject) => {
         signal?.throwIfAborted();
-        sleepers.push(resolve);
-        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        sleepers.add(resolve);
+        signal?.addEventListener(
+          "abort",
+          () => {
+            sleepers.delete(resolve);
+            reject(signal.reason);
+          },
+          { once: true },
+        );
       }),
   };
-  return { clock, wakeSleepers: () => sleepers.splice(0).forEach((wake) => wake()) };
+  return {
+    clock,
+    wakeSleepers: async () => {
+      await waitFor(async () => sleepers.size > 0, { label: "idle timer registered" });
+      const pending = [...sleepers];
+      sleepers.clear();
+      for (const wake of pending) wake();
+    },
+  };
 }
 /** The web's sendMessage (Task 18 web contract): event row, wake request, NOTIFY run_wake. */
 async function sendMessage(id: string, text: string) {
@@ -625,7 +640,7 @@ describe("RunWorker + Supervisor", () => {
     await until(run.id, (r) => r.status === "waiting" && r.waitReason === "approval", "asking");
     await approve(run.id);
     await until(run.id, (r) => r.status === "waiting" && r.waitReason === "takeover", "human wait");
-    wakeSleepers(); // the idle timer fires: the run goes to sleep
+    await wakeSleepers(); // the idle timer fires: the run goes to sleep
     await until(run.id, (r) => r.status === "sleeping", "asleep");
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(await row(run.id)).toMatchObject({ status: "sleeping", wakeRequestedAt: null });
@@ -1307,7 +1322,7 @@ describe("run-mode: the approval mode changes mid-run", () => {
     expect(cards.map((c) => [c.status, c.decidedBy])).toEqual([["approved", "bypass"]]);
     // The model is told, so it does not expect to be asked.
     expect(JSON.stringify(mock.requestsFor(name)[1]!.body.input)).toContain(
-      "the user changed the approval mode",
+      "Approval mode: actions are approved automatically.",
     );
   });
 
@@ -1454,7 +1469,7 @@ for (const ending of ["sleep", "cancel"] as const) {
       }),
     );
     await until(run.id, (r) => r.status === "waiting", "approval waiting");
-    if (ending === "sleep") wakeSleepers();
+    if (ending === "sleep") await wakeSleepers();
     else {
       await owner.db
         .update(runs)

@@ -287,7 +287,7 @@ export class RunWorker {
     if (!run || isTerminal(run.status)) return { kind: "cancelled" };
     if (run.controller === "user") return this.#holdForUser();
     // A person may change the mode mid-run (run-mode): it governs this step's decisions.
-    this.#loop!.useApprovalMode(run.approvalMode);
+    this.#loop!.useRunControl(run);
     return this.#loop!.step(this.#abort.signal);
   }
 
