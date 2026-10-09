@@ -768,6 +768,14 @@ export class RunLoop {
     const messages = await loadUserMessages(db, runId, this.#userCursor);
     const cursor = messages.at(-1)?.id ?? this.#userCursor;
     this.#interruptSeen = newerId(this.#interruptSeen, cursor);
+    this.#turnContext.observeActions(
+      this.#calls.flatMap((call) =>
+        call.kind === "computer"
+          ? call.actions.map((action) => JSON.stringify(action))
+          : [callSignature(call)],
+      ),
+      `${obs.url}#${obs.domHash}@${obs.scroll.x},${obs.scroll.y}`,
+    );
     await this.#turnContext.refresh({ ...this.#run }, obs.origin, this.#control, hooks);
     const extra = this.#turnContext.messages();
     const userTexts = messages.map((message) => `Message from the user: ${message.text}`);
@@ -1720,7 +1728,8 @@ export class RunLoop {
     if (wait) return this.#wait("otp", "A one-time code is needed to sign in");
     // The page (URL, DOM, position) is part of the signature: scrolling or paging is not a loop.
     const signature = `${this.#calls.map(callSignature).join("|")}@${obs.url}#${obs.domHash}#${obs.scroll.x},${obs.scroll.y}`;
-    if (ran && this.#loops.recordAction(signature, obs.phash))
+    // The third repeat gets a D56 correction on the next observation. A fourth still pauses.
+    if (ran && this.#loops.recordAction(signature, obs.phash) && this.#loops.pressure > 3)
       return this.#wait("takeover", "stuck");
     return CONTINUE;
   }

@@ -598,7 +598,7 @@ describe("RunLoop (spec §5.3)", () => {
       },
     ]);
     expect(await drive(human.loop)).toEqual({ kind: "waiting", reason: "takeover" });
-    const stuck = await setup([click(), click(), click(), done()]);
+    const stuck = await setup([click(), click(), click(), click(), done()]);
     expect(await drive(stuck.loop)).toEqual({ kind: "waiting", reason: "takeover" });
     expect(await status(stuck.run.id)).toMatchObject({ waitReason: "takeover" });
   });
