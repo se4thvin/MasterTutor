@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AgentTurnStatus } from "./enums.ts";
-import type { ComputerAction } from "./tools.ts";
+import type { ComputerAction } from "./tool-call.ts";
 
 /** The longest reasoning summary a decide step keeps (characters, after redaction). */
 export const REASONING_SUMMARY_MAX = 4_000;

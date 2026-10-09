@@ -1,4 +1,4 @@
-import { BYPASS_DECIDER, POLICY_DECIDER } from "@mastertutor/contracts";
+import { BYPASS_DECIDER, POLICY_DECIDER, PersonDecider } from "@mastertutor/contracts";
 import { METRIC } from "@mastertutor/contracts/telemetry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -72,7 +72,7 @@ describe("run event recorders (spec §5.3, seam 6)", () => {
       type: "approval_mode_changed",
       from: "ask",
       to: "bypass",
-      by: "6f2c8a3e-0000-4000-8000-000000000000",
+      by: PersonDecider.parse("6f2c8a3e-0000-4000-8000-000000000000"),
     });
     expect((await telemetry.metric(METRIC.approvalModeChanges.name))[0]!.attributes).toEqual({
       "mt.approval.mode": "bypass",

@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { Budget, Usage } from "./budget.ts";
 import type { ApprovalKind, ApprovalMode } from "./enums.ts";
-import { GuardCategory } from "./observer.ts";
-import { OBSERVER_ROLES } from "./telemetry.ts";
+import { GuardCategory } from "./guard-codes.ts";
+import { OBSERVER_ROLES } from "./observer-roles.ts";
 import { Alias, Origin, Uuid } from "./primitives.ts";
-import { ComputerAction } from "./tools.ts";
+import { ComputerAction } from "./tool-call.ts";
 
 /** Spec §5.5 risky words, matched as word prefixes so "payment" and "deleting" are caught. */
 export const RISKY_ACTION =
