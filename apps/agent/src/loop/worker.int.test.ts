@@ -1363,12 +1363,15 @@ describe("run-mode: Send now interrupts, Send queues", () => {
     );
     await until(run.id, (r) => r.status === "waiting" || r.status === "sleeping", "asking");
     await sendNow(run.id, "Go on");
-    // The wake is used up and the card still waits.
-    await waitFor(async () => (await row(run.id)).wakeRequestedAt === null, {
-      label: "wake consumed",
-      timeoutMs: 15_000,
-    });
-    expect(["waiting", "sleeping"]).toContain((await row(run.id)).status);
+    // The wake is used up and the run is back to waiting on the card (a sleeping run is claimed
+    // and resumed first, so the two are read together).
+    await waitFor(
+      async () => {
+        const r = await row(run.id);
+        return r.wakeRequestedAt === null && ["waiting", "sleeping"].includes(r.status);
+      },
+      { label: "still waiting on the card", timeoutMs: 15_000 },
+    );
     expect(mock.requestsFor(name)).toHaveLength(1);
     const cards = await owner.db.select().from(approvals).where(eq(approvals.runId, run.id));
     expect(cards.map((c) => c.status)).toEqual(["pending"]);
