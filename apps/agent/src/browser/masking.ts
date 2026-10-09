@@ -22,6 +22,13 @@ export interface MaskSources {
   /** `text` with every registered secret value replaced by SECRET_REDACTION; `text` itself when none occurs. */
   redact(text: string): string;
   /**
+   * True when `text` shows a registered secret distinctive enough that the match cannot be
+   * ordinary text (a PIN or a plain-word password reads like any number or word). Only this may
+   * withhold a whole screenshot; `redact` stays exact for every secret. Optional: without it,
+   * every redactable match counts.
+   */
+  showsSecret?(text: string): boolean;
+  /**
    * Frames holding vault-filled nodes, by CDP frame id and the document (loaderId) filled, whatever
    * session registered them (N2): a frame whose CDP session was replaced still counts as filled
    * while it shows that document. Optional: no fills, no frames.
@@ -299,9 +306,11 @@ export async function hasFilledOutOfProcessFrame(
 type AxText = { name?: { value?: unknown }; value?: { value?: unknown } };
 
 function hasSecretText(nodes: readonly AxText[], sources: MaskSources): boolean {
+  const shows = (value: string) =>
+    sources.showsSecret ? sources.showsSecret(value) : containsSecret(sources, value);
   return nodes.some((node) =>
     [node.name?.value, node.value?.value].some(
-      (value) => typeof value === "string" && containsSecret(sources, value),
+      (value) => typeof value === "string" && shows(value),
     ),
   );
 }

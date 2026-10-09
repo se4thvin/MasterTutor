@@ -33,6 +33,11 @@ export const WITHHELD = {
   moved: "a secret field moved while it was taken",
   unreadable: "it could not be checked for saved secrets",
   navigating: "the page kept navigating while it was taken",
+  crossOriginFrame:
+    "a field filled from the vault is on screen beside an embedded frame from another site, which cannot be masked",
+  filledFrame: "a field filled from the vault sits inside an embedded frame that cannot be masked",
+  unlocatable: "a field filled from the vault could not be located on the page",
+  secretText: "a saved secret shows as text on the page",
 } as const;
 
 const MAX_ATTEMPTS = 3;
@@ -187,12 +192,13 @@ export async function captureModelScreenshot(
       (await hasShownFilledNode(await session.cdp(), sources)) &&
       (await hasCrossOriginFrames(session))
     ) {
-      return drop();
+      return drop(WITHHELD.crossOriginFrame);
     }
     // A field the vault filled inside an out-of-process frame cannot be boxed from here either.
-    if (await hasFilledOutOfProcessFrame(session, sources, signal)) return drop();
+    if (await hasFilledOutOfProcessFrame(session, sources, signal))
+      return drop(WITHHELD.filledFrame);
     const before = await collectMaskBoxes(session, sources);
-    if (before.unverifiable > 0) return drop();
+    if (before.unverifiable > 0) return drop(WITHHELD.unlocatable);
     session.guard.assertAgent(signal);
     const { data } = await (
       await session.cdp()
@@ -202,7 +208,7 @@ export async function captureModelScreenshot(
       captureBeyondViewport: false,
     });
     const after = await collectMaskBoxes(session, sources);
-    if (after.unverifiable > 0) return drop();
+    if (after.unverifiable > 0) return drop(WITHHELD.unlocatable);
     if (!sameBoxes(before.boxes, after.boxes)) continue;
     // A resize between reading the layout and capturing would misalign every mask: retake.
     const raw = Buffer.from(data, "base64");
@@ -216,7 +222,7 @@ export async function captureModelScreenshot(
     ) {
       continue;
     }
-    if (await containsSecretText(session, sources, signal)) return drop();
+    if (await containsSecretText(session, sources, signal)) return drop(WITHHELD.secretText);
     const shot = await screened(
       await finalize(raw, layout, after.boxes),
       sources,
