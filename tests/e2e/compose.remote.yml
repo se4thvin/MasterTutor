@@ -65,6 +65,9 @@ services:
   observability-init:
     image: mastertutor/node-runtime:${MT_CI_RUN_ID}
     labels: *ci-labels
+  observer:
+    image: mastertutor/observer:${MT_CI_RUN_ID}
+    labels: *ci-labels
   browser-1:
     image: mastertutor/browser-slot:${MT_CI_RUN_ID}
     security_opt: [apparmor=mastertutor-slot]
@@ -112,6 +115,10 @@ networks:
   observe-store:
     labels: *ci-labels
   observe-edge:
+    labels: *ci-labels
+  observer-db:
+    labels: *ci-labels
+  observer-egress:
     labels: *ci-labels
   obs-ingest:
     labels: *ci-labels

@@ -4,14 +4,16 @@
   "private": true,
   "type": "module",
   "sideEffects": [
-    "./src/register-agent.ts"
+    "./src/register-agent.ts",
+    "./src/register-observer.ts"
   ],
   "exports": {
     ".": "./src/index.ts",
     "./record": "./src/record.ts",
     "./instrument": "./src/instrument.ts",
     "./register-agent": "./src/register-agent.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./register-observer": "./src/register-observer.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

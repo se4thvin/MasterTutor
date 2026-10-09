@@ -58,3 +58,17 @@ export const O2RangeResponse = z.object({
   }),
 });
 export type O2RangeResponse = z.infer<typeof O2RangeResponse>;
+
+import { DASHBOARDS } from "./dashboards/catalog.ts";
+/** Examples derived from provisioned panels; no copied query definitions. */
+export const DASHBOARD_FEW_SHOTS: ReadonlyArray<{
+  title: string;
+  kind: "promql" | "sql";
+  query: string;
+}> = DASHBOARDS.flatMap((dashboard) =>
+  dashboard.panels.map((panel) => ({
+    title: `${dashboard.title} / ${panel.title}`,
+    kind: panel.query.type,
+    query: panel.query.type === "promql" ? panel.query.expr : panel.query.sql,
+  })),
+);

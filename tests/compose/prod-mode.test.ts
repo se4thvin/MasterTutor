@@ -20,6 +20,29 @@ const hardened = {
 const prodLike = (): ComposeConfig => ({
   services: {
     web: { environment: { OPENAI_API_KEY: "sk-value-never-printed", OPENAI_BASE_URL: "" } },
+    observer: {
+      ...hardened,
+      image: "mastertutor/observer:prod",
+      environment: {
+        OBSERVER_QUERY_URL: "http://observer-query:4001",
+        DATABASE_URL: "postgres://observer_role:test@postgres:5432/mastertutor",
+        OPENAI_BASE_URL: "",
+      },
+      networks: {
+        "observer-db": {},
+        "observer-query": {},
+        "observer-edge": {},
+        telemetry: {},
+        "observer-egress": {},
+      },
+    },
+    "observer-query": {
+      ...hardened,
+      image: "mastertutor/observer:prod",
+      command: ["node", "apps/observer/src/query-proxy-main.ts"],
+      environment: {},
+      networks: { observe: {}, "observer-query": {} },
+    },
     agent: { environment: { AGENT_TEST_MODE: "0", OPENAI_BASE_URL: "" } },
     "browser-1": {
       environment: { SLOT_EGRESS_ALLOW_CIDRS: "", PULSE_ALLOWED_IP: "172.30.233.10" },
@@ -36,7 +59,19 @@ const prodLike = (): ComposeConfig => ({
       networks: { pdf: {} },
     },
   },
-  networks: { pdf: { internal: true }, audio: { internal: true }, pulse: { internal: true } },
+  networks: Object.fromEntries(
+    [
+      "pdf",
+      "audio",
+      "pulse",
+      "observer-db",
+      "observe",
+      "observe-edge",
+      "observer-query",
+      "observer-edge",
+      "telemetry",
+    ].map((key) => [key, { internal: true }]),
+  ),
 });
 
 describe("prodModeProblems (D47)", () => {
@@ -306,4 +341,53 @@ describe("observability rules (D50)", () => {
       "networks.obs-ingest: must disable IP masquerade, so the collector has no egress (D50)",
     ]);
   });
+});
+
+describe("the observer service (D52)", () => {
+  it("rejects powerful credentials, a published port and extra network", () => {
+    const config = prodLike();
+    const observer = config.services.observer!;
+    observer.environment!.S3_ACCESS_KEY_ID = "test";
+    observer.ports = [{ target: 4000, published: "4000" }];
+    observer.networks!.backend = {};
+    expect(prodModeProblems(config)).toEqual(
+      expect.arrayContaining([
+        "observer.environment.S3_ACCESS_KEY_ID: the observer holds no S3, vault, sealing, auth or n.eko secret (D52)",
+        "observer.ports: the observer publishes no port (D52)",
+        "observer.networks: exactly observer-db, observer-edge, observer-egress, observer-query, telemetry (D52)",
+      ]),
+    );
+  });
+  it("rejects an owner database role, public database network and mock provider", () => {
+    const config = prodLike();
+    config.services.observer!.environment!.DATABASE_URL =
+      "postgres://owner:test@postgres:5432/mastertutor";
+    config.services.observer!.environment!.OPENAI_BASE_URL = "http://llm-mock:8080/v1";
+    config.networks["observer-db"] = {};
+    expect(prodModeProblems(config)).toEqual(
+      expect.arrayContaining([
+        "observer.DATABASE_URL: must use observer_role at postgres (D52)",
+        "observer.OPENAI_BASE_URL: must be empty (real OpenAI only, D38/D47)",
+        "networks.observer-db: must be internal (D52)",
+      ]),
+    );
+  });
+});
+
+it("refuses an O2 credential or direct access in the observer and a public or unconstrained proxy", () => {
+  const config = prodLike();
+  config.services.observer!.environment!.OBSERVE_COPILOT_PASSWORD = "not-a-real-secret";
+  config.services.observer!.networks!.observe = {};
+  const proxy = config.services["observer-query"]!;
+  proxy.ports = [{ target: 4001, published: "4001" }];
+  proxy.networks!.edge = {};
+  proxy.environment!.OPENAI_API_KEY = "not-a-real-secret";
+  config.services.web!.networks = { "observer-query": {} };
+  const problems = prodModeProblems(config).join("\n");
+  expect(problems).toContain("observer.environment.OBSERVE_COPILOT_PASSWORD");
+  expect(problems).toContain("observer.networks");
+  expect(problems).toContain("observer-query.ports");
+  expect(problems).toContain("observer-query.networks");
+  expect(problems).toContain("observer-query.environment.OPENAI_API_KEY");
+  expect(problems).toContain("web.networks.observer-query");
 });

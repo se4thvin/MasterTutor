@@ -75,16 +75,26 @@ export interface RunDetail {
 
 const MAX_STEPS = 200;
 
+/** Workspace-scoped metadata lookup for a context handle; no goal or page text. */
+export async function runForCopilot(
+  db: DbLike,
+  workspaceId: string,
+  runId: string,
+): Promise<ObserverRunRow | null> {
+  const [run] = await db
+    .select()
+    .from(observerRuns)
+    .where(and(eq(observerRuns.id, runId), eq(observerRuns.workspaceId, workspaceId)));
+  return run ?? null;
+}
+
 export async function runDetail(
   db: DbLike,
   workspaceId: string,
   runId: string,
   options: { includeUntrusted: boolean },
 ): Promise<RunDetail | null> {
-  const [run] = await db
-    .select()
-    .from(observerRuns)
-    .where(and(eq(observerRuns.id, runId), eq(observerRuns.workspaceId, workspaceId)));
+  const run = await runForCopilot(db, workspaceId, runId);
   if (!run) return null;
   const [goalRow, steps, approvals, events, guard] = await Promise.all([
     options.includeUntrusted

@@ -32,3 +32,4 @@ export * from "./observer.ts";
 export * from "./pricing.ts";
 export * from "./private-address.ts";
 export * from "./source-url.ts";
+export * from "./observer-query.ts";

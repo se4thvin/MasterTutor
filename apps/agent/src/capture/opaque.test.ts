@@ -26,6 +26,9 @@ describe("OCR input stays within 1280×800 (data policy rule 4, D5)", () => {
     const requests: Array<{ instructions: string; input: unknown; name: string }> = [];
     const model = createOcrModel({
       responses: {
+        stream: () => {
+          throw new Error("unused");
+        },
         create: async () => {
           throw new Error("unused");
         },
@@ -53,6 +56,9 @@ describe("OCR input stays within 1280×800 (data policy rule 4, D5)", () => {
     let calls = 0;
     const model = createOcrModel({
       responses: {
+        stream: () => {
+          throw new Error("unused");
+        },
         create: async () => {
           throw new Error("unused");
         },

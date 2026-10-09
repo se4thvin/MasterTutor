@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Node services. Two targets:
+# Node services. Three targets:
 #   node-runtime: agent, migrate, garage-init, observability-init (TS via Node type stripping);
-#   web: the Next.js standalone server.
+#   web: the Next.js standalone server; observer: the Copilot and isolated query proxy.
 FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS base
 ENV CI=true NEXT_TELEMETRY_DISABLED=1
 RUN npm install -g pnpm@10.34.6 && npm cache clean --force
@@ -32,6 +32,28 @@ RUN find apps/agent packages -path '*/node_modules' -prune -o \
 RUN find node_modules/.pnpm -path '*/node_modules/tesseract.js-core/*.wasm.js' -delete \
  && find node_modules/.pnpm -path '*/node_modules/@tesseract.js-data/eng/4.0.0' -prune \
       -exec rm -rf {} +
+
+FROM fetch AS observer-build
+COPY . .
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline --prod --store-dir /pnpm/store --filter "@mastertutor/observer-service..."
+# The Copilot's code index (spec §7.5): built from this context (.dockerignore already drops .git,
+# .env*, docs, orchestration and *.md); only the JSON ships, never the tree.
+RUN node apps/observer/src/bin/build-code-index.ts /repo /repo/code-index.json
+RUN find apps/observer packages -path '*/node_modules' -prune -o \
+      \( -name '*.test.ts' -o -name testing -o -name testing.ts \) -print0 | xargs -0 rm -rf
+
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS observer
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=observer-build --chown=node:node /repo/package.json ./package.json
+COPY --from=observer-build --chown=node:node /repo/node_modules ./node_modules
+COPY --from=observer-build --chown=node:node /repo/packages ./packages
+COPY --from=observer-build --chown=node:node /repo/apps/observer ./apps/observer
+COPY --from=observer-build --chown=node:node /repo/code-index.json ./code-index.json
+USER node
+EXPOSE 4000 4001
+CMD ["node", "--import", "./packages/telemetry/src/register-observer.ts", "apps/observer/src/main.ts"]
 
 # Workspace packages stay symlinked outside node_modules, which Node type stripping requires.
 FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS node-runtime

@@ -34,6 +34,7 @@ const root = await provisionRoot({
 await provisionUsers(root, {
   ingest: env.OBSERVE_INGEST_PASSWORD,
   viewer: env.OBSERVE_VIEWER_PASSWORD,
+  copilot: env.OBSERVE_COPILOT_PASSWORD,
 });
 await provisionStreams(root);
 await provisionAlertDelivery(root, {

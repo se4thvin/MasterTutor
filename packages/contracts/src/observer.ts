@@ -268,12 +268,39 @@ export type CopilotErrorCode = z.infer<typeof CopilotErrorCode>;
 export const ResultId = z.string().regex(/^Q[1-9][0-9]{0,2}$/);
 export type ResultId = z.infer<typeof ResultId>;
 
+export const COPILOT_LIMITS = {
+  questionsPerWindow: 20,
+  windowMinutes: 10,
+  toolRounds: 8,
+  parallelCalls: 4,
+  maxOutputTokens: 2_000,
+  inputTokens: 60_000,
+  storedRows: 200,
+  columns: 32,
+  columnChars: 64,
+  cellChars: 2_000,
+  summaryChars: 200,
+  textDeltaChars: 4_000,
+  modelRows: 50,
+  series: 20,
+  points: 300,
+  metricDefaultHours: 7 * 24,
+  metricMaxHours: 90 * 24,
+  searchDefaultHours: 24,
+  searchMaxHours: 7 * 24,
+  queryTimeoutMs: 10_000,
+  codeMatches: 50,
+  codeReadLines: 200,
+  retentionDays: 30,
+  dailyUsdDefault: 3,
+} as const;
+
 export const CHART_KINDS = ["line", "bar", "table"] as const;
 export const ChartSpec = z.strictObject({
   resultId: ResultId,
   kind: z.enum(CHART_KINDS),
-  x: z.string().min(1).max(64),
-  y: z.array(z.string().min(1).max(64)).min(1).max(4),
+  x: z.string().min(1).max(COPILOT_LIMITS.columnChars),
+  y: z.array(z.string().min(1).max(COPILOT_LIMITS.columnChars)).min(1).max(4),
   title: z.string().max(80),
 });
 export type ChartSpec = z.infer<typeof ChartSpec>;
@@ -293,12 +320,12 @@ export type CopilotAsk = z.infer<typeof CopilotAsk>;
 
 export const CopilotEvent = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("thread"), threadId: Uuid }),
-  z.strictObject({ type: z.literal("text"), delta: z.string().max(4_000) }),
+  z.strictObject({ type: z.literal("text"), delta: z.string().max(COPILOT_LIMITS.textDeltaChars) }),
   z.strictObject({
     type: z.literal("tool_started"),
     resultId: ResultId,
     tool: CopilotToolName,
-    summary: z.string().max(200),
+    summary: z.string().max(COPILOT_LIMITS.summaryChars),
   }),
   z.strictObject({
     type: z.literal("tool_done"),
@@ -318,13 +345,13 @@ export const CopilotEvent = z.discriminatedUnion("type", [
 ]);
 export type CopilotEvent = z.infer<typeof CopilotEvent>;
 
-const Cell = z.union([z.string().max(2_000), z.number(), z.boolean(), z.null()]);
+const Cell = z.union([z.string().max(COPILOT_LIMITS.cellChars), z.number(), z.boolean(), z.null()]);
 export const CopilotResultView = z.strictObject({
   resultId: ResultId,
   tool: CopilotToolName,
-  summary: z.string().max(200),
-  columns: z.array(z.string().max(64)).max(32),
-  rows: z.array(z.array(Cell).max(32)).max(200),
+  summary: z.string().max(COPILOT_LIMITS.summaryChars),
+  columns: z.array(z.string().max(COPILOT_LIMITS.columnChars)).max(COPILOT_LIMITS.columns),
+  rows: z.array(z.array(Cell).max(COPILOT_LIMITS.columns)).max(COPILOT_LIMITS.storedRows),
   rowCount: z.number().int().min(0),
   truncated: z.boolean(),
   tookMs: z.number().int().min(0),
@@ -358,28 +385,6 @@ export const CopilotThreadView = z.strictObject({
   results: z.array(CopilotResultView),
 });
 export type CopilotThreadView = z.infer<typeof CopilotThreadView>;
-
-export const COPILOT_LIMITS = {
-  questionsPerWindow: 20,
-  windowMinutes: 10,
-  toolRounds: 8,
-  parallelCalls: 4,
-  maxOutputTokens: 2_000,
-  inputTokens: 60_000,
-  storedRows: 200,
-  modelRows: 50,
-  series: 20,
-  points: 300,
-  metricDefaultHours: 7 * 24,
-  metricMaxHours: 90 * 24,
-  searchDefaultHours: 24,
-  searchMaxHours: 7 * 24,
-  queryTimeoutMs: 10_000,
-  codeMatches: 50,
-  codeReadLines: 200,
-  retentionDays: 30,
-  dailyUsdDefault: 3,
-} as const;
 
 /* ---------------------------------- routing ---------------------------------- */
 

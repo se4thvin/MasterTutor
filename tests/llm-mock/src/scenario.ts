@@ -1,4 +1,6 @@
 export type MockOutput =
+  /** A plain assistant message (the Copilot answers). */
+  | { type: "message"; text: string }
   | {
       type: "computer";
       actions: Array<Record<string, unknown>>;

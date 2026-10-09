@@ -39,6 +39,12 @@ const INVENTORY: Record<string, readonly string[]> = {
     "tests/security/key-placement.security.test.ts",
     "tests/compose/compose-config.int.test.ts",
   ],
+  "observer query confinement": [
+    "apps/observer/src/queries/sql.test.ts",
+    "apps/observer/src/query-proxy.test.ts",
+    "tests/compose/prod-overlay.int.test.ts",
+    "tests/observability/stack/5-copilot.int.test.ts",
+  ],
   "9 tool list": ["apps/agent/src/llm/llm.test.ts"],
   "10 dependencies": [".github/workflows/ci.yml"],
   "live-view auth": ["tests/live/live-stack.int.test.ts"],

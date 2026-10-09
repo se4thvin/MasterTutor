@@ -31,7 +31,7 @@ import { countDropped, setTelemetryLog, type Log } from "./self.ts";
 export { getTelemetry, type TelemetryHandle } from "./handle.ts";
 
 export interface StartOptions {
-  service: "web" | "agent";
+  service: "web" | "agent" | "observer";
   env: TelemetryEnv;
   crash: CrashMode;
   log: Log;

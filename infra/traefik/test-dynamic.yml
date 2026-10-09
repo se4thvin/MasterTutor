@@ -36,6 +36,12 @@ http:
       entryPoints: [web]
       middlewares: [live-auth, live-upload-limit, live-strip, live-headers]
       service: live-browser-2
+    observer:
+      rule: Host(`localhost`) && PathPrefix(`/api/observer/`)
+      priority: 960
+      entryPoints: [web]
+      middlewares: [observer-auth, observer-headers]
+      service: observer
     observability:
       rule: Host(`obs.localhost`)
       priority: 900
@@ -48,6 +54,16 @@ http:
       entryPoints: [web]
       service: web
   middlewares:
+    observer-auth:
+      forwardAuth:
+        address: http://172.30.231.11:3000/api/observer-auth
+        trustForwardHeader: false
+        authResponseHeaders: [Authorization, Cookie, X-Mt-User, X-Mt-Workspace]
+    observer-headers:
+      headers:
+        contentTypeNosniff: true
+        customResponseHeaders:
+          Cache-Control: no-store
     observability-auth:
       forwardAuth:
         address: http://172.30.231.11:3000/api/observability/auth
@@ -78,6 +94,10 @@ http:
         contentSecurityPolicy: "frame-ancestors 'self'"
         contentTypeNosniff: true
   services:
+    observer:
+      loadBalancer:
+        servers:
+          - url: http://observer:4000
     observability:
       loadBalancer:
         servers:

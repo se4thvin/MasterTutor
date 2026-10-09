@@ -39,6 +39,7 @@ services:
       cdp:
         ipv4_address: 172.30.231.12
       observe-edge: {}
+      observer-edge: {}
 
   web:
     environment:
@@ -50,6 +51,12 @@ services:
       traefik.http.routers.mastertutor-web-http.middlewares: !reset null
       traefik.http.routers.mastertutor-web-http.service: !reset null
       traefik.http.routers.mastertutor-observability-session.tls.certresolver: !reset null
+
+  observer:
+    environment:
+      MT_DEPLOYMENT: bench
+    labels:
+      traefik.http.routers.mastertutor-observer.tls.certresolver: !reset null
 
   openobserve:
     environment:
@@ -96,6 +103,9 @@ services:
     ports: !override ["127.0.0.1:59006:59006/udp", "127.0.0.1:59006:59006/tcp"]
 
 networks:
+  observer-edge: !override
+    name: mastertutor-observer
+    internal: true
   observe-edge: !override
     name: mastertutor-obs
     internal: true

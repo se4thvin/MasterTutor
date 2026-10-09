@@ -9,6 +9,15 @@ services:
       MT_DEPLOYMENT: test
       ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set by scripts/lib/test-stack.sh}
       OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:?set by scripts/lib/test-stack.sh}
+  observer:
+    environment:
+      OPENAI_BASE_URL: http://llm-mock:8090/v1
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      MT_DEPLOYMENT: test
+    # The mock lives on edge; the production observer's five networks stay unchanged.
+    networks:
+      edge: {}
+
   e2e:
     environment:
       ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set by scripts/lib/test-stack.sh}
@@ -29,3 +38,4 @@ services:
         condition: service_completed_successfully
     networks:
       observe-edge: {}
+      observer-edge: {}

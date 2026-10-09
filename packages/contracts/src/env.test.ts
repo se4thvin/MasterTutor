@@ -174,12 +174,13 @@ describe("ObserverEnv (spec §5.1)", () => {
     OPENAI_API_KEY: "k",
     PUBLIC_URL: "https://mt.example.com",
     OBSERVER_INTERNAL_TOKEN: "t".repeat(32),
-    OBSERVE_COPILOT_PASSWORD: "Copilot-password-0123456789abcdef",
+    OBSERVER_QUERY_TOKEN: "q".repeat(32),
+    OBSERVER_QUERY_URL: "http://observer-query:4001",
   };
   it("defaults the daily cap to $3 and holds no S3, vault or auth secret", () => {
     const env = parseEnv(ObserverEnv, base);
     expect(env.OBSERVER_DAILY_USD).toBe(3);
     for (const key of Object.keys(ObserverEnv.shape))
-      expect(key).not.toMatch(/^(S3_|VAULT_|BETTER_AUTH|NEKO_|LIVE_COOKIE|SEALING)/);
+      expect(key).not.toMatch(/^(S3_|VAULT_|BETTER_AUTH|NEKO_|LIVE_COOKIE|SEALING|OBSERVE_)/);
   });
 });

@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
 import { seedMember, startTestDatabase, type TestDatabase } from "../testing.ts";
 import {
+  reserveCopilotSpend,
+  settleCopilotSpend,
   addSpend,
   appendItems,
   countQuestionsSince,
@@ -78,5 +80,21 @@ describe("Copilot replay storage (spec §7.3, §7.6)", () => {
     await owner.sql`update observer.copilot_threads set updated_at = now() - interval '31 days' where id = ${id}`;
     await purgeThreadsBefore(observer.db, new Date(Date.now() - 30 * 86_400_000));
     expect(await loadThread(observer.db, workspaceId, id)).toBeNull();
+  });
+  it("reserves spend atomically, refuses overlapping excess and settles actual usage", async () => {
+    await owner.sql`delete from observer.copilot_spend`;
+    const reservations = await Promise.all([
+      reserveCopilotSpend(observer.db, 0.6, 1),
+      reserveCopilotSpend(observer.db, 0.6, 1),
+    ]);
+    expect(reservations.filter(Boolean)).toHaveLength(1);
+    expect(await spentToday(observer.db)).toBeCloseTo(0.6, 6);
+    const held = reservations.find((r) => r !== null)!;
+    await settleCopilotSpend(observer.db, held, 0.1);
+    expect(await spentToday(observer.db)).toBeCloseTo(0.1, 6);
+    expect(await reserveCopilotSpend(observer.db, 1, 1)).toBeNull();
+    const next = await reserveCopilotSpend(observer.db, 0.6, 1);
+    expect(next).not.toBeNull();
+    expect(await spentToday(observer.db)).toBeCloseTo(0.7, 6);
   });
 });
