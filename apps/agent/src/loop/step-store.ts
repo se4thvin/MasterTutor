@@ -304,6 +304,7 @@ export class StepStore {
             target: [runSteps.runId, runSteps.seq],
             set: {
               state: step.state,
+              action: sql`coalesce(excluded.action, ${runSteps.action})`,
               result: step.result ?? null,
               caption: sql`coalesce(excluded.caption, ${runSteps.caption})`,
               url: sql`coalesce(excluded.url, ${runSteps.url})`,

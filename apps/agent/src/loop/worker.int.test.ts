@@ -325,6 +325,34 @@ describe("RunWorker + Supervisor", () => {
     expect(browser.computerRuns).toHaveLength(1);
   });
 
+  it("takeover aborts a stalled first decide and hand-back starts a fresh decide", async () => {
+    await start();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { run, browser, name } = await queue([{ ...done, hold: () => held }, done]);
+    try {
+      await waitFor(() => mock.requestsFor(name).length === 1, { label: "first decide in flight" });
+      await takeOver(run.id);
+      await waitFor(async () => (await controlEvents(run.id)).includes("user"), {
+        label: "takeover acknowledged",
+      });
+      expect(await row(run.id)).toMatchObject({ status: "waiting", controller: "user" });
+      expect(mock.requestsFor(name)).toHaveLength(1);
+      // The first HTTP reply remains held: completion proves takeover cancelled it.
+      await handBackTo(run.id);
+      await until(run.id, (row) => row.status === "completed", "fresh decide after hand-back");
+      expect(mock.requestsFor(name)).toHaveLength(2);
+      expect(browser.executed).toHaveLength(0);
+      expect(await row(run.id)).toMatchObject({
+        usage: { steps: 1, inputTokens: 1000, outputTokens: 100 },
+      });
+    } finally {
+      release();
+    }
+  });
+
   it("takeover during an act aborts it, holds without model calls, and hand back re-observes without retrying it", async () => {
     await start();
     const { run, browser } = await queue([click, done]);
