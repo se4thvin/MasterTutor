@@ -1,4 +1,4 @@
-/** Damped spring with unit mass (run 16 prototype), shared by the 3D hero and Pip. Parameters come from motion-tokens. */
+/** Damped spring with unit mass (run 16 prototype), used by Pip. Parameters come from motion-tokens. */
 export interface Spring {
   x: number;
   v: number;
