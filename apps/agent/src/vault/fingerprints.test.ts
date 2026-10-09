@@ -1,7 +1,11 @@
 import { EventEmitter } from "node:events";
 import type { CDPSession } from "playwright-core";
 import { describe, expect, it } from "vitest";
-import { createSecretFingerprints, isScannableSecret } from "./fingerprints.ts";
+import {
+  createSecretFingerprints,
+  isDistinctiveSecret,
+  isScannableSecret,
+} from "./fingerprints.ts";
 import { SECRET_REDACTION } from "./runtime.ts";
 
 const fakeCdp = () => new EventEmitter() as unknown as CDPSession & EventEmitter;
@@ -229,6 +233,39 @@ describe("OCR'd text for the local pixel screens (QA-099)", () => {
     const mask = prints.forRun("run-a");
     expect(mask.redact("PIN 4821")).toBe(`PIN ${SECRET_REDACTION}`);
     expect(mask.inOcrText?.("Room 48 21, order 4B21")).toBe(false);
+  });
+});
+
+describe("generic secrets never match ordinary text (black-screen report)", () => {
+  it("calls a secret distinctive at 8+ characters, or 6+ mixing two kinds of character", () => {
+    for (const secret of [
+      "MARMOT4CANARY8VELVET",
+      "hunter2Ol1",
+      "Tr0ub4dor&3",
+      "longpassword",
+      "ab12cd",
+    ])
+      expect(isDistinctiveSecret(secret)).toBe(true);
+    for (const secret of ["parity", "199005", "4821", "math", "Abc1", "      "])
+      expect(isDistinctiveSecret(secret)).toBe(false);
+  });
+  it("lets only a distinctive secret found in page text withhold a whole frame", () => {
+    const prints = createSecretFingerprints();
+    prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "parity" });
+    const generic = prints.forRun("run-a");
+    expect(generic.showsSecret?.("2.3.3: Parity checks. Even parity")).toBe(false);
+    expect(generic.redact("even parity")).toBe(`even ${SECRET_REDACTION}`); // text stays redacted
+    prints.remember("run-b", { filled: filled(fakeCdp(), [1]), secret: "MARMOT4CANARY8VELVET" });
+    expect(prints.forRun("run-b").showsSecret?.("pw MARMOT4CANARY8VELVET")).toBe(true);
+    expect(prints.forRun("run-b").showsSecret?.("pw MARMOT4CANARY")).toBe(false);
+  });
+  it("matches a generic secret in OCR'd text only as a whole token, never inside a word", () => {
+    const prints = createSecretFingerprints();
+    prints.remember("run-a", { filled: filled(fakeCdp(), [1]), secret: "parity" });
+    const mask = prints.forRun("run-a");
+    expect(mask.inOcrText?.("Disparity checks and comparity")).toBe(false);
+    expect(mask.inOcrText?.("Even parity bits")).toBe(true);
+    expect(mask.inOcrText?.("Even PARlTY bits")).toBe(true); // confusables, still the whole token
   });
 });
 
