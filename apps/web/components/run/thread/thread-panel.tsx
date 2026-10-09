@@ -57,7 +57,17 @@ function ThreadList(p: ThreadProps) {
   }, []);
   useEffect(() => {
     const list = listRef.current;
-    if (list && pinned.current && p.replaySeq === null) list.scrollTop = list.scrollHeight;
+    if (!list || p.replaySeq !== null) return undefined;
+    const pin = () => {
+      if (pinned.current) list.scrollTop = list.scrollHeight;
+    };
+    pin();
+    // The tail can grow after it mounts (the lazily loaded code box): keep the end in view.
+    const tail = list.lastElementChild;
+    if (!tail) return undefined;
+    const observer = new ResizeObserver(pin);
+    observer.observe(tail);
+    return () => observer.disconnect();
   }, [p.items.length, p.otp, p.thinking, p.replaySeq]);
   useEffect(() => {
     const list = listRef.current;
