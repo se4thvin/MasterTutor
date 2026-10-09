@@ -85,6 +85,7 @@ export async function provisionUsers(
   ] as const) {
     const password = passwords[who];
     if (password === undefined) continue;
+    // OSS has no read-only role: this user belongs only to the isolated query proxy.
     const role = who === "copilot" ? O2_ROLES.viewer : O2_ROLES[who];
     if (existing.has(email))
       await client.call(

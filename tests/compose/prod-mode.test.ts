@@ -22,17 +22,26 @@ const prodLike = (): ComposeConfig => ({
     web: { environment: { OPENAI_API_KEY: "sk-value-never-printed", OPENAI_BASE_URL: "" } },
     observer: {
       ...hardened,
+      image: "mastertutor/observer:prod",
       environment: {
+        OBSERVER_QUERY_URL: "http://observer-query:4001",
         DATABASE_URL: "postgres://observer_role:test@postgres:5432/mastertutor",
         OPENAI_BASE_URL: "",
       },
       networks: {
         "observer-db": {},
-        observe: {},
-        "observe-edge": {},
+        "observer-query": {},
+        "observer-edge": {},
         telemetry: {},
         "observer-egress": {},
       },
+    },
+    "observer-query": {
+      ...hardened,
+      image: "mastertutor/observer:prod",
+      command: ["node", "apps/observer/src/query-proxy-main.ts"],
+      environment: {},
+      networks: { observe: {}, "observer-query": {} },
     },
     agent: { environment: { AGENT_TEST_MODE: "0", OPENAI_BASE_URL: "" } },
     "browser-1": {
@@ -51,10 +60,17 @@ const prodLike = (): ComposeConfig => ({
     },
   },
   networks: Object.fromEntries(
-    ["pdf", "audio", "pulse", "observer-db", "observe", "observe-edge", "telemetry"].map((key) => [
-      key,
-      { internal: true },
-    ]),
+    [
+      "pdf",
+      "audio",
+      "pulse",
+      "observer-db",
+      "observe",
+      "observe-edge",
+      "observer-query",
+      "observer-edge",
+      "telemetry",
+    ].map((key) => [key, { internal: true }]),
   ),
 });
 
@@ -338,7 +354,7 @@ describe("the observer service (D52)", () => {
       expect.arrayContaining([
         "observer.environment.S3_ACCESS_KEY_ID: the observer holds no S3, vault, sealing, auth or n.eko secret (D52)",
         "observer.ports: the observer publishes no port (D52)",
-        "observer.networks: exactly observe, observe-edge, observer-db, observer-egress, telemetry (D52)",
+        "observer.networks: exactly observer-db, observer-edge, observer-egress, observer-query, telemetry (D52)",
       ]),
     );
   });
@@ -356,4 +372,22 @@ describe("the observer service (D52)", () => {
       ]),
     );
   });
+});
+
+it("refuses an O2 credential or direct access in the observer and a public or unconstrained proxy", () => {
+  const config = prodLike();
+  config.services.observer!.environment!.OBSERVE_COPILOT_PASSWORD = "not-a-real-secret";
+  config.services.observer!.networks!.observe = {};
+  const proxy = config.services["observer-query"]!;
+  proxy.ports = [{ target: 4001, published: "4001" }];
+  proxy.networks!.edge = {};
+  proxy.environment!.OPENAI_API_KEY = "not-a-real-secret";
+  config.services.web!.networks = { "observer-query": {} };
+  const problems = prodModeProblems(config).join("\n");
+  expect(problems).toContain("observer.environment.OBSERVE_COPILOT_PASSWORD");
+  expect(problems).toContain("observer.networks");
+  expect(problems).toContain("observer-query.ports");
+  expect(problems).toContain("observer-query.networks");
+  expect(problems).toContain("observer-query.environment.OPENAI_API_KEY");
+  expect(problems).toContain("web.networks.observer-query");
 });

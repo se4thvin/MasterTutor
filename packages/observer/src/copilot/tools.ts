@@ -1,5 +1,10 @@
-import { ChartSpec, COPILOT_LIMITS, RunStatus, type CopilotToolName } from "@mastertutor/contracts";
-import { LOG_STREAMS, TRACE_STREAM } from "@mastertutor/contracts/telemetry";
+import {
+  ChartSpec,
+  COPILOT_LIMITS,
+  COPILOT_STREAMS,
+  RunStatus,
+  type CopilotToolName,
+} from "@mastertutor/contracts";
 import { z } from "zod";
 import { RunHandle } from "./handles.ts";
 
@@ -15,7 +20,7 @@ export const MetricsQueryArgs = z.strictObject({
   stepSeconds: z.number().int().min(15).max(86_400).nullable(),
 });
 export const TelemetrySearchArgs = z.strictObject({
-  stream: z.enum([LOG_STREAMS.app, LOG_STREAMS.containers, TRACE_STREAM]),
+  stream: z.enum(COPILOT_STREAMS),
   sql: z.string().min(1).max(4_000),
   rangeHours: z.number().int().min(1).max(168).nullable(),
 });

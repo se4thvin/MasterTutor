@@ -523,11 +523,12 @@ describe("observability in production (D50)", () => {
     ).toEqual([]);
   });
 
-  it("joins exactly the shared host's new external network, besides mastertutor-cdp", () => {
+  it("separates the observer ingress from the OpenObserve external network", () => {
     const external = Object.entries(obs.networks).filter(([, network]) => network.external);
     expect(external.map(([key, network]) => [key, network.name]).sort()).toEqual([
       ["cdp", "mastertutor-cdp"],
       ["observe-edge", "mastertutor-obs"],
+      ["observer-edge", "mastertutor-observer"],
     ]);
     expect(Object.keys(obs.services.openobserve!.networks ?? {}).sort()).toEqual([
       "observe",
@@ -576,6 +577,7 @@ describe("Copilot deployment (D52)", () => {
   const observer = config.services.observer!;
   it("routes only the app Copilot prefix through credential-replacing ForwardAuth", () => {
     const l = labels(observer);
+    expect(l["traefik.docker.network"]).toBe("mastertutor-observer");
     expect(l["traefik.http.routers.mastertutor-observer.rule"]).toBe(observerRouterRule(DOMAIN));
     expect(l["traefik.http.routers.mastertutor-observer.priority"]).toBe("960");
     expect(l["traefik.http.middlewares.mastertutor-observer-auth.forwardauth.address"]).toBe(
@@ -594,10 +596,10 @@ describe("Copilot deployment (D52)", () => {
     expect(new URL(env(observer).DATABASE_URL!).username).toBe("observer_role");
     expect(env(observer).OPENAI_BASE_URL).toBe("");
     expect(Object.keys(observer.networks ?? {}).sort()).toEqual([
-      "observe",
-      "observe-edge",
       "observer-db",
+      "observer-edge",
       "observer-egress",
+      "observer-query",
       "telemetry",
     ]);
     expect(config.networks["observer-db"]).toMatchObject({ internal: true });
@@ -607,6 +609,23 @@ describe("Copilot deployment (D52)", () => {
         .map(([name]) => name)
         .sort(),
     ).toEqual(["observer", "postgres"]);
+    const proxy = config.services["observer-query"]!;
+    expect(proxy.image).toBe(observer.image);
+    expect(proxy.command).toEqual(["node", "apps/observer/src/query-proxy-main.ts"]);
+    expect(env(observer).OBSERVE_COPILOT_PASSWORD).toBeUndefined();
+    expect(env(observer).OBSERVE_URL).toBeUndefined();
+    expect(env(observer).OBSERVER_QUERY_URL).toBe("http://observer-query:4001");
+    expect(env(proxy).OBSERVE_COPILOT_PASSWORD).toBeTruthy();
+    expect(env(proxy).OPENAI_API_KEY).toBeUndefined();
+    expect(proxy.ports ?? []).toEqual([]);
+    expect(Object.keys(proxy.networks ?? {}).sort()).toEqual(["observe", "observer-query"]);
+    expect(config.networks["observer-query"]).toMatchObject({ internal: true });
+    expect(
+      Object.entries(config.services)
+        .filter(([, service]) => "observer-query" in (service.networks ?? {}))
+        .map(([name]) => name)
+        .sort(),
+    ).toEqual(["observer", "observer-query"]);
     expect(observer.image).toBe("mastertutor/observer:prod");
     expect(observer.read_only).toBe(true);
     expect(observer.user).toBe("1000:1000");

@@ -147,12 +147,11 @@ services:
       OPENAI_BASE_URL: ""
       DATABASE_URL: postgres://observer_role:${OBSERVER_DB_PASSWORD:?set OBSERVER_DB_PASSWORD}@postgres:5432/mastertutor
       OBSERVER_INTERNAL_TOKEN: ${OBSERVER_INTERNAL_TOKEN:?set OBSERVER_INTERNAL_TOKEN}
-      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:?set OBSERVE_COPILOT_PASSWORD}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       MT_DEPLOYMENT: production
     labels:
       traefik.enable: "true"
-      traefik.docker.network: mastertutor-obs
+      traefik.docker.network: mastertutor-observer
       # observerRouterRule(DOMAIN) and observerForwardAuthAddress() exactly (prod-overlay.int.test.ts).
       traefik.http.routers.mastertutor-observer.rule: "Host(`${DOMAIN:?set DOMAIN}`) && PathPrefix(`/api/observer/`)"
       traefik.http.routers.mastertutor-observer.priority: "960"
@@ -167,6 +166,15 @@ services:
       traefik.http.middlewares.mastertutor-observer-auth.forwardauth.trustForwardHeader: "false"
       traefik.http.middlewares.mastertutor-observer-headers.headers.contentTypeNosniff: "true"
       traefik.http.middlewares.mastertutor-observer-headers.headers.customResponseHeaders.Cache-Control: "no-store"
+
+  observer-query:
+    <<: *logging
+    image: mastertutor/observer:prod
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+    environment:
+      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:?set OBSERVE_COPILOT_PASSWORD}
 
   agent:
     <<: *node-runtime-prod
@@ -367,7 +375,11 @@ networks:
     external: true
     internal: !reset null
     ipam: !reset null
-  # Created internal on the host (infra/host/create-obs-network.sh); Traefik, OpenObserve and the observer.
+  observer-edge:
+    name: mastertutor-observer
+    external: true
+    internal: !reset null
+  # Created internal on the host (infra/host/create-obs-network.sh); Traefik and OpenObserve.
   observe-edge:
     name: mastertutor-obs
     external: true

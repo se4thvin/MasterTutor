@@ -1,4 +1,4 @@
-import { COPILOT_LIMITS } from "@mastertutor/contracts";
+import { COPILOT_LIMITS, type ObserverTable } from "@mastertutor/contracts";
 import {
   O2RangeResponse,
   O2SearchBody,
@@ -7,12 +7,8 @@ import {
   type O2Client,
 } from "@mastertutor/observability/query";
 
-export type Cell = string | number | boolean | null;
-export interface Table {
-  columns: string[];
-  rows: Cell[][];
-  truncated: boolean;
-}
+export type Table = ObserverTable;
+export type Cell = Table["rows"][number][number];
 export interface O2Query {
   search(
     stream: string,

@@ -13,6 +13,7 @@ import {
   MigrateEnv,
   ObservabilityInitEnv,
   ObserverEnv,
+  ObserverQueryEnv,
   WebEnv,
   liveForwardAuthAddress,
   liveRouterRule,
@@ -27,6 +28,7 @@ export const PRODUCTION_FILES = ["compose.yml", "compose.prod.yml"] as const;
 const SERVICE_SCHEMAS = {
   web: WebEnv,
   observer: ObserverEnv,
+  "observer-query": ObserverQueryEnv,
   agent: AgentEnv,
   migrate: MigrateEnv,
   "garage-init": GarageInitEnv,

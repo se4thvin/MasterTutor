@@ -179,7 +179,7 @@ export type ObservabilityInitEnv = z.infer<typeof ObservabilityInitEnv>;
 
 /**
  * observer (spec §5.1, §7): observer_role's database URL, the one OpenAI key (D36), its own
- * OpenObserve user, the internal bearer ForwardAuth injects. No S3, vault, sealing or auth secret.
+ * query proxy URL, the internal bearer ForwardAuth injects. No S3, vault, sealing or auth secret.
  */
 export const ObserverEnv = z.object({
   ...Common,
@@ -190,14 +190,20 @@ export const ObserverEnv = z.object({
   /** The app's origin: the same-origin write check compares Origin with it. */
   PUBLIC_URL: z.url(),
   OBSERVER_INTERNAL_TOKEN: Secret,
-  OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
-  OBSERVE_COPILOT_PASSWORD: ObservePassword,
+  OBSERVER_QUERY_URL: z.url().default("http://observer-query:4001"),
   OBSERVER_DAILY_USD: z.coerce.number().positive().max(100).default(COPILOT_LIMITS.dailyUsdDefault),
   OBSERVER_PORT: z.coerce.number().int().min(1).max(65_535).default(OBSERVER_PORT),
   /** Built into the image by build-code-index.ts (spec §7.5). */
   OBSERVER_CODE_INDEX: z.string().min(1).default("/app/code-index.json"),
 });
 export type ObserverEnv = z.infer<typeof ObserverEnv>;
+
+/** Only the isolated read proxy (and provisioning job) receives the OSS admin credential. */
+export const ObserverQueryEnv = z.object({
+  OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
+  OBSERVE_COPILOT_PASSWORD: ObservePassword,
+});
+export type ObserverQueryEnv = z.infer<typeof ObserverQueryEnv>;
 
 export class EnvError extends Error {
   readonly problems: string[];

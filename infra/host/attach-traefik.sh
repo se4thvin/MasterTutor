@@ -6,7 +6,7 @@
 # address: nothing there filters on Traefik's address, and only OpenObserve shares that network.
 # OPERATOR STEP, only after the user approves this host change (D41, D42). Re-run whenever Dokploy
 # recreates its Traefik container. Without --yes it prints the command and changes nothing.
-# Usage: bash infra/host/attach-traefik.sh [--network obs] [--yes]
+# Usage: bash infra/host/attach-traefik.sh [--network obs|observer] [--yes]
 set -euo pipefail
 TRAEFIK_CONTAINER="${TRAEFIK_CONTAINER:-dokploy-traefik}"
 NETWORK=mastertutor-cdp
@@ -22,15 +22,15 @@ WANT="$PREFIX.12"
 APPLY=0
 TARGET=cdp
 usage() {
-  echo "usage: attach-traefik.sh [--network obs] [--yes]" >&2
+  echo "usage: attach-traefik.sh [--network obs|observer] [--yes]" >&2
   exit 2
 }
 while (($# > 0)); do
   case "$1" in
     --yes) APPLY=1 ;;
     --network)
-      [[ "${2:-}" == obs ]] || usage
-      TARGET=obs
+      [[ "${2:-}" == obs || "${2:-}" == observer ]] || usage
+      TARGET="$2"
       shift
       ;;
     *) usage ;;
@@ -38,8 +38,9 @@ while (($# > 0)); do
   shift
 done
 
-if [[ "$TARGET" == obs ]]; then
+if [[ "$TARGET" != cdp ]]; then
   NETWORK=mastertutor-obs
+  [[ "$TARGET" != observer ]] || NETWORK=mastertutor-observer
   current="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$TRAEFIK_CONTAINER")"
   if [[ -n "$current" ]]; then
     echo "$TRAEFIK_CONTAINER already attached to $NETWORK"

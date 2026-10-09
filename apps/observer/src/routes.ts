@@ -1,8 +1,8 @@
-import { COPILOT_LIMITS, OBSERVE_USERS, type ObserverEnv } from "@mastertutor/contracts";
+import type { ObserverEnv } from "@mastertutor/contracts";
 import { createOpenAI } from "@mastertutor/contracts/server/openai";
-import { createO2Client, DASHBOARD_FEW_SHOTS } from "@mastertutor/observability/query";
+import { DASHBOARD_FEW_SHOTS } from "@mastertutor/observability/query";
 import { createAsk } from "./conversation.ts";
-import { createO2Query } from "./o2.ts";
+import { createQueryProxyClient } from "./query-proxy-client.ts";
 import { loadCodeIndex } from "./code-index.ts";
 import { createToolRegistry } from "./tools/registry.ts";
 import type { Logger } from "@mastertutor/contracts/server";
@@ -22,14 +22,7 @@ export async function createRoutes(deps: {
     baseURL: env.OPENAI_BASE_URL,
     timeoutMs: 60_000,
   });
-  const o2 = createO2Query(
-    createO2Client({
-      baseUrl: env.OBSERVE_URL,
-      email: OBSERVE_USERS.copilot,
-      password: env.OBSERVE_COPILOT_PASSWORD,
-      timeoutMs: COPILOT_LIMITS.queryTimeoutMs,
-    }),
-  );
+  const o2 = createQueryProxyClient(env.OBSERVER_QUERY_URL);
   const tools = createToolRegistry({ db, o2, code: await loadCodeIndex(env.OBSERVER_CODE_INDEX) });
   return {
     ask: createAsk({

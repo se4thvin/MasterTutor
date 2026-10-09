@@ -270,3 +270,26 @@ Notes:
   If root's password and `OBSERVE_ROOT_PASSWORD` ever disagree without `_PREVIOUS`, the job logs a
   fatal "cannot sign in as OpenObserve's root" line naming the keys and exits 1, and users,
   dashboards and alerts are not re-applied: check its exit code after every deploy (step 2).
+
+### Observer query boundary (D52 security review)
+
+The Copilot holds `OBSERVER_QUERY_URL=http://observer-query:4001`, never an OpenObserve
+credential. `observer-query` uses the same observer image with the proxy entrypoint;
+only it and `observability-init` receive `OBSERVE_COPILOT_PASSWORD`. It binds to its
+`observer-query-private` interface on the internal `observer-query` network, whose
+only members are observer and proxy. Its `observe` interface is for outbound O2
+queries only. It exposes bounded SQL search and registry-validated PromQL reads;
+`/query` evaluates a one-point range at the requested timestamp. It publishes no port.
+
+Observer HTTP ingress uses a separate internal `mastertutor-observer` network,
+shared only with Dokploy Traefik. Before deployment, the operator follows the
+same approval procedure as the existing observability network:
+
+```sh
+bash infra/host/create-obs-network.sh --network observer
+bash infra/host/attach-traefik.sh --network observer
+```
+
+These commands preview changes. After host-change approval, add `--yes` to each.
+Keep OpenObserve off this network and the observer off `mastertutor-obs`/`observe`.
+Reattach Traefik after Dokploy recreates it. These host changes are deferred with deployment.

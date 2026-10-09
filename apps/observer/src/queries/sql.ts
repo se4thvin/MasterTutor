@@ -1,8 +1,6 @@
-import { LOG_STREAMS, TRACE_STREAM } from "@mastertutor/contracts/telemetry";
+import { COPILOT_STREAMS, type CopilotStream } from "@mastertutor/contracts";
 import type { QueryCheck } from "./promql.ts";
-
-export const COPILOT_STREAMS = [LOG_STREAMS.app, LOG_STREAMS.containers, TRACE_STREAM] as const;
-export type CopilotStream = (typeof COPILOT_STREAMS)[number];
+export { COPILOT_STREAMS, type CopilotStream } from "@mastertutor/contracts";
 
 interface Token {
   kind: "word" | "identifier" | "string" | "symbol";

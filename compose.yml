@@ -455,7 +455,7 @@ services:
       - observe
 
   # D52 (spec §5.1): the Copilot's backend. Least privilege: observer_role over schema observer, its
-  # own OpenObserve user, OpenAI egress only, no S3/vault/auth secret, no published port.
+  # isolated query proxy, OpenAI egress only, no S3/vault/auth secret, no published port.
   observer:
     image: mastertutor/observer:local
     build:
@@ -474,7 +474,7 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL}
       OBSERVER_INTERNAL_TOKEN: ${OBSERVER_INTERNAL_TOKEN:-}
-      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:-}
+      OBSERVER_QUERY_URL: http://observer-query:4001
       OBSERVER_DAILY_USD: ${OBSERVER_DAILY_USD:-3}
     healthcheck:
       <<: *node-health
@@ -488,14 +488,46 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      observer-query:
+        condition: service_healthy
+    networks:
+      - observer-db
+      - observer-query
+      - observer-edge
+      - telemetry
+      - observer-egress
+
+  # OSS OpenObserve only has admin users. This process alone holds the query credential.
+  observer-query:
+    image: mastertutor/observer:local
+    build:
+      context: .
+      target: observer
+    command: ["node", "apps/observer/src/query-proxy-main.ts"]
+    profiles: [observability]
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:-}
+    healthcheck:
+      <<: *node-health
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://observer-query-private:4001/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+    depends_on:
       observability-init:
         condition: service_completed_successfully
     networks:
-      - observer-db
-      - observe
-      - observe-edge
-      - telemetry
-      - observer-egress
+      observer-query:
+        aliases: [observer-query-private]
+      observe: {}
 
   browser-1:
     <<: *browser-slot
@@ -552,6 +584,10 @@ services:
     ports: ["59006:59006/udp", "59006:59006/tcp"]
 
 networks:
+  observer-query:
+    internal: true
+  observer-edge:
+    internal: true
   observer-db:
     internal: true
   # The isolated Copilot service has an outbound interface for its OpenAI client only.

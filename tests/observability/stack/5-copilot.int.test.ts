@@ -50,4 +50,53 @@ describe.runIf(enabled)("Copilot routing (spec §7.2)", () => {
     ]).trim();
     expect(status).toBe("401");
   });
+  it("keeps O2 secrets and direct O2 access out of the observer", () => {
+    const result = compose([
+      "exec",
+      "-T",
+      "observer",
+      "node",
+      "--input-type=module",
+      "-e",
+      `
+      const noSecret = !Object.keys(process.env).some(k => /^OBSERVE_/.test(k));
+      let direct = false;
+      try { await fetch('http://openobserve:5080/healthz', {signal: AbortSignal.timeout(1500)}); direct = true; } catch {}
+      const proxy = await fetch(process.env.OBSERVER_QUERY_URL + '/search', {
+        method: 'POST', headers: {'content-type':'application/json'},
+        body: JSON.stringify({stream:'mastertutor', sql:'SELECT * FROM mastertutor LIMIT 1', size:1,
+          range:{startUs:Date.now()*1000-3600000000,endUs:Date.now()*1000}})
+      });
+      const denied = await fetch(process.env.OBSERVER_QUERY_URL + '/search', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body:JSON.stringify({stream:'mastertutor',sql:'SELECT containers.body AS "from mastertutor where" FROM mastertutor, containers LIMIT 1',size:1,range:{startUs:1,endUs:2}})
+      });
+      const admin = await fetch(process.env.OBSERVER_QUERY_URL + '/api/default/users', {method:'DELETE'});
+      console.log(JSON.stringify({noSecret,direct,search:proxy.status,denied:denied.status,admin:admin.status}));
+    `,
+    ]);
+    expect(JSON.parse(result)).toEqual({
+      noSecret: true,
+      direct: false,
+      search: 200,
+      denied: 400,
+      admin: 404,
+    });
+  });
+  it("does not accept proxy requests on its OpenObserve-facing interface", () => {
+    const result = compose([
+      "exec",
+      "-T",
+      "web",
+      "node",
+      "--input-type=module",
+      "-e",
+      `
+      let reachable = false;
+      try { await fetch('http://observer-query:4001/healthz', {signal:AbortSignal.timeout(1500)}); reachable = true; } catch {}
+      console.log(JSON.stringify({reachable}));
+    `,
+    ]);
+    expect(JSON.parse(result)).toEqual({ reachable: false });
+  });
 });

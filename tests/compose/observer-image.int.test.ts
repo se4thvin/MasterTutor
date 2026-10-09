@@ -31,7 +31,7 @@ it("boots the observer production modules and validates its baked code index wit
         "./packages/telemetry/src/register-observer.ts",
         "--input-type=module",
         "-e",
-        "await import('./apps/observer/src/routes.ts'); const {loadCodeIndex} = await import('./apps/observer/src/code-index.ts'); const code = await loadCodeIndex('/app/code-index.json'); if (!code.read('apps/observer/src/main.ts', 1, 10)) throw new Error('missing observer snapshot'); console.log('OBSERVER IMAGE OK');",
+        "await import('./apps/observer/src/routes.ts'); const {createQueryProxyServer} = await import('./apps/observer/src/query-proxy.ts'); const proxy = createQueryProxyServer({}); proxy.close(); const {ObserverEnv} = await import('./packages/contracts/src/index.ts'); if ('OBSERVE_COPILOT_PASSWORD' in ObserverEnv.shape) throw new Error('credential in copilot'); const {loadCodeIndex} = await import('./apps/observer/src/code-index.ts'); const code = await loadCodeIndex('/app/code-index.json'); if (!code.read('apps/observer/src/main.ts', 1, 10)) throw new Error('missing observer snapshot'); console.log('OBSERVER IMAGE OK');",
       ],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
     );

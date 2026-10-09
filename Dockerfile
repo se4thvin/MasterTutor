@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Node services. Three targets:
 #   node-runtime: agent, migrate, garage-init, observability-init (TS via Node type stripping);
-#   web: the Next.js standalone server; observer: the isolated Copilot.
+#   web: the Next.js standalone server; observer: the Copilot and isolated query proxy.
 FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS base
 ENV CI=true NEXT_TELEMETRY_DISABLED=1
 RUN npm install -g pnpm@10.34.6 && npm cache clean --force
@@ -52,7 +52,7 @@ COPY --from=observer-build --chown=node:node /repo/packages ./packages
 COPY --from=observer-build --chown=node:node /repo/apps/observer ./apps/observer
 COPY --from=observer-build --chown=node:node /repo/code-index.json ./code-index.json
 USER node
-EXPOSE 4000
+EXPOSE 4000 4001
 CMD ["node", "--import", "./packages/telemetry/src/register-observer.ts", "apps/observer/src/main.ts"]
 
 # Workspace packages stay symlinked outside node_modules, which Node type stripping requires.
