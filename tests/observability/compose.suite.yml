@@ -11,6 +11,9 @@ services:
       - --providers.file.filename=/etc/traefik/dynamic.yml
       - --ping=true
       - --log.level=WARN
+  observer:
+    environment:
+      PUBLIC_URL: https://localhost:${TEST_HTTP_PORT:-18080}
   web:
     environment:
       BETTER_AUTH_URL: https://localhost:${TEST_HTTP_PORT:-18080}

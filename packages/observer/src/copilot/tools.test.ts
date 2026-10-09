@@ -43,3 +43,14 @@ it("carries per-tool limits and taint, and refuses traversing search prefixes", 
       .success,
   ).toBe(false);
 });
+
+it("accepts Next.js catch-all paths while refusing parent-directory components", () => {
+  const schema = COPILOT_TOOLS.code_read.schema;
+  expect(
+    schema.safeParse({ path: "apps/web/app/api/[...path]/route.ts", startLine: 1, endLine: 10 })
+      .success,
+  ).toBe(true);
+  expect(
+    schema.safeParse({ path: "apps/web/../private.ts", startLine: 1, endLine: 10 }).success,
+  ).toBe(false);
+});

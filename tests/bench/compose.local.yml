@@ -51,6 +51,12 @@ services:
       traefik.http.routers.mastertutor-web-http.service: !reset null
       traefik.http.routers.mastertutor-observability-session.tls.certresolver: !reset null
 
+  observer:
+    environment:
+      MT_DEPLOYMENT: bench
+    labels:
+      traefik.http.routers.mastertutor-observer.tls.certresolver: !reset null
+
   openobserve:
     environment:
       ZO_WEB_URL: http://obs.localhost:18080/observability

@@ -137,6 +137,37 @@ services:
       traefik.http.routers.mastertutor-observability-session.tls.certresolver: letsencrypt
       traefik.http.routers.mastertutor-observability-session.service: mastertutor-web
 
+  observer:
+    <<: *logging
+    image: mastertutor/observer:prod
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    environment:
+      OPENAI_BASE_URL: ""
+      DATABASE_URL: postgres://observer_role:${OBSERVER_DB_PASSWORD:?set OBSERVER_DB_PASSWORD}@postgres:5432/mastertutor
+      OBSERVER_INTERNAL_TOKEN: ${OBSERVER_INTERNAL_TOKEN:?set OBSERVER_INTERNAL_TOKEN}
+      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:?set OBSERVE_COPILOT_PASSWORD}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      MT_DEPLOYMENT: production
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: mastertutor-obs
+      # observerRouterRule(DOMAIN) and observerForwardAuthAddress() exactly (prod-overlay.int.test.ts).
+      traefik.http.routers.mastertutor-observer.rule: "Host(`${DOMAIN:?set DOMAIN}`) && PathPrefix(`/api/observer/`)"
+      traefik.http.routers.mastertutor-observer.priority: "960"
+      traefik.http.routers.mastertutor-observer.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.mastertutor-observer.tls: ${TRAEFIK_TLS:-true}
+      traefik.http.routers.mastertutor-observer.tls.certresolver: letsencrypt
+      traefik.http.routers.mastertutor-observer.middlewares: mastertutor-observer-auth,mastertutor-observer-headers
+      traefik.http.routers.mastertutor-observer.service: mastertutor-observer
+      traefik.http.services.mastertutor-observer.loadbalancer.server.port: "4000"
+      traefik.http.middlewares.mastertutor-observer-auth.forwardauth.address: "http://${CDP_SUBNET_PREFIX:-172.30.231}.11:3000/api/observer-auth"
+      traefik.http.middlewares.mastertutor-observer-auth.forwardauth.authResponseHeaders: Authorization,Cookie,X-Mt-User,X-Mt-Workspace
+      traefik.http.middlewares.mastertutor-observer-auth.forwardauth.trustForwardHeader: "false"
+      traefik.http.middlewares.mastertutor-observer-headers.headers.contentTypeNosniff: "true"
+      traefik.http.middlewares.mastertutor-observer-headers.headers.customResponseHeaders.Cache-Control: "no-store"
+
   agent:
     <<: *node-runtime-prod
     # Run loop, screencast encoding and extractors.
@@ -178,6 +209,7 @@ services:
       OBSERVE_ROOT_PASSWORD: ${OBSERVE_ROOT_PASSWORD:?set OBSERVE_ROOT_PASSWORD}
       OBSERVE_INGEST_PASSWORD: ${OBSERVE_INGEST_PASSWORD:?set OBSERVE_INGEST_PASSWORD}
       OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:?set OBSERVE_VIEWER_PASSWORD}
+      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:?set OBSERVE_COPILOT_PASSWORD}
       ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:?set ALERT_WEBHOOK_SECRET}
 
   # OpenObserve on its own host, obs.${DOMAIN} (D50 ruling I-2): owner-only through ForwardAuth to
@@ -335,7 +367,7 @@ networks:
     external: true
     internal: !reset null
     ipam: !reset null
-  # Created internal on the host (infra/host/create-obs-network.sh); Traefik and OpenObserve only.
+  # Created internal on the host (infra/host/create-obs-network.sh); Traefik, OpenObserve and the observer.
   observe-edge:
     name: mastertutor-obs
     external: true

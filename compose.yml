@@ -66,6 +66,7 @@ services:
       retries: 30
     networks:
       - backend
+      - observer-db
 
   garage:
     image: dxflrs/garage:v2.3.0
@@ -120,6 +121,7 @@ services:
       DATABASE_URL: postgres://owner:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/mastertutor
       WEB_DB_PASSWORD: ${WEB_DB_PASSWORD:?set WEB_DB_PASSWORD}
       AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:?set AGENT_DB_PASSWORD}
+      OBSERVER_DB_PASSWORD: ${OBSERVER_DB_PASSWORD:-}
       BROWSER_SLOTS: ${BROWSER_SLOTS:-browser-1,browser-2,browser-3,browser-4,browser-5,browser-6}
     depends_on:
       postgres:
@@ -155,6 +157,7 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:-}
       OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:-}
+      OBSERVER_INTERNAL_TOKEN: ${OBSERVER_INTERNAL_TOKEN:-}
       # Its cdp address (<prefix>.11) is the Host Traefik's ForwardAuth calls carry (D50 I-1).
       CDP_SUBNET_PREFIX: ${CDP_SUBNET_PREFIX:-172.30.231}
     healthcheck:
@@ -441,6 +444,7 @@ services:
       OBSERVE_ROOT_PASSWORD_PREVIOUS: ${OBSERVE_ROOT_PASSWORD_PREVIOUS:-}
       OBSERVE_INGEST_PASSWORD: ${OBSERVE_INGEST_PASSWORD:-}
       OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:-}
+      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:-}
       ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:-}
       ALERT_WEBHOOK_URL: http://web:3000/api/alerts/webhook
       SPEND_ALERT_USD_PER_HOUR: ${SPEND_ALERT_USD_PER_HOUR:-25}
@@ -449,6 +453,49 @@ services:
         condition: service_started
     networks:
       - observe
+
+  # D52 (spec §5.1): the Copilot's backend. Least privilege: observer_role over schema observer, its
+  # own OpenObserve user, OpenAI egress only, no S3/vault/auth secret, no published port.
+  observer:
+    image: mastertutor/observer:local
+    build:
+      context: .
+      target: observer
+    profiles: [observability]
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://observer_role:${OBSERVER_DB_PASSWORD:-}@postgres:5432/mastertutor
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL}
+      OBSERVER_INTERNAL_TOKEN: ${OBSERVER_INTERNAL_TOKEN:-}
+      OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:-}
+      OBSERVER_DAILY_USD: ${OBSERVER_DAILY_USD:-3}
+    healthcheck:
+      <<: *node-health
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      observability-init:
+        condition: service_completed_successfully
+    networks:
+      - observer-db
+      - observe
+      - observe-edge
+      - telemetry
+      - observer-egress
 
   browser-1:
     <<: *browser-slot
@@ -505,6 +552,10 @@ services:
     ports: ["59006:59006/udp", "59006:59006/tcp"]
 
 networks:
+  observer-db:
+    internal: true
+  # The isolated Copilot service has an outbound interface for its OpenAI client only.
+  observer-egress: {}
   edge: {}
   backend: {}
   egress: {}
@@ -534,7 +585,7 @@ networks:
     internal: true
   observe-store:
     internal: true
-  # Traefik ↔ OpenObserve only; compose.prod.yml makes it the external mastertutor-obs.
+  # Traefik ↔ OpenObserve and Copilot; compose.prod.yml makes it the external mastertutor-obs.
   observe-edge:
     internal: true
   # Only so the collector can publish its loopback fluent-forward port (spec §4.2): Docker cannot

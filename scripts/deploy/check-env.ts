@@ -12,6 +12,7 @@ import {
   GarageInitEnv,
   MigrateEnv,
   ObservabilityInitEnv,
+  ObserverEnv,
   WebEnv,
   liveForwardAuthAddress,
   liveRouterRule,
@@ -25,6 +26,7 @@ import { vapidPairMatches } from "../lib/vapid.ts";
 export const PRODUCTION_FILES = ["compose.yml", "compose.prod.yml"] as const;
 const SERVICE_SCHEMAS = {
   web: WebEnv,
+  observer: ObserverEnv,
   agent: AgentEnv,
   migrate: MigrateEnv,
   "garage-init": GarageInitEnv,

@@ -7,7 +7,7 @@ import { RunHandle } from "./handles.ts";
 const CodePath = z
   .string()
   .regex(/^(?:apps|packages|infra)\/[A-Za-z0-9._/()[\]-]{1,240}$/)
-  .refine((p) => !p.includes(".."), "No ..");
+  .refine((p) => !p.split("/").includes(".."), "No parent-directory components");
 
 export const MetricsQueryArgs = z.strictObject({
   promql: z.string().min(1).max(2_000),
@@ -38,7 +38,7 @@ export const CodeSearchArgs = z.strictObject({
   pathPrefix: z
     .string()
     .regex(/^(?:apps|packages|infra)(?:\/[A-Za-z0-9._/()[\]-]*)?$/)
-    .refine((p) => !p.includes(".."), "No ..")
+    .refine((p) => !p.split("/").includes(".."), "No parent-directory components")
     .nullable(),
 });
 export const CodeReadArgs = z.strictObject({

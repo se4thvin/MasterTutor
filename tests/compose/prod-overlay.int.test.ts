@@ -12,6 +12,8 @@ import {
   observabilityForwardAuthAddress,
   observabilityRouterRule,
   observabilitySessionRouterRule,
+  observerRouterRule,
+  observerForwardAuthAddress,
 } from "@mastertutor/contracts";
 import { o2OtlpEndpoint } from "@mastertutor/observability";
 import { describe, expect, it } from "vitest";
@@ -28,7 +30,7 @@ const PROD = ["compose.yml", "compose.prod.yml"] as const;
  */
 const OBSERVABILITY_SECRETS = Object.fromEntries(
   Object.entries(generateSecrets()).filter(([key]) =>
-    /^(OBSERVE_|S3_OBSERVE_|VAPID_|ALERT_WEBHOOK_SECRET$)/.test(key),
+    /^(OBSERVER_|OBSERVE_|S3_OBSERVE_|VAPID_|ALERT_WEBHOOK_SECRET$)/.test(key),
   ),
 );
 const prod = (env: Record<string, string> = {}, profiles: string[] = []) =>
@@ -567,4 +569,68 @@ describe("observability in production (D50)", () => {
       expect(obs.services[name]!.environment ?? {}).toEqual({});
     expect(prodModeProblems(obs)).toEqual([]);
   });
+});
+
+describe("Copilot deployment (D52)", () => {
+  const config = prod({}, ["observability"]);
+  const observer = config.services.observer!;
+  it("routes only the app Copilot prefix through credential-replacing ForwardAuth", () => {
+    const l = labels(observer);
+    expect(l["traefik.http.routers.mastertutor-observer.rule"]).toBe(observerRouterRule(DOMAIN));
+    expect(l["traefik.http.routers.mastertutor-observer.priority"]).toBe("960");
+    expect(l["traefik.http.middlewares.mastertutor-observer-auth.forwardauth.address"]).toBe(
+      observerForwardAuthAddress(),
+    );
+    expect(
+      l["traefik.http.middlewares.mastertutor-observer-auth.forwardauth.authResponseHeaders"],
+    ).toBe("Authorization,Cookie,X-Mt-User,X-Mt-Workspace");
+    expect(
+      l["traefik.http.middlewares.mastertutor-observer-auth.forwardauth.trustForwardHeader"],
+    ).toBe("false");
+    expect(l["traefik.http.services.mastertutor-observer.loadbalancer.server.port"]).toBe("4000");
+  });
+  it("uses only the view role and private service networks with no published port", () => {
+    expect(observer.ports ?? []).toEqual([]);
+    expect(new URL(env(observer).DATABASE_URL!).username).toBe("observer_role");
+    expect(env(observer).OPENAI_BASE_URL).toBe("");
+    expect(Object.keys(observer.networks ?? {}).sort()).toEqual([
+      "observe",
+      "observe-edge",
+      "observer-db",
+      "observer-egress",
+      "telemetry",
+    ]);
+    expect(config.networks["observer-db"]).toMatchObject({ internal: true });
+    expect(
+      Object.entries(config.services)
+        .filter(([, service]) => "observer-db" in (service.networks ?? {}))
+        .map(([name]) => name)
+        .sort(),
+    ).toEqual(["observer", "postgres"]);
+    expect(observer.image).toBe("mastertutor/observer:prod");
+    expect(observer.read_only).toBe(true);
+    expect(observer.user).toBe("1000:1000");
+    expect(prodModeProblems(config)).toEqual([]);
+  });
+});
+
+it("keeps the Copilot same-origin write guard aligned with the TLS test app", () => {
+  const config = composeConfig(
+    ".env.test",
+    [
+      "compose.yml",
+      "compose.test.yml",
+      "tests/observability/compose.observability.yml",
+      "tests/observability/compose.suite.yml",
+    ],
+    {
+      profiles: ["observability", "e2e"],
+      env: {
+        ...OBSERVABILITY_SECRETS,
+        TEST_HTTP_PORT: "28081",
+        MT_OBS_TLS_DIR: "/tmp/observer-test-tls",
+      },
+    },
+  );
+  expect(env(config.services.observer).PUBLIC_URL).toBe(env(config.services.web).BETTER_AUTH_URL);
 });
