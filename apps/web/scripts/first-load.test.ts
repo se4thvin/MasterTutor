@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
-  HERO_BUDGET_KB,
+  MASCOT_BUDGET_KB,
   compareFirstLoad,
-  compareHeroBundle,
+  compareMascotBundle,
   measureFirstLoad,
-  measureHeroBundle,
+  measureMascotBundle,
   routeOf,
 } from "./first-load.ts";
 
@@ -90,56 +90,56 @@ describe("compareFirstLoad", () => {
   });
 });
 
-describe("measureHeroBundle (F5 P4)", () => {
+describe("measureMascotBundle (F5 P4)", () => {
   it("finds the lazy three chunk and reports one that leaked into first load", () => {
     const { dir } = fakeBuild();
     writeFileSync(
-      join(dir, "static/chunks/hero.js"),
+      join(dir, "static/chunks/pip.js"),
       `isWebGLRenderer ${randomBytes(4000).toString("hex")}`,
     );
-    const lazy = measureHeroBundle(dir);
-    expect(lazy.files).toEqual(["static/chunks/hero.js"]);
+    const lazy = measureMascotBundle(dir);
+    expect(lazy.files).toEqual(["static/chunks/pip.js"]);
     expect(lazy.leaked).toEqual([]);
     expect(lazy.kb).toBeGreaterThan(0);
     writeFileSync(join(dir, "static/chunks/page.js"), "isWebGLRenderer");
-    expect(measureHeroBundle(dir).leaked).toEqual(["static/chunks/page.js"]);
+    expect(measureMascotBundle(dir).leaked).toEqual(["static/chunks/page.js"]);
   });
 });
 
-describe("measureHeroBundle: the whole lazy chunk group (final M4)", () => {
-  it("counts every chunk the hero's import loads, not only the one with three", () => {
+describe("measureMascotBundle: the whole lazy chunk group (final M4)", () => {
+  it("counts every chunk the mascot's import loads, not only the one with three", () => {
     const { dir } = fakeBuild();
     writeFileSync(
-      join(dir, "static/chunks/hero.js"),
+      join(dir, "static/chunks/pip.js"),
       `isWebGLRenderer ${randomBytes(4000).toString("hex")}`,
     );
     writeFileSync(join(dir, "static/chunks/scene.js"), randomBytes(3000).toString("hex"));
     writeFileSync(
       join(dir, "static/chunks/loader.js"),
-      `t.v(s=>Promise.all(["static/chunks/scene.js","static/chunks/hero.js"].map(s=>t.l(s))))`,
+      `t.v(s=>Promise.all(["static/chunks/scene.js","static/chunks/pip.js"].map(s=>t.l(s))))`,
     );
-    expect(measureHeroBundle(dir).files).toEqual([
-      "static/chunks/hero.js",
+    expect(measureMascotBundle(dir).files).toEqual([
+      "static/chunks/pip.js",
       "static/chunks/scene.js",
     ]);
   });
 });
 
-describe("compareHeroBundle", () => {
+describe("compareMascotBundle", () => {
   it("passes a lazy chunk within the budget", () => {
-    expect(compareHeroBundle({ files: ["a.js"], kb: 139.2, leaked: [] }, HERO_BUDGET_KB)).toEqual(
-      [],
-    );
+    expect(
+      compareMascotBundle({ files: ["a.js"], kb: 139.2, leaked: [] }, MASCOT_BUDGET_KB),
+    ).toEqual([]);
   });
-  it("names a missing, oversized or leaked hero", () => {
-    expect(compareHeroBundle({ files: [], kb: 0, leaked: [] }, 150)).toEqual([
-      "hero: no chunk contains three (is the lazy hero import wired?)",
+  it("accepts no three chunk while Pip is the 2D stand-in", () => {
+    expect(compareMascotBundle({ files: [], kb: 0, leaked: [] }, 150)).toEqual([]);
+  });
+  it("names an oversized or leaked mascot", () => {
+    expect(compareMascotBundle({ files: ["a.js"], kb: 151.3, leaked: [] }, 150)).toEqual([
+      "mascot: 151.3 kB gz exceeds the 150 kB budget",
     ]);
-    expect(compareHeroBundle({ files: ["a.js"], kb: 151.3, leaked: [] }, 150)).toEqual([
-      "hero: 151.3 kB gz exceeds the 150 kB budget",
-    ]);
-    expect(compareHeroBundle({ files: ["a.js"], kb: 10, leaked: ["a.js"] }, 150)).toEqual([
-      "hero: three is in first-load JS (a.js)",
+    expect(compareMascotBundle({ files: ["a.js"], kb: 10, leaked: ["a.js"] }, 150)).toEqual([
+      "mascot: three is in first-load JS (a.js)",
     ]);
   });
 });

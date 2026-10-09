@@ -1,10 +1,11 @@
 import type { ApprovalMode } from "@mastertutor/contracts";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
+import { RunPip } from "@/components/mascot/run-pip.tsx";
 import { ButtonLink } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import type { BrowserState } from "./model/browser-state.ts";
 import { STATE_PILL, hostAndPath, markFor, shortRunId, statusLabel } from "./model/copy.ts";
-import type { RunModel } from "./model/run-model.ts";
+import { latestStep, type RunModel } from "./model/run-model.ts";
 import { untrustedText } from "./model/untrusted-text.ts";
 
 const MODE: Record<ApprovalMode, string> = {
@@ -21,10 +22,14 @@ export function RunHeader({ model, state }: { model: RunModel; state: BrowserSta
   });
   // The goal is user text, possibly another member's: cleaned like page text (final M11).
   const title = untrustedText(model.goal.split("\n")[0], 4000);
+  const last = latestStep(model);
+  const capturing = last?.phase === "act" && last.action?.tool === "capture";
   return (
     <header className="run-head">
       <div className="run-head-text">
         <p className="run-eyebrow">
+          {/* The mascot slot (mascot-ui): beside the status it mirrors, which stays the signal. */}
+          <RunPip runStatus={model.status} capturing={capturing} />
           <span className="run-status" data-tone={STATE_PILL[state].tone}>
             <StatusMark status={markFor(state, model)} decorative />
             {statusLabel(state, model)}

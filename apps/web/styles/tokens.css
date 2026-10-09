@@ -52,10 +52,14 @@
   /* Agent cursor over remote web content: dark arrow, white outline, in either theme. */
   --cursor: #111111;
   --cursor-outline: #ffffff;
-  /* 3D hero art palette (run 16). components/hero only. */
-  --hero-aqua: #e4f5f3;
-  --hero-aqua-deep: #a9dcd8;
-  --hero-bondi: #1f8f96;
+  /* Pip, the mascot (design/mascot, concept A): clay colours in either theme. components/mascot only. */
+  --pip-body: #55b8b5;
+  --pip-shade: #1f8f96;
+  --pip-face: #fff4e6;
+  --pip-leaf: #34c759;
+  --pip-cheek: #ff8f87;
+  --pip-ink: #1d1d1f;
+  --pip-paper: #ffffff;
   /* Folder tiles (FolderFloat): a light blue manila, Apple-folder tinted; ink meets AA on the flap. */
   --folder-back: #74aeeb;
   --folder-front: #8fc1f3;

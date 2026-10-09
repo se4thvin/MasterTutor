@@ -10,6 +10,7 @@ import { Button, ButtonLink } from "@/components/ui/button.tsx";
 import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { LayoutMotion } from "@/components/motion/layout-motion.tsx";
+import { PipLazy } from "@/components/mascot/pip-lazy.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
 import { PageHead } from "@/components/ui/page-head.tsx";
@@ -250,6 +251,7 @@ export function LibraryView() {
           ) : search.settledQuery && !search.isFetching ? (
             <EmptyState
               icon="search"
+              art={<PipLazy state="reading" size="compact" />}
               eyebrow="Search"
               title="No results"
               body={`No notes match “${search.settledQuery}”. Search covers titles and every captured block.`}
@@ -294,6 +296,7 @@ export function LibraryView() {
         ) : items.length === 0 ? (
           <EmptyState
             icon="allNotes"
+            art={<PipLazy state="idle" size="compact" />}
             eyebrow={params.kind ? KIND_LABEL[params.kind] : undefined}
             title={empty.title}
             body={empty.body}

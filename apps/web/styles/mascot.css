@@ -1,0 +1,149 @@
+/* Pip, the mascot (components/mascot). The slot reserves Pip's box before its chunk arrives. The
+   stand-in's motion is transform/opacity only; reduced motion (motion.css) leaves a still pose. */
+@layer components {
+  .mascot-slot {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    &[data-size="hero"] {
+      width: clamp(13rem, 24vw, 20rem);
+      aspect-ratio: 100 / 124;
+    }
+    &[data-size="compact"] {
+      width: 2.75rem;
+      height: 2.75rem;
+    }
+  }
+  .mascot,
+  .mascot-pending {
+    display: grid;
+    justify-items: center;
+    width: 100%;
+    height: 100%;
+    /* Pip never takes focus or a text selection: a poke is a pointer delight only. */
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mascot-art {
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .mascot-label {
+    color: var(--label-2);
+    font-size: var(--text-13);
+    font-weight: var(--weight-semibold);
+    white-space: nowrap;
+  }
+  .mascot-shadow {
+    fill: var(--pip-shade);
+    opacity: 0.18;
+  }
+  .mascot-body,
+  .mascot-arm,
+  .mascot-look,
+  .mascot-zzz,
+  .mascot-bubbles,
+  .mascot-confetti,
+  .mascot-glow {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+  }
+  .mascot-look {
+    transform-origin: 50% 50%;
+    translate: var(--look-x, 0) var(--look-y, 0);
+  }
+  /* The stand-in keeps idle and attentive still (no steady-state paint); blinking and
+     breathing are the 3D Pip's. Only a state that is doing something moves. */
+  .mascot[data-state="dozing"] .mascot-body {
+    rotate: -6deg;
+  }
+  .mascot[data-state="working"] .mascot-body,
+  .mascot[data-state="reading"] .mascot-body {
+    animation: mascot-bob var(--motion-dur-panel) var(--motion-ease-cursor) infinite alternate;
+  }
+  .mascot[data-state="waiting"] .mascot-body {
+    animation: mascot-hop var(--motion-dur-flash) var(--motion-ease-out) infinite;
+  }
+  .mascot[data-state="celebrating"] .mascot-body {
+    animation: mascot-hop calc(var(--motion-dur-pulse) / 2) var(--motion-ease-out) infinite;
+  }
+  .mascot[data-state="oops"] .mascot-body {
+    scale: 0.94;
+    animation: mascot-shake var(--motion-dur-panel) var(--motion-ease-out) 3;
+  }
+  .mascot[data-state="thinking"] .mascot-body {
+    rotate: 4deg;
+  }
+  .mascot-arm-up {
+    transform-origin: 0% 100%;
+  }
+  .mascot[data-state="waving"] .mascot-arm-up {
+    animation: mascot-wave calc(var(--motion-dur-panel) * 0.9) var(--motion-ease-cursor) infinite
+      alternate;
+  }
+  .mascot-zzz,
+  .mascot-bubbles {
+    animation: mascot-float var(--motion-dur-pulse) var(--motion-ease-out) infinite;
+  }
+  .mascot-glow {
+    transform-origin: 50% 50%;
+    animation: mascot-glow var(--motion-dur-pulse) var(--motion-ease-cursor) infinite alternate;
+  }
+
+  @keyframes mascot-bob {
+    to {
+      transform: translateY(-1px);
+    }
+  }
+  @keyframes mascot-hop {
+    0%,
+    30%,
+    100% {
+      transform: none;
+    }
+    12% {
+      transform: translateY(-6%) scale(0.98, 1.03);
+    }
+  }
+  @keyframes mascot-shake {
+    0%,
+    100% {
+      transform: none;
+    }
+    25% {
+      transform: rotate(-4deg);
+    }
+    75% {
+      transform: rotate(4deg);
+    }
+  }
+  @keyframes mascot-wave {
+    to {
+      transform: rotate(18deg);
+    }
+  }
+  @keyframes mascot-float {
+    0% {
+      opacity: 0.4;
+      transform: translateY(2px);
+    }
+    100% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes mascot-glow {
+    to {
+      opacity: 0.4;
+    }
+  }
+
+  /* Reduced transparency: the soft contact shadow becomes solid. */
+  @media (prefers-reduced-transparency: reduce) {
+    .mascot-shadow {
+      fill: var(--hairline);
+      opacity: 1;
+    }
+  }
+}

@@ -5,6 +5,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
+import { PipLazy } from "@/components/mascot/pip-lazy.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
@@ -57,6 +58,7 @@ export function RunsList() {
     return (
       <EmptyState
         icon="runs"
+        art={<PipLazy state="idle" size="compact" />}
         title="No runs yet"
         body="Start a task and the agent's runs show up here."
         actions={

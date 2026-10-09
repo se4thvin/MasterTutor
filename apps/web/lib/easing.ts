@@ -1,4 +1,4 @@
-/** CSS cubic-bezier() solver, shared by the agent cursor and the 3D hero (one source of truth). */
+/** CSS cubic-bezier() solver, for the agent cursor (one source of truth). */
 type Bezier = readonly [number, number, number, number];
 
 export const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
