@@ -18,7 +18,7 @@ import {
   policyDecider,
   isRiskyLabel,
 } from "./approval.ts";
-import { APPROVAL_KINDS, type ApprovalKind } from "./enums.ts";
+import { APPROVAL_KINDS, APPROVAL_MODES, type ApprovalKind } from "./enums.ts";
 import { DEFAULT_BUDGET, EMPTY_USAGE } from "./budget.ts";
 
 describe("isRiskyLabel", () => {
@@ -65,6 +65,24 @@ describe("ApprovalRequest", () => {
       },
       new_origin: { kind: "new_origin", origin: "https://b.com", url: "https://b.com/page" },
       budget: { kind: "budget", exceeded: "usd", usage: EMPTY_USAGE, budget: DEFAULT_BUDGET },
+      data_egress: {
+        kind: "data_egress",
+        action: { type: "type", text: "notes" },
+        url: "https://b.com/form",
+        fromOrigin: "https://a.com",
+        toOrigin: "https://b.com",
+        chars: 5,
+        screenshotKey: null,
+      },
+      observer: {
+        kind: "observer",
+        verdict: "escalate",
+        category: "guard_unavailable",
+        rationale: "",
+        subject: null,
+        url: "https://a.com/",
+        screenshotKey: null,
+      },
     };
     for (const kind of APPROVAL_KINDS) {
       expect(ApprovalRequest.parse(samples[kind]).kind).toBe(kind);
@@ -90,7 +108,9 @@ describe("decideByPolicy", () => {
 describe("bypass mode (D44)", () => {
   it("approves every action approval, records it as bypass, and still asks at a budget hit", () => {
     for (const kind of APPROVAL_KINDS)
-      expect(decideByPolicy("bypass", kind)).toBe(kind === "budget" ? "ask" : "approved");
+      expect(decideByPolicy("bypass", kind)).toBe(
+        kind === "budget" || kind === "observer" ? "ask" : "approved",
+      );
     expect(policyDecider("bypass")).toBe("bypass");
     expect(policyDecider("auto_within_allowlist")).toBe("policy");
   });
@@ -250,5 +270,34 @@ describe("deciders are allow-checked (D52 prerequisite, spec §4)", () => {
       `"t"."c" ~ '${PERSON_ID_SOURCE}' AND lower("t"."c") NOT IN ('policy', 'bypass', 'observer', 'agent')`,
     );
     expect(deciderShapeSql('"t"."c"')).toBe(`"t"."c" IS NULL OR "t"."c" ~ '${PERSON_ID_SOURCE}'`);
+  });
+});
+
+describe("data_egress and observer kinds (spec §6.3, §8)", () => {
+  it("asks for data_egress in auto mode and approves it in bypass (D52, user decision)", () => {
+    expect(decideByPolicy("auto_within_allowlist", "data_egress")).toBe("ask");
+    expect(decideByPolicy("ask", "data_egress")).toBe("ask");
+    expect(decideByPolicy("bypass", "data_egress")).toBe("approved");
+  });
+  it("always asks for an observer request", () => {
+    for (const mode of APPROVAL_MODES) expect(decideByPolicy(mode, "observer")).toBe("ask");
+  });
+  it("wraps a subject request but never another observer request", () => {
+    const subject = {
+      kind: "new_origin",
+      origin: "https://b.test",
+      url: "https://b.test/",
+    } as const;
+    const observer = {
+      kind: "observer",
+      verdict: "block",
+      category: "unexpected_origin",
+      rationale: "Not related to the goal.",
+      subject,
+      url: "https://a.test/",
+      screenshotKey: null,
+    } as const;
+    expect(ApprovalRequest.parse(observer)).toEqual(observer);
+    expect(ApprovalRequest.safeParse({ ...observer, subject: observer }).success).toBe(false);
   });
 });

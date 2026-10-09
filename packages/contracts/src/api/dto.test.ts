@@ -226,6 +226,7 @@ describe("tool profiles and takeovers (Phase 10, P10a-3/5)", () => {
     waitReason: null,
     controller: "agent",
     approvalMode: "ask",
+    observerMode: "enforce",
     toolProfile: "browser_use",
     model: "m",
     noteId: null,
@@ -337,5 +338,16 @@ describe("RunDetail.downloads (reload of a finished run)", () => {
     expect(StoredDownloadView.safeParse({ ...ok, filename: "x".repeat(256) }).success).toBe(false);
     expect(StoredDownloadView.safeParse({ ...ok, bytes: -1 }).success).toBe(false);
     expect(StoredDownloadView.safeParse({ ...ok, assetId: null }).success).toBe(false);
+  });
+});
+
+describe("observer mode (spec §6.8)", () => {
+  it("defaults to enforce and needs an acknowledgement for shadow", () => {
+    expect(CreateRunInput.parse({ goal: "g" }).observerMode).toBe("enforce");
+    expect(CreateRunInput.safeParse({ goal: "g", observerMode: "shadow" }).success).toBe(false);
+    expect(
+      CreateRunInput.parse({ goal: "g", observerMode: "shadow", observerShadowAcknowledged: true })
+        .observerMode,
+    ).toBe("shadow");
   });
 });

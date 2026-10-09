@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Budget, Usage } from "./budget.ts";
 import type { ApprovalKind, ApprovalMode } from "./enums.ts";
+import { GuardCategory } from "./observer.ts";
 import { Alias, Origin, Uuid } from "./primitives.ts";
 import { ComputerAction } from "./tools.ts";
 
@@ -19,7 +20,7 @@ export const MAX_POSTS_TO_CHARS = 4_096;
 const ScreenshotKey = z.string().min(1).max(1_024).nullable();
 const RecordExcerpt = z.string().max(240).nullable().optional();
 
-export const ApprovalRequest = z.discriminatedUnion("kind", [
+export const ApprovalSubject = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("risky_click"),
     action: ComputerAction,
@@ -66,6 +67,38 @@ export const ApprovalRequest = z.discriminatedUnion("kind", [
     usage: Usage,
     budget: Budget,
   }),
+  /** Typed text read on one origin, going to another outside the allowlist (spec §6.3). */
+  z.object({
+    kind: z.literal("data_egress"),
+    action: ComputerAction,
+    url: PageUrl,
+    fromOrigin: Origin,
+    toOrigin: Origin,
+    chars: z.number().int().min(0).max(100_000),
+    screenshotKey: ScreenshotKey,
+  }),
+]);
+export type ApprovalSubject = z.infer<typeof ApprovalSubject>;
+export type DataEgressRequest = Extract<ApprovalSubject, { kind: "data_egress" }>;
+
+/**
+ * The Guard stopped an action (escalate, or block in ask mode) or holds the run (subject null).
+ * The rationale is model output: shown as untrusted text on the card only (spec §6.10).
+ */
+export const ObserverRequest = z.object({
+  kind: z.literal("observer"),
+  verdict: z.enum(["escalate", "block"]),
+  category: GuardCategory,
+  rationale: z.string().max(300),
+  subject: ApprovalSubject.nullable(),
+  url: PageUrl,
+  screenshotKey: ScreenshotKey,
+});
+export type ObserverRequest = z.infer<typeof ObserverRequest>;
+
+export const ApprovalRequest = z.discriminatedUnion("kind", [
+  ...ApprovalSubject.options,
+  ObserverRequest,
 ]);
 export type ApprovalRequest = z.infer<typeof ApprovalRequest>;
 
@@ -117,6 +150,8 @@ export const AUTO_MODE_DECISIONS = {
   credential_first_use: "approved",
   new_origin: "denied",
   budget: "ask",
+  data_egress: "ask",
+  observer: "ask",
 } as const satisfies Record<ApprovalKind, PolicyDecision>;
 
 /**
@@ -126,7 +161,8 @@ export const AUTO_MODE_DECISIONS = {
  * invariants: a prompt-injection safety check still waits for a person (decideSafetyChecks); a
  * bypass decision is never a person's (vault fills stay on the item's exact origin, an off-origin
  * form still needs a person, no lasting vault grant); the network policy, sandbox, kill switch,
- * takeover and secret masking do not depend on the approval mode at all.
+ * takeover and secret masking do not depend on the approval mode at all. `data_egress` is approved
+ * (D52, user decision). An `observer` request always waits for a person.
  */
 export const BYPASS_DECISIONS = {
   risky_click: "approved",
@@ -135,6 +171,8 @@ export const BYPASS_DECISIONS = {
   credential_first_use: "approved",
   new_origin: "approved",
   budget: "ask",
+  data_egress: "approved",
+  observer: "ask",
 } as const satisfies Record<ApprovalKind, PolicyDecision>;
 
 export const POLICY_DECIDER = "policy";

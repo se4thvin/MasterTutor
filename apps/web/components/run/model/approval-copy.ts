@@ -22,6 +22,8 @@ export interface ApprovalCopy {
   /** In 1280×800 viewport space; only for actions that point somewhere. */
   spotlight: { x: number; y: number } | null;
   budget: boolean;
+  /** "Approve anyway": a person may override a Guard block in ask mode (D52, audited). */
+  override: boolean;
 }
 
 const KEY_NAMES: Readonly<Record<string, string>> = {
@@ -98,6 +100,10 @@ export function requestSummary(request: ApprovalRequest): string {
       return `open ${pageHost(request.origin)}`;
     case "budget":
       return `${EXCEEDED[request.exceeded].toLowerCase()} budget`;
+    case "data_egress":
+      return `send text from ${pageHost(request.fromOrigin)} to ${pageHost(request.toOrigin)}`;
+    case "observer":
+      return request.subject ? requestSummary(request.subject) : "continue this run";
   }
 }
 
@@ -121,6 +127,7 @@ export function approvalCopy(request: ApprovalRequest): ApprovalCopy {
     context: null,
     spotlight: null,
     budget: false,
+    override: false,
   } as const;
   switch (request.kind) {
     case "risky_click": {
@@ -222,6 +229,37 @@ export function approvalCopy(request: ApprovalRequest): ApprovalCopy {
         body: `Used ${used}. Extend by 50%, finish with what's captured, or cancel the run.`,
         details: [],
         budget: true,
+      };
+    }
+    case "data_egress":
+      return {
+        ...none,
+        tone: "warn",
+        title: `Send text from ${pageHost(request.fromOrigin)} to ${pageHost(request.toOrigin)}?`,
+        body: `The agent wants to type ${request.chars} characters it read on ${pageHost(request.fromOrigin)} into a page on another site.`,
+        risk: "Text from one site going to another can leak what you're working on. Deny unless you expected this.",
+        details: [["From", request.fromOrigin], ["To", request.toOrigin], pageDetail(request.url)],
+        spotlight: pointOf(request.action),
+      };
+    case "observer": {
+      const subject = request.subject ? approvalCopy(request.subject) : null;
+      const rationale = untrustedText(request.rationale, 300);
+      return {
+        ...none,
+        tone: "warn",
+        title:
+          request.subject === null
+            ? "The safety observer paused this run"
+            : `The safety observer stopped this: ${requestSummary(request.subject)}`,
+        body: rationale || "It found this step unusual for your goal.",
+        risk:
+          request.verdict === "block"
+            ? "It recommends you deny. Approve only if you're sure this is what you asked for."
+            : "Check what the agent is about to do before you approve.",
+        context: subject?.context ?? null,
+        details: subject?.details ?? [pageDetail(request.url)],
+        spotlight: subject?.spotlight ?? null,
+        override: request.verdict === "block",
       };
     }
   }

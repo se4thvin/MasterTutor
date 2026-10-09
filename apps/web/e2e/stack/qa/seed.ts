@@ -155,6 +155,28 @@ const APPROVAL_REQUESTS: Record<ApprovalKind, ApprovalRequest> = {
     url: "https://www.britannica.com/biography/Ada-Lovelace",
   },
   budget: { kind: "budget", exceeded: "usd", usage: usage(61, 5.02), budget: DEFAULT_BUDGET },
+  data_egress: {
+    kind: "data_egress",
+    action: { type: "type", text: "Ada Lovelace wrote the first published algorithm" },
+    url: "https://www.britannica.com/search",
+    fromOrigin: "https://en.wikipedia.org",
+    toOrigin: "https://www.britannica.com",
+    chars: 48,
+    screenshotKey: null,
+  },
+  observer: {
+    kind: "observer",
+    verdict: "block",
+    category: "unexpected_origin",
+    rationale: "Opening a shopping site is unrelated to capturing the article.",
+    subject: {
+      kind: "new_origin",
+      origin: "https://shop.example.com",
+      url: "https://shop.example.com/cart",
+    },
+    url: "https://en.wikipedia.org/wiki/Ada_Lovelace",
+    screenshotKey: null,
+  },
 };
 
 // ---- Runs ---------------------------------------------------------------------------------------

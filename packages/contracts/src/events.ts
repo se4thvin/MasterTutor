@@ -7,11 +7,13 @@ import {
   BlockType,
   Controller,
   FiledBy,
+  ObserverMode,
   RunStatus,
   StepPhase,
   StepState,
   WaitReason,
 } from "./enums.ts";
+import { GuardCategory, GuardStage, GuardVerdictName } from "./observer.ts";
 import { IsoDateTime, SlotName, Uuid } from "./primitives.ts";
 import { RUN_TITLE_MAX } from "./run-title.ts";
 import { ToolName, type ComputerAction } from "./tools.ts";
@@ -50,6 +52,7 @@ export const RUN_EVENT_TYPES = [
   "filed",
   "model_fallback",
   "title",
+  "guard",
 ] as const;
 export type RunEventType = (typeof RUN_EVENT_TYPES)[number];
 
@@ -125,6 +128,19 @@ export const RunEvent = z.discriminatedUnion("type", [
   }),
   /** The run's generated title, stored once (runs.title); model output, so shown as text only. */
   z.object({ type: z.literal("title"), title: z.string().min(1).max(RUN_TITLE_MAX) }),
+  /** A Guard review's outcome (spec §6.10): codes and counts only, never the rationale. */
+  z.object({
+    type: z.literal("guard"),
+    verdict: GuardVerdictName,
+    category: GuardCategory,
+    stage: GuardStage,
+    rollout: ObserverMode,
+    /** False in shadow (recorded only) and for allow or flag. */
+    applied: z.boolean(),
+    items: z.number().int().min(0).max(20),
+    /** Reviewed items whose typed text came from another origin (the watcher's egress signal). */
+    flows: z.number().int().min(0).max(20),
+  }),
 ]);
 export type RunEvent = z.infer<typeof RunEvent>;
 
