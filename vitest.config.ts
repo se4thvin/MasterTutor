@@ -61,6 +61,8 @@ export default defineConfig({
           include: ["tests/behaviour/**/*.behaviour.test.ts", "apps/**/*.behaviour.test.ts"],
           exclude,
           globalSetup: ["tests/behaviour/global-setup.ts"],
+          // Every file starts from the same stack state, so files pass in any order (isolate.ts).
+          setupFiles: ["tests/behaviour/isolate.ts"],
           testTimeout: 120_000,
           hookTimeout: 300_000,
           fileParallelism: false,

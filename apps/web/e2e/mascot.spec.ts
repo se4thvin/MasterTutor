@@ -189,12 +189,21 @@ async function measure(page: Page, info: TestInfo, size: "hero" | "compact") {
     s.updateMs.length = 0;
     s.frameGapMs.length = 0;
   });
+  // Five seconds, and as many more frames as it takes to have a sample worth a percentile: a busy
+  // shared CPU renders fewer frames per second (SwiftShader), which the fps below reports.
+  const started = Date.now();
   await page.waitForTimeout(5_000);
+  await page.waitForFunction(
+    () => (window as unknown as { __pipStats: Stats }).__pipStats.tickMs.length > 30,
+    undefined,
+    { polling: "raf" },
+  );
+  const seconds = (Date.now() - started) / 1000;
   const s = (await stats(page))!;
   const result = {
     size,
     samples: s.tickMs.length,
-    fps: s.tickMs.length / 5,
+    fps: s.tickMs.length / seconds,
     updateP50: percentile(s.updateMs, 50),
     updateP95: percentile(s.updateMs, 95),
     tickP50: percentile(s.tickMs, 50),

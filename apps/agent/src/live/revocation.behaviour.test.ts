@@ -79,12 +79,20 @@ describe("revocation reaches open live views (sign-out, removal from the workspa
     await owner.db.delete(session).where(eq(session.userId, person.userId));
 
     await waitFor(() => closed, { label: "live view closed", timeoutMs: 10_000 });
+    // The agent disconnects the session (the socket closes), then deletes it, then records the
+    // view as closed (a failed close keeps it recorded for a retry). Once recorded, all of it is done.
+    const row = await waitFor(
+      async () => {
+        const [current] = await owner.db.select().from(runs).where(eq(runs.id, runId));
+        return current?.liveViewerId === null ? current : null;
+      },
+      { label: "live view recorded as closed", timeoutMs: 10_000 },
+    );
     // ForwardAuth only checks at the upgrade: the n.eko session itself must be gone too.
     const whoami = await fetch(`${base}/api/whoami`, {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(whoami.status).toBe(401);
-    const [row] = await owner.db.select().from(runs).where(eq(runs.id, runId));
     expect(row).toMatchObject({ controller: "agent", controlUserId: null, liveViewerId: null });
     const events = (await owner.db.select().from(runEvents).where(eq(runEvents.runId, runId))).map(
       (e) => e.payload,

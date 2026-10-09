@@ -207,6 +207,8 @@ export class DownloadGate {
   }
 
   #onProgress(guid: string, state: string, receivedBytes: number, totalBytes: number): void {
+    // A capped download's partial file, should Chromium still have written to it.
+    if (state === "canceled" && this.#capped.has(guid)) void this.#removeFile(guid);
     if (this.#userDownloads.has(guid)) {
       const { maxBytes } = this.#userLimits;
       // Checked at completion too: a small file can finish without an in-progress event.
@@ -231,19 +233,29 @@ export class DownloadGate {
     if (source) this.#finished?.({ id: guid, ...source, by });
   }
 
-  /** Cancels a person's download for a cap; Chromium removes its partial file. */
+  /**
+   * Cancels a person's download for a cap, then deletes what it wrote before reporting it.
+   * Chromium deletes a cancelled download's partial file on its own schedule, which under load
+   * outlived the report; once the cancel is acknowledged nothing writes to it any more.
+   */
   #cap(guid: string, reason: "too_large" | "too_many"): void {
     if (this.#capped.has(guid)) return;
     this.#capped.add(guid);
     this.#userDownloads.delete(guid);
-    void this.#cdp.send("Browser.cancelDownload", { guid }).catch(() => undefined);
-    void this.#removeFile(guid);
-    this.#userLimits.onCapped?.({ id: guid, reason });
+    void this.#cdp
+      .send("Browser.cancelDownload", { guid })
+      .catch(() => undefined)
+      .then(() => this.#removeFile(guid))
+      .then(() => this.#userLimits.onCapped?.({ id: guid, reason }));
   }
 
-  async #removeFile(name: string): Promise<void> {
+  /** Deletes a download's file, finished (`<guid>`) or partial (`<guid>.crdownload`). */
+  async #removeFile(guid: string): Promise<void> {
     const local = this.#folder?.localPath;
-    if (local) await rm(join(local, name), { force: true });
+    if (!local) return;
+    await Promise.all(
+      [guid, `${guid}.crdownload`].map((name) => rm(join(local, name), { force: true })),
+    );
   }
 
   #end(allowance: Allowance): void {
