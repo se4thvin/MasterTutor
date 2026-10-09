@@ -51,7 +51,8 @@ export function CallChip({
   }, [status]);
   return (
     <span ref={ref} className="cchip" data-status={status}>
-      <span className="cchip-fill" aria-hidden="true" />
+      {/* The wash slides behind the mask; the glyph and words must still pass clipping checks. */}
+      <span className="cchip-fill" aria-hidden="true" data-qa-allow-clip="" />
       <span className="cchip-glyph">
         <Icon name={glyph} size="sm" />
         <StatusMark status={status} />
