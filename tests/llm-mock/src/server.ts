@@ -313,10 +313,29 @@ export async function startLlmMock(
   };
 
   /** Structured Responses calls (OCR, filing, run title) carry no scenario tag; they route on text.format.name. */
+  const ALLOW_REVIEW = { verdict: "allow", category: "other", itemKeys: [], rationale: "" };
+  function guardAnswer(body: MockRequestBody): { screen: unknown; review: unknown } {
+    const content = (body.input as Array<{ content?: unknown }> | undefined)?.[0]?.content;
+    let parsed: { goal?: unknown } = {};
+    try {
+      parsed = JSON.parse(String(content));
+    } catch {
+      // Not a Guard payload: fall back to allow.
+    }
+    const name = scenarioTag(String(parsed.goal ?? ""))?.name;
+    const answer = name ? scenarios.get(name)?.guard?.(parsed) : undefined;
+    return {
+      screen: { decision: answer?.screen ?? "allow" },
+      review: answer?.review ?? ALLOW_REVIEW,
+    };
+  }
+
   const structured = new Map<string, (body: MockRequestBody) => unknown>([
     ["ocr_text", () => ({ markdown: "" })],
     ["filing_decision", () => ({ path: ["Inbox"], createLeaf: true })],
     ["run_title", () => ({ title: "Mock run title" })],
+    ["guard_screen", (body) => guardAnswer(body).screen],
+    ["guard_review", (body) => guardAnswer(body).review],
   ]);
 
   const refuse = (
@@ -419,14 +438,24 @@ export async function startLlmMock(
       if (answer) {
         const policy = requestPolicyProblem(body);
         if (policy) return refuse(response, path, body, policy);
-        requests.push({ scenario: null, turn: null, body, at: Date.now(), path });
-        return respond(response, body, null, [
+        const route = format?.startsWith("guard_") ? routeOf(body) : null;
+        requests.push({
+          scenario: route?.name ?? null,
+          nonce: route?.nonce ?? null,
+          turn: null,
+          body,
+          at: Date.now(),
+          path,
+        });
+        return respond(response, body, route?.name ?? null, [
           {
             type: "message",
             id: nextId("msg"),
             role: "assistant",
             status: "completed",
-            content: [{ type: "output_text", annotations: [], text: JSON.stringify(answer(body)) }],
+            content: [
+              { type: "output_text", annotations: [], text: JSON.stringify(await answer(body)) },
+            ],
           },
         ]);
       }
