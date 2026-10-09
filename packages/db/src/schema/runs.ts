@@ -3,6 +3,7 @@ import {
   EMPTY_USAGE,
   MODELS,
   SLOT_NAME_PATTERN,
+  deciderShapeSql,
   type ApprovalEdit,
   type ApprovalRequest,
   type Budget,
@@ -177,12 +178,16 @@ export const approvals = pgTable(
     request: jsonb("request").$type<ApprovalRequest>().notNull(),
     status: approvalStatusEnum("status").notNull().default("pending"),
     edit: jsonb("edit").$type<ApprovalEdit>(),
-    /** A user id, or "policy" when approvalMode decided it. */
+    /** A user id or a machine decider (MACHINE_DECIDERS, spec §4). */
     decidedBy: text("decided_by"),
     decidedAt: tstz("decided_at"),
     createdAt: createdAt(),
   },
-  (t) => [index("approvals_run_status_idx").on(t.runId, t.status)],
+  (t) => [
+    index("approvals_run_status_idx").on(t.runId, t.status),
+    // Input validation at the trust boundary (spec §4): a user id or a machine decider, nothing else.
+    check("approvals_decided_by_ck", sql.raw(deciderShapeSql(`"approvals"."decided_by"`))),
+  ],
 );
 
 export const downloads = pgTable("downloads", {

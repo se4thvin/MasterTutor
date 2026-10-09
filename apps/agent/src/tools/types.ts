@@ -10,7 +10,7 @@ import type { Log } from "../runtime/types.ts";
 export interface CallApproval {
   /** The approval request's kind, e.g. "credential_first_use". */
   kind: string;
-  /** The deciding user's id, or POLICY_DECIDER for auto mode. */
+  /** The deciding user's id, or POLICY_DECIDER for any machine decision. */
   decidedBy: string;
   /**
    * What the approved card named beyond its kind, so the tool can check it still holds at act

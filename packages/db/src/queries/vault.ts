@@ -1,6 +1,6 @@
 import {
-  BYPASS_DECIDER,
-  POLICY_DECIDER,
+  MACHINE_DECIDERS,
+  PERSON_ID_SOURCE,
   TERMINAL_RUN_STATUSES,
   encodeNotify,
   type ImapConfig,
@@ -515,10 +515,13 @@ export async function consumeOtpCode(db: DbExecutor, runId: string): Promise<Uin
 /* --------------------------------- grants --------------------------------- */
 
 /**
- * A grant only a person can make: auto-mode and bypass decisions authorise one call and are never
- * read as a grant, whatever the table's CHECK already refuses (D44, B3 final review).
+ * A grant only a person can make: machine decisions authorise one call and are never read as a
+ * grant, whatever the table's CHECK already refuses (D44, D52, B3 final review).
  */
-const humanApprover = notInArray(vaultGrants.approvedBy, [POLICY_DECIDER, BYPASS_DECIDER]);
+const humanApprover = and(
+  sql`${vaultGrants.approvedBy} ~ ${PERSON_ID_SOURCE}`,
+  notInArray(sql`lower(${vaultGrants.approvedBy})`, [...MACHINE_DECIDERS]),
+)!;
 
 export async function getVaultGrantApprover(
   db: DbExecutor,

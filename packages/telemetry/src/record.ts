@@ -1,8 +1,7 @@
 import { metrics } from "@opentelemetry/api";
 import {
-  BYPASS_DECIDER,
-  POLICY_DECIDER,
   SLOT_STATES,
+  deciderClass,
   TERMINAL_RUN_STATUSES,
   type AlertRule,
   type RunEvent,
@@ -22,9 +21,7 @@ const TERMINAL: ReadonlySet<string> = new Set(TERMINAL_RUN_STATUSES);
 
 /** Who decided an approval, as a class (spec §5.2): a user id never becomes telemetry. */
 export function deciderOf(decidedBy: string): ApprovalDecider {
-  if (decidedBy === POLICY_DECIDER) return "policy";
-  if (decidedBy === BYPASS_DECIDER) return "bypass";
-  return "person";
+  return deciderClass(decidedBy);
 }
 
 function safely(record: () => void): void {

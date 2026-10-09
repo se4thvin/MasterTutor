@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_DECIDER,
   ApprovalDecisionInput,
   ApprovalRequest,
   AUTO_MODE_DECISIONS,
+  MACHINE_DECIDERS,
+  OBSERVER_DECIDER,
+  PERSON_ID_SOURCE,
+  PersonDecider,
   decideByPolicy,
   decideSafetyChecks,
+  deciderClass,
+  deciderShapeSql,
+  isMachineDecider,
   isPersonDecider,
+  personDeciderSql,
   policyDecider,
   isRiskyLabel,
 } from "./approval.ts";
@@ -194,5 +203,52 @@ describe("approval request display fields (run view A2, A3a)", () => {
       }),
     ).toMatchObject({ action: { type: "keypress" }, context: null });
     expect(ApprovalRequest.safeParse(form).success).toBe(true);
+  });
+});
+
+describe("deciders are allow-checked (D52 prerequisite, spec §4)", () => {
+  it("never reads a superseded approval (decided_by agent) as a person's", () => {
+    expect(isPersonDecider("agent")).toBe(false);
+  });
+
+  it("accepts user ids only", () => {
+    for (const id of ["user-1", "fixture-user", "user_7f3a9c", "Qw3rTy0123456789AbCdEfGhIjKlMnOp"])
+      expect(isPersonDecider(id), id).toBe(true);
+    for (const value of [
+      ...MACHINE_DECIDERS,
+      "",
+      " user-1",
+      "user 1",
+      "user:1",
+      "-leading-dash",
+      "x".repeat(65),
+      "Observer",
+      undefined,
+    ])
+      expect(isPersonDecider(value as string | undefined), String(value)).toBe(false);
+  });
+
+  it("names every machine decider and classifies everything else as unknown", () => {
+    expect(MACHINE_DECIDERS).toEqual(["policy", "bypass", "observer", "agent"]);
+    expect(deciderClass("observer")).toBe("observer");
+    expect(deciderClass("agent")).toBe("agent");
+    expect(deciderClass("user-1")).toBe("person");
+    expect(deciderClass("user:1")).toBe("unknown");
+    expect(deciderClass(null)).toBe("unknown");
+    for (const decider of MACHINE_DECIDERS) expect(isMachineDecider(decider)).toBe(true);
+    expect(isMachineDecider("user-1")).toBe(false);
+  });
+
+  it("parses a person decider as a branded value and refuses a machine one", () => {
+    expect(PersonDecider.parse("user-1")).toBe("user-1");
+    expect(PersonDecider.safeParse(OBSERVER_DECIDER).success).toBe(false);
+    expect(PersonDecider.safeParse(AGENT_DECIDER).success).toBe(false);
+  });
+
+  it("builds the SQL person rule from the same constants", () => {
+    expect(personDeciderSql('"t"."c"')).toBe(
+      `"t"."c" ~ '${PERSON_ID_SOURCE}' AND lower("t"."c") NOT IN ('policy', 'bypass', 'observer', 'agent')`,
+    );
+    expect(deciderShapeSql('"t"."c"')).toBe(`"t"."c" IS NULL OR "t"."c" ~ '${PERSON_ID_SOURCE}'`);
   });
 });

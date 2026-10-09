@@ -28,9 +28,12 @@ describe("run event recorders (spec §5.3, seam 6)", () => {
     ]);
   });
 
-  it("maps deciders to person, policy or bypass, never a user id", async () => {
+  it("maps deciders to a class, never a user id, and never counts a machine as a person", async () => {
     expect(deciderOf(POLICY_DECIDER)).toBe("policy");
     expect(deciderOf(BYPASS_DECIDER)).toBe("bypass");
+    expect(deciderOf("observer")).toBe("observer");
+    expect(deciderOf("agent")).toBe("agent");
+    expect(deciderOf("not a user id")).toBe("unknown");
     recordRunEvent({
       type: "approval_resolved",
       approvalId: ID,

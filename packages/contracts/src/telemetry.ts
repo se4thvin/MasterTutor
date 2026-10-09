@@ -88,7 +88,14 @@ export const TOOL_OUTCOMES = [
   "refused",
 ] as const;
 export type ToolOutcome = (typeof TOOL_OUTCOMES)[number];
-export const APPROVAL_DECIDERS = ["person", "policy", "bypass"] as const;
+export const APPROVAL_DECIDERS = [
+  "person",
+  "policy",
+  "bypass",
+  "observer",
+  "agent",
+  "unknown",
+] as const;
 export type ApprovalDecider = (typeof APPROVAL_DECIDERS)[number];
 export const SLOT_OUTCOMES = ["leased", "released", "ok", "timeout"] as const;
 export type SlotOutcome = (typeof SLOT_OUTCOMES)[number];

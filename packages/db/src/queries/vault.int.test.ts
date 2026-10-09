@@ -1,3 +1,4 @@
+import { MACHINE_DECIDERS, personDeciderSql } from "@mastertutor/contracts";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "../client.ts";
@@ -366,25 +367,29 @@ describe("agent side (as agent_role)", () => {
     expect(await aliases()).toContain(alias);
   });
 
-  it("reads a policy or bypass approver as no human grant, without leaning on the CHECK (B3 final review)", async () => {
+  it("reads a machine or malformed approver as no human grant, without leaning on the CHECK (B3 final review, D52)", async () => {
     // The CHECK keeps such rows out; the queries must state the rule themselves too.
+    const notPeople = [...MACHINE_DECIDERS, "Observer", "user 1", "user:1"];
     await owner.sql`alter table vault_grants drop constraint vault_grants_human_approver`;
     try {
-      for (const decider of ["policy", "bypass"]) {
+      for (const decider of notPeople) {
         const { id, alias } = await newItem();
         await upsertBrowserSession(agent.db, { workspaceId, alias, origin, sealed: bytes(14) });
         await owner.sql`insert into vault_grants (item_id, origin, approved_by) values (${id}, ${origin}, ${decider})`;
         expect(await hasHumanVaultGrant(agent.db, { workspaceId, alias, origin }), decider).toBe(
           false,
         );
+        expect(await getVaultGrantApprover(agent.db, id, origin), decider).toBeNull();
         expect(
           (await loadBrowserSessions(agent.db, workspaceId, [origin])).map((row) => row.alias),
           decider,
         ).not.toContain(alias);
       }
     } finally {
-      await owner.sql`delete from vault_grants where approved_by in ('policy', 'bypass')`;
-      await owner.sql`alter table vault_grants add constraint vault_grants_human_approver check (approved_by not in ('policy', 'bypass'))`;
+      await owner.sql`delete from vault_grants where approved_by in ${owner.sql(notPeople)}`;
+      await owner.sql.unsafe(
+        `alter table vault_grants add constraint vault_grants_human_approver check (${personDeciderSql("approved_by")})`,
+      );
     }
   });
 
