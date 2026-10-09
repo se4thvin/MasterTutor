@@ -1,0 +1,10 @@
+{"neko_login_failure_kind": "URLError"}
+{"neko": 0, "pulseaudio": 1, "chromium": 12, "neko_diagnostic_counts": {"pulse": 0, "dbus": 0, "gstreamer": 0, "x11": 0, "display": 0, "permission denied": 5, "connection refused": 0, "no such file": 0, "failed": 0, "panic": 35, "error": 5, "invalid": 0, "not found": 0, "audio": 0, "sink": 0, "socket": 0, "encoder": 0, "pipeline": 5, "clock": 0, "backend": 0, "auth": 0, "member": 0, "empty": 0}, "pulseaudio_diagnostic_counts": {"pulse": 11, "dbus": 21, "gstreamer": 0, "x11": 0, "display": 0, "permission denied": 0, "connection refused": 0, "no such file": 21, "failed": 42, "panic": 0, "error": 0, "invalid": 0, "not found": 0, "audio": 11, "sink": 10, "socket": 42, "encoder": 0, "pipeline": 0, "clock": 0, "backend": 0, "auth": 0, "member": 0, "empty": 0}, "eacces_path_prefix_counts": {"/root": 0, "/home/neko": 0, "/tmp": 0, "/run": 0, "/dev": 0, "/usr": 0, "/etc": 0, "/proc": 0, "/sys": 0}, "public_source_frames": []}
+
+Traceback (most recent call last):
+  File "/opt/spike/net/live.py", line 97, in <module>
+    if __name__ == '__main__': main()
+                               ~~~~^^
+  File "/opt/spike/net/live.py", line 81, in main
+    raise RuntimeError('Neko login did not become ready') from None
+RuntimeError: Neko login did not become ready

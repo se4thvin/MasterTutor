@@ -1,0 +1,14 @@
+{"method":"wm","status":200,"result":{"wm":"openbox"}}
+{"method":"baseline","status":200,"result":{"ready":true}}
+{"method":"check","status":200,"result":{"success":false}}
+✔ select only the explicitly authorized running bench agent (1.568402ms)
+✔ reserve before send; charge failed requests conservatively (1.68061ms)
+✔ settle a pre-send reservation without losing previous spend (0.355789ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 381.465771

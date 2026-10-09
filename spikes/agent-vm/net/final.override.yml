@@ -1,0 +1,4 @@
+name: mt-vm-p0-stream-final
+networks:
+  cdp:
+    name: mt-vm-p0-stream-cdp

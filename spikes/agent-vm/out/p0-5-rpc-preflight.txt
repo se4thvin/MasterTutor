@@ -1,0 +1,3 @@
+{"method":"wm","status":200,"result":{"error":"desktop_request_failed"}}
+{"method":"baseline","status":200,"result":{"ready":true}}
+{"method":"check","status":200,"result":{"success":false}}

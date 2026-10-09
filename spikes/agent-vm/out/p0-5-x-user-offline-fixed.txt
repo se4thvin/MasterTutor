@@ -1,0 +1,28 @@
+83d341b7c611ca3794ef98cd80acc63a758d3dafd63e5ab801ebc9e36057a77b  images/vmlinux
+images/vmlinux 44169936
+a08850b3afde7338bb09824d178e16ba9eaff29a6b98413202553cbafbabf949  images/rootfs.ext4
+images/rootfs.ext4 2392850432
+debugfs 1.47.0 (5-Feb-2023)
+debugfs:  rm /usr/sbin/vm-init
+
+debugfs:  write /guest/vm-init /usr/sbin/vm-init
+Allocated inode: 11622
+debugfs:  set_inode_field /usr/sbin/vm-init mode 0100755
+debugfs:  Inode: 11622   Type: regular    Mode:  0755   Flags: 0x80000
+Generation: 0    Version: 0x00000000:00000000
+User:     0   Group:     0   Project:     0   Size: 2630
+File ACL: 0
+Links: 1   Blockcount: 8
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6ac95c85:00000000 -- Fri Oct  9 21:28:37 2026
+ atime: 0x6ac95c85:00000000 -- Fri Oct  9 21:28:37 2026
+ mtime: 0x6ac95c85:00000000 -- Fri Oct  9 21:28:37 2026
+crtime: 0x6ac95c85:00000000 -- Fri Oct  9 21:28:37 2026
+Size of extra inode fields: 32
+Inode checksum: 0xa1637040
+EXTENTS:
+(0):431620
+debugfs 1.47.0 (5-Feb-2023)
+debugfs 1.47.0 (5-Feb-2023)
+9805244c5650026471ec3f09ca508afae9583d8c578ac65dcddae5ccbc8094c9  /guest/images/rootfs.ext4
+2392850432

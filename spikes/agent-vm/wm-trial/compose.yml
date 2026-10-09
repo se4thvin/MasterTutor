@@ -1,0 +1,6 @@
+services:
+  fc:
+    image: mt-vm-p0-trial:local
+    container_name: mt-vm-p0-trial-fc
+    labels: { mt-vm-p0: "1", mt-vm-p0.run: trial }
+    ports: !reset []

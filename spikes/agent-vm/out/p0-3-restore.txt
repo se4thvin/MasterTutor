@@ -1,0 +1,69 @@
+83d341b7c611ca3794ef98cd80acc63a758d3dafd63e5ab801ebc9e36057a77b  images/vmlinux
+images/vmlinux 44169936
+50b7bea3ddfedd3865d545568ed02bb649fe0dba49e1e026529714b7d9cc77fc  images/rootfs.ext4
+images/rootfs.ext4 1809842176
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from runtime.Dockerfile
+#1 transferring dockerfile: 323B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/mt-vm-p0-firecracker:1.17.0
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.1s
+
+#4 [internal] load build context
+#4 ...
+
+#5 [1/5] FROM docker.io/library/mt-vm-p0-firecracker:1.17.0
+#5 DONE 0.2s
+
+#4 [internal] load build context
+#4 transferring context: 555.43MB 5.0s
+#4 transferring context: 1.12GB 10.1s
+#4 transferring context: 1.67GB 15.1s
+#4 transferring context: 1.85GB 16.6s done
+#4 DONE 16.7s
+
+#6 [2/5] COPY images/vmlinux /opt/vm/vmlinux
+#6 DONE 0.2s
+
+#7 [3/5] COPY images/rootfs.ext4 /opt/vm/rootfs.ext4
+#7 DONE 2.6s
+
+#8 [4/5] COPY restore.py /opt/spike/restore.py
+#8 DONE 0.1s
+
+#9 [5/5] COPY restore-entry.sh /opt/spike/restore-entry.sh
+#9 DONE 0.1s
+
+#10 exporting to image
+#10 exporting layers
+#10 exporting layers 12.5s done
+#10 writing image sha256:9c5aff62748aafc0395352c06566b9a03d7868291d9394db88cd764e46aaf066 done
+#10 naming to docker.io/library/mt-vm-p0-restore:local done
+#10 DONE 12.5s
+ Container mt-vm-p0-restore-fc Creating 
+Attaching to mt-vm-p0-restore-fc
+ Container mt-vm-p0-restore-fc Created 
+ Container mt-vm-p0-restore-fc Starting 
+ Container mt-vm-p0-restore-fc Started 
+mt-vm-p0-restore-fc  | Traceback (most recent call last):
+mt-vm-p0-restore-fc  |   File "/opt/spike/restore.py", line 150, in <module>
+mt-vm-p0-restore-fc  |     main()
+mt-vm-p0-restore-fc  |     ~~~~^^
+mt-vm-p0-restore-fc  |   File "/opt/spike/restore.py", line 112, in main
+mt-vm-p0-restore-fc  |     connection, _ = golden.accept()
+mt-vm-p0-restore-fc  |                     ~~~~~~~~~~~~~^^
+mt-vm-p0-restore-fc  |   File "/usr/lib/python3.13/socket.py", line 295, in accept
+mt-vm-p0-restore-fc  |     fd, addr = self._accept()
+mt-vm-p0-restore-fc  |                ~~~~~~~~~~~~^^
+mt-vm-p0-restore-fc  | TimeoutError: timed out
+[Kmt-vm-p0-restore-fc exited with code 1
+ Compose Stopping Aborting on container exit...
+ Container mt-vm-p0-restore-fc Stopping 
+ Container mt-vm-p0-restore-fc Stopped 
+

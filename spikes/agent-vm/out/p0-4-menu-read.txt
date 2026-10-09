@@ -1,0 +1,85 @@
+  <font place="MenuHeader">
+  <font place="MenuItem">
+  <keybind key="C-A-Left">
+  </keybind>
+  <keybind key="C-A-Right">
+  </keybind>
+  <keybind key="C-A-Up">
+  </keybind>
+  <keybind key="C-A-Down">
+  </keybind>
+  <keybind key="S-A-Left">
+  </keybind>
+  <keybind key="S-A-Right">
+  </keybind>
+  <keybind key="S-A-Up">
+  </keybind>
+  <keybind key="S-A-Down">
+  </keybind>
+  <keybind key="W-F1">
+  </keybind>
+  <keybind key="W-F2">
+  </keybind>
+  <keybind key="W-F3">
+  </keybind>
+  <keybind key="W-F4">
+  </keybind>
+  <keybind key="W-d">
+  </keybind>
+  <keybind key="A-F4">
+  </keybind>
+  <keybind key="A-Escape">
+  </keybind>
+  <keybind key="A-space">
+    <!--action name="ShowMenu"><menu>client-menu</menu></action-->
+  </keybind>
+  <keybind key="A-Print">
+    <action name="Execute"><command>scrot -s</command></action>
+  </keybind>
+  <keybind key="A-Tab">
+  </keybind>
+  <keybind key="A-S-Tab">
+  </keybind>
+  <keybind key="C-A-Tab">
+  </keybind>
+  <keybind key="W-S-Right">
+  </keybind>
+  <keybind key="W-S-Left">
+  </keybind>
+  <keybind key="W-S-Up">
+  </keybind>
+  <keybind key="W-S-Down">
+  </keybind>
+  <keybind key="W-e">
+      <command>kfmclient openProfile filemanagement</command>
+  </keybind>
+  <keybind key="Print">
+    <action name="Execute"><command>scrot</command></action>
+  </keybind>
+      <action name="ShowMenu"><menu>client-menu</menu></action>
+      <action name="ShowMenu"><menu>client-menu</menu></action>
+      <action name="ShowMenu"><menu>client-menu</menu></action>
+      <action name="ShowMenu"><menu>client-menu</menu></action>
+    <!-- Menus -->
+      <action name="ShowMenu"><menu>client-list-combined-menu</menu></action>
+      <action name="ShowMenu"><menu>root-menu</menu></action>
+<menu>
+  <!-- You can specify more than one menu file in here and they are all loaded,
+       just don't make menu ids clash or, well, it'll be kind of pointless -->
+  <!-- default menu file (or custom one in $HOME/.config/openbox/) -->
+  <!-- system menu files on Debian systems -->
+  <!--file>/var/lib/openbox/debian-menu.xml</file-->
+  <file>menu.xml</file>
+       menu is hidden again -->
+  <!-- center submenus vertically about the parent entry -->
+  <submenuShowDelay>100</submenuShowDelay>
+  <!-- time to delay before showing a submenu after hovering over the parent
+       submenu will not be shown until it is clicked on -->
+  <submenuHideDelay>400</submenuHideDelay>
+  <!-- time to delay before hiding a submenu when selecting another
+       entry in parent menu
+       submenu will not be hidden until a different submenu is opened -->
+  <!-- controls if icons appear in the client-list-(combined-)menu -->
+  <!-- show the manage desktops section in the client-list-(combined-)menu -->
+</menu>
+  # the type is one of: normal, dialog, splash, utility, menu, toolbar, dock,

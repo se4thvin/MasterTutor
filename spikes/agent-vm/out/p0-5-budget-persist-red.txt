@@ -1,0 +1,23 @@
+✔ reserve before send; charge failed requests conservatively (1.493067ms)
+✖ settle a pre-send reservation without losing previous spend (0.386859ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 348.20549
+
+✖ failing tests:
+
+test at spikes/agent-vm/wm-trial/budget.test.ts:13:1
+✖ settle a pre-send reservation without losing previous spend (0.386859ms)
+  TypeError: budget.settle is not a function
+      at TestContext.<anonymous> (file:///home/coursebite/mt-vm-p0/houndshark-vm-p0/spikes/agent-vm/wm-trial/budget.test.ts:16:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)

@@ -1,0 +1,10 @@
+test_api_errors_cannot_be_counted_as_successful_boots (test_boot.MeasurementTests.test_api_errors_cannot_be_counted_as_successful_boots) ... ok
+test_p95_is_nearest_rank_and_includes_the_slowest_of_ten (test_boot.MeasurementTests.test_p95_is_nearest_rank_and_includes_the_slowest_of_ten) ... ok
+test_rejects_empty_measurements (test_boot.MeasurementTests.test_rejects_empty_measurements) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK
+{"file": "vmlinux", "source": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/20261008-40f3a4819490-0/x86_64/vmlinux-6.1.188", "sha256": "6e105082d617064296680262ddf53844f292da803165e74e1a4f051940de48ef", "bytes": 45064368}
+{"file": "rootfs.squashfs", "source": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/20261008-40f3a4819490-0/x86_64/ubuntu-24.04.squashfs", "sha256": "1d50b8fff4410e9fbe29de5b65f4a4b74efb901ab14071288cd8fb4a753f0fdd", "bytes": 108199936}
