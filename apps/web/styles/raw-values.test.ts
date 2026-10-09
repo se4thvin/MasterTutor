@@ -29,9 +29,16 @@ describe("one source for colours, shadows and glass", () => {
   });
 
   it("writes the glass blur recipe exactly once, in .glass", () => {
+    // Declarations only: an @supports (backdrop-filter: …) condition is not a second recipe.
     const uses = sheets.flatMap(([name, css]) =>
-      [...css.matchAll(/(?<!-webkit-)backdrop-filter:/g)].map(() => name),
+      [...css.matchAll(/(?<!-webkit-|\()backdrop-filter:/g)].map(() => name),
     );
     expect(uses).toEqual(["components.css"]);
+  });
+
+  it("never writes -webkit-backdrop-filter by hand: the minifier kept only it, and Chromium lost the blur", () => {
+    for (const [name, css] of sheets) {
+      expect(css.replace(/\/\*[\s\S]*?\*\//g, ""), name).not.toMatch(/-webkit-backdrop-filter/);
+    }
   });
 });

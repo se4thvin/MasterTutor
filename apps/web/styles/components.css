@@ -95,11 +95,90 @@
     }
   }
 
-  /* The one glass recipe (sheets, toasts, sidebar, palette). Surfaces tune it with --glass-bg. */
+  /* The one glass recipe. Surfaces tune it with --glass-bg. Only Liquid Glass (.lglass) turns the
+     blur on: each blurred layer is re-rasterised whenever what is under it changes, so the app
+     keeps a few (glass.spec.ts) rather than one per overlay; the run view's own overlays over the
+     live browser stay translucent until they move onto LiquidGlass. */
   .glass {
     background: var(--glass-bg, var(--glass));
-    backdrop-filter: var(--blur);
-    -webkit-backdrop-filter: var(--blur);
+    /* Unprefixed only: the build adds -webkit- for Safari. Written both ways, Next's minifier
+       merged them into the prefixed one alone, which Chromium ignores: no blur at all
+       (check-prod-bundle.ts fails the build output if that comes back). */
+    backdrop-filter: var(--glass-blur, none);
+  }
+  /* Liquid Glass (LiquidGlass, HIG regular variant): .glass under a thicker tint, a specular top
+     edge, a hairline rim and a sheen from the leading corner. Static: painted once, never animated.
+     The inset shadows and background stay put while a glass scroll container scrolls. */
+  .lglass {
+    --glass-bg: var(--glass-liquid);
+    --glass-blur: var(--blur);
+    background-image: radial-gradient(120% 50% at 0% 0%, var(--glass-sheen), transparent 70%);
+    /* Each surface sets its elevation in --glass-lift, so the rim is never overridden. */
+    box-shadow:
+      inset 0 1px 0 var(--glass-specular),
+      inset 0 0 0 0.5px var(--glass-rim),
+      var(--glass-lift, var(--e2));
+    @supports not (backdrop-filter: blur(1px)) {
+      --glass-bg: var(--bg-2);
+    }
+  }
+  /* A docked surface with nothing beneath it to blur keeps the material without the blur pass. */
+  .lglass-still {
+    --glass-blur: none;
+  }
+  /* Never glass on glass (HIG). Glass inside glass is solid; so are popups (menus, popovers,
+     toasts) while a modal glass panel is up, since they would sit on its blur. --blur: none keeps
+     .glass the one place the filter is written. */
+  .lglass .lglass,
+  :root:has(:is(.sheet, .alert, .palette, .run-approval)) :is(.menu, .popover, .toast) {
+    --glass-bg: var(--elevated);
+    --blur: none;
+    background-image: none;
+  }
+  /* While a modal glass panel is up it is the one blur: the toolbar beneath keeps its tint but
+     stops blurring, so at most two backdrop layers are ever live at once (each is re-rasterised
+     when what is under it changes; three starved a software-rendered run page). */
+  :root:has(:is(.sheet, .alert, .palette, .run-approval)) .toolbar {
+    --blur: none;
+  }
+  /* MarqueeText: one line, cut with a trailing fade when it does not fit; the text glides (WAAPI
+     transform) on hover or keyboard focus of its host. */
+  .marquee {
+    --marquee-fade: 16px; /* px: marquee-behaviour.ts reads it as a number */
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    &[data-overflow] {
+      mask-image: linear-gradient(to right, black calc(100% - var(--marquee-fade)), transparent);
+    }
+  }
+  .marquee-text {
+    display: inline-block;
+  }
+  /* A marquee host's focus ring is an inset shadow, not an outline: Chromium repaints an outline
+     whose element holds moving content on every frame of the glide (D28: zero paint). Forced
+     colours drop shadows, so there the outline comes back. */
+  [data-marquee-host]:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--tint-text);
+    @media (forced-colors: active) {
+      outline: 2px solid;
+    }
+  }
+  /* The reduced-motion stand-in: the full name laid over the cut label (a top-layer popover). */
+  .marquee-tip {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0.25rem 0.5rem;
+    border: 0;
+    border-radius: var(--r-xs);
+    background: var(--elevated);
+    color: var(--label);
+    box-shadow: var(--e2);
+    overflow-wrap: anywhere;
+    pointer-events: none;
   }
   .design-glass-demo {
     background:
@@ -492,6 +571,7 @@
     }
   }
   .toolbar {
+    --glass-lift: 0 0 transparent; /* a bar, not a floating panel: no drop shadow */
     position: sticky;
     top: 0;
     z-index: 20;
@@ -571,6 +651,10 @@
     }
     @variant lg {
       padding: 4rem 0 2rem;
+    }
+    /* A folder's name is the library's title: an unbroken one wraps rather than running off. */
+    & h1 {
+      overflow-wrap: anywhere;
     }
   }
   .pagehead-lede {

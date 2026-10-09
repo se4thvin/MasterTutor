@@ -30,6 +30,18 @@ export const MOTION_INFRASTRUCTURE = [
 ] as const;
 
 const run = async () => import("../helpers/run.ts");
+const folders = async () => import("../helpers/folders.ts");
+const longRow = async (page: Page) =>
+  page
+    .locator(".sidebar")
+    .getByRole("treeitem", { name: (await folders()).LONG_UNBROKEN, exact: true });
+/** The library with a folder name wider than its sidebar row (1440: the sidebar's tree). */
+const openLongFolder = async (page: Page) => {
+  const { LONG_UNBROKEN, createFolder, gotoReady } = await folders();
+  await gotoReady(page, "/library");
+  await createFolder(page, LONG_UNBROKEN);
+  await (await longRow(page)).locator(".marquee[data-overflow]").waitFor();
+};
 const openRun = async (page: Page) => void (await (await run()).gotoRun(page));
 const emitNow = async (
   page: Page,
@@ -162,6 +174,26 @@ export const MOTIONS: readonly Motion[] = [
     trigger: async (page) => page.getByRole("radio", { name: "30 days" }).click(),
     durationMs: 600,
     sample: { selector: ".rseg-thumb", property: "transform" },
+  },
+  {
+    // Hover glides the cut name: a transform on the text inside its fading mask, nothing else.
+    id: "folder-marquee",
+    files: ["apps/web/components/ui/marquee-text.tsx"],
+    scope: '.sidebar [role="tree"]',
+    open: openLongFolder,
+    trigger: async (page) => (await longRow(page)).hover(),
+    durationMs: 1500,
+  },
+  {
+    // The Liquid Glass sidebar while its content scrolls under the rim and sheen: the material
+    // is static (inset shadows and background stay put), so the glass must not repaint.
+    id: "sidebar-glass",
+    files: ["apps/web/components/ui/liquid-glass.tsx", "apps/web/components/shell/sidebar.tsx"],
+    scope: ".sidebar",
+    open: openLongFolder,
+    trigger: async (page) =>
+      page.locator(".sidebar").evaluate((el) => el.scrollBy({ top: 200, behavior: "smooth" })),
+    durationMs: 1500,
   },
   {
     // Pip blends idle → celebrating in its canvas: no layout or paint in its subtree (D28).
