@@ -15,6 +15,9 @@ async function openReplay(page: Page) {
   await page.getByRole("button", { name: "Replay step: Clicked “Log in”" }).click();
   if (isPhone(page)) {
     await page.keyboard.press("Escape");
+    // The tap that chose the row leaves the pointer where the frame's shield now sits (Pip in the
+    // header moved it): park it off the frame, so no hover tooltip opens on the replayed screen.
+    await page.mouse.move(0, 0);
     // Wait for the sheet to unmount: until then its scroll lock hides #main's scrollbar.
     await page.getByRole("dialog", { name: "Thread" }).waitFor({ state: "detached" });
     // Closing the sheet returns focus to the peek bar below the frame, which scrolls the page;
