@@ -68,7 +68,7 @@ export async function provisionRoot(
 /** Creates the ingest and viewer users, or resets an existing one's role and password. */
 export async function provisionUsers(
   client: O2Client,
-  passwords: { ingest: string; viewer: string },
+  passwords: { ingest: string; viewer: string; copilot?: string },
 ): Promise<void> {
   const list = await client.call(
     "listUsers",
@@ -81,20 +81,24 @@ export async function provisionUsers(
   for (const [who, email] of [
     ["ingest", OBSERVE_USERS.ingest],
     ["viewer", OBSERVE_USERS.viewer],
+    ["copilot", OBSERVE_USERS.copilot],
   ] as const) {
+    const password = passwords[who];
+    if (password === undefined) continue;
+    const role = who === "copilot" ? O2_ROLES.viewer : O2_ROLES[who];
     if (existing.has(email))
       await client.call(
         "updateUser",
         "PUT",
         o2Paths.user(client.org, email),
-        o2UserUpdateBody(passwords[who], O2_ROLES[who], who),
+        o2UserUpdateBody(password, role, who),
       );
     else
       await client.call(
         "createUser",
         "POST",
         o2Paths.users(client.org),
-        o2UserCreateBody(email, passwords[who], O2_ROLES[who], who),
+        o2UserCreateBody(email, password, role, who),
       );
   }
 }

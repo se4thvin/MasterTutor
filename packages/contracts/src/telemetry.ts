@@ -503,3 +503,8 @@ export const SPANMETRIC_DIMENSIONS = [
 export const LOG_STREAMS = { app: "mastertutor", containers: "containers" } as const;
 export const TRACE_STREAM = "default";
 export const RETENTION_DAYS = { logs: 30, traces: 15, metrics: 90 } as const;
+
+/** OpenObserve's names replace dots with underscores. */
+export function o2StreamName(name: string): string {
+  return name.replaceAll(".", "_");
+}

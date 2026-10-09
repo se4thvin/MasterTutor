@@ -174,3 +174,22 @@ describe("root password rotation (review I4)", () => {
     }
   });
 });
+
+it("provisions and rotates the separate Copilot user with the viewer role", async () => {
+  for (const existing of [[], ["copilot@mastertutor.internal"]]) {
+    const { client, calls } = fakeO2(existing);
+    await provisionUsers(client, { ingest: INGEST, viewer: VIEWER, copilot: "test-only-copilot" });
+    const copilot = calls.at(-1)!;
+    expect(copilot.method).toBe(existing.length ? "PUT" : "POST");
+    expect(copilot.body).toMatchObject(
+      existing.length
+        ? { new_password: "test-only-copilot", role: O2_ROLES.viewer }
+        : {
+            email: "copilot@mastertutor.internal",
+            password: "test-only-copilot",
+            role: O2_ROLES.viewer,
+          },
+    );
+    expect(calls).toHaveLength(4);
+  }
+});

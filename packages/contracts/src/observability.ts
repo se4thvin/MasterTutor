@@ -10,6 +10,7 @@ export const OBSERVE_USERS = {
   root: "root@mastertutor.internal",
   ingest: "ingest@mastertutor.internal",
   viewer: "viewer@mastertutor.internal",
+  copilot: "copilot@mastertutor.internal",
 } as const;
 /**
  * Where OpenObserve's UI keeps its client-side session record, and its shape (spec §12). Pinned by

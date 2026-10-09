@@ -153,6 +153,30 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
+  apps/observer:
+    dependencies:
+      '@mastertutor/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@mastertutor/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@mastertutor/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@mastertutor/observer':
+        specifier: workspace:*
+        version: link:../../packages/observer
+      '@mastertutor/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
+      '@prometheus-io/lezer-promql':
+        specifier: 0.313.4
+        version: 0.313.4(@lezer/highlight@1.2.5)(@lezer/lr@1.4.11)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+
   apps/web:
     dependencies:
       '@base-ui/react':
@@ -1513,6 +1537,15 @@ packages:
   '@kwsites/file-exists@1.1.1':
     resolution: {integrity: sha512-m9/5YGR18lIwxSFDwfE3oA7bWuq9kdau6ugN4H2rJeyhFQZcG9AgSHkQtSD15a8WvTgfz9aikZMrKPHvbpqFiw==}
 
+  '@lezer/common@1.5.3':
+    resolution: {integrity: sha512-H0iErY4e43LpXbYDyBci5W4v/RwTgGV3YzYOlJPiGZ8RY8w51kVE+xLn1tg3Z6UmSfyETvtsUK3r7YsgDQEI7Q==}
+
+  '@lezer/highlight@1.2.5':
+    resolution: {integrity: sha512-O1GMVKgtf5YspFaRzpmqkVgMtIk2HG9uMAbH6wdAIdNh3TVzCsch/+cRi+6l2//UGDKe6NB9BW3cvuR5ezMQ0w==}
+
+  '@lezer/lr@1.4.11':
+    resolution: {integrity: sha512-UwgZcl1R66H2hDzBrA7kWyYmX6s8p5TQ+e/t7CuvgCtBEPxbEPaHYHu+pJBvTvDotEJpuQkJjbXuHiw5Cixxgw==}
+
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
 
@@ -1879,6 +1912,12 @@ packages:
     resolution: {integrity: sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ==}
     engines: {node: '>=20'}
     hasBin: true
+
+  '@prometheus-io/lezer-promql@0.313.4':
+    resolution: {integrity: sha512-wBnJsfaw/+AMlzC8BMXLu6ydlimNxz8sZQCTKRbcsCgGhdi03NFZ7iR5NgBDo1GSDEy712/jf/6pT1h/mgsr7A==}
+    peerDependencies:
+      '@lezer/highlight': ^1.1.2
+      '@lezer/lr': ^1.2.3
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -5927,6 +5966,16 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@lezer/common@1.5.3': {}
+
+  '@lezer/highlight@1.2.5':
+    dependencies:
+      '@lezer/common': 1.5.3
+
+  '@lezer/lr@1.4.11':
+    dependencies:
+      '@lezer/common': 1.5.3
+
   '@mixmark-io/domino@2.2.0':
     optional: true
 
@@ -6296,6 +6345,11 @@ snapshots:
   '@playwright/test@1.63.0':
     dependencies:
       playwright: 1.63.0
+
+  '@prometheus-io/lezer-promql@0.313.4(@lezer/highlight@1.2.5)(@lezer/lr@1.4.11)':
+    dependencies:
+      '@lezer/highlight': 1.2.5
+      '@lezer/lr': 1.4.11
 
   '@protobufjs/aspromise@1.1.2': {}
 
