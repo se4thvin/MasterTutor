@@ -6,6 +6,8 @@ import type { BrowserContext, Route } from "playwright-core";
 export interface BlockedNavigation {
   url: string;
   origin: string;
+  /** The blocked request was not a GET (a form post): opening its URL would not redo it. */
+  formPost?: true;
 }
 
 export type HostResolver = (host: string) => Promise<string[]>;
@@ -156,7 +158,8 @@ export interface PrivateConnection {
 }
 
 export interface NetworkPolicyOptions {
-  allowedOrigins(): readonly string[];
+  /** Whether a top-level document may load from `origin` without asking (navigation-scope.ts). */
+  allowsNavigation(origin: string): boolean;
   testMode: boolean;
   onBlockedNavigation(block: BlockedNavigation): void;
   /** A response arrived from a private address although the pre-request check passed (rebinding). */
@@ -181,6 +184,14 @@ export function isAllowedNavigationScheme(raw: string): boolean {
   }
 }
 
+function requestMethod(route: Route): string {
+  try {
+    return route.request().method();
+  } catch {
+    return "GET";
+  }
+}
+
 /** Fails closed: when the request cannot be inspected it is treated as a top-level navigation. */
 function isTopLevelNavigation(route: Route): boolean {
   try {
@@ -192,9 +203,13 @@ function isTopLevelNavigation(route: Route): boolean {
   }
 }
 
+function blockedNavigation(url: string, origin: string, method: string): BlockedNavigation {
+  return method === "GET" ? { url, origin } : { url, origin, formPost: true };
+}
+
 /**
- * Domain allowlist in code (spec §5.5): top-level documents outside allowed_origins (redirect hops
- * included), and every
+ * Domain allowlist in code (spec §5.5, D51): top-level documents the run's scope does not allow
+ * (redirect hops included), and every
  * top-level non-http(s) scheme (file:, view-source:, chrome:, data:, ...) except about:blank, are
  * aborted and reported; private ranges are blocked for every request. Fixture hosts bypass only the
  * private-range check, and only when AGENT_TEST_MODE=1. WebSockets and service workers are not
@@ -227,8 +242,9 @@ export async function installNetworkPolicy(
     }
     if (topLevel) {
       const origin = toOrigin(url.href);
-      if (origin === null || !options.allowedOrigins().includes(origin)) {
-        if (origin !== null) options.onBlockedNavigation({ url: url.href, origin });
+      if (origin === null || !options.allowsNavigation(origin)) {
+        if (origin !== null)
+          options.onBlockedNavigation(blockedNavigation(url.href, origin, requestMethod(route)));
         await route.abort("blockedbyclient");
         return;
       }
@@ -245,8 +261,9 @@ export async function installNetworkPolicy(
       const frame = request.frame();
       if (frame.parentFrame() !== null) return;
       const origin = toOrigin(request.url());
-      if (origin !== null && options.allowedOrigins().includes(origin)) return;
-      if (origin !== null) options.onBlockedNavigation({ url: request.url(), origin });
+      if (origin !== null && options.allowsNavigation(origin)) return;
+      if (origin !== null)
+        options.onBlockedNavigation(blockedNavigation(request.url(), origin, request.method()));
       void frame.goto("about:blank").catch(() => undefined);
     } catch {
       // The request or its frame is gone: nothing was loaded.

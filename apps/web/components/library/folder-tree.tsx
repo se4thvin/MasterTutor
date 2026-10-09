@@ -1,8 +1,16 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
 import { Icon, type IconName } from "@/components/ui/icon.tsx";
+import { MarqueeText } from "@/components/ui/marquee-text.tsx";
 import { cx } from "@/lib/cx.ts";
 import { FOLDER_DRAG_TYPE, acceptsDrop, getDragged, setDragged } from "@/lib/folders/drag.ts";
 import {
@@ -202,13 +210,15 @@ export function FolderTree({
             aria-selected={current}
             aria-expanded={row.node?.children.length ? expanded.has(row.key) : undefined}
             aria-label={row.label}
+            title={row.label}
+            data-marquee-host=""
             tabIndex={row.key === focusKey ? 0 : -1}
             className={cx(
               "tree-row",
               current && "tree-row-current",
               dropKey === row.key && "tree-row-drop",
             )}
-            style={{ paddingInlineStart: `${0.6 + (row.level - 1) * 0.875}rem` }}
+            style={{ "--level": row.level } as CSSProperties}
             draggable={isFolder}
             onFocus={() => setFocusKey(row.key)}
             onClick={() => go(row.key)}
@@ -252,7 +262,7 @@ export function FolderTree({
               openName={row.node ? "folderOpen" : null}
               lift={dropKey === row.key}
             />
-            <span className="tree-label">{row.label}</span>
+            <MarqueeText text={row.label} className="tree-label" />
           </li>
         );
       })}

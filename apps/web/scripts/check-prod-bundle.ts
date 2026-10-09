@@ -1,11 +1,14 @@
 /**
  * Build-output check for a production build (`next build` without WEB_FIXTURE_API):
  * - no fixture API code (router, seed) anywhere in the output, server or client;
- * - no server-only env names in client chunks (they would reveal what the server holds).
+ * - no server-only env names in client chunks (they would reveal what the server holds);
+ * - every built stylesheet keeps backdrop-filter beside -webkit-backdrop-filter (glass blurs in
+ *   every engine, backdrop-filter-check.ts).
  * Run after `pnpm --filter @mastertutor/web build`. Exits 1 with each finding.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { backdropFilterFindings } from "./backdrop-filter-check.ts";
 
 const root = new URL("../.next/", import.meta.url).pathname;
 
@@ -15,7 +18,7 @@ function* files(dir: string): Generator<string> {
     if (entry.isDirectory()) {
       // The build cache and a dev server's output are intermediate artefacts, not what ships.
       if (entry.name !== "cache" && entry.name !== "dev") yield* files(path);
-    } else if (/\.(js|mjs|cjs|json|html|rsc|body)$/.test(entry.name)) yield path;
+    } else if (/\.(js|mjs|cjs|json|html|rsc|body|css)$/.test(entry.name)) yield path;
   }
 }
 
@@ -36,6 +39,9 @@ const SERVER_ENV_NAMES = [
   "NEKO_MEMBER_SECRET",
   "OPENAI_API_KEY",
   "S3_SECRET_ACCESS_KEY",
+  "VAPID_PRIVATE_KEY",
+  "ALERT_WEBHOOK_SECRET",
+  "OBSERVE_VIEWER_PASSWORD",
 ];
 
 const findings: string[] = [];
@@ -45,6 +51,7 @@ for (const path of files(root)) {
   for (const marker of FIXTURE_MARKERS) {
     if (text.includes(marker)) findings.push(`fixture code in ${rel}: "${marker}"`);
   }
+  if (rel.endsWith(".css")) findings.push(...backdropFilterFindings(text, rel));
   if (rel.startsWith("static/")) {
     for (const name of SERVER_ENV_NAMES) {
       if (text.includes(name)) findings.push(`server env name in client chunk ${rel}: ${name}`);
@@ -56,4 +63,6 @@ if (findings.length) {
   console.error(`Production bundle check failed (${findings.length}):\n${findings.join("\n")}`);
   process.exit(1);
 }
-console.log("Production bundle check passed: no fixture code, no server env names in the client.");
+console.log(
+  "Production bundle check passed: no fixture code, no server env names in the client, glass blurs everywhere.",
+);

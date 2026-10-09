@@ -123,6 +123,52 @@ describe("attach-traefik.sh arguments (review minor)", () => {
   });
 });
 
+describe("create-obs-network.sh and attach-traefik.sh --network obs (D50)", () => {
+  it("prints the internal network create without --yes, runs it with --yes, and checks an existing one", () => {
+    const dry = run("create-obs-network.sh", [], {});
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain(
+      "would run: docker network create --driver bridge --internal mastertutor-obs",
+    );
+    expect(dry.calls).not.toContain("network create");
+    const applied = run("create-obs-network.sh", ["--yes"], {});
+    expect(applied.calls).toContain("network create --driver bridge --internal mastertutor-obs");
+    const ok = run("create-obs-network.sh", ["--yes"], { STUB_NETWORK: "true" });
+    expect(ok.status).toBe(0);
+    expect(ok.calls).not.toContain("network create");
+    const bad = run("create-obs-network.sh", ["--yes"], { STUB_NETWORK: "false" });
+    expect(bad.status).toBe(1);
+    expect(bad.calls).not.toContain("network create");
+    for (const arg of ["-y", "--network"]) {
+      const refused = run("create-obs-network.sh", [arg], {});
+      expect(refused.status, arg).toBe(2);
+      expect(refused.calls, arg).toBe("");
+    }
+  });
+
+  it("attaches Traefik to mastertutor-obs with no fixed address, only with --yes, idempotently", () => {
+    const dry = run("attach-traefik.sh", ["--network", "obs"], {});
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain(
+      "would run: docker network connect mastertutor-obs dokploy-traefik",
+    );
+    expect(dry.calls).not.toContain("network connect");
+    const applied = run("attach-traefik.sh", ["--network", "obs", "--yes"], {});
+    expect(applied.calls).toContain("network connect mastertutor-obs dokploy-traefik");
+    expect(applied.calls).not.toContain("mastertutor-cdp");
+    const same = run("attach-traefik.sh", ["--yes", "--network", "obs"], {
+      STUB_TRAEFIK_IP: "172.18.0.5",
+    });
+    expect(same.status).toBe(0);
+    expect(same.calls).not.toContain("network connect");
+    for (const args of [["--network"], ["--network", "cdp"], ["obs"], ["--network", "obs", "-y"]]) {
+      const refused = run("attach-traefik.sh", args, {});
+      expect(refused.status, args.join(" ")).toBe(2);
+      expect(refused.calls, args.join(" ")).toBe("");
+    }
+  });
+});
+
 describe("no host-wide changes (D41, D45, D42)", () => {
   it("ships no sysctl, ufw or TURN script", () => {
     const tracked = spawnSync("git", ["ls-files", "infra/host"], { encoding: "utf8" }).stdout;

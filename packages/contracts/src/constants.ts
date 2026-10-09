@@ -6,6 +6,11 @@ export const MODELS = {
   agentPrimary: "gpt-6-astra",
   agentFallback: "gpt-6.1-sol",
   filing: "gpt-6-luna",
+  /**
+   * The run title: one short structured answer per run. gpt-6-luna is the smallest model on our
+   * key (D1: the cheap high-volume one) and already proven on strict JSON (filing).
+   */
+  runTitle: "gpt-6-luna",
   transcription: "gpt-4o-transcribe-diarize",
   embeddings: "text-embedding-3-small",
 } as const;

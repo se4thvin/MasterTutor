@@ -6,9 +6,12 @@ import { IconButton } from "@/components/ui/button.tsx";
 export function MessageComposer({
   disabled,
   onSend,
+  onType,
 }: {
   disabled: boolean;
   onSend(text: string): Promise<boolean>;
+  /** Each keystroke (Pip thinks along). */
+  onType(): void;
 }) {
   const id = useId();
   const [text, setText] = useState("");
@@ -37,6 +40,7 @@ export function MessageComposer({
         disabled={disabled}
         placeholder={disabled ? "This run has ended" : "Message the agent"}
         onChange={(e) => setText(e.target.value)}
+        onInput={onType}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();

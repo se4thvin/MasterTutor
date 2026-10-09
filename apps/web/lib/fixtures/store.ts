@@ -51,7 +51,7 @@ export function usageReport(runs: readonly RunSummary[], from: string, to: strin
     perDay,
     perRun: runs.map((r) => ({
       runId: r.id,
-      goal: r.goal,
+      title: r.title,
       status: r.status,
       usd: r.usage.usd,
       steps: r.usage.steps,

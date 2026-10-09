@@ -10,7 +10,7 @@ import {
   type StepRow,
 } from "./run-model.ts";
 import type { TakeoverNotice, TakeoverState } from "./takeover.ts";
-import { untrustedText } from "./untrusted-text.ts";
+import { untrustedText } from "@mastertutor/contracts";
 
 export type Tone = "signal" | "tint" | "warn" | "muted" | "ok";
 

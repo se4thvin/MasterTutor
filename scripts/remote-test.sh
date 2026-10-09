@@ -10,18 +10,19 @@
 #
 # Usage: scripts/remote-test.sh <suite> [args...]
 #        scripts/remote-test.sh all
-#   suites: unit integration security web-build agent-image behaviour ui e2e smoke qa bench-mock
+#   suites: unit integration security web-build agent-image behaviour ui e2e smoke qa bench-mock observability
 #   Vitest suites take Vitest args; ui, e2e and qa take Playwright args (both take --shard=i/n);
 #   web-build, agent-image, smoke and bench-mock take none.
 #   `all` runs every suite but qa at once, each in its own isolated project, and prints one table.
 #   scripts/remote-test.sh qa --down   removes the long-lived QA stack and frees the stack lock.
 #   MT_CI_MAX_STACKS (default 6): how many stack suites may run on the host at once.
+#   MT_CI_TELEMETRY=1: e2e, smoke and bench-mock stacks also run the telemetry profile (D50).
 set -euo pipefail
 
 host=coursebite-build
-suites="unit integration security web-build agent-image behaviour ui e2e smoke qa bench-mock"
+suites="unit integration security web-build agent-image behaviour ui e2e smoke qa bench-mock observability"
 # Every suite but qa, whose stack is meant to outlive the run.
-all_suites="unit integration security web-build agent-image behaviour ui e2e smoke bench-mock"
+all_suites="unit integration security web-build agent-image behaviour ui e2e smoke bench-mock observability"
 behaviour_shards=3
 all_unit_workers=8
 
@@ -47,7 +48,7 @@ remote_dir="mt-ci/$name"
 remote_script="$remote_dir/scripts/remote-test/run-on-host.sh"
 new_project() { echo "mt-${branch:-detached}-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"; }
 # The remote command for run-on-host.sh with these arguments.
-remote() { echo "${MT_CI_MAX_STACKS:+MT_CI_MAX_STACKS=$MT_CI_MAX_STACKS }bash $(printf '%q ' "$remote_script" "$@")"; }
+remote() { echo "${MT_CI_MAX_STACKS:+MT_CI_MAX_STACKS=$MT_CI_MAX_STACKS }${MT_CI_TELEMETRY:+MT_CI_TELEMETRY=$MT_CI_TELEMETRY }bash $(printf '%q ' "$remote_script" "$@")"; }
 
 if [[ "$suite" == qa ]]; then
   # One long-lived QA stack per worktree: a stable project name, so later runs and --down find it.

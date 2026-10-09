@@ -19,10 +19,14 @@ describe("module dependency map (plan: no cycles, spec §4.3)", () => {
         expect(spec, file).toMatch(/^(\.|node:|@opentelemetry\/|@mastertutor\/contracts)/);
   });
 
-  it("observability imports only contracts and zod", () => {
+  it("observability imports only contracts and zod (its test-only testing.ts adds testcontainers)", () => {
     for (const file of files("packages/observability/src"))
       for (const spec of imports(file))
-        expect(spec, file).toMatch(/^(\.|node:|zod$|@mastertutor\/contracts)/);
+        expect(spec, file).toMatch(
+          file.endsWith("/testing.ts")
+            ? /^(\.|node:|zod$|@mastertutor\/contracts|testcontainers$)/
+            : /^(\.|node:|zod$|@mastertutor\/contracts)/,
+        );
   });
 
   it("contracts imports no workspace package, and OTel only in the log bridge", () => {

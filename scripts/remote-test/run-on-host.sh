@@ -99,7 +99,7 @@ case "$suite" in
     # One next start serves every worker: Playwright's default (half of 88 cores) overloads it and
     # turns timing into failures; 8 runs as fast (measured, D48). A --workers arg overrides it.
     suite_args=(--workers=8 "$@") ;;
-  e2e | qa)
+  e2e | qa | observability)
     suite_args=("$@") ;;
   web-build | agent-image | smoke | bench-mock)
     [[ $# -eq 0 ]] || die "$suite takes no extra arguments" ;;
@@ -151,7 +151,7 @@ pnpm_store="$runs_dir/.pnpm-store"
 mkdir -p "$pnpm_store"
 
 case "$suite" in
-  behaviour | e2e | smoke | qa | bench-mock)
+  behaviour | e2e | smoke | qa | bench-mock | observability)
     # Chromium's sandbox in the slots needs user namespaces, which this host allows only to
     # containers under the mastertutor-slot AppArmor profile (infra/host/apparmor/README.md).
     if ! docker run --rm --label mastertutor.ci=1 --label "mastertutor.ci.run=$project" \
@@ -184,12 +184,15 @@ case "$suite" in
     command='KEEP_STACK=1 exec bash scripts/qa-stack.sh "$@"' ;;
   bench-mock)
     command="$install && exec bash scripts/bench-mock.sh" ;;
+  # D50: the telemetry stack end to end (scripts/observability-stack.sh).
+  observability)
+    command="$install && exec bash scripts/observability-stack.sh \"\$@\"" ;;
 esac
 
 # Stack suites: a slot's subnets and ports (qa: the reserved block, legacy ports, legacy lock).
 slot_env=()
 case "$suite" in
-  behaviour | ui | e2e | smoke | bench-mock)
+  behaviour | ui | e2e | smoke | bench-mock | observability)
     acquire_slot "$max_stacks" "$runs_dir"
     echo "remote-test: stack slot $SLOT of $max_stacks" >&2
     while IFS= read -r var; do slot_env+=(-e "$var"); done < <(slot_networks "$SLOT"; slot_ports "$SLOT") ;;
@@ -198,7 +201,7 @@ case "$suite" in
     while IFS= read -r var; do slot_env+=(-e "$var"); done < <(slot_networks "$SLOT_QA") ;;
 esac
 case "$suite" in
-  e2e | smoke | qa | bench-mock)
+  e2e | smoke | qa | bench-mock | observability)
     # Traefik's live-auth address follows the run's cdp subnet (tests/e2e/compose.remote.yml).
     prefix="$(slot_networks "${SLOT:-$SLOT_QA}" | sed -n 's/^CDP_SUBNET_PREFIX=//p')"
     sed "s/172\.30\.231\./$prefix./g" infra/traefik/test-dynamic.yml >"$run_dir/traefik-dynamic.yml" ;;
@@ -220,6 +223,7 @@ docker run --rm --init --name "$project-runner" \
   -e npm_config_store_dir="$pnpm_store" \
   -e HOME=/tmp -e CI=1 \
   -e MT_CI_RUN_ID="$project" -e MT_CI_RUN_DIR="$run_dir" -e COMPOSE_PROJECT_NAME="$project" \
+  -e MT_CI_TELEMETRY="${MT_CI_TELEMETRY:-0}" \
   -e TESTCONTAINERS_RYUK_DISABLED=true -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
   -e BEHAVIOUR_REMOTE_HOST=1 -e BEHAVIOUR_DOWNLOADS="$run_dir/downloads" \
   -e BEHAVIOUR_SLOT_IMAGE="mastertutor/browser-slot:$project" \

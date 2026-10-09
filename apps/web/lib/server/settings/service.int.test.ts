@@ -105,6 +105,7 @@ describe("settings.* on the live router (Task 0B)", () => {
     await owner.db.insert(runs).values({
       workspaceId: member.workspaceId,
       goal: "outage",
+      title: "Outage notes",
       allowedOrigins: ["https://example.com"],
       status: "failed",
       error: { code: "model_unavailable", message: "The model is unavailable." },
@@ -137,7 +138,8 @@ describe("settings.* on the live router (Task 0B)", () => {
       { day: "2026-10-04", runs: 1, usd: 0.5, steps: 2 },
       { day: "2026-10-05", runs: 0, usd: 0, steps: 0 },
     ]);
-    expect(report.perRun.map((r) => r.goal)).toEqual(["outage", "done"]);
+    // A stored title wins; a run without one shows the fallback (no backfill).
+    expect(report.perRun.map((r) => r.title)).toEqual(["Outage notes", "done"]);
     expect(report.stepLatencyMs).toEqual({ p50: 2000, p95: 2900 });
     expect(report.openaiErrorRate).toBe(0.5);
     const empty = await client(who).settings.usage({ from: "2026-01-01", to: "2026-01-02" });

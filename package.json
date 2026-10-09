@@ -36,6 +36,7 @@
     "@eslint/js": "10.0.1",
     "@mastertutor/contracts": "workspace:*",
     "@mastertutor/db": "workspace:*",
+    "@mastertutor/observability": "workspace:*",
     "@mastertutor/sealing": "workspace:*",
     "@orpc/client": "1.15.4",
     "@orpc/contract": "1.15.4",

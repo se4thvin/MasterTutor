@@ -3,6 +3,12 @@
 #   pnpm compose:test --profile e2e up -d --build --wait   plus llm-mock and the fixture sites
 # scripts/e2e.sh runs the Playwright stack suite in the `e2e` service (profile e2e-runner).
 # Production Traefik is Dokploy's; the per-slot /live routers are infra/traefik/test-dynamic.yml.
+# D50 observability e2e (observability-access.spec.ts): throwaway values for a throwaway stack,
+# shared by web and the e2e runner. OpenObserve itself is not in this stack.
+x-e2e-observability: &e2e-observability
+  ALERT_WEBHOOK_SECRET: e2e-alert-webhook-secret-0123456789abcdef
+  OBSERVE_VIEWER_PASSWORD: E2e-viewer-password-0123456789abcdef
+
 services:
   traefik:
     image: traefik:v3.7.13
@@ -41,6 +47,7 @@ services:
 
   web:
     environment:
+      <<: *e2e-observability
       OPENAI_BASE_URL: http://llm-mock:8090/v1
       # The app's origin is Traefik's published port: one variable for every place it is spelled.
       BETTER_AUTH_URL: http://localhost:${TEST_HTTP_PORT:-18080}
@@ -140,6 +147,7 @@ services:
           [
             site.fixtures.test,
             other.fixtures.test,
+            sso.fixtures.test,
             other.fixtures-isolated.test,
             ads.fixtures-hung.test,
           ]
@@ -210,6 +218,8 @@ services:
       HOME: /tmp
       E2E_BASE_URL: http://localhost:${TEST_HTTP_PORT:-18080}
       E2E_LLM_MOCK_URL: http://llm-mock:8090
+      <<: *e2e-observability
+      CDP_SUBNET_PREFIX: ${CDP_SUBNET_PREFIX:-172.30.231}
     volumes:
       - ./apps/web/e2e:/repo/apps/web/e2e
       - ./apps/web/playwright.stack.config.ts:/repo/apps/web/playwright.stack.config.ts:ro

@@ -7,9 +7,12 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { DEFAULT_BROWSER_SLOTS } from "@mastertutor/contracts";
+import { vapidKeyPair } from "./lib/vapid.ts";
 
 const b64url = (bytes: number) => randomBytes(bytes).toString("base64url");
 const hex = (bytes: number) => randomBytes(bytes).toString("hex");
+/** ObservePassword: 256 random bits plus one character of each kind OpenObserve's policy demands. */
+const observePassword = () => `${b64url(32)}-Aa0`;
 
 export const ENV_DEFAULTS = {
   PUBLIC_IP: "127.0.0.1",
@@ -24,6 +27,7 @@ export function generateSecrets(): Record<string, string> {
   const pub = publicKey.export({ format: "jwk" }).x;
   const priv = privateKey.export({ format: "jwk" }).d;
   if (!pub || !priv) throw new Error("x25519 key export failed");
+  const vapid = vapidKeyPair();
   return {
     POSTGRES_PASSWORD: b64url(24),
     WEB_DB_PASSWORD: b64url(24),
@@ -41,6 +45,14 @@ export function generateSecrets(): Record<string, string> {
     // libsodium crypto_box keys are raw X25519 keys; base64 (standard) for the env.
     VAULT_PUBLIC_KEY: Buffer.from(pub, "base64url").toString("base64"),
     VAULT_PRIVATE_KEY: Buffer.from(priv, "base64url").toString("base64"),
+    S3_OBSERVE_ACCESS_KEY_ID: `GK${hex(12)}`,
+    S3_OBSERVE_SECRET_ACCESS_KEY: hex(32),
+    OBSERVE_ROOT_PASSWORD: observePassword(),
+    OBSERVE_INGEST_PASSWORD: observePassword(),
+    OBSERVE_VIEWER_PASSWORD: observePassword(),
+    ALERT_WEBHOOK_SECRET: b64url(32),
+    VAPID_PUBLIC_KEY: vapid.publicKey,
+    VAPID_PRIVATE_KEY: vapid.privateKey,
   };
 }
 
@@ -56,12 +68,13 @@ export function fillEnv(
     const match = LINE.exec(line);
     if (match) values.set(match[1]!, match[2]!.trim());
   }
-  const hasPublic = (values.get("VAULT_PUBLIC_KEY") ?? "") !== "";
-  const hasPrivate = (values.get("VAULT_PRIVATE_KEY") ?? "") !== "";
-  if (hasPublic !== hasPrivate) {
-    throw new Error(
-      "VAULT_PUBLIC_KEY and VAULT_PRIVATE_KEY must be set together; fix .env by hand",
-    );
+  for (const [a, b] of [
+    ["VAULT_PUBLIC_KEY", "VAULT_PRIVATE_KEY"],
+    ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"],
+    ["S3_OBSERVE_ACCESS_KEY_ID", "S3_OBSERVE_SECRET_ACCESS_KEY"],
+  ] as const) {
+    if (((values.get(a) ?? "") !== "") !== ((values.get(b) ?? "") !== ""))
+      throw new Error(`${a} and ${b} must be set together; fix .env by hand`);
   }
   const filled: string[] = [];
   const lines = existing.split("\n").map((line) => {

@@ -32,6 +32,8 @@ describe("bench config", () => {
       ".env.bench",
       "--profile",
       "pdf",
+      "--profile",
+      "observability",
       "-f",
       "compose.yml",
       "-f",

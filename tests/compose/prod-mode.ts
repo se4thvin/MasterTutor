@@ -1,6 +1,11 @@
 // The single definition of "production mode" for a resolved compose config (D47). Used by the
 // compose overlay tests (Task 12), the production env check (Task 14), the real-model smoke
 // (Task 15) and the bench harness preflight (Phase 10). Problems name keys and services only.
+import {
+  O2_REQUIRED_ENV,
+  OPENOBSERVE_IMAGE,
+  OTEL_COLLECTOR_IMAGE,
+} from "@mastertutor/observability";
 import { composeConfig, type ComposeConfig, type ComposeService } from "./compose-json.ts";
 
 /**
@@ -18,6 +23,10 @@ export const PRODUCTION_SERVICES = [
   "pdf-worker",
   "docling",
   "audio-capture",
+  // D50: the telemetry stack, under the `observability` profile (observabilityProblems below).
+  "otel-collector",
+  "openobserve",
+  "observability-init",
 ] as const;
 
 /**
@@ -118,6 +127,28 @@ export const WORKERS: Readonly<Record<string, WorkerRule>> = {
   },
 };
 
+/** Read-only, no capabilities, no new privileges, non-root and bounded; `tag` names the decision. */
+function hardeningProblems(name: string, service: ComposeService, tag: string): string[] {
+  const problems: string[] = [];
+  if (service.read_only !== true) problems.push(`${name}.read_only: must be true (${tag})`);
+  if (!service.cap_drop?.includes("ALL")) problems.push(`${name}.cap_drop: must drop ALL (${tag})`);
+  if (!service.security_opt?.includes("no-new-privileges:true")) {
+    problems.push(`${name}.security_opt: must set no-new-privileges (${tag})`);
+  }
+  const uid = /^(\d+)(?::\d+)?$/.exec(service.user ?? "")?.[1];
+  if (uid === undefined || Number(uid) === 0) {
+    problems.push(`${name}.user: must be a numeric non-root uid (${tag})`);
+  }
+  if (!(
+    Number(service.mem_limit) > 0 &&
+    Number(service.cpus) > 0 &&
+    Number(service.pids_limit) > 0
+  )) {
+    problems.push(`${name}: must bound memory, CPU and processes (${tag})`);
+  }
+  return problems;
+}
+
 /** No secrets, read-only, no capabilities, no new privileges, non-root, bounded, internal only. */
 function workerProblems(config: ComposeConfig, name: string, rule: WorkerRule): string[] {
   const service = config.services[name];
@@ -130,23 +161,7 @@ function workerProblems(config: ComposeConfig, name: string, rule: WorkerRule): 
   ) {
     problems.push(`${name}.environment: only its fixed settings, no secrets (final I8)`);
   }
-  if (service.read_only !== true) problems.push(`${name}.read_only: must be true (final I8)`);
-  if (!service.cap_drop?.includes("ALL"))
-    problems.push(`${name}.cap_drop: must drop ALL (final I8)`);
-  if (!service.security_opt?.includes("no-new-privileges:true")) {
-    problems.push(`${name}.security_opt: must set no-new-privileges (final I8)`);
-  }
-  const uid = /^(\d+)(?::\d+)?$/.exec(service.user ?? "")?.[1];
-  if (uid === undefined || Number(uid) === 0) {
-    problems.push(`${name}.user: must be a numeric non-root uid (final I8)`);
-  }
-  if (!(
-    Number(service.mem_limit) > 0 &&
-    Number(service.cpus) > 0 &&
-    Number(service.pids_limit) > 0
-  )) {
-    problems.push(`${name}: must bound memory, CPU and processes (final I8)`);
-  }
+  problems.push(...hardeningProblems(name, service, "final I8"));
   const networks = Object.keys(service.networks ?? {}).sort();
   if (networks.join(",") !== [...rule.networks].sort().join(",")) {
     problems.push(`${name}.networks: must be exactly ${rule.networks.join(", ")} (final I8)`);
@@ -158,6 +173,62 @@ function workerProblems(config: ComposeConfig, name: string, rule: WorkerRule): 
   }
   if ((service.ports ?? []).length > 0)
     problems.push(`${name}.ports: must publish nothing (final I8)`);
+  return problems;
+}
+
+const OBSERVE_NETWORKS = ["telemetry", "observe", "observe-store", "observe-edge"] as const;
+/** The collector's one non-internal network (it publishes the fluent-forward port): no outbound NAT. */
+export const NO_MASQUERADE = { "com.docker.network.bridge.enable_ip_masquerade": "false" } as const;
+
+/**
+ * D50: applied when the observability profile runs (check-env requires it in production).
+ * OpenObserve publishes nothing and is reached only through the owner ForwardAuth; both images
+ * are pinned; the collector publishes one loopback port; every telemetry hop is internal.
+ */
+function observabilityProblems(config: ComposeConfig): string[] {
+  const o2 = config.services.openobserve;
+  const collector = config.services["otel-collector"];
+  const problems: string[] = [];
+  if (o2) {
+    if ((o2.ports ?? []).length > 0) problems.push("openobserve.ports: must publish nothing (D50)");
+    if (o2.image !== OPENOBSERVE_IMAGE)
+      problems.push(
+        "openobserve.image: must be OPENOBSERVE_IMAGE, the digest the API contract test pins (D50)",
+      );
+    for (const [key, value] of Object.entries(O2_REQUIRED_ENV))
+      if (o2.environment?.[key] !== value)
+        problems.push(`openobserve.${key}: must be ${value} (D50)`);
+    problems.push(...hardeningProblems("openobserve", o2, "D50"));
+    const middlewares =
+      o2.labels?.["traefik.http.routers.mastertutor-observability.middlewares"] ?? "";
+    if (!middlewares.split(",").includes("mastertutor-observability-auth"))
+      problems.push("openobserve: its router must run mastertutor-observability-auth (D50)");
+  }
+  if (collector) {
+    const ports = collector.ports ?? [];
+    if (ports.some((p) => p.host_ip !== "127.0.0.1" || p.target !== 24224))
+      problems.push("otel-collector.ports: only 127.0.0.1:24224 (D45, D50)");
+    if (collector.image !== OTEL_COLLECTOR_IMAGE)
+      problems.push(
+        "otel-collector.image: must be OTEL_COLLECTOR_IMAGE, the digest the collector test pins (D50)",
+      );
+    problems.push(...hardeningProblems("otel-collector", collector, "D50"));
+  }
+  for (const name of OBSERVE_NETWORKS) {
+    const network = config.networks[name];
+    // Production's observe-edge is the host-made external mastertutor-obs (create-obs-network.sh).
+    if (network && network.external !== true && network.internal !== true)
+      problems.push(`networks.${name}: must be internal (D50)`);
+  }
+  const ingest = config.networks["obs-ingest"];
+  if (
+    collector &&
+    ingest &&
+    Object.entries(NO_MASQUERADE).some(([key, value]) => ingest.driver_opts?.[key] !== value)
+  )
+    problems.push(
+      "networks.obs-ingest: must disable IP masquerade, so the collector has no egress (D50)",
+    );
   return problems;
 }
 
@@ -207,5 +278,6 @@ export function prodModeProblems(config: ComposeConfig, options: ProdModeOptions
       problems.push(`${name}.PULSE_ALLOWED_IP: must be audio-capture's pulse address only (B4 I7)`);
     }
   }
+  problems.push(...observabilityProblems(config));
   return problems;
 }

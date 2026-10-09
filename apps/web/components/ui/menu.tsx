@@ -4,6 +4,7 @@ import { Menu } from "@base-ui/react/menu";
 import type { ReactNode } from "react";
 import { cx } from "@/lib/cx.ts";
 import { Icon, type IconName } from "./icon.tsx";
+import { LIQUID_GLASS } from "./liquid-glass.tsx";
 
 export { Menu };
 
@@ -22,7 +23,7 @@ export function MenuPanel({
         collisionPadding={12}
         className="popover-positioner"
       >
-        <Menu.Popup className="menu">{children}</Menu.Popup>
+        <Menu.Popup className={`menu ${LIQUID_GLASS}`}>{children}</Menu.Popup>
       </Menu.Positioner>
     </Menu.Portal>
   );

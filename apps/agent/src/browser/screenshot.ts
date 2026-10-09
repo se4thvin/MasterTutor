@@ -1,11 +1,14 @@
 import { VIEWPORT } from "@mastertutor/contracts";
+import { setTimeout as delay } from "node:timers/promises";
 import sharp from "sharp";
+import { abortable, pause } from "../runtime/abortable.ts";
 import {
   collectMaskBoxes,
   containsSecretText,
   drawMasks,
   hasCrossOriginFrames,
   hasFilledOutOfProcessFrame,
+  hasShownFilledNode,
   sameBoxes,
   type Box,
   type MaskSources,
@@ -32,9 +35,54 @@ export const WITHHELD = {
   moved: "a secret field moved while it was taken",
   unreadable: "it could not be checked for saved secrets",
   navigating: "the page kept navigating while it was taken",
+  crossOriginFrame:
+    "a field filled from the vault is on screen beside an embedded frame from another site, which cannot be masked",
+  filledFrame: "a field filled from the vault sits inside an embedded frame that cannot be masked",
+  unlocatable: "a field filled from the vault could not be located on the page",
+  secretText: "a saved secret shows as text on the page",
 } as const;
 
+/**
+ * Page.captureScreenshot answers when the compositor draws. A capture sent while the page swaps
+ * renderer process mid-navigation can stay unanswered forever, or fail with "Not attached to an
+ * active page"; a fresh capture answers at once (reproduced on a real slot: the MH sign-in hang).
+ * Either way the frame is retaken, never awaited without bound.
+ */
+export const CAPTURE_TIMEOUT_MS = 5_000;
+const SWAPPING = /Not attached to an active page|Target closed|Session closed/i;
+
+/** The PNG as base64, or null when the page was swapping and the capture should be retaken. */
+export async function captureFrame(
+  session: Pick<BrowserSession, "cdp">,
+  signal: AbortSignal,
+  timeoutMs = CAPTURE_TIMEOUT_MS,
+): Promise<string | null> {
+  const cdp = await session.cdp();
+  const timer = new AbortController();
+  try {
+    const sent = cdp
+      .send("Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: false,
+      })
+      .then(
+        ({ data }) => data,
+        (error: unknown) => {
+          if (error instanceof Error && SWAPPING.test(error.message)) return null;
+          throw error;
+        },
+      );
+    const late = delay(timeoutMs, null, { signal: timer.signal }).catch(() => null);
+    return await abortable(Promise.race([sent, late]), signal);
+  } finally {
+    timer.abort();
+  }
+}
+
 const MAX_ATTEMPTS = 3;
+/** Lets a renderer swap finish before a capture is retaken. */
+const RETAKE_PAUSE_MS = 100;
 /** How long an observation waits for a main-frame navigation before stopping it. */
 const STUCK_NAVIGATION_WAIT_MS = 5_000;
 
@@ -176,30 +224,38 @@ export async function captureModelScreenshot(
     session.lastScale = dropped.scale;
     return dropped;
   };
+  // Why the last attempt was retaken: the reason a dropped frame gives the model.
+  let retake: string = WITHHELD.moved;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     session.guard.assertAgent(signal);
     await session.page.bringToFront();
     layout = await session.layout();
     // While vault-filled fields are on this page, inputs inside cross-origin frames cannot be
     // boxed from this target, so any such frame makes the screenshot undeliverable (R-E5).
-    if (sources.nodeIds(await session.cdp()).length > 0 && (await hasCrossOriginFrames(session))) {
-      return drop();
+    if (
+      (await hasShownFilledNode(await session.cdp(), sources)) &&
+      (await hasCrossOriginFrames(session))
+    ) {
+      return drop(WITHHELD.crossOriginFrame);
     }
     // A field the vault filled inside an out-of-process frame cannot be boxed from here either.
-    if (await hasFilledOutOfProcessFrame(session, sources, signal)) return drop();
+    if (await hasFilledOutOfProcessFrame(session, sources, signal))
+      return drop(WITHHELD.filledFrame);
     const before = await collectMaskBoxes(session, sources);
-    if (before.unverifiable > 0) return drop();
+    if (before.unverifiable > 0) return drop(WITHHELD.unlocatable);
     session.guard.assertAgent(signal);
-    const { data } = await (
-      await session.cdp()
-    ).send("Page.captureScreenshot", {
-      format: "png",
-      fromSurface: true,
-      captureBeyondViewport: false,
-    });
+    const data = await captureFrame(session, signal);
+    if (data === null) {
+      retake = WITHHELD.navigating;
+      await pause(RETAKE_PAUSE_MS, signal);
+      continue;
+    }
     const after = await collectMaskBoxes(session, sources);
-    if (after.unverifiable > 0) return drop();
-    if (!sameBoxes(before.boxes, after.boxes)) continue;
+    if (after.unverifiable > 0) return drop(WITHHELD.unlocatable);
+    if (!sameBoxes(before.boxes, after.boxes)) {
+      retake = WITHHELD.moved;
+      continue;
+    }
     // A resize between reading the layout and capturing would misalign every mask: retake.
     const raw = Buffer.from(data, "base64");
     const meta = await sharp(raw).metadata();
@@ -212,7 +268,7 @@ export async function captureModelScreenshot(
     ) {
       continue;
     }
-    if (await containsSecretText(session, sources, signal)) return drop();
+    if (await containsSecretText(session, sources, signal)) return drop(WITHHELD.secretText);
     const shot = await screened(
       await finalize(raw, layout, after.boxes),
       sources,
@@ -224,5 +280,5 @@ export async function captureModelScreenshot(
     session.lastScale = shot.scale;
     return shot;
   }
-  return drop();
+  return drop(retake);
 }

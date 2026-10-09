@@ -113,3 +113,28 @@ describe("Better Auth wiring", () => {
     expect(rows).toEqual([{ role: "member" }]);
   });
 });
+
+describe("the session cookie (D50 ruling I-2)", () => {
+  it("is host-only on the app host (no Domain), so obs.<app host> never receives it", async () => {
+    const auth = createAuth({
+      db: handle.db,
+      secret,
+      baseURL: "https://mt.example.com",
+      signupOpen: true,
+    });
+    const { headers } = await auth.api.signUpEmail({
+      body: {
+        email: "cookie-scope@example.test",
+        password: "correct-horse-battery-staple",
+        name: "T",
+      },
+      returnHeaders: true,
+    });
+    const cookies = headers.getSetCookie();
+    expect(cookies.some((c) => /session_token=/.test(c))).toBe(true);
+    for (const cookie of cookies) {
+      expect(cookie).not.toMatch(/;\s*domain=/i);
+      expect(cookie).toMatch(/;\s*httponly/i);
+    }
+  });
+});

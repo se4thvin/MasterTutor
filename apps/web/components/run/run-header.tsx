@@ -1,11 +1,11 @@
-import type { ApprovalMode } from "@mastertutor/contracts";
+import { RUN_TITLE_MAX, untrustedText, type ApprovalMode } from "@mastertutor/contracts";
+import type { ReactNode } from "react";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { ButtonLink } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import type { BrowserState } from "./model/browser-state.ts";
 import { STATE_PILL, hostAndPath, markFor, shortRunId, statusLabel } from "./model/copy.ts";
 import type { RunModel } from "./model/run-model.ts";
-import { untrustedText } from "./model/untrusted-text.ts";
 
 const MODE: Record<ApprovalMode, string> = {
   ask: "asks first",
@@ -13,18 +13,29 @@ const MODE: Record<ApprovalMode, string> = {
   bypass: "bypass",
 };
 
-export function RunHeader({ model, state }: { model: RunModel; state: BrowserState }) {
+export function RunHeader({
+  model,
+  state,
+  pip,
+}: {
+  model: RunModel;
+  state: BrowserState;
+  /** The mascot slot (RunPip). */
+  pip: ReactNode;
+}) {
   const host = hostAndPath(model.currentUrl)?.host ?? "no page yet";
   const started = new Date(model.createdAt).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
-  // The goal is user text, possibly another member's: cleaned like page text (final M11).
-  const title = untrustedText(model.goal.split("\n")[0], 4000);
+  // A model's title or another member's goal: cleaned like page text, shown as text (final M11).
+  const title = untrustedText(model.title, RUN_TITLE_MAX);
   return (
     <header className="run-head">
       <div className="run-head-text">
         <p className="run-eyebrow">
+          {/* The mascot slot (mascot-ui): beside the status it mirrors, which stays the signal. */}
+          {pip}
           <span className="run-status" data-tone={STATE_PILL[state].tone}>
             <StatusMark status={markFor(state, model)} decorative />
             {statusLabel(state, model)}

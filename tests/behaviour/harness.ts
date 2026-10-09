@@ -102,7 +102,7 @@ export async function startBehaviourAgent(
       model: createOpenAIModelClient(openai),
       hooks: {
         // The fixture site stands in for a site with a saved sign-in: its pages carry password
-        // fields, which without one pause the run (sign-in rule). other.fixtures.test has none.
+        // fields, which without one pause the run (sign-in rule). OTHER has none.
         hasSignIn: async (_run, origin) => origin === SITE,
         ...(typeof options.hooks === "function"
           ? options.hooks({ db: agentDb.db, storage, openai, log })

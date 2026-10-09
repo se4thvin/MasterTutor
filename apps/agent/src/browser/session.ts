@@ -12,6 +12,7 @@ import type { Log } from "../runtime/types.ts";
 import { DownloadGate, type DownloadFolder } from "./download-gate.ts";
 import { NEAR_FRAME_MARGIN_PX, ownerBoxCovers } from "./frame-owner-box.ts";
 import { sessionChannel, watchFrameTargets, type CdpChannel } from "./frame-watch.ts";
+import { allowsTopLevel } from "./navigation-scope.ts";
 import { PendingNavigations } from "./pending-navigations.ts";
 import { ControlGuard } from "./guard.ts";
 import { IsolatedWorlds, type WorldOptions } from "./isolated-world.ts";
@@ -53,6 +54,8 @@ export const RESPONSE_LOG_BUFFERS = {
 export interface BrowserSessionOptions {
   cdpBaseUrl: string;
   allowedOrigins(): readonly string[];
+  /** A sign-in flow the person approved is open: it may pass through another site (D51). */
+  signInFlowOpen?(): boolean;
   testMode: boolean;
   log: Log;
   guard?: ControlGuard;
@@ -187,7 +190,8 @@ export class BrowserSession {
         options.log,
       );
       session.#policy = await installNetworkPolicy(context, {
-        allowedOrigins: options.allowedOrigins,
+        allowsNavigation: (origin) =>
+          allowsTopLevel(origin, options.allowedOrigins(), options.signInFlowOpen?.() ?? false),
         testMode: options.testMode,
         onBlockedNavigation: (block) => session.#blocked.push(block),
         onPrivateConnection: (hit) => session.#onPrivateConnection(hit),

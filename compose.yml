@@ -83,7 +83,9 @@ services:
       timeout: 5s
       retries: 30
     networks:
-      - backend
+      backend: {}
+      # OpenObserve's only route to its bucket (D50); its key reaches nothing else.
+      observe-store: {}
 
   garage-init:
     <<: *node-runtime
@@ -98,6 +100,10 @@ services:
       S3_WEB_SECRET_ACCESS_KEY: ${S3_WEB_SECRET_ACCESS_KEY:?set S3_WEB_SECRET_ACCESS_KEY}
       S3_AGENT_ACCESS_KEY_ID: ${S3_AGENT_ACCESS_KEY_ID:?set S3_AGENT_ACCESS_KEY_ID}
       S3_AGENT_SECRET_ACCESS_KEY: ${S3_AGENT_SECRET_ACCESS_KEY:?set S3_AGENT_SECRET_ACCESS_KEY}
+      # OpenObserve's own bucket and key (D50), provisioned only when the key is set.
+      S3_OBSERVE_BUCKET: observability
+      S3_OBSERVE_ACCESS_KEY_ID: ${S3_OBSERVE_ACCESS_KEY_ID:-}
+      S3_OBSERVE_SECRET_ACCESS_KEY: ${S3_OBSERVE_SECRET_ACCESS_KEY:-}
     depends_on:
       garage:
         condition: service_healthy
@@ -141,6 +147,16 @@ services:
       S3_BUCKET: mastertutor
       S3_ACCESS_KEY_ID: ${S3_WEB_ACCESS_KEY_ID:?set S3_WEB_ACCESS_KEY_ID}
       S3_SECRET_ACCESS_KEY: ${S3_WEB_SECRET_ACCESS_KEY:?set S3_WEB_SECRET_ACCESS_KEY}
+      # D50: telemetry is off unless the endpoint is set; push, the alert webhook and
+      # /observability are each off while their key is empty.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      MT_DEPLOYMENT: ${MT_DEPLOYMENT:-production}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:-}
+      OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:-}
+      # Its cdp address (<prefix>.11) is the Host Traefik's ForwardAuth calls carry (D50 I-1).
+      CDP_SUBNET_PREFIX: ${CDP_SUBNET_PREFIX:-172.30.231}
     healthcheck:
       <<: *node-health
       test:
@@ -160,11 +176,17 @@ services:
       backend: {}
       cdp:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.11
+      # D50: exports to the collector; receives OpenObserve's alert webhook.
+      telemetry: {}
+      observe: {}
 
   agent:
     <<: *node-runtime
     restart: unless-stopped
-    command: ["node", "apps/agent/src/main.ts"]
+    # The telemetry preload registers instrumentations before main.ts's imports load node:http
+    # (D50, spec §6.3); it does nothing unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    command:
+      ["node", "--import", "./packages/telemetry/src/register-agent.ts", "apps/agent/src/main.ts"]
     # Graceful stop: running runs sleep with a wake, then slot restarts get AGENT_SHUTDOWN_DRAIN_MS.
     stop_grace_period: 30s
     cap_drop:
@@ -191,6 +213,8 @@ services:
       AGENT_TEST_MODE: ${AGENT_TEST_MODE:-0}
       AGENT_HEALTH_PORT: "8787"
       AGENT_SHUTDOWN_DRAIN_MS: ${AGENT_SHUTDOWN_DRAIN_MS:-5000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      MT_DEPLOYMENT: ${MT_DEPLOYMENT:-production}
     volumes:
       - downloads:/downloads
     healthcheck:
@@ -215,6 +239,7 @@ services:
         ipv4_address: ${CDP_SUBNET_PREFIX:-172.30.231}.10
       pdf: {}
       audio: {}
+      telemetry: {}
 
   # Every slot recording happens here, never in the agent (B4 review I7): parec pulls a slot's
   # PulseAudio over `pulse` (shared with the slots only; they admit port 4713 from this address
@@ -324,6 +349,107 @@ services:
     networks:
       - pdf
 
+  # Telemetry pipeline (D50, spec §10). Profile `observability`: test stacks never run it, and
+  # nothing waits on it; web and agent export to it only when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+  # The image is distroless with no healthcheck subcommand, so it has no healthcheck (B1).
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    environment:
+      OBSERVE_INGEST_PASSWORD: ${OBSERVE_INGEST_PASSWORD:-}
+      # o2OtlpEndpoint (packages/observability): the API lives under OpenObserve's base path.
+      OBSERVE_OTLP_ENDPOINT: http://openobserve:5080/observability/api/default
+    volumes:
+      - ./infra/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    # The Docker daemon's fluentd log driver connects here (spec §9); loopback only (D45).
+    ports:
+      - "127.0.0.1:24224:24224/tcp"
+    networks:
+      telemetry: {}
+      observe: {}
+      obs-ingest: {}
+
+  # Storage, search and dashboards (spec §11). Internal only: its one route in is Traefik's
+  # owner-only /observability router (compose.prod.yml). Distroless (no shell, curl or wget), so no
+  # healthcheck: observability-init polls /healthz itself (B1). The O2_REQUIRED_ENV block is
+  # pinned by tests/compose/prod-mode.ts; ZO_SKIP_SSRF_CHECKS lets it call web's webhook on the
+  # internal `observe` network (it has no egress).
+  openobserve:
+    image: openobserve/openobserve:v1.0.4@sha256:d4a878fac1f6c56003764f7f2a1625668917388f167e222c8c810de3f54c56ba
+    profiles: ["observability"]
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    cpus: 1
+    pids_limit: 256
+    environment:
+      ZO_ROOT_USER_EMAIL: root@mastertutor.internal
+      ZO_ROOT_USER_PASSWORD: ${OBSERVE_ROOT_PASSWORD:-}
+      ZO_DATA_DIR: /data
+      ZO_LOCAL_MODE: "true"
+      ZO_LOCAL_MODE_STORAGE: s3
+      ZO_S3_PROVIDER: s3
+      ZO_S3_SERVER_URL: http://garage:3900
+      ZO_S3_REGION_NAME: garage
+      ZO_S3_BUCKET_NAME: observability
+      ZO_S3_ACCESS_KEY: ${S3_OBSERVE_ACCESS_KEY_ID:-}
+      ZO_S3_SECRET_KEY: ${S3_OBSERVE_SECRET_ACCESS_KEY:-}
+      ZO_COOKIE_SECURE_ONLY: "true"
+      ZO_COMPACT_DATA_RETENTION_DAYS: "90"
+      ZO_BASE_URI: /observability
+      ZO_TELEMETRY: "false"
+      ZO_USAGE_REPORTING_ENABLED: "false"
+      ZO_MMDB_DISABLE_DOWNLOAD: "true"
+      ZO_SKIP_SSRF_CHECKS: "true"
+    volumes:
+      - openobserve-data:/data
+    depends_on:
+      garage-init:
+        condition: service_completed_successfully
+    networks:
+      observe: {}
+      observe-store: {}
+      observe-edge: {}
+
+  # Idempotent provisioning (spec §11): users, retention, alert delivery, dashboards, alerts.
+  observability-init:
+    <<: *node-runtime
+    profiles: ["observability"]
+    restart: "no"
+    command: ["node", "packages/observability/src/bin/observability-init.ts"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OBSERVE_URL: http://openobserve:5080/observability
+      OBSERVE_ROOT_PASSWORD: ${OBSERVE_ROOT_PASSWORD:-}
+      # Only for the one deploy that rotates root (runbook §13).
+      OBSERVE_ROOT_PASSWORD_PREVIOUS: ${OBSERVE_ROOT_PASSWORD_PREVIOUS:-}
+      OBSERVE_INGEST_PASSWORD: ${OBSERVE_INGEST_PASSWORD:-}
+      OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:-}
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:-}
+      ALERT_WEBHOOK_URL: http://web:3000/api/alerts/webhook
+      SPEND_ALERT_USD_PER_HOUR: ${SPEND_ALERT_USD_PER_HOUR:-25}
+    depends_on:
+      openobserve:
+        condition: service_started
+    networks:
+      - observe
+
   browser-1:
     <<: *browser-slot
     environment:
@@ -401,9 +527,27 @@ networks:
   # agent ↔ audio-capture (finished chunks).
   audio:
     internal: true
+  # D50 (spec §4.2): one internal network per hop of the telemetry stack.
+  telemetry:
+    internal: true
+  observe:
+    internal: true
+  observe-store:
+    internal: true
+  # Traefik ↔ OpenObserve only; compose.prod.yml makes it the external mastertutor-obs.
+  observe-edge:
+    internal: true
+  # Only so the collector can publish its loopback fluent-forward port (spec §4.2): Docker cannot
+  # publish a port from a container on internal networks only. No IP masquerade, so the collector
+  # (it parses untrusted log lines and holds an OpenObserve credential) has no route out
+  # (review I2, tests/observability/collector-config.int.test.ts).
+  obs-ingest:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 volumes:
   pgdata: {}
   garage-meta: {}
   garage-data: {}
   downloads: {}
+  openobserve-data: {}

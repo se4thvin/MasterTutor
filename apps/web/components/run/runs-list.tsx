@@ -1,10 +1,11 @@
 "use client";
 
-import type { RunStatus } from "@mastertutor/contracts";
+import { RUN_TITLE_MAX, untrustedText, type RunStatus } from "@mastertutor/contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { Button, ButtonLink } from "@/components/ui/button.tsx";
+import { PipLazy } from "@/components/mascot/pip-lazy.tsx";
 import { EmptyState } from "@/components/ui/empty-state.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { LoadError } from "@/components/ui/load-error.tsx";
@@ -12,7 +13,6 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { orpc } from "@/lib/api/client.ts";
 import { formatDateTime } from "@/lib/notes/format.ts";
 import { markStatus } from "@/lib/status.ts";
-import { untrustedText } from "./model/untrusted-text.ts";
 
 const TEXT: Record<RunStatus, string> = {
   queued: "Queued",
@@ -57,6 +57,7 @@ export function RunsList() {
     return (
       <EmptyState
         icon="runs"
+        art={<PipLazy state="idle" size="compact" />}
         title="No runs yet"
         body="Start a task and the agent's runs show up here."
         actions={
@@ -75,7 +76,7 @@ export function RunsList() {
             <span className="run-list-main">
               <StatusMark status={markStatus(run.status)} decorative />
               <span className="min-w-0 run-list-text">
-                <bdi className="run-list-goal">{untrustedText(run.goal.split("\n")[0], 4000)}</bdi>
+                <bdi className="run-list-goal">{untrustedText(run.title, RUN_TITLE_MAX)}</bdi>
                 <small>
                   {TEXT[run.status]} · {formatDateTime(run.createdAt)}
                 </small>

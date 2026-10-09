@@ -31,7 +31,7 @@ describe("ESLint OpenAI data policy (D38)", () => {
     for (const filePath of [
       "apps/web/lib/probe.ts",
       "apps/web/components/ui/icons.ts",
-      "apps/web/components/hero/probe.tsx",
+      "apps/web/components/mascot/probe.tsx",
     ]) {
       const [result] = await eslint.lintText(
         'import OpenAI from "openai";\nexport default OpenAI;\n',

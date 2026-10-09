@@ -66,6 +66,7 @@ describe("remote test runner (D45, X4, D48)", () => {
       "smoke",
       "qa",
       "bench-mock",
+      "observability",
     ]);
   });
 
@@ -149,7 +150,7 @@ describe("remote test runner (D45, X4, D48)", () => {
     expect(host).toContain('stack_lock="$runs_dir/stack.lock"');
     expect(host).not.toContain("behaviour.lock");
     expect(host).toMatch(
-      /^ {2}behaviour \| ui \| e2e \| smoke \| bench-mock\)\n {4}acquire_slot /m,
+      /^ {2}behaviour \| ui \| e2e \| smoke \| bench-mock \| observability\)\n {4}acquire_slot /m,
     );
     expect(host).toMatch(/^ {2}qa\)\n {4}take_stack_lock$/m);
   });

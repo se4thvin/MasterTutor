@@ -25,8 +25,9 @@ BEGIN
     IF t NOT IN ('run_transcript', 'vault_secrets', 'vault_grants', 'otp_codes', 'browser_sessions', 'vault_audit') THEN
       EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO web_role', t);
     END IF;
-    -- agent: everything except Better Auth's tables and the audit log (handled below).
-    IF t NOT IN ('user', 'session', 'account', 'verification', 'vault_audit') THEN
+    -- agent: everything except Better Auth's tables, the audit log (handled below), and web-only
+    -- alert state (D50).
+    IF t NOT IN ('user', 'session', 'account', 'verification', 'vault_audit', 'alerts', 'push_subscriptions') THEN
       EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO agent_role', t);
     END IF;
   END LOOP;

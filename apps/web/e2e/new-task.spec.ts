@@ -5,7 +5,6 @@ import { mockRpc } from "./helpers/run.ts";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/test.ts";
 
-type Logged = [string, unknown][];
 const createBody = (body: unknown) => (body as { json: unknown }).json;
 
 test.describe("New task", () => {
@@ -13,16 +12,6 @@ test.describe("New task", () => {
     ({ viewport }) => viewport?.width !== 1440,
     "content checks run once; layout is Task 18",
   );
-
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      const log: [string, unknown][] = [];
-      (window as unknown as { __heroLog: typeof log }).__heroLog = log;
-      for (const name of ["hero:type", "hero:focus", "hero:start"]) {
-        window.addEventListener(name, (e) => log.push([name, (e as CustomEvent).detail ?? null]));
-      }
-    });
-  });
 
   test("composes a task with sources, options and ⌘↵, then opens the run", async ({ page }) => {
     await page.goto("/new");
@@ -81,20 +70,6 @@ test.describe("New task", () => {
     );
   });
 
-  test("emits hero:type, hero:focus and hero:start without loading any 3D code", async ({
-    page,
-  }) => {
-    await page.goto("/new");
-    const goal = page.getByLabel("Describe the task");
-    await goal.click();
-    await goal.pressSequentially("abc");
-    await page.getByRole("button", { name: /^Start/ }).focus();
-    const log = await page.evaluate(() => (window as unknown as { __heroLog: Logged }).__heroLog);
-    expect(log.filter(([n]) => n === "hero:type")).toHaveLength(3);
-    expect(log).toContainEqual(["hero:focus", true]);
-    expect(log).toContainEqual(["hero:focus", false]);
-  });
-
   test("validates before calling the API", async ({ page }) => {
     let creates = 0;
     page.on("request", (r) => {
@@ -111,10 +86,6 @@ test.describe("New task", () => {
   });
 
   test.describe("goal only", () => {
-    // The 3D hero is not under test here: on a software-GL host its shader compile can hold the
-    // main thread for seconds (timers, navigation). hero.spec.ts covers it.
-    test.use({ reducedMotion: "reduce" });
-
     test("starts with just a goal: no source and no allowed domain", async ({ page }) => {
       await page.goto("/new");
       await expect(
@@ -240,10 +211,6 @@ test.describe("New task", () => {
   });
 
   test.describe("the draft is saved", () => {
-    // The 3D hero is not under test here: on a software-GL host its shader compile can hold the
-    // main thread for seconds (timers, navigation). hero.spec.ts covers it.
-    test.use({ reducedMotion: "reduce" });
-
     const DRAFT_KEY = "mt.new-task-draft:fixture-user";
     const storedDraft = (page: Page) =>
       page.evaluate((key) => window.localStorage.getItem(key), DRAFT_KEY);

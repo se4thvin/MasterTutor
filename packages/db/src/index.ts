@@ -15,3 +15,4 @@ export * from "./queries/search.ts";
 export * from "./queries/note-detail.ts";
 export * from "./queries/note-quality.ts";
 export * from "./queries/note-delete.ts";
+export * from "./queries/alerts.ts";
