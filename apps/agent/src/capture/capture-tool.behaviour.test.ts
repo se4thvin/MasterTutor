@@ -167,6 +167,90 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     );
   });
 
+  it("captures SPA sections 1.1–1.9 as distinct, verbatim notes in source order without duplicates", async () => {
+    const scope = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/spa-sections/index.html?section=1`, signal);
+    const cdp = await env.session.cdp();
+    const { frameTree: initial } = await cdp.send("Page.getFrameTree");
+    const tool = createCaptureTool(env.services);
+    const take = async (args: Args = page) => {
+      const ctx = env.context(scope);
+      const result = await tool.run(ctx, args);
+      await env.commit(ctx);
+      return result;
+    };
+    const captures = [];
+    const repeated = "The same verbatim sentence appears at two distinct source locations.";
+    for (let section = 1; section <= 9; section++) {
+      if (section > 1) await env.session.page.locator(`[data-section="${section}"]`).click();
+      expect(env.session.page.url()).toContain(`?section=${section}`);
+      // A pushState navigation changes the source URL but keeps the browser document loaded.
+      const { frameTree } = await cdp.send("Page.getFrameTree");
+      expect(frameTree.frame.loaderId).toBe(initial.frame.loaderId);
+      await take({ scope: "element", selector: "#figure", kind: null });
+      await take({ scope: "element", selector: "#opening", kind: null });
+      const partial = await env.db.db
+        .select()
+        .from(noteBlocks)
+        .innerJoin(notes, eq(notes.id, noteBlocks.noteId))
+        .where(eq(notes.runId, scope.runId))
+        .orderBy(sql`${noteBlocks.position} collate "C"`);
+      const full = await take();
+      await env.session.page.locator("#reveal").click();
+      const expanded = await take();
+      const again = await take();
+      await take({ scope: "element", selector: "#figure", kind: null });
+      const blocks = await env.db.db
+        .select()
+        .from(noteBlocks)
+        .where(eq(noteBlocks.noteId, expanded.noteId))
+        .orderBy(sql`${noteBlocks.position} collate "C"`);
+      captures.push({ section, partial, full, expanded, again, blocks });
+    }
+    const storedNotes = await env.db.db.select().from(notes).where(eq(notes.runId, scope.runId));
+    expect(storedNotes).toHaveLength(9);
+    expect(new Set(captures.map((c) => c.full.noteId)).size).toBe(9);
+    for (const { section, partial, full, expanded, again, blocks } of captures) {
+      expect(storedNotes.find((n) => n.id === full.noteId)?.title).toBe(`Section 1.${section}`);
+      // On the first section, reverse capture order must already be corrected before a page capture.
+      if (section === 1)
+        expect(partial.map((row) => row.note_blocks.markdown)).toEqual([
+          `Section 1.${section} opens with the first source paragraph, which must precede its figure even when the figure is captured first.`,
+          `## Figure 1.${section}.1`,
+          `Figure 1.${section}.1 describes the source diagram in its own words, which the captured note must retain exactly as written.`,
+        ]);
+      expect(expanded.blockIds.slice(0, -1)).toEqual(full.blockIds);
+      expect(again.blockIds).toEqual(expanded.blockIds);
+      // Defuddle stores the repeated H1 as the note title; body content remains verbatim.
+      expect(blocks.map((b) => b.markdown)).toEqual([
+        `Section 1.${section} opens with the first source paragraph, which must precede its figure even when the figure is captured first.`,
+        repeated,
+        `## Figure 1.${section}.1`,
+        `Figure 1.${section}.1 describes the source diagram in its own words, which the captured note must retain exactly as written.`,
+        repeated,
+        `Section 1.${section} reveals this additional source paragraph after its first page capture.`,
+      ]);
+      expect(
+        new Set(blocks.map((b) => `${b.contentSha256}:${JSON.stringify(b.anchor)}`)).size,
+      ).toBe(blocks.length);
+      expect(blocks.filter((b) => b.markdown === repeated)).toHaveLength(2);
+    }
+    const storedSources = await env.db.db
+      .select()
+      .from(sources)
+      .where(eq(sources.workspaceId, scope.workspaceId));
+    expect(storedSources).toHaveLength(9);
+    expect(new Set(storedSources.map((s) => s.url)).size).toBe(9);
+    await env.session.page.locator('[data-section="1"]').click();
+    await env.session.page.locator("#reveal").click();
+    const revisit = await take();
+    expect(revisit.noteId).toBe(captures[0]!.full.noteId);
+    expect(revisit.blockIds).toEqual(captures[0]!.expanded.blockIds);
+    expect(await env.db.db.select().from(notes).where(eq(notes.runId, scope.runId))).toHaveLength(
+      9,
+    );
+  }, 180_000);
+
   it("stores the snapshot under the step and returns the same blocks on a repeat capture", async () => {
     const first = await capture("article/index.html");
     expect(first.source.mhtmlKey).toMatch(/^snapshots\/.+\/page\.mhtml$/);
