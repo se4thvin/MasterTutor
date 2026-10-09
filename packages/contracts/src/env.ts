@@ -190,6 +190,7 @@ export const ObserverEnv = z.object({
   /** The app's origin: the same-origin write check compares Origin with it. */
   PUBLIC_URL: z.url(),
   OBSERVER_INTERNAL_TOKEN: Secret,
+  OBSERVER_QUERY_TOKEN: Secret,
   OBSERVER_QUERY_URL: z.url().default("http://observer-query:4001"),
   OBSERVER_DAILY_USD: z.coerce.number().positive().max(100).default(COPILOT_LIMITS.dailyUsdDefault),
   OBSERVER_PORT: z.coerce.number().int().min(1).max(65_535).default(OBSERVER_PORT),
@@ -200,6 +201,7 @@ export type ObserverEnv = z.infer<typeof ObserverEnv>;
 
 /** Only the isolated read proxy (and provisioning job) receives the OSS admin credential. */
 export const ObserverQueryEnv = z.object({
+  OBSERVER_QUERY_TOKEN: Secret,
   OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
   OBSERVE_COPILOT_PASSWORD: ObservePassword,
 });

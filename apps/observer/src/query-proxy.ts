@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import {
   COPILOT_LIMITS,
@@ -15,7 +16,10 @@ const json = (res: ServerResponse, status: number, body: unknown) => {
 };
 
 /** Exact read routes only: no forwarded URLs, methods, headers or credentials. */
-export function createQueryProxyServer(o2: O2Query): Server {
+export function createQueryProxyServer(o2: O2Query, token: string): Server {
+  if (!token) throw new Error("missing_query_proxy_token");
+  const digest = (value: string) => createHash("sha256").update(value).digest();
+  const expected = digest(`Bearer ${token}`);
   const server = createServer(async (req, res) => {
     const abort = new AbortController();
     res.on("close", () => abort.abort());
@@ -27,6 +31,8 @@ export function createQueryProxyServer(o2: O2Query): Server {
       if (req.method === "GET" && req.url === "/healthz") return json(res, 200, { ok: true });
       if (req.method !== "POST" || !["/search", "/query", "/query_range"].includes(req.url ?? ""))
         return json(res, 404, { error: "not_found" });
+      if (!timingSafeEqual(digest(req.headers.authorization ?? ""), expected))
+        return json(res, 401, { error: "unauthorized" });
       const chunks: Buffer[] = [];
       let size = 0;
       // Pause instead of destroying the socket on overflow, so the bounded error can be sent.

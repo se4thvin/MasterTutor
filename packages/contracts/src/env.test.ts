@@ -174,6 +174,7 @@ describe("ObserverEnv (spec §5.1)", () => {
     OPENAI_API_KEY: "k",
     PUBLIC_URL: "https://mt.example.com",
     OBSERVER_INTERNAL_TOKEN: "t".repeat(32),
+    OBSERVER_QUERY_TOKEN: "q".repeat(32),
     OBSERVER_QUERY_URL: "http://observer-query:4001",
   };
   it("defaults the daily cap to $3 and holds no S3, vault or auth secret", () => {

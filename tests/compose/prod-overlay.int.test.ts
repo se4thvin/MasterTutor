@@ -617,6 +617,14 @@ describe("Copilot deployment (D52)", () => {
     expect(env(observer).OBSERVER_QUERY_URL).toBe("http://observer-query:4001");
     expect(env(proxy).OBSERVE_COPILOT_PASSWORD).toBeTruthy();
     expect(env(proxy).OPENAI_API_KEY).toBeUndefined();
+    const token = env(observer).OBSERVER_QUERY_TOKEN;
+    expect(Boolean(token && token === env(proxy).OBSERVER_QUERY_TOKEN)).toBe(true);
+    expect(
+      Object.entries(config.services)
+        .filter(([, service]) => Boolean(env(service).OBSERVER_QUERY_TOKEN))
+        .map(([name]) => name)
+        .sort(),
+    ).toEqual(["observer", "observer-query"]);
     expect(proxy.ports ?? []).toEqual([]);
     expect(Object.keys(proxy.networks ?? {}).sort()).toEqual(["observe", "observer-query"]);
     expect(config.networks["observer-query"]).toMatchObject({ internal: true });

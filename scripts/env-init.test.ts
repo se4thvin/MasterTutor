@@ -159,9 +159,14 @@ describe("observability secrets (D50)", () => {
 
 it("generates independent Copilot credentials that satisfy the policies", () => {
   const s = generateSecrets();
-  const keys = ["OBSERVER_DB_PASSWORD", "OBSERVER_INTERNAL_TOKEN", "OBSERVE_COPILOT_PASSWORD"];
+  const keys = [
+    "OBSERVER_DB_PASSWORD",
+    "OBSERVER_INTERNAL_TOKEN",
+    "OBSERVER_QUERY_TOKEN",
+    "OBSERVE_COPILOT_PASSWORD",
+  ];
   expect(keys.every((key) => (s[key]?.length ?? 0) >= 32)).toBe(true);
-  expect(new Set(keys.map((key) => s[key])).size).toBe(3);
+  expect(new Set(keys.map((key) => s[key])).size).toBe(4);
   expect(DbPassword.safeParse(s.OBSERVER_DB_PASSWORD).success).toBe(true);
   expect(
     ObservabilityInitEnv.shape.OBSERVE_COPILOT_PASSWORD.safeParse(s.OBSERVE_COPILOT_PASSWORD)

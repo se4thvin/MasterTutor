@@ -474,6 +474,7 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL}
       OBSERVER_INTERNAL_TOKEN: ${OBSERVER_INTERNAL_TOKEN:-}
+      OBSERVER_QUERY_TOKEN: ${OBSERVER_QUERY_TOKEN:-}
       OBSERVER_QUERY_URL: http://observer-query:4001
       OBSERVER_DAILY_USD: ${OBSERVER_DAILY_USD:-3}
     healthcheck:
@@ -512,6 +513,7 @@ services:
     security_opt: [no-new-privileges:true]
     environment:
       OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:-}
+      OBSERVER_QUERY_TOKEN: ${OBSERVER_QUERY_TOKEN:-}
     healthcheck:
       <<: *node-health
       test:

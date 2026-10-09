@@ -13,6 +13,7 @@ const server = createQueryProxyServer(
       timeoutMs: COPILOT_LIMITS.queryTimeoutMs,
     }),
   ),
+  env.OBSERVER_QUERY_TOKEN,
 );
 // Bind only the observer-facing interface, never the shared OpenObserve network.
 server.listen(4001, "observer-query-private");

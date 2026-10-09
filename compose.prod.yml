@@ -147,6 +147,7 @@ services:
       OPENAI_BASE_URL: ""
       DATABASE_URL: postgres://observer_role:${OBSERVER_DB_PASSWORD:?set OBSERVER_DB_PASSWORD}@postgres:5432/mastertutor
       OBSERVER_INTERNAL_TOKEN: ${OBSERVER_INTERNAL_TOKEN:?set OBSERVER_INTERNAL_TOKEN}
+      OBSERVER_QUERY_TOKEN: ${OBSERVER_QUERY_TOKEN:?set OBSERVER_QUERY_TOKEN}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       MT_DEPLOYMENT: production
     labels:
@@ -175,6 +176,7 @@ services:
     pids_limit: 64
     environment:
       OBSERVE_COPILOT_PASSWORD: ${OBSERVE_COPILOT_PASSWORD:?set OBSERVE_COPILOT_PASSWORD}
+      OBSERVER_QUERY_TOKEN: ${OBSERVER_QUERY_TOKEN:?set OBSERVER_QUERY_TOKEN}
 
   agent:
     <<: *node-runtime-prod

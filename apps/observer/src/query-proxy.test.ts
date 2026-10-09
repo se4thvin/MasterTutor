@@ -1,10 +1,13 @@
+import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Server } from "node:http";
+import { request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createQueryProxyClient } from "./query-proxy-client.ts";
 import { createO2Query } from "./o2.ts";
 import { createQueryProxyServer } from "./query-proxy.ts";
 
+const token = randomBytes(32).toString("base64url");
+const headers = { authorization: `Bearer ${token}` };
 const servers: Server[] = [];
 afterEach(async () => {
   for (const server of servers.splice(0)) {
@@ -29,6 +32,7 @@ async function fixture() {
         ) as never;
       },
     }),
+    token,
   );
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -36,7 +40,7 @@ async function fixture() {
   const post = (path: string, body: unknown) =>
     fetch(url + path, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify(body),
     });
   return { calls, url, post };
@@ -59,9 +63,9 @@ describe("query proxy read boundary", () => {
     expect((await fetch(url + "/search")).status).toBe(404);
     expect(calls).toHaveLength(3);
   });
-  it("uses the credential-free client and validates the proxy's bounded result", async () => {
+  it("uses the authenticated client and validates the proxy's bounded result", async () => {
     const { url } = await fixture();
-    const result = await createQueryProxyClient(url).search(
+    const result = await createQueryProxyClient(url, token).search(
       "mastertutor",
       search.sql,
       search.range,
@@ -80,30 +84,33 @@ describe("query proxy read boundary", () => {
     const aborted = new Promise<void>((resolve) => {
       stopped = resolve;
     });
-    const server = createQueryProxyServer({
-      async search(_stream, _sql, _range, _size, signal) {
-        began();
-        await new Promise<void>((_resolve, reject) =>
-          signal.addEventListener(
-            "abort",
-            () => {
-              stopped();
-              reject(new Error("upstream-private-content"));
-            },
-            { once: true },
-          ),
-        );
-        throw new Error("unreachable");
+    const server = createQueryProxyServer(
+      {
+        async search(_stream, _sql, _range, _size, signal) {
+          began();
+          await new Promise<void>((_resolve, reject) =>
+            signal.addEventListener(
+              "abort",
+              () => {
+                stopped();
+                reject(new Error("upstream-private-content"));
+              },
+              { once: true },
+            ),
+          );
+          throw new Error("unreachable");
+        },
+        async range() {
+          throw new Error("upstream-private-content");
+        },
       },
-      async range() {
-        throw new Error("upstream-private-content");
-      },
-    });
+      token,
+    );
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const controller = new AbortController();
-    const pending = createQueryProxyClient(url).search(
+    const pending = createQueryProxyClient(url, token).search(
       "mastertutor",
       search.sql,
       search.range,
@@ -117,6 +124,7 @@ describe("query proxy read boundary", () => {
     await aborted;
     const reply = await fetch(url + "/query_range", {
       method: "POST",
+      headers,
       body: JSON.stringify(range),
     });
     expect(reply.status).toBe(502);
@@ -147,8 +155,56 @@ describe("query proxy read boundary", () => {
   });
   it("bounds request bodies and returns errors without reflecting input", async () => {
     const { url } = await fixture();
-    const reply = await fetch(url + "/search", { method: "POST", body: "x".repeat(20000) });
+    const reply = await fetch(url + "/search", {
+      method: "POST",
+      headers,
+      body: "x".repeat(20000),
+    });
     expect(reply.status).toBe(413);
     expect(await reply.text()).not.toContain("xxxxx");
   });
+});
+
+it("refuses missing and incorrect bearers before waiting for a body", async () => {
+  const { url, calls } = await fixture();
+  for (const authorization of [
+    undefined,
+    "Bearer wrong",
+    `Bearer ${"x".repeat(token.length)}`,
+    "Basic wrong",
+  ]) {
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const req = request(
+        url + "/search",
+        {
+          method: "POST",
+          headers: { "content-length": "100", ...(authorization ? { authorization } : {}) },
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode);
+          req.destroy();
+        },
+      );
+      req.on("error", reject);
+      req.setTimeout(1000, () => {
+        req.destroy();
+        reject(new Error("waited for unauthorized body"));
+      });
+      req.flushHeaders();
+    });
+    expect(status).toBe(401);
+  }
+  expect(calls).toEqual([]);
+});
+
+it("authenticates every query route and leaves health checks available", async () => {
+  const { url, calls } = await fixture();
+  for (const path of ["/search", "/query", "/query_range"]) {
+    const reply = await fetch(url + path, { method: "POST", body: "invalid JSON" });
+    expect(reply.status).toBe(401);
+    expect(await reply.json()).toEqual({ error: "unauthorized" });
+  }
+  expect((await fetch(url + "/healthz")).status).toBe(200);
+  expect(calls).toEqual([]);
 });

@@ -63,16 +63,18 @@ describe.runIf(enabled)("Copilot routing (spec §7.2)", () => {
       let direct = false;
       try { await fetch('http://openobserve:5080/healthz', {signal: AbortSignal.timeout(1500)}); direct = true; } catch {}
       const proxy = await fetch(process.env.OBSERVER_QUERY_URL + '/search', {
-        method: 'POST', headers: {'content-type':'application/json'},
+        method: 'POST', headers: {'content-type':'application/json',authorization:'Bearer '+process.env.OBSERVER_QUERY_TOKEN},
         body: JSON.stringify({stream:'mastertutor', sql:'SELECT * FROM mastertutor LIMIT 1', size:1,
           range:{startUs:Date.now()*1000-3600000000,endUs:Date.now()*1000}})
       });
       const denied = await fetch(process.env.OBSERVER_QUERY_URL + '/search', {
-        method:'POST', headers:{'content-type':'application/json'},
+        method:'POST', headers:{'content-type':'application/json',authorization:'Bearer '+process.env.OBSERVER_QUERY_TOKEN},
         body:JSON.stringify({stream:'mastertutor',sql:'SELECT containers.body AS "from mastertutor where" FROM mastertutor, containers LIMIT 1',size:1,range:{startUs:1,endUs:2}})
       });
+      const unauthorized = await fetch(process.env.OBSERVER_QUERY_URL + '/search', {method:'POST',body:'invalid'});
+      const wrong = await fetch(process.env.OBSERVER_QUERY_URL + '/query_range', {method:'POST',headers:{authorization:'Bearer wrong'},body:'invalid'});
       const admin = await fetch(process.env.OBSERVER_QUERY_URL + '/api/default/users', {method:'DELETE'});
-      console.log(JSON.stringify({noSecret,direct,search:proxy.status,denied:denied.status,admin:admin.status}));
+      console.log(JSON.stringify({noSecret,direct,search:proxy.status,denied:denied.status,admin:admin.status,unauthorized:unauthorized.status,wrong:wrong.status}));
     `,
     ]);
     expect(JSON.parse(result)).toEqual({
@@ -81,6 +83,8 @@ describe.runIf(enabled)("Copilot routing (spec §7.2)", () => {
       search: 200,
       denied: 400,
       admin: 404,
+      unauthorized: 401,
+      wrong: 401,
     });
   });
   it("does not accept proxy requests on its OpenObserve-facing interface", () => {

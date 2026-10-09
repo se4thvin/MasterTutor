@@ -22,7 +22,7 @@ export async function createRoutes(deps: {
     baseURL: env.OPENAI_BASE_URL,
     timeoutMs: 60_000,
   });
-  const o2 = createQueryProxyClient(env.OBSERVER_QUERY_URL);
+  const o2 = createQueryProxyClient(env.OBSERVER_QUERY_URL, env.OBSERVER_QUERY_TOKEN);
   const tools = createToolRegistry({ db, o2, code: await loadCodeIndex(env.OBSERVER_CODE_INDEX) });
   return {
     ask: createAsk({

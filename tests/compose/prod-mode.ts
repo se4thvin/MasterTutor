@@ -338,9 +338,9 @@ function observerProblems(config: ComposeConfig): string[] {
     )
       problems.push("observer-query.networks: exactly observe, observer-query (D52)");
     for (const key of Object.keys(proxy.environment ?? {}))
-      if (!["OBSERVE_URL", "OBSERVE_COPILOT_PASSWORD"].includes(key))
+      if (!["OBSERVE_URL", "OBSERVE_COPILOT_PASSWORD", "OBSERVER_QUERY_TOKEN"].includes(key))
         problems.push(
-          `observer-query.environment.${key}: only the O2 query credential and URL (D52)`,
+          `observer-query.environment.${key}: only the O2 query credential, URL and proxy bearer (D52)`,
         );
     problems.push(...hardeningProblems("observer-query", proxy, "D52"));
   }
