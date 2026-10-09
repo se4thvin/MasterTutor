@@ -6,6 +6,7 @@ import {
   drawMasks,
   hasCrossOriginFrames,
   hasFilledOutOfProcessFrame,
+  hasShownFilledNode,
   provablyNotShown,
   quadToBox,
   sameBoxes,
@@ -366,7 +367,8 @@ export async function captureMaskedRegion(
   if (!clip) return null;
   session.guard.assertAgent(signal);
   // B1's gates for model screenshots (screenshot.ts), in the same order.
-  if (sources.nodeIds(cdp).length > 0 && (await hasCrossOriginFrames(session))) return null; // B3 seam: nodeIds(cdp)
+  if ((await hasShownFilledNode(cdp, sources)) && (await hasCrossOriginFrames(session)))
+    return null; // B3 seam: nodeIds(cdp)
   if (await hasFilledOutOfProcessFrame(session, sources, signal)) return null;
   const start = await session.layout();
   const vault = sources.hasSecrets() || sources.nodeIds(cdp).length > 0; // B3 seam: nodeIds(cdp)

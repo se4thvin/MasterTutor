@@ -265,15 +265,19 @@ describe("secret text scan (containsSecretText)", () => {
       { id: "main", securityOrigin: "http://a.test" },
       { id: "x", securityOrigin: "http://b.test" },
     ];
-    const shoot = (mask: MaskSources) =>
+    const border = [10, 10, 60, 10, 60, 30, 10, 30];
+    const shoot = (mask: MaskSources, nodeState = "visible") =>
       captureModelScreenshot(
-        fakeSession({ frames: cross, nodeState: "hidden" }).session,
+        fakeSession({ frames: cross, nodeState, boxModel: () => ({ model: { border } }) }).session,
         mask,
         signal,
       );
     expect((await shoot(sources())).dropped).toBe(false);
     expect((await shoot(secret)).dropped).toBe(false);
     expect((await shoot(sources([9]))).dropped).toBe(true);
+    // A filled field an in-page sign-in hid or removed is gone from the screen: stay sighted.
+    expect((await shoot(sources([9]), "hidden")).dropped).toBe(false);
+    expect((await shoot(sources([9]), "detached")).dropped).toBe(false);
   });
 });
 

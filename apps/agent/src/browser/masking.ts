@@ -160,6 +160,18 @@ export async function provablyNotShown(cdp: CDPSession, backendNodeId: number): 
   }
 }
 
+/**
+ * True while a field the vault filled may still be on screen. A filled node that is provably
+ * detached or hidden (an in-page sign-in removed or hid its form, with no navigation) counts as
+ * gone, exactly like one whose document a navigation replaced (F8): R-E5 keeps the agent sighted
+ * after login.
+ */
+export async function hasShownFilledNode(cdp: CDPSession, sources: MaskSources): Promise<boolean> {
+  for (const backendNodeId of sources.nodeIds(cdp))
+    if (!(await provablyNotShown(cdp, backendNodeId))) return true;
+  return false;
+}
+
 export async function collectMaskBoxes(
   session: BrowserSession,
   sources: MaskSources,

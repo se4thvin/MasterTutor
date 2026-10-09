@@ -6,6 +6,7 @@ import {
   drawMasks,
   hasCrossOriginFrames,
   hasFilledOutOfProcessFrame,
+  hasShownFilledNode,
   sameBoxes,
   type Box,
   type MaskSources,
@@ -182,7 +183,10 @@ export async function captureModelScreenshot(
     layout = await session.layout();
     // While vault-filled fields are on this page, inputs inside cross-origin frames cannot be
     // boxed from this target, so any such frame makes the screenshot undeliverable (R-E5).
-    if (sources.nodeIds(await session.cdp()).length > 0 && (await hasCrossOriginFrames(session))) {
+    if (
+      (await hasShownFilledNode(await session.cdp(), sources)) &&
+      (await hasCrossOriginFrames(session))
+    ) {
       return drop();
     }
     // A field the vault filled inside an out-of-process frame cannot be boxed from here either.
