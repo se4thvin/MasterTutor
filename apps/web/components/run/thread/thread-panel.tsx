@@ -73,6 +73,9 @@ function ThreadList(p: ThreadProps) {
     const list = listRef.current;
     const row = selected === null ? null : list?.querySelector<HTMLElement>("[data-selected]");
     if (!list || !row) return;
+    // A row already in full view (the one just clicked) stays put; others glide to the middle.
+    const top = row.offsetTop - list.scrollTop;
+    if (top >= 0 && top + row.offsetHeight <= list.clientHeight) return;
     const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     list.scrollTo({
       top: row.offsetTop - (list.clientHeight - row.offsetHeight) / 2,

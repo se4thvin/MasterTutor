@@ -1458,7 +1458,6 @@
     flex: 1;
     flex-direction: column;
     min-height: 0;
-    overflow: hidden;
     border-radius: var(--r-lg);
     background: var(--elevated);
     box-shadow: 0 0 0 0.03125rem var(--hairline);
@@ -1470,6 +1469,7 @@
     margin: 0;
     padding: 0.375rem 0.375rem 0.75rem;
     overflow: auto;
+    border-radius: inherit;
     overscroll-behavior: contain;
     list-style: none;
     scrollbar-width: thin;
@@ -1485,10 +1485,12 @@
     opacity: 0;
     &[data-edge="top"] {
       top: 0;
+      border-radius: var(--r-lg) var(--r-lg) 0 0;
       background: linear-gradient(var(--elevated), transparent);
     }
     &[data-edge="bottom"] {
       bottom: 0;
+      border-radius: 0 0 var(--r-lg) var(--r-lg);
       background: linear-gradient(transparent, var(--elevated));
     }
   }
