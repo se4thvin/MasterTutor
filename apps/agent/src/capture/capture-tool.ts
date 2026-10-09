@@ -77,7 +77,11 @@ export async function persistCapture(
       draft.meta,
       draft.blocks.map((block) => [block.markdown, block.anchor]),
     ]);
-    const noteId = await services.writer.ensureNote(w, { title: draft.title, lede: draft.lede });
+    const noteId = await services.writer.ensureNote(w, {
+      title: draft.title,
+      lede: draft.lede,
+      document: { kind: draft.kind, url: draft.url },
+    });
     if (draft.dedupe) {
       const existing = await services.writer.findSource(w.scope, noteId, draft.kind, draft.url);
       if (existing && existing.meta.contentSha256 === draft.contentSha256) {

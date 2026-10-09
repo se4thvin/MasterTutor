@@ -53,7 +53,11 @@ export async function openVideoContext(
     .first()
     .getAttribute("content", { timeout: 500 })
     .catch(() => null);
-  const noteId = await services.writer.ensureNote(w, { title, lede });
+  const noteId = await services.writer.ensureNote(w, {
+    title,
+    lede,
+    document: { kind: "youtube", url: page.url() },
+  });
   const url = page.url();
   const existing = await services.writer.findSource(w.scope, noteId, "youtube", url);
   if (existing)

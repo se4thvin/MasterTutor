@@ -50,6 +50,7 @@ export interface BlockDraft {
 export interface NoteDraft {
   title: string;
   lede: string | null;
+  document?: { kind: SourceKind; url: string };
 }
 export interface SourceDraft {
   noteId: string;
@@ -146,6 +147,7 @@ export class NoteWriter {
   protected readonly db: DbLike;
   protected readonly embedder: Embedder;
   /** Blocks staged in a step but not committed yet, per note: later appends in that step see them (W10). */
+  readonly #documents = new WeakMap<StepWriter, Map<string, string>>();
   readonly #pending = new WeakMap<StepWriter, Map<string, PlacedBlock[]>>();
 
   constructor(deps: { db: DbLike; embedder: Embedder }) {
@@ -159,7 +161,7 @@ export class NoteWriter {
     await this.assertRunNote(w.scope, noteId);
   }
 
-  /** The run's note; stages a new one (and runs.note_id) when the run has none yet. */
+  /** Select a document by its actual URL, never a potentially shared SPA canonical URL. */
   async ensureNote(w: WriteContext, draft: NoteDraft): Promise<string> {
     const title = clip(draft.title.trim(), 500) || "Untitled";
     const lede = draft.lede?.trim() ? clip(draft.lede.trim(), 1_000) : null;
@@ -168,9 +170,32 @@ export class NoteWriter {
       .from(runs)
       .where(and(eq(runs.id, w.scope.runId), eq(runs.workspaceId, w.scope.workspaceId)));
     if (!run) throw new NoteWriteError("run_missing", "run not found");
-    if (run.noteId) return run.noteId;
-    const pending = this.#pending.get(w.step)?.keys().next().value;
-    if (pending) return pending;
+    const documentKey = draft.document ? JSON.stringify(draft.document) : null;
+    if (draft.document) {
+      screenValue(w.secrets, draft.document);
+      if (!toOrigin(draft.document.url) || !/^https?:/.test(draft.document.url))
+        throw new NoteWriteError("unsupported_url", "only http(s) documents");
+      const pending = this.#documents.get(w.step)?.get(documentKey!);
+      if (pending) return pending;
+      const [existing] = await this.db
+        .select({ id: notes.id })
+        .from(notes)
+        .innerJoin(sources, sql`${sources.meta}->>'noteId' = ${notes.id}::text`)
+        .where(
+          and(
+            eq(notes.runId, w.scope.runId),
+            eq(notes.workspaceId, w.scope.workspaceId),
+            eq(sources.workspaceId, w.scope.workspaceId),
+            eq(sources.kind, draft.document.kind),
+            eq(sources.url, draft.document.url),
+          ),
+        );
+      if (existing) return existing.id;
+    } else {
+      if (run.noteId) return run.noteId;
+      const pending = this.#pending.get(w.step)?.keys().next().value;
+      if (pending) return pending;
+    }
     // Screened only when it is going to be stored (an existing note keeps its own title).
     screenText(w.secrets, title);
     if (lede) screenText(w.secrets, lede);
@@ -188,6 +213,14 @@ export class NoteWriter {
       await tx.update(runs).set({ noteId }).where(eq(runs.id, w.scope.runId));
     });
     this.#staged(w.step, noteId);
+    if (documentKey) {
+      let documents = this.#documents.get(w.step);
+      if (!documents) {
+        documents = new Map();
+        this.#documents.set(w.step, documents);
+      }
+      documents.set(documentKey, noteId);
+    }
     return noteId;
   }
 

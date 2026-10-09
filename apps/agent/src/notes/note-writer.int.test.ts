@@ -113,6 +113,42 @@ describe("NoteWriter", () => {
     ).toMatchObject({ sourceId, blockIds: ids });
   });
 
+  it("selects notes by source URL, including revisits and two documents in one step", async () => {
+    const scope = await seedRun(h.db);
+    const nw = writer();
+    const capture = async (url: string, title: string, w = testWrite(scope)) => {
+      const id = await nw.ensureNote(w, { title, lede: null, document: { kind: "web", url } });
+      nw.stageSource(w, source(id, url));
+      return { id, w };
+    };
+    const first = await capture("https://example.com/section/1", "Section 1.1");
+    await commitStep(h.db, scope.runId, first.w.step);
+    const second = await capture("https://example.com/section/2", "Section 1.2");
+    expect(second.id).not.toBe(first.id);
+    await commitStep(h.db, scope.runId, second.w.step);
+    // A restarted writer must find the earlier document without depending on runs.note_id.
+    expect(
+      await writer().ensureNote(testWrite(scope), {
+        title: "Section 1.1",
+        lede: null,
+        document: { kind: "web", url: "https://example.com/section/1" },
+      }),
+    ).toBe(first.id);
+    const w = testWrite(scope);
+    const third = await capture("https://example.com/section/3", "Section 1.3", w);
+    const fourth = await capture("https://example.com/section/4", "Section 1.4", w);
+    expect(third.id).not.toBe(fourth.id);
+    expect(
+      await nw.ensureNote(w, {
+        title: "Section 1.3",
+        lede: null,
+        document: { kind: "web", url: "https://example.com/section/3" },
+      }),
+    ).toBe(third.id);
+    await commitStep(h.db, scope.runId, w.step);
+    expect(await h.db.select().from(notes).where(eq(notes.runId, scope.runId))).toHaveLength(4);
+  });
+
   it("keeps two appends to one note in one step ordered (W10)", async () => {
     const scope = await seedRun(h.db);
     const notesWriter = writer();
