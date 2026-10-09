@@ -29,6 +29,8 @@ const extract: PageExtract = {
   mathTex: [],
   rawTables: ['<table><tr><td rowspan="2">x</td></tr></table>'],
   activities: [],
+  activityToken: "MTACTIVITYf00dN",
+  excludedText: "",
   frames: [{ index: 0, url: "https://x.test/f", name: null }],
   smallFrames: 0,
   media: [
@@ -133,7 +135,7 @@ describe("assembleBlocks: interactive activities", () => {
       "",
       "A numbered prose line.",
       "",
-      "> MTACTIVITY0",
+      "> MTACTIVITYf00dN0",
       ">",
       "> participation activity",
       ">",
@@ -170,6 +172,20 @@ describe("assembleBlocks: interactive activities", () => {
           "> - False",
         ].join("\n"),
       },
+    ]);
+  });
+
+  it("resolves a placeholder nested in a list or quote, and never one without this capture's token", () => {
+    const page: PageExtract = {
+      ...activity("https://book.test/ch/4"),
+      markdown: "- > MTACTIVITYf00dN0\n\n> > MTACTIVITYf00dN0\n\n> MTACTIVITY0",
+    };
+    expect(markdownOf(page).map((b) => ("markdown" in b ? b.markdown : ""))).toEqual([
+      expect.stringMatching(
+        /^- > \[!example\] \[Interactive activity\]\(https:\/\/book\.test\/ch\/4#/,
+      ),
+      expect.stringMatching(/^> > \[!example\] \[Interactive activity\]\(/),
+      "> MTACTIVITY0",
     ]);
   });
 

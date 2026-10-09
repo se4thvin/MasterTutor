@@ -70,7 +70,6 @@ export type AssembledBlock =
     }
   | { kind: "frame"; index: number };
 
-const ACTIVITY = /^> MTACTIVITY(\d+)$/m;
 const MEDIA_TOKEN = /!\[([^\]]*)\]\(https:\/\/mt-media\.invalid\/(\d+)\)/g;
 const ONLY_MEDIA = /^\s*(?:!\[[^\]]*\]\(https:\/\/mt-media\.invalid\/\d+\)\s*)+$/;
 const OPAQUE_TILES = 3;
@@ -86,6 +85,12 @@ export function assembleBlocks(
   stored: ReadonlyMap<number, StoredMedia>,
 ): AssembledBlock[] {
   const out: AssembledBlock[] = [];
+  // The placeholder carries this capture's random token, so page text cannot forge it; it is
+  // matched anywhere in a line (an activity inside a list item or a quote keeps its prefixes).
+  // An empty token would match every number: no token, no placeholders.
+  const placeholder = extract.activityToken
+    ? new RegExp(`${extract.activityToken}(\\d+)`, "g")
+    : /(?!)/g;
   for (const block of splitMarkdown(joinEnumerators(extract.markdown))) {
     const trimmed = block.markdown.trim();
     const table = /^MTRAWTABLE(\d+)$/.exec(trimmed);
@@ -127,7 +132,7 @@ export function assembleBlocks(
       continue;
     }
     const markdown = block.markdown
-      .replace(ACTIVITY, (_match, index: string) => {
+      .replace(placeholder, (_match, index: string) => {
         const activity = extract.activities[Number(index)];
         const fragment = activity ? textFragment(activity.title) : null;
         return activityCallout(activity?.url ? `${activity.url}${fragment ?? ""}` : null);
@@ -651,6 +656,8 @@ async function readWebPage(
       pageTokens: page.sourceTokens,
       mediaLost,
       figuresWithheld,
+      /** App UI left out of the note; its text still counts against coverage. */
+      excludedTokens: tokens(extract.excludedText).length,
       framesMissing: main.framesMissing,
       framesSkipped: main.framesSkipped,
     },

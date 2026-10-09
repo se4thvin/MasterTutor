@@ -17,7 +17,7 @@ export interface MtLib {
   xpathOf(el: Element): string | null;
   /** Navigation, banner, footer and search landmarks: not content (decision 12). */
   isChrome(el: Element): boolean;
-  /** An icon-font ligature or aria-hidden glyph: a single token drawn as a symbol, not text. */
+  /** A single token drawn as one icon glyph (Private Use Area codepoint or ligature), not text. */
   isIconGlyph(el: Element): boolean;
   /** Allowlisted SVG markup: no script, events, animation, styles sheets or external refs; null if nothing safe is left. */
   sanitizeSvg(svg: Element): string | null;
@@ -33,14 +33,14 @@ export interface MtLib {
 
 /** What pageInstallStructure found on a page (see page/structure.ts). */
 export interface PageStructure {
-  /** App UI before the main heading: left out of the note and of page coverage, like chrome. */
+  /** App UI before the main heading: left out of the note, still counted in page coverage. */
   excluded: Set<Element>;
   /** Positioned-text drawings: kept as an element screenshot, their labels left out. */
   drawings: Set<Element>;
   /** Interactive activities: rendered as one callout with a link back. */
   activities: Set<Element>;
-  /** Choice option boxes and their labels. */
-  options: Map<Element, string>;
+  /** Choice options: each option's box, mapped to its parts (the box, then any `label[for]` beside it). */
+  options: Map<Element, Element[]>;
   hiddenParts(drawing: Element): Element[];
 }
 export interface MtStructure {
@@ -100,8 +100,12 @@ export interface PageExtract {
   mathTex: string[];
   media: PageMedia[];
   rawTables: string[];
-  /** Each MTACTIVITY placeholder's title text and the page it links back to (http/https only). */
+  /** Each activity placeholder's title text and the page it links back to (http/https only). */
   activities: PageActivity[];
+  /** This capture's activity placeholder prefix (random): `<token><index>` marks activity `index`. */
+  activityToken: string;
+  /** Text of the app UI left out of the note (still counted in pageText), for audit. */
+  excludedText: string;
   frames: PageFrame[];
   /** Visible frames too small to capture (under 200×100): recorded, not captured (M9). */
   smallFrames: number;

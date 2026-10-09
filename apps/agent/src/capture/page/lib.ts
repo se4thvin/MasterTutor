@@ -22,6 +22,18 @@ export function pageInstallLib(): void {
     "EMBED",
     "CANVAS",
   ]);
+  const SEPARATING_TAGS = new Set([
+    "BUTTON",
+    "SELECT",
+    "INPUT",
+    "TEXTAREA",
+    "IFRAME",
+    "VIDEO",
+    "AUDIO",
+    "OBJECT",
+    "EMBED",
+    "CANVAS",
+  ]);
   const MATH_SELECTOR = "math, .katex, .katex-display, mjx-container, .MathJax, .MathJax_Display";
   const BLOCK_SELECTOR =
     "p, li, h1, h2, h3, h4, h5, h6, pre, blockquote, table, figure, figcaption, dt, dd";
@@ -167,15 +179,37 @@ export function pageInstallLib(): void {
     }
     return `/${parts.join("/")}`;
   };
-  // Icon-font ligatures (`<i class="material-icons">expand_more</i>`) and aria-hidden glyphs are
-  // drawn as symbols: one token of text that no reader sees as a word.
-  const ICON_FONT = /icon|^["']?material symbols/i;
+  // Icons drawn from text, found by how they render, never by a font's name: one Private Use
+  // Area character (icon-font codepoints), or a word a ligature font draws as one glyph
+  // (`<i>expand_more</i>`). Spelled out with ligatures off, such a word is far wider than drawn.
+  const PRIVATE_USE = /^(?:[\uE000-\uF8FF]|[\u{F0000}-\u{FFFFD}]|[\u{100000}-\u{10FFFD}])$/u;
+  const glyphs = new Map<string, boolean>();
+  let measure: CanvasRenderingContext2D | null | undefined;
   const isIconGlyph = (el: Element): boolean => {
     if (el.childElementCount > 0) return false;
     const text = (el.textContent ?? "").trim();
     if (!text || text.length > 40 || /\s/.test(text)) return false;
-    if (el.getAttribute("aria-hidden") === "true") return true;
-    return ICON_FONT.test(getComputedStyle(el).fontFamily.split(",")[0] ?? "");
+    if (PRIVATE_USE.test(text)) return true;
+    if (text.length < 3) return false;
+    const style = getComputedStyle(el);
+    const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const key = `${font}\u0000${text}`;
+    let glyph = glyphs.get(key);
+    if (glyph === undefined) {
+      // A detached canvas: nothing is added to the page.
+      measure ??= document.createElement("canvas").getContext("2d");
+      glyph = false;
+      if (measure) {
+        measure.font = font;
+        measure.textRendering = "optimizeLegibility";
+        const drawn = measure.measureText(text).width;
+        measure.textRendering = "optimizeSpeed"; // no ligatures
+        const spelled = measure.measureText(text).width;
+        glyph = drawn > 0 && spelled >= 2 * drawn;
+      }
+      glyphs.set(key, glyph);
+    }
+    return glyph;
   };
   const isChrome = (el: Element): boolean => {
     const role = el.getAttribute("role");
@@ -254,8 +288,12 @@ export function pageInstallLib(): void {
           SKIP_TAGS.has(node.tagName) ||
           node instanceof SVGElement ||
           node.matches(MATH_SELECTOR)
-        )
+        ) {
+          // A control or embed between two runs of text separates them, as on screen
+          // (`<input><label>A</label><input><label>B</label>` reads "A B", not "AB").
+          if (SEPARATING_TAGS.has(node.tagName)) onBreak();
           return;
+        }
         if (!visible(node) || isIconGlyph(node) || skip?.(node)) return;
         if (node.tagName === "BR") {
           onBreak();

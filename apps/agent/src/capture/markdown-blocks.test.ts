@@ -131,6 +131,11 @@ describe("joinEnumerators", () => {
       "1) What?",
     );
   });
+  it("never touches fenced code, quoted or not", () => {
+    for (const text of ["```\n1.\n\nx = 1\n```", "> ~~~\n> 2)\n> y\n> ~~~"])
+      expect(joinEnumerators(text)).toBe(text);
+    expect(joinEnumerators("```\n1.\n```\n\n1)\n\nAfter")).toBe("```\n1.\n```\n\n1\\) After");
+  });
   it("leaves a number before structure, at the end, or across a quote boundary", () => {
     for (const text of ["1)\n\n# Heading", "1)\n\n- item", "text\n\n3)", "> 1)\n\nOutside"])
       expect(joinEnumerators(text)).toBe(text);
@@ -138,13 +143,13 @@ describe("joinEnumerators", () => {
 });
 
 describe("activity callouts", () => {
-  const header = activityCallout("https://book.test/s/4#:~:text=4.4.2");
-  it("builds an Obsidian callout header that links back, escaping link-breaking characters", () => {
+  const header = `> ${activityCallout("https://book.test/s/4#:~:text=4.4.2")}`;
+  it("builds an Obsidian callout title that links back, escaping link-breaking characters", () => {
     expect(header).toBe("> [!example] [Interactive activity](https://book.test/s/4#:~:text=4.4.2)");
     expect(activityCallout("https://book.test/a (b)")).toBe(
-      "> [!example] [Interactive activity](https://book.test/a%20%28b%29)",
+      "[!example] [Interactive activity](https://book.test/a%20%28b%29)",
     );
-    expect(activityCallout(null)).toBe("> [!example] Interactive activity");
+    expect(activityCallout(null)).toBe("[!example] Interactive activity");
   });
   it("keeps the header out of the block's plain text, so only page text is verified", () => {
     const markdown = `${header}\n>\n> participation activity\n>\n> **4.4.2: Overflow.**`;

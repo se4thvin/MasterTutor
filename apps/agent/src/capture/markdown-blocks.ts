@@ -134,25 +134,36 @@ const ACTIVITY_LABEL = "Interactive activity";
 const ACTIVITY_HEADER =
   /^> \[!example\] (?:\[Interactive activity\]\([^()\s]*\)|Interactive activity)(?:\n|$)/;
 
+/** The callout's title, placed after the line's own `> ` prefix: `[!example] [Interactive activity](link)`. */
 export function activityCallout(link: string | null): string {
   const percent = (char: string) =>
     `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`;
   const target = link?.replace(/[\s()<>]/g, percent);
-  return `> [!example] ${target ? `[${ACTIVITY_LABEL}](${target})` : ACTIVITY_LABEL}`;
+  return `[!example] ${target ? `[${ACTIVITY_LABEL}](${target})` : ACTIVITY_LABEL}`;
 }
 
 const ENUMERATOR = /^\(?\d{1,3}\\?[.)]$/;
 
 /**
  * Joins a number standing alone on its line ("1)", "2.") to the next text line, as question sets
- * render: `1)` then the prompt, escaped (`1\\) prompt`) so it stays text rather than a list. Quoted lines join only with quoted lines, prose only with prose;
+ * render: `1)` then the prompt, escaped (`1\\) prompt`) so it stays text rather than a list.
+ * Lines inside fenced code are never touched. Quoted lines join only with quoted lines, prose only with prose;
  * a number before a heading, list, table, fence or another number stays as it is.
  */
 export function joinEnumerators(markdown: string): string {
   const lines = markdown.split("\n");
   const out: string[] = [];
+  let fence: string | null = null; // the open fence's marker
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
+    const marker = FENCE.exec(line.replace(/^(?:>\s?)+/, ""))?.[1];
+    if (fence !== null || marker) {
+      // Inside a fence until a marker of the same character, at least as long, closes it.
+      if (fence === null) fence = marker!;
+      else if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      out.push(line);
+      continue;
+    }
     const quote = line.startsWith(">") ? ">" : "";
     /** A line's text in this line's context (quoted or prose); null in the other context. */
     const body = (value: string | undefined) =>

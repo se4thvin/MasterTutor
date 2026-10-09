@@ -23,6 +23,14 @@ export function pageInstallStructure(): void {
   const MAX_PIECE_CHARS = 40;
   const MAX_DRAWING_CHARS = 3000;
   const MAX_OPTION_CHARS = 300;
+  /** What makes a subtree content, never UI: media, figures, headings, tables, code, quotes, math. */
+  const CONTENT =
+    "img, picture, video, audio, canvas, iframe, figure, figcaption, h1, h2, h3, h4, h5, h6, table, pre, blockquote, math";
+  /** A text run this long is prose (a sentence), not a control's label. */
+  const PROSE_CHARS = 60;
+  /** Positioned layouts that are lists or grids of text (virtualized rows, data grids): never drawings. */
+  const LIST_LIKE =
+    "table, ul, ol, [role=grid], [role=row], [role=gridcell], [role=table], [role=list], [role=listitem], [role=listbox], [role=option]";
 
   const inChrome = (el: Element): boolean => {
     for (let at: Element | null = el; at; at = at.parentElement) if (lib.isChrome(at)) return true;
@@ -59,16 +67,32 @@ export function pageInstallStructure(): void {
     return null;
   };
 
+  /** Media of a size worth keeping, a figure, heading, table, code, quote or math, or a sentence. */
+  const holdsContent = (el: Element): boolean => {
+    for (const match of [el, ...el.querySelectorAll(`${CONTENT}, svg`)]) {
+      if (!match.matches(`${CONTENT}, svg`) || !lib.visible(match)) continue;
+      if (match.tagName.toLowerCase() !== "svg") return true;
+      const r = match.getBoundingClientRect();
+      if (r.width >= 48 && r.height >= 48) return true;
+    }
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode())
+      if ((node.textContent ?? "").trim().length > PROSE_CHARS) return true;
+    return false;
+  };
+
   /**
    * App UI above the main heading: every earlier sibling, along the heading's ancestor path up to
-   * body, that holds a control. A dek or eyebrow label has no control and stays; a toolbar, a
-   * collapsible table of contents, a dropdown or a status box with buttons is UI, like a nav landmark.
+   * body, that holds a control and no content (holdsContent). A dek or eyebrow label has no
+   * control and stays; a hero figure with an "Enlarge" button is content and stays; a toolbar, a
+   * collapsible table of contents or a status box with a dropdown is UI. It leaves the note but
+   * still counts in page coverage: nothing proves it is not content.
    */
   const leadingChrome = (heading: Element): Element[] => {
     const out: Element[] = [];
     for (let at: Element | null = heading; at && at !== document.body; at = at.parentElement)
       for (let sib = at.previousElementSibling; sib; sib = sib.previousElementSibling)
-        if (lib.visible(sib) && hasVisible(sib, CONTROL)) out.push(sib);
+        if (lib.visible(sib) && hasVisible(sib, CONTROL) && !holdsContent(sib)) out.push(sib);
     return out;
   };
 
@@ -103,6 +127,7 @@ export function pageInstallStructure(): void {
       const drawing = commonAncestor(pieces);
       if (!drawing || drawing === root || drawing === document.body) continue;
       if ((drawing.textContent ?? "").length > MAX_DRAWING_CHARS) continue;
+      if (drawing.matches(LIST_LIKE) || drawing.querySelector(LIST_LIKE)) continue;
       const inPiece = (el: Element) => pieces.some((piece) => piece.contains(el));
       const stray = [...drawing.querySelectorAll("*")].some(
         (el) => ownText(el) && lib.visible(el) && !inPiece(el) && !hiddenWithin(el, drawing),
@@ -148,10 +173,12 @@ export function pageInstallStructure(): void {
 
   /**
    * Choice options (radio buttons, checkboxes): each control's largest ancestor holding no other
-   * choice, when at least two such boxes share a parent. Returned with their visible label.
+   * choice, plus the `label[for]` beside it when the control stands bare in its group, when at
+   * least two such options share a parent. Each option maps to its parts in document order, so
+   * the note clones them (math, code and images inside a label survive).
    */
-  const options = (root: Element): Map<Element, string> => {
-    const boxes: Element[] = [];
+  const options = (root: Element): Map<Element, Element[]> => {
+    const found: { control: Element; box: Element }[] = [];
     for (const control of root.querySelectorAll(CHOICE)) {
       let box: Element = control;
       while (
@@ -160,23 +187,25 @@ export function pageInstallStructure(): void {
         box.parentElement.querySelectorAll(CHOICE).length === 1
       )
         box = box.parentElement;
-      boxes.push(box);
+      found.push({ control, box });
     }
-    const out = new Map<Element, string>();
-    for (const box of boxes) {
-      const siblings = boxes.filter((other) => other.parentElement === box.parentElement);
-      if (siblings.length < 2) continue;
-      const parts: string[] = [];
-      lib.walkRendered(
-        box,
-        null,
-        (_node, text) => parts.push(text),
-        () => parts.push(" "),
-      );
-      const control = box.matches(CHOICE) ? box : box.querySelector(CHOICE);
-      const label =
-        parts.join("").replace(/\s+/g, " ").trim() || control?.getAttribute("aria-label") || "";
-      if (label && label.length <= MAX_OPTION_CHARS) out.set(box, label);
+    const out = new Map<Element, Element[]>();
+    for (const { control, box } of found) {
+      if (found.filter((other) => other.box.parentElement === box.parentElement).length < 2)
+        continue;
+      const labels =
+        box === control && control instanceof HTMLInputElement
+          ? [...(control.labels ?? [])].filter(
+              (label) => label.parentElement === box.parentElement && !label.contains(box),
+            )
+          : [];
+      const parts = [box, ...labels];
+      const text = parts
+        .map((part) => part.textContent ?? "")
+        .join(" ")
+        .trim();
+      const named = text !== "" || control.getAttribute("aria-label");
+      if (named && text.length <= MAX_OPTION_CHARS) out.set(box, parts);
     }
     return out;
   };
