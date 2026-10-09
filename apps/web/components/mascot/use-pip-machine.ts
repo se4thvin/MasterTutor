@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PIP_TIMING, createPipMachine, type PipEvent, type PipMachine } from "./pip-machine.ts";
+import { createPipMachine, type PipEvent, type PipMachine } from "./pip-machine.ts";
 import type { PipState } from "./pip-types.ts";
 
 /** Input anywhere on the page wakes a dozing Pip. Passive listeners: a timestamp write each. */
@@ -32,13 +32,4 @@ export function usePipMachine({
   }, [doze, arrive]);
   const send = useCallback((event: PipEvent) => machine.current?.send(event), []);
   return [state, send];
-}
-
-/**
- * Start waits this long before opening the run, so its celebration is seen (the run's creation
- * runs alongside). Under reduced motion there is nothing to watch: no wait.
- */
-export function pipStartFloor(): Promise<void> {
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, PIP_TIMING.celebrateMs));
 }
