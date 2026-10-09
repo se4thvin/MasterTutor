@@ -78,7 +78,14 @@ export type IconName =
   | "pause"
   | "maximize"
   | "minimize"
-  | "send";
+  | "send"
+  | "pointer"
+  | "keyboard"
+  | "scroll"
+  | "read"
+  | "capture"
+  | "thread"
+  | "panelHide";
 
 export const SOURCE_KIND_ICON: Record<SourceKind, IconName> = {
   web: "web",

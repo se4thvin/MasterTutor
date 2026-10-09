@@ -39,6 +39,10 @@ export const durations = {
   spin: 1000,
   /** Poster → 3D crossfade (run 16). */
   heroReveal: 700,
+  /** A running action card's progress wipe (CallChip): it holds at 90% until the step is done. */
+  callWipe: 2400,
+  /** A cancelled action card's shake (CallChip), on transform only. */
+  shake: 450,
 } as const;
 
 export const easings = {

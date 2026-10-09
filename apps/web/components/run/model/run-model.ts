@@ -26,6 +26,8 @@ export interface StepRow {
   url: string | null;
   screenshotKey: string | null;
   action: StepAction | null;
+  /** A decide step's reasoning summary (screened model text); null elsewhere. */
+  reasoning: string | null;
   at: string;
 }
 export interface PendingApproval {
@@ -186,6 +188,7 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
       url: v.url,
       screenshotKey: v.screenshotKey,
       action: v.action,
+      reasoning: v.reasoning,
       at: v.createdAt,
     }))
     .sort((a, b) => a.seq - b.seq);
@@ -257,6 +260,7 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
         url: e.url,
         screenshotKey: e.screenshotKey,
         action: e.action,
+        reasoning: e.reasoning ?? null,
         at: record.at,
       };
       const currentUrl = e.url ?? m.currentUrl;

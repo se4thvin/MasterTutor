@@ -3,14 +3,14 @@ import { recordedEvents } from "../lib/fixtures/run-recording.ts";
 import { emit, frame, gotoRun, rpcCalls } from "./helpers/run.ts";
 import { expect, test } from "./helpers/test.ts";
 
-const steps = (page: Page) => page.getByRole("complementary", { name: "Steps" });
+const steps = (page: Page) => page.getByRole("complementary", { name: "Thread" });
 const width = (page: Page) => page.viewportSize()?.width ?? 0;
 const intersects = (
   a: { x: number; y: number; width: number; height: number },
   b: { x: number; y: number; width: number; height: number },
 ) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-test("1440: timeline beside the browser; the callout and leader stay in the frame, clear of the timeline (D22)", async ({
+test("1440: thread beside the browser; the callout and leader stay in the frame, clear of the thread (D22)", async ({
   page,
 }) => {
   test.skip(width(page) !== 1440, "wide layout");
@@ -30,18 +30,34 @@ test("1440: timeline beside the browser; the callout and leader stay in the fram
 });
 
 for (const w of [1180, 1024] as const) {
-  test(`${w}: stacked; callouts become gutter badges and the leader is hidden (D22)`, async ({
+  test(`${w}: thread beside the browser; callouts become gutter badges and the leader is hidden (D22)`, async ({
     page,
   }) => {
-    test.skip(width(page) !== w, "stacked layout");
+    test.skip(width(page) !== w, "icon-rail layout");
     await gotoRun(page);
     await emit(page, [recordedEvents()[0]!]);
     const f = (await frame(page).boundingBox())!;
     const s = (await steps(page).boundingBox())!;
-    expect(s.y).toBeGreaterThanOrEqual(f.y + f.height);
+    expect(s.x).toBeGreaterThanOrEqual(f.x + f.width);
     await expect(page.getByTestId("gutter-badge")).toBeVisible();
     await expect(page.locator(".run-leader")).toBeHidden();
     await expect(page.getByRole("button", { name: "Callouts" })).toBeHidden();
+  });
+}
+
+for (const w of [1440, 1180, 1024] as const) {
+  test(`${w}: the browser is the hero: the whole frame and the thread fit the first screen`, async ({
+    page,
+  }) => {
+    test.skip(width(page) !== w, "pane layouts");
+    await gotoRun(page);
+    const viewport = page.viewportSize()!;
+    const f = (await frame(page).boundingBox())!;
+    const s = (await steps(page).boundingBox())!;
+    expect(f.y + f.height).toBeLessThanOrEqual(viewport.height);
+    expect(s.y + s.height).toBeLessThanOrEqual(viewport.height);
+    // The frame takes most of the content width beside the pane.
+    expect(f.width).toBeGreaterThan(s.width * 1.5);
   });
 }
 

@@ -12,13 +12,13 @@ import { Crumbs, Toolbar, ToolbarSpacer } from "@/components/ui/toolbar.tsx";
 import { api } from "@/lib/api/client.ts";
 import { MEDIA } from "@/lib/breakpoints.ts";
 import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
+import { useHotkey } from "@/lib/hooks/use-hotkey.ts";
 import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
-import { ApprovalSheet } from "./approval/approval-sheet.tsx";
+import { APPROVAL_SHEET_ID, ApprovalSheet } from "./approval/approval-sheet.tsx";
 import { BrowserFrame } from "./browser/browser-frame.tsx";
 import { HandBackSheet } from "./browser/hand-back-sheet.tsx";
 import type { LiveStatus } from "./browser/live-frame.tsx";
 import { REPLAY_INTERVAL_MS, ReplayScrubber } from "./browser/replay-scrubber.tsx";
-import { useCalloutsPreference } from "./callout-preference.ts";
 import { approvalCopy } from "./model/approval-copy.ts";
 import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
 import { INFO_ERROR_COPY, hostAndPath, shortRunId } from "./model/copy.ts";
@@ -27,14 +27,15 @@ import { inControl } from "./model/takeover.ts";
 import {
   summaryLabel,
   thinkingState,
-  timelineItems,
+  threadItems,
   type PendingMessage,
-} from "./model/timeline-items.ts";
+} from "./model/thread-items.ts";
 import { forgetWatchedRun, rememberWatchedRun } from "./pip/watching.ts";
 import { RunHeader } from "./run-header.tsx";
+import { STORED_TOGGLES, useStoredToggle } from "./stored-toggle.ts";
 import { useRun } from "./stream/use-run.ts";
+import { ThreadPane, ThreadSheet } from "./thread/thread-panel.tsx";
 import { BudgetMeters } from "./timeline/budget-meters.tsx";
-import { TimelinePanel } from "./timeline/timeline-panel.tsx";
 import { useTakeover } from "./use-takeover.ts";
 
 /** The OTP card is rare (a site asked for a code): off the run page's first load. */
@@ -42,6 +43,11 @@ const { Component: OtpCard, usePrefetch: usePrefetchOtpCard } = lazyComponent(()
   import("./timeline/otp-card.tsx").then((mod) => mod.OtpCard),
 );
 const ignoreFailure = () => undefined;
+
+const THREAD_PANE_ID = "run-thread";
+
+/** Moves focus to the approval sheet, which then speaks for itself (alertdialog). */
+const reviewApproval = () => document.getElementById(APPROVAL_SHEET_ID)?.focus();
 
 export function RunView({ runId, viewerId }: { runId: string; viewerId: string | null }) {
   const toast = useToast();
@@ -60,8 +66,13 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   const [deciding, setDeciding] = useState<ReadonlySet<string>>(() => new Set());
   const [pending, setPending] = useState<PendingMessage[]>([]);
   const [playing, setPlaying] = useState(false);
-  const regular = useMediaQuery(MEDIA.md);
-  const [callouts, setCallouts] = useCalloutsPreference();
+  // Above phone width the thread is a pane (beside the browser, or under it at tablet width) the
+  // viewer can hide; at phone width a peek bar opens it as a bottom sheet (fe-run-chat).
+  const paneWidth = useMediaQuery(MEDIA.sm);
+  const [threadOn, setThreadOn] = useStoredToggle(STORED_TOGGLES.thread);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const pane = paneWidth && threadOn;
+  const [callouts, setCallouts] = useStoredToggle(STORED_TOGGLES.callouts);
   const [stopOpen, setStopOpen] = useState(false);
   const stop = useCallback(() => {
     api.runs.cancel({ runId }).catch(() => toast({ title: "Couldn't stop the run. Try again." }));
@@ -117,9 +128,21 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
     if (playing && replayStep === null) setPlaying(false);
   }, [playing, replayStep]);
   const items = useMemo(
-    () => (view ? timelineItems(view, pending, viewerId) : []),
+    () => (view ? threadItems(view, pending, viewerId) : []),
     [view, pending, viewerId],
   );
+  // While the pane is hidden, the Thread button counts what arrived since.
+  const loaded = view !== null;
+  const [seen, setSeen] = useState<number | null>(null);
+  useEffect(() => {
+    if (loaded && (pane || seen === null)) setSeen(items.length);
+  }, [loaded, pane, seen, items.length]);
+  const unread = pane || seen === null ? 0 : Math.max(0, items.length - seen);
+  const toggleThread = useCallback(() => {
+    if (paneWidth) setThreadOn(!threadOn);
+    else setSheetOpen((open) => !open);
+  }, [paneWidth, threadOn, setThreadOn]);
+  useHotkey({ key: "t" }, toggleThread);
   const lastEventId = view?.lastEventId ?? null;
   const send = useCallback(
     async (text: string) => {
@@ -222,9 +245,24 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   // One copy per render, shared by the sheet and the frame's spotlight (M8).
   const copy = approval ? approvalCopy(approval.request) : null;
   const thinking = thinkingState(view);
-  // At md+ the timeline's ThoughtLine speaks while the agent thinks; the caption would repeat it.
-  // Every other state (control, pause, CAPTCHA, stuck, acting) is the caption's to announce (final I1).
+  // While the pane is open its ThoughtLine speaks while the agent thinks; the caption would repeat
+  // it. Every other state (control, pause, CAPTCHA, stuck, acting) is the caption's to announce (final I1).
   const userHasControl = inControl(view.controller, takeover);
+  const thread = {
+    runId,
+    items,
+    summary: summaryLabel(view),
+    thinking,
+    otp: pane ? otp : null,
+    replaySeq,
+    onReplay: (seq: number) => {
+      setPlaying(false);
+      setReplaySeq(seq);
+    },
+    onReview: reviewApproval,
+    canMessage: !isTerminal(view.status),
+    onSend: send,
+  };
   return (
     <>
       <Toolbar>
@@ -238,6 +276,25 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
         >
           Callouts
         </Button>
+        {paneWidth ? (
+          <Button
+            variant="plain"
+            icon="thread"
+            className="run-thread-toggle"
+            aria-pressed={threadOn}
+            aria-controls={pane ? THREAD_PANE_ID : undefined}
+            aria-keyshortcuts="T"
+            onClick={toggleThread}
+          >
+            Thread
+            {unread > 0 ? (
+              <span className="run-thread-unread">
+                <span className="sr-only">, </span>
+                {unread} new
+              </span>
+            ) : null}
+          </Button>
+        ) : null}
         {userHasControl ? (
           <Button
             variant="primary"
@@ -265,71 +322,63 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
           Stop
         </Button>
       </Toolbar>
-      <div className="wrap run">
+      <div className="wrap run" data-thread={pane || undefined}>
         <RunHeader model={view} state={state} />
-        <div className="run-body">
-          <section className="run-stage" aria-label="Agent browser">
-            <BrowserFrame
-              runId={runId}
-              model={view}
-              state={state}
-              takeover={takeover}
-              replayStep={replayStep}
-              replayLabel={replayLabel}
-              liveEpoch={liveEpoch}
-              liveStatus={liveStatus}
-              onLiveStatus={setLiveStatus}
-              approval={
-                approval && copy ? (
-                  <ApprovalSheet
-                    key={approval.id}
-                    runId={runId}
-                    approval={approval}
-                    copy={copy}
-                    count={view.approvals.length}
-                    onDecide={decide}
-                    onTakeOver={startTakeover}
-                  />
-                ) : null
-              }
-              spotlight={copy?.spotlight ?? null}
-              scrubber={
-                <ReplayScrubber
-                  steps={shotSteps}
-                  seq={replaySeq}
-                  playing={playing}
-                  onSeq={setReplaySeq}
-                  onTogglePlay={() => setPlaying((p) => !p)}
-                />
-              }
-              showCallouts={callouts}
-              announceCaption={!regular || thinking === null || state !== "live"}
-              onHandBack={() => setHandBackOpen(true)}
-              onTakeControl={startTakeover}
-              onResume={resume}
-              onJumpLive={() => {
-                setPlaying(false);
-                setReplaySeq(null);
-              }}
-            />
-            {regular ? null : otp}
-            <BudgetMeters usage={view.usage} budget={view.budget} />
-          </section>
-          <TimelinePanel
+        <section className="run-stage" aria-label="Agent browser">
+          <BrowserFrame
             runId={runId}
-            items={items}
-            summary={summaryLabel(view)}
-            thinking={thinking}
-            otp={regular ? otp : null}
-            replaySeq={replaySeq}
-            onReplay={(seq) => {
+            model={view}
+            state={state}
+            takeover={takeover}
+            replayStep={replayStep}
+            replayLabel={replayLabel}
+            liveEpoch={liveEpoch}
+            liveStatus={liveStatus}
+            onLiveStatus={setLiveStatus}
+            approval={
+              // At phone width the thread sheet, while open, stands in front: the approval sheet
+              // waits behind it and takes focus again when it closes (its Review button closes it).
+              approval && copy && !(sheetOpen && !paneWidth) ? (
+                <ApprovalSheet
+                  key={approval.id}
+                  runId={runId}
+                  approval={approval}
+                  copy={copy}
+                  count={view.approvals.length}
+                  onDecide={decide}
+                  onTakeOver={startTakeover}
+                />
+              ) : null
+            }
+            spotlight={copy?.spotlight ?? null}
+            scrubber={
+              <ReplayScrubber
+                steps={shotSteps}
+                seq={replaySeq}
+                playing={playing}
+                onSeq={setReplaySeq}
+                onTogglePlay={() => setPlaying((p) => !p)}
+              />
+            }
+            showCallouts={callouts}
+            announceCaption={!pane || thinking === null || state !== "live"}
+            onHandBack={() => setHandBackOpen(true)}
+            onTakeControl={startTakeover}
+            onResume={resume}
+            onJumpLive={() => {
               setPlaying(false);
-              setReplaySeq(seq);
+              setReplaySeq(null);
             }}
-            canMessage={!isTerminal(view.status)}
-            onSend={send}
           />
-        </div>
+          {paneWidth ? null : (
+            <ThreadSheet {...thread} open={sheetOpen} onOpenChange={setSheetOpen} />
+          )}
+          {pane ? null : otp}
+        </section>
+        {pane ? (
+          <ThreadPane {...thread} id={THREAD_PANE_ID} onHide={() => setThreadOn(false)} />
+        ) : null}
+        <BudgetMeters usage={view.usage} budget={view.budget} />
       </div>
       <HandBackSheet
         open={handBackOpen && userHasControl}

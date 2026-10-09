@@ -1,7 +1,8 @@
 import { POLICY_DECIDER, compareEventIds } from "@mastertutor/contracts";
 import type { StatusMarkStatus } from "@/lib/status.ts";
+import type { IconName } from "@/lib/ui/vocabulary.ts";
 import { requestSummary } from "./approval-copy.ts";
-import { errorLine } from "./copy.ts";
+import { errorLine, hostAndPath } from "./copy.ts";
 import {
   captureCount,
   isInformational,
@@ -14,6 +15,8 @@ import { untrustedText } from "./untrusted-text.ts";
 
 /** A chat message is shown whole up to this many characters. */
 const MAX_MESSAGE = 2_000;
+/** One paragraph of a reasoning summary (the whole summary is capped by the contract). */
+const MAX_PARAGRAPH = 1_200;
 
 export interface PendingMessage {
   /** The client id: one entry per sent message, however often it is listed. */
@@ -24,13 +27,19 @@ export interface PendingMessage {
   sentAt: string;
 }
 
-export type TimelineItem =
+/**
+ * One entry of the run's thread (fe-run-chat): the agent's side (pages it opened, its reasoning
+ * summaries, its actions and the approval it waits on), the person's messages, and system lines.
+ * Every text is untrusted and arrives cleaned; the view renders it as plain text inside <bdi>.
+ */
+export type ThreadItem =
   | {
       kind: "step";
       key: string;
       seq: number;
       verb: string;
       verbKind: "cred" | "sig" | null;
+      glyph: IconName;
       line: string;
       status: StatusMarkStatus;
       ts: string;
@@ -43,6 +52,27 @@ export type TimelineItem =
       shotSeq: number | null;
       current: boolean;
     }
+  | {
+      kind: "page";
+      key: string;
+      seq: number;
+      /** Never truncated: the host is the security signal (S7). */
+      host: string;
+      path: string;
+      shotSeq: number | null;
+      ts: string;
+      at: string;
+    }
+  | {
+      kind: "thought";
+      key: string;
+      seq: number;
+      title: string | null;
+      paragraphs: string[];
+      ts: string;
+      at: string;
+    }
+  | { kind: "approval"; key: string; approvalId: string; line: string; ts: string; at: string }
   | { kind: "message"; key: string; text: string; ts: string; at: string; pending: boolean }
   | {
       kind: "decision";
@@ -72,6 +102,25 @@ const VERBS: Readonly<Record<string, string>> = {
   video: "Video",
   annotate: "Note",
 };
+
+const GLYPHS: Readonly<Record<string, IconName>> = {
+  read_page: "read",
+  capture: "capture",
+  fill_credential: "password",
+  use_passkey: "passkey",
+  video: "video",
+  annotate: "edit",
+};
+
+/** What an action card shows beside its verb: the kind of input, else the tool. */
+function glyphFor(step: StepRow): IconName {
+  if (step.phase === "approve") return "hand";
+  const action = step.action;
+  if (action?.tool !== "computer") return (action && GLYPHS[action.tool]) ?? "live";
+  if (action.pointer === "scroll") return "scroll";
+  if (action.pointer) return "pointer";
+  return /^(?:type|press) /.test(action.summary) ? "keyboard" : "live";
+}
 
 /** A computer step without `pointer` (recorded before A1 landed, or a keyboard action) says "Act". */
 function verbFor(step: StepRow): string {
@@ -115,21 +164,35 @@ function decisionLine(outcome: ApprovalOutcome, viewerId: string | null): string
 }
 
 /**
- * The one step row shown as selected during replay. Rows that share a screenshot (several acts on
- * one screen) are not all selected: the clicked row is, while its screenshot is on screen; after
- * the replay moves on, the first row of the shown screenshot is.
+ * The one row shown as selected during replay. Rows that share a screenshot (the page card and the
+ * acts on that screen) are not all selected: the clicked row is, while its screenshot is on screen;
+ * after the replay moves on, the first row of the shown screenshot is.
  */
 export function selectedRowSeq(
-  items: readonly TimelineItem[],
+  items: readonly ThreadItem[],
   replaySeq: number | null,
   clickedSeq: number | null,
 ): number | null {
   if (replaySeq === null) return null;
   const rows = items.filter(
-    (item): item is Extract<TimelineItem, { kind: "step" }> =>
-      item.kind === "step" && item.shotSeq === replaySeq,
+    (item): item is Extract<ThreadItem, { kind: "step" | "page" }> =>
+      (item.kind === "step" || item.kind === "page") && item.shotSeq === replaySeq,
   );
   return (rows.find((row) => row.seq === clickedSeq) ?? rows[0])?.seq ?? null;
+}
+
+/**
+ * A reasoning summary as plain text: paragraphs (blank-line separated), each cleaned; a leading
+ * `**Title**` paragraph becomes the title, and other `**` emphasis markers are dropped. Nothing in
+ * it is ever parsed as markup.
+ */
+export function thoughtParts(summary: string): { title: string | null; paragraphs: string[] } {
+  const raw = summary.split(/\n\s*\n/);
+  const heading = /^\s*\*\*([^*\n]+)\*\*\s*$/.exec(raw[0] ?? "");
+  const clean = (text: string) => untrustedText(text.replace(/\*\*/g, ""), MAX_PARAGRAPH);
+  const title = heading ? clean(heading[1]!) || null : null;
+  const paragraphs = (heading ? raw.slice(1) : raw).map(clean).filter((text) => text !== "");
+  return { title, paragraphs };
 }
 
 export function elapsedClock(from: string, at: string): string {
@@ -137,39 +200,82 @@ export function elapsedClock(from: string, at: string): string {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-export function timelineItems(
+export function threadItems(
   model: RunModel,
   pending: readonly PendingMessage[],
   viewerId: string | null,
-): TimelineItem[] {
+): ThreadItem[] {
   const clock = (at: string) => elapsedClock(model.createdAt, at);
   const shown = model.steps.filter((s) => s.phase === "act" || s.phase === "approve");
   const lastSeq = shown.at(-1)?.seq ?? null;
   const live = !isTerminal(model.status);
-  const shotBefore = new Map<number, number | null>();
+  const items: ThreadItem[] = [];
   let lastShot: number | null = null;
+  let lastPage: string | null = null;
   for (const step of model.steps) {
     if (step.screenshotKey !== null) lastShot = step.seq;
-    shotBefore.set(step.seq, lastShot);
+    const ts = clock(step.at);
+    if (step.phase === "observe" && step.state === "done" && step.url !== null) {
+      const page = hostAndPath(step.url);
+      const where = page ? `${page.host}${page.path}` : null;
+      if (page && where !== lastPage) {
+        lastPage = where;
+        items.push({
+          kind: "page",
+          key: `page-${step.seq}`,
+          seq: step.seq,
+          host: page.host,
+          path: page.path,
+          shotSeq: lastShot,
+          ts,
+          at: step.at,
+        });
+      }
+    } else if (step.phase === "decide" && step.reasoning) {
+      const { title, paragraphs } = thoughtParts(step.reasoning);
+      if (title || paragraphs.length > 0)
+        items.push({
+          kind: "thought",
+          key: `thought-${step.seq}`,
+          seq: step.seq,
+          title,
+          paragraphs,
+          ts,
+          at: step.at,
+        });
+    } else if (step.phase === "approve" && step.state === "started" && model.approvals.length > 0) {
+      // The approval card below speaks for the approval being waited on.
+      continue;
+    } else if (step.phase === "act" || step.phase === "approve") {
+      const credential =
+        step.action?.tool === "fill_credential" || step.action?.tool === "use_passkey";
+      items.push({
+        kind: "step",
+        key: `step-${step.seq}`,
+        seq: step.seq,
+        verb: verbFor(step),
+        verbKind: credential ? "cred" : step.phase === "approve" ? "sig" : null,
+        glyph: glyphFor(step),
+        line: untrustedText(step.action?.summary ?? step.caption, 200) || `Step ${step.seq}`,
+        status: stepStatus(step),
+        ts,
+        at: step.at,
+        credential,
+        shotSeq: lastShot,
+        current: live && step.seq === lastSeq,
+      });
+    }
   }
-  const items: TimelineItem[] = shown.map((step) => {
-    const credential =
-      step.action?.tool === "fill_credential" || step.action?.tool === "use_passkey";
-    return {
-      kind: "step",
-      key: `step-${step.seq}`,
-      seq: step.seq,
-      verb: verbFor(step),
-      verbKind: credential ? "cred" : step.phase === "approve" ? "sig" : null,
-      line: untrustedText(step.action?.summary ?? step.caption, 200) || `Step ${step.seq}`,
-      status: stepStatus(step),
-      ts: clock(step.at),
-      at: step.at,
-      credential,
-      shotSeq: shotBefore.get(step.seq) ?? null,
-      current: live && step.seq === lastSeq,
-    };
-  });
+  for (const a of model.approvals) {
+    items.push({
+      kind: "approval",
+      key: `approval-${a.id}`,
+      approvalId: a.id,
+      line: requestSummary(a.request),
+      ts: clock(a.at),
+      at: a.at,
+    });
+  }
   for (const m of model.messages) {
     items.push({
       kind: "message",
@@ -255,6 +361,27 @@ export function thinkingState(model: RunModel): ThinkingState | null {
       ? untrustedText(last.caption, 160)
       : "";
   return { label: thought || "Thinking about the next step", since, until: null, working: true };
+}
+
+/** The newest agent line, for the compact peek bar: thinking, else the latest agent entry. */
+export function peekLine(items: readonly ThreadItem[], thinking: ThinkingState | null): string {
+  if (thinking?.working) return thinking.label;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!;
+    switch (item.kind) {
+      case "approval":
+        return `Needs your approval: ${item.line}`;
+      case "thought":
+        return item.title ?? item.paragraphs[0] ?? "";
+      case "step":
+        return item.line;
+      case "page":
+        return `Opened ${item.host}${item.path}`;
+      default:
+        continue;
+    }
+  }
+  return thinking?.label ?? "No activity yet";
 }
 
 export function summaryLabel(model: RunModel): string {

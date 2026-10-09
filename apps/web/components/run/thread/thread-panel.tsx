@@ -1,0 +1,168 @@
+"use client";
+
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { AnimatedItem, AnimatedList } from "@/components/bits/animated-list.tsx";
+import { ThoughtLine } from "@/components/bits/thought-line.tsx";
+import { IconButton } from "@/components/ui/button.tsx";
+import { Icon } from "@/components/ui/icon.tsx";
+import { Sheet } from "@/components/ui/sheet.tsx";
+import {
+  peekLine,
+  selectedRowSeq,
+  type ThinkingState,
+  type ThreadItem,
+} from "../model/thread-items.ts";
+import { untrustedText } from "../model/untrusted-text.ts";
+import { MessageComposer } from "./message-composer.tsx";
+import { ThreadEntry } from "./thread-entry.tsx";
+
+/** Within this many px of the end, a new entry keeps the thread pinned to it. */
+const PINNED_PX = 160;
+
+interface ThreadProps {
+  runId: string;
+  items: ThreadItem[];
+  summary: string;
+  thinking: ThinkingState | null;
+  /** The OTP card; the view renders it in the stage when the thread is a sheet. */
+  otp: ReactNode;
+  replaySeq: number | null;
+  onReplay(seq: number): void;
+  /** Moves focus to the approval sheet (the thread's approval card never decides itself). */
+  onReview(): void;
+  canMessage: boolean;
+  onSend(text: string): Promise<boolean>;
+}
+
+/**
+ * The conversation (fe-run-chat): pinned to the newest entry while the reader is at the end, and
+ * during replay the shown screenshot's entry is selected and scrolled to the middle (inside the
+ * list only: the page itself never scrolls).
+ */
+function ThreadList(p: ThreadProps) {
+  const listRef = useRef<HTMLOListElement>(null);
+  const [clickedSeq, setClickedSeq] = useState<number | null>(null);
+  const selected = selectedRowSeq(p.items, p.replaySeq, clickedSeq);
+  // Opens at the newest entry and stays there until the reader scrolls back through the history.
+  const pinned = useRef(true);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    const track = () => {
+      pinned.current = list.scrollHeight - list.scrollTop - list.clientHeight < PINNED_PX;
+    };
+    list.addEventListener("scroll", track, { passive: true });
+    return () => list.removeEventListener("scroll", track);
+  }, []);
+  useEffect(() => {
+    const list = listRef.current;
+    if (list && pinned.current && p.replaySeq === null) list.scrollTop = list.scrollHeight;
+  }, [p.items.length, p.otp, p.thinking, p.replaySeq]);
+  useEffect(() => {
+    const list = listRef.current;
+    const row = selected === null ? null : list?.querySelector<HTMLElement>("[data-selected]");
+    if (!list || !row) return;
+    const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    list.scrollTo({
+      top: row.offsetTop - (list.clientHeight - row.offsetHeight) / 2,
+      behavior: smooth ? "smooth" : "auto",
+    });
+  }, [selected]);
+  return (
+    <AnimatedList listRef={listRef} label="Agent activity">
+      {p.items.map((item) => (
+        <ThreadEntry
+          key={item.key}
+          item={item}
+          runId={p.runId}
+          selected={(item.kind === "step" || item.kind === "page") && item.seq === selected}
+          onReplay={(rowSeq, shotSeq) => {
+            setClickedSeq(rowSeq);
+            p.onReplay(shotSeq);
+          }}
+          onReview={p.onReview}
+        />
+      ))}
+      {p.thinking ? (
+        <AnimatedItem className="th-item" data-side="agent" data-kind="thinking">
+          <ThoughtLine
+            label={p.thinking.label}
+            working={p.thinking.working}
+            since={p.thinking.since}
+            until={p.thinking.until}
+          />
+        </AnimatedItem>
+      ) : null}
+      {p.otp ? (
+        <AnimatedItem className="th-item" data-side="agent" data-kind="otp">
+          {p.otp}
+        </AnimatedItem>
+      ) : null}
+    </AnimatedList>
+  );
+}
+
+/** The thread as a pane beside the browser (or under it at tablet width); hideable. */
+export function ThreadPane({ id, onHide, ...p }: ThreadProps & { id: string; onHide(): void }) {
+  const titleId = useId();
+  return (
+    <aside id={id} className="thread glass" aria-labelledby={titleId} data-qa-obstacle>
+      <div className="thread-head">
+        <h2 id={titleId} className="thread-title">
+          Thread
+        </h2>
+        <span className="thread-summary">{p.summary}</span>
+        <IconButton
+          icon="panelHide"
+          label="Hide thread"
+          aria-keyshortcuts="T"
+          className="thread-hide"
+          onClick={onHide}
+        />
+      </div>
+      <ThreadList {...p} />
+      <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />
+    </aside>
+  );
+}
+
+/** Phone width: a peek bar under the browser opens the thread as a bottom sheet. */
+export function ThreadSheet({
+  open,
+  onOpenChange,
+  ...p
+}: ThreadProps & { open: boolean; onOpenChange(open: boolean): void }) {
+  const line = untrustedText(peekLine(p.items, p.thinking), 120);
+  return (
+    <>
+      <button
+        type="button"
+        className="thread-peek glass"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`Open thread: ${line}`}
+        onClick={() => onOpenChange(true)}
+      >
+        <span className="thread-peek-glyph" aria-hidden="true">
+          <Icon name="thread" size="sm" />
+        </span>
+        <span className="thread-peek-text">
+          <bdi>{line}</bdi>
+          <span className="thread-peek-summary">{p.summary}</span>
+        </span>
+        <Icon name="chevronRight" size="sm" />
+      </button>
+      <Sheet open={open} onOpenChange={onOpenChange} title="Thread">
+        <ThreadList
+          {...p}
+          otp={null}
+          onReview={() => {
+            onOpenChange(false);
+            p.onReview();
+          }}
+        />
+        <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />
+      </Sheet>
+    </>
+  );
+}

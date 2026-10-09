@@ -13,6 +13,9 @@ import { isTyping } from "@/lib/hooks/use-hotkey.ts";
 import type { ApprovalCopy } from "../model/approval-copy.ts";
 import type { PendingApproval } from "../model/run-model.ts";
 
+/** The one approval sheet on screen; the thread's approval card moves focus to it (fe-run-chat). */
+export const APPROVAL_SHEET_ID = "run-approval";
+
 /** Keys and buttons stay inert this long after a sheet appears: a keystroke or click meant for something else never decides it (S1). */
 const APPROVAL_ARM_MS = 600;
 
@@ -124,6 +127,7 @@ export function ApprovalSheet({
   return (
     <div
       ref={ref}
+      id={APPROVAL_SHEET_ID}
       className="run-approval"
       data-tone={copy.tone}
       role="alertdialog"

@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { rec, recordedDetail, recordedEvents } from "../../lib/fixtures/run-recording.ts";
 import { emit, frame, gotoRun } from "./run.ts";
-import { expect, isCompact } from "./test.ts";
+import { expect, isPhone } from "./test.ts";
 
 export interface RunScenario {
   name: string;
@@ -11,13 +11,13 @@ export interface RunScenario {
 }
 
 async function openReplay(page: Page) {
-  if (isCompact(page)) await page.getByRole("button", { name: /^Steps/ }).click();
+  if (isPhone(page)) await page.getByRole("button", { name: /^Open thread/ }).click();
   await page.getByRole("button", { name: "Replay step: Clicked “Log in”" }).click();
-  if (isCompact(page)) {
+  if (isPhone(page)) {
     await page.keyboard.press("Escape");
     // Wait for the sheet to unmount: until then its scroll lock hides #main's scrollbar.
-    await page.getByRole("dialog", { name: "Steps" }).waitFor({ state: "detached" });
-    // Closing the sheet returns focus to the Steps button below the frame, which scrolls the page;
+    await page.getByRole("dialog", { name: "Thread" }).waitFor({ state: "detached" });
+    // Closing the sheet returns focus to the peek bar below the frame, which scrolls the page;
     // check the frame where a viewer sees it, not under the sticky toolbar.
     await page.locator("#main").evaluate((main) => main.scrollTo({ top: 0 }));
   }
