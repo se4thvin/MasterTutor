@@ -10,6 +10,7 @@ async function rules(code: string, filePath: string): Promise<string[]> {
 
 const WEB = "apps/web/components/x.tsx";
 const MASCOT = "apps/web/components/mascot/x.tsx";
+const MASCOT_SCENE = "apps/web/components/mascot/scene/x.ts";
 const ICONS = "apps/web/components/ui/icons.ts";
 const BITS = "apps/web/components/bits/x.tsx";
 const MOTION_DIR = "apps/web/components/motion/x.tsx";
@@ -30,9 +31,13 @@ describe("animation and icon import bans", () => {
     },
   );
 
-  it("allows three only under components/mascot", async () => {
-    expect(await rules(`import * as T from "three"; export default T;`, MASCOT)).toEqual([]);
-    expect(await rules(`export const l = () => import("three");`, MASCOT)).toEqual([]);
+  it("allows three only under components/mascot/scene", async () => {
+    expect(await rules(`import * as T from "three"; export default T;`, MASCOT_SCENE)).toEqual([]);
+    expect(await rules(`export const l = () => import("three");`, MASCOT_SCENE)).toEqual([]);
+    // Pip's component itself never imports three: only its lazily imported scene does.
+    expect(await rules(`import * as T from "three"; export default T;`, MASCOT)).toContain(
+      "no-restricted-imports",
+    );
     expect(await rules(`import * as T from "three"; export default T;`, WEB)).toContain(
       "no-restricted-imports",
     );

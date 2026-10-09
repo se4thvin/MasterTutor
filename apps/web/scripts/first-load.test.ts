@@ -131,10 +131,10 @@ describe("compareMascotBundle", () => {
       compareMascotBundle({ files: ["a.js"], kb: 139.2, leaked: [] }, MASCOT_BUDGET_KB),
     ).toEqual([]);
   });
-  it("accepts no three chunk while Pip is the 2D stand-in", () => {
-    expect(compareMascotBundle({ files: [], kb: 0, leaked: [] }, 150)).toEqual([]);
-  });
-  it("names an oversized or leaked mascot", () => {
+  it("names a missing, oversized or leaked mascot", () => {
+    expect(compareMascotBundle({ files: [], kb: 0, leaked: [] }, 150)).toEqual([
+      "mascot: no chunk contains three (is Pip's lazy scene import wired?)",
+    ]);
     expect(compareMascotBundle({ files: ["a.js"], kb: 151.3, leaked: [] }, 150)).toEqual([
       "mascot: 151.3 kB gz exceeds the 150 kB budget",
     ]);

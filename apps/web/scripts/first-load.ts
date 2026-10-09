@@ -141,11 +141,9 @@ export function measureMascotBundle(nextDir: string, marker = "isWebGLRenderer")
   return { files, kb: toKb(bytes), leaked: files.filter((file) => firstLoad.has(file)) };
 }
 
-/**
- * No three chunk is no finding while Pip is the 2D stand-in (components/mascot/pip-lazy.tsx);
- * MERGE (mascot-3d): once the 3D Pip lands, a missing three chunk means the lazy import broke.
- */
 export function compareMascotBundle(mascot: MascotBundle, budgetKb: number): string[] {
+  if (mascot.files.length === 0)
+    return ["mascot: no chunk contains three (is Pip's lazy scene import wired?)"];
   const findings = mascot.leaked.map((file) => `mascot: three is in first-load JS (${file})`);
   if (mascot.kb > budgetKb)
     findings.push(`mascot: ${mascot.kb} kB gz exceeds the ${budgetKb} kB budget`);

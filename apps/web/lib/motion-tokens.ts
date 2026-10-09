@@ -7,6 +7,14 @@ export const springs = {
   spring: { type: "spring", stiffness: 400, damping: 30, mass: 1 },
   /** Softer spring for sheets and the PiP. */
   springSoft: { type: "spring", stiffness: 260, damping: 30, mass: 1 },
+  /** Pip: state crossfade weights, critically damped so a blend never overshoots. */
+  pipBlend: { type: "spring", stiffness: 140, damping: 24, mass: 1 },
+  /** Pip: head and eyes turning toward the cursor or a target. */
+  pipLook: { type: "spring", stiffness: 120, damping: 16, mass: 1 },
+  /** Pip: the sprout's leaves flaring and fluttering (underdamped: they flutter). */
+  pipLeaf: { type: "spring", stiffness: 220, damping: 9, mass: 1 },
+  /** Pip: the jelly squash after a poke (deliberately underdamped). */
+  pipSquash: { type: "spring", stiffness: 380, damping: 11, mass: 1 },
 } as const;
 
 /** Milliseconds. */

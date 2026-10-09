@@ -2,33 +2,32 @@
 
 import { Suspense, type ComponentType } from "react";
 import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
+import { PipFrame } from "./pip-frame.tsx";
 import type { PipProps } from "./pip-types.ts";
 
+/** The state's poster, as Pip shows it before its chunk arrives (or if the chunk never does). */
+function PipPoster({ state, size, label = "Pip", onPoke }: PipProps) {
+  return <PipFrame state={state} size={size} label={label} onPoke={onPoke} />;
+}
+
 /**
- * The one way the app renders Pip: Pip's code stays out of first-load JS and arrives as its own
- * chunk. The box is sized by CSS before the chunk lands, so nothing shifts.
- *
- * MERGE (mascot-3d): the import below becomes `./pip.tsx` (the 3D Pip, which owns its poster,
- * software-GL and reduced-motion fallbacks per the contract). pip-stand-in.tsx then stays only as
- * a test double.
- *
- * Pip is decorative: a chunk that fails to arrive renders nothing, without a toast.
+ * The one way the app renders Pip: pip.tsx (and, behind its own import(), three) stays out of
+ * first-load JS. The poster frame renders until the component arrives, so nothing shifts. Pip is
+ * decorative: a chunk that fails to arrive keeps the poster, without a toast.
  */
-const NoPip = () => null;
 const { Component: LazyPip } = lazyComponent((): Promise<ComponentType<PipProps>> =>
-  import("./pip-stand-in.tsx").then(
+  import("./pip.tsx").then(
     (mod) => mod.Pip,
-    () => NoPip,
+    () => PipPoster,
   ),
 );
 
 export function PipLazy(props: PipProps) {
   return (
-    // data-mascot-state is the state machine's output, for tests and the layout; never styling.
-    <span className="mascot-slot" data-size={props.size} data-mascot-state={props.state}>
-      <Suspense fallback={<span className="mascot-pending" data-mascot-pending="" />}>
-        <LazyPip {...props} />
-      </Suspense>
-    </span>
+    <Suspense fallback={<PipPoster {...props} />}>
+      <LazyPip {...props} />
+    </Suspense>
   );
 }
+
+export default PipLazy;
