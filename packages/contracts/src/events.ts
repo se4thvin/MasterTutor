@@ -14,11 +14,11 @@ import {
   StepState,
   WaitReason,
 } from "./enums.ts";
-import { GuardCategory, GuardStage, GuardVerdictName } from "./observer.ts";
+import { GuardCategory, GuardStage, GuardVerdictName } from "./guard-codes.ts";
 import { IsoDateTime, SlotName, Uuid } from "./primitives.ts";
 import { RUN_TITLE_MAX } from "./run-title.ts";
 import { ReasoningSummary } from "./step-result.ts";
-import { ToolName, type ComputerAction } from "./tools.ts";
+import { ToolName, type ComputerAction } from "./tool-call.ts";
 
 /** Pointer kinds the run view animates; the agent sets `pointer` for computer steps that start with one. */
 export const POINTER_KINDS = ["click", "double_click", "drag", "move", "scroll"] as const;

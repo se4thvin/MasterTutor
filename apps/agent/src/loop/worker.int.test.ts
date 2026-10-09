@@ -1261,7 +1261,7 @@ async function switchMode(id: string, mode: "ask" | "auto_within_allowlist" | "b
       type: "approval_mode_changed",
       from: before!.approvalMode,
       to: mode,
-      by: "user-1",
+      by: PersonDecider.parse("user-1"),
     });
   });
 }

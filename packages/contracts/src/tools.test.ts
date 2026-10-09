@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { strictSchemaProblems } from "./testing/strict-schema.ts";
 import {
   CaptureArgs,
-  ComputerAction,
   CREDENTIAL_ERROR_CODES,
   FillCredentialArgs,
   FOCUSED_TARGET,
@@ -10,10 +9,10 @@ import {
   isToolInProfile,
   ReadPageElement,
   ReadPageResult,
-  TOOL_NAMES,
   TOOL_PROFILE_TOOLS,
   VideoArgs,
 } from "./tools.ts";
+import { ComputerAction, TOOL_NAMES } from "./tool-call.ts";
 
 describe("tool list", () => {
   it("is exactly the 7 spec tools", () => {

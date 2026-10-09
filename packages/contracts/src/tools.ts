@@ -1,20 +1,8 @@
 import { z } from "zod";
-import { VIEWPORT } from "./constants.ts";
 import { ANNOTATE_KINDS, CredentialField, Fidelity, VideoOp, type ToolProfile } from "./enums.ts";
 import { Alias, ElementRef, Sha256Hex, Uuid } from "./primitives.ts";
+import { TOOL_NAMES, type ToolName } from "./tool-call.ts";
 
-/** Exactly these tools reach the model (spec §6). There is no exec_* tool. */
-export const TOOL_NAMES = [
-  "computer",
-  "read_page",
-  "capture",
-  "fill_credential",
-  "use_passkey",
-  "video",
-  "annotate",
-] as const;
-export const ToolName = z.enum(TOOL_NAMES);
-export type ToolName = z.infer<typeof ToolName>;
 export const FUNCTION_TOOL_NAMES = [
   "read_page",
   "capture",
@@ -38,48 +26,6 @@ export function isToolInProfile(profile: ToolProfile, tool: ToolName): boolean {
   return (TOOL_PROFILE_TOOLS[profile] as readonly ToolName[]).includes(tool);
 }
 
-const X = z
-  .number()
-  .int()
-  .min(0)
-  .max(VIEWPORT.width - 1);
-const Y = z
-  .number()
-  .int()
-  .min(0)
-  .max(VIEWPORT.height - 1);
-const Point = z.object({ x: X, y: Y });
-const ScrollDelta = z.number().int().min(-10_000).max(10_000);
-
-export const COMPUTER_ACTION_TYPES = [
-  "click",
-  "double_click",
-  "drag",
-  "move",
-  "scroll",
-  "keypress",
-  "type",
-  "wait",
-  "screenshot",
-] as const;
-/** Allowlist over OpenAI's native computer_call actions; anything else is rejected. */
-export const ComputerAction = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("click"),
-    x: X,
-    y: Y,
-    button: z.enum(["left", "right", "wheel", "back", "forward"]).default("left"),
-  }),
-  z.object({ type: z.literal("double_click"), x: X, y: Y }),
-  z.object({ type: z.literal("drag"), path: z.array(Point).min(2).max(100) }),
-  z.object({ type: z.literal("move"), x: X, y: Y }),
-  z.object({ type: z.literal("scroll"), x: X, y: Y, scroll_x: ScrollDelta, scroll_y: ScrollDelta }),
-  z.object({ type: z.literal("keypress"), keys: z.array(z.string().min(1).max(32)).min(1).max(8) }),
-  z.object({ type: z.literal("type"), text: z.string().max(5_000) }),
-  z.object({ type: z.literal("wait") }),
-  z.object({ type: z.literal("screenshot") }),
-]);
-export type ComputerAction = z.infer<typeof ComputerAction>;
 export const ComputerResult = z.object({ screenshotKey: z.string().min(1).max(1024) });
 export type ComputerResult = z.infer<typeof ComputerResult>;
 

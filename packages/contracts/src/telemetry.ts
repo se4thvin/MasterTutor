@@ -19,8 +19,10 @@ import type {
   SlotState,
   StepPhase,
 } from "./enums.ts";
-import type { CopilotToolName, GuardCategory, GuardStage, GuardVerdictName } from "./observer.ts";
-import type { ToolName } from "./tools.ts";
+import type { GuardCategory, GuardStage, GuardVerdictName } from "./guard-codes.ts";
+import type { CopilotToolName } from "./observer.ts";
+import type { ObserverRole } from "./observer-roles.ts";
+import type { ToolName } from "./tool-call.ts";
 
 export const TRACER_NAME = "mastertutor";
 export const METER_NAME = "mastertutor";
@@ -139,12 +141,7 @@ export const DEPENDENCIES = [
   "push",
 ] as const;
 export type Dependency = (typeof DEPENDENCIES)[number];
-/**
- * The Observer's roles (D52). Track D adds the document designer (D53b). Each is also a reserved
- * name that can never be a person's decider (RESERVED_DECIDERS in ./approval.ts).
- */
-export const OBSERVER_ROLES = ["guard", "watcher", "copilot"] as const;
-export type ObserverRole = (typeof OBSERVER_ROLES)[number];
+export { OBSERVER_ROLES, type ObserverRole } from "./observer-roles.ts";
 export const OBSERVER_OUTCOMES = [
   "ok",
   "timeout",
