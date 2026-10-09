@@ -1,0 +1,127 @@
+test_api_errors_cannot_be_counted_as_successful_boots (test_boot.MeasurementTests.test_api_errors_cannot_be_counted_as_successful_boots) ... ok
+test_p95_is_nearest_rank_and_includes_the_slowest_of_ten (test_boot.MeasurementTests.test_p95_is_nearest_rank_and_includes_the_slowest_of_ten) ... ok
+test_rejects_empty_measurements (test_boot.MeasurementTests.test_rejects_empty_measurements) ... ok
+test_unix_api_reaches_a_real_socket (test_boot.MeasurementTests.test_unix_api_reaches_a_real_socket) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
+ Image mt-vm-p0-firecracker:1.17.0 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 606B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.70kB done
+#2 DONE 0.1s
+
+#3 [internal] load metadata for docker.io/library/debian:trixie-slim
+#3 DONE 0.2s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [rootfs 1/5] FROM docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 162B done
+#6 DONE 0.0s
+
+#7 [rootfs 2/5] RUN apt-get update && apt-get install -y --no-install-recommends squashfs-tools e2fsprogs && rm -rf /var/lib/apt/lists/*
+#7 CACHED
+
+#8 [rootfs 3/5] COPY images/rootfs.squashfs /tmp/rootfs.squashfs
+#8 CACHED
+
+#9 [rootfs 4/5] RUN echo '1d50b8fff4410e9fbe29de5b65f4a4b74efb901ab14071288cd8fb4a753f0fdd  /tmp/rootfs.squashfs' | sha256sum -c -
+#9 0.882 /tmp/rootfs.squashfs: OK
+#9 DONE 1.1s
+
+#10 [rootfs 5/5] RUN unsquashfs -processors 4 -d /tree /tmp/rootfs.squashfs && rm -rf /tree/root/.ssh /tree/home/*/.ssh &&     sed -i 's/^\([^:]*\):[^:]*:/\1:!:/' /tree/etc/shadow &&     truncate -s 1G /rootfs.ext4 && mkfs.ext4 -q -F -d /tree -L mtquickstart /rootfs.ext4
+#10 0.582 Parallel unsquashfs: Using 4 processors
+#10 0.582 7724 inodes (9073 blocks) to write
+#10 0.582 
+#10 0.582 [=================/                                          ]  5109/16797  30%[==========================================/                 ] 12085/16797  71%[===========================================================-] 16797/16797 100%
+#10 1.030 
+#10 1.030 created 7055 files
+#10 1.030 created 1466 directories
+#10 1.030 created 667 symlinks
+#10 1.030 created 0 devices
+#10 1.030 created 0 fifos
+#10 1.030 created 0 sockets
+#10 1.030 created 2 hardlinks
+#10 DONE 3.2s
+
+#11 [stage-1 2/7] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl iproute2 util-linux socat python3 libcap2-bin &&     curl -fsSLo /tmp/fc.tgz "https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-x86_64.tgz" &&     echo "06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558  /tmp/fc.tgz" | sha256sum -c - &&     tar -xzf /tmp/fc.tgz -C /tmp && install -m 0755 /tmp/release-*/firecracker-v1.17.0-x86_64 /usr/local/bin/firecracker &&     useradd -u 10001 -U -M fc && rm -rf /tmp/* /var/lib/apt/lists/*
+#11 CACHED
+
+#12 [stage-1 3/7] COPY --from=rootfs /rootfs.ext4 /opt/vm/rootfs.ext4
+#12 DONE 1.7s
+
+#13 [stage-1 4/7] COPY images/vmlinux /opt/vm/vmlinux
+#13 DONE 0.2s
+
+#14 [stage-1 5/7] RUN echo '6e105082d617064296680262ddf53844f292da803165e74e1a4f051940de48ef  /opt/vm/vmlinux' | sha256sum -c -
+#14 0.472 /opt/vm/vmlinux: OK
+#14 DONE 0.6s
+
+#15 [stage-1 6/7] COPY boot.py /opt/spike/boot.py
+#15 DONE 0.1s
+
+#16 [stage-1 7/7] COPY boot.sh /usr/local/bin/boot.sh
+#16 DONE 0.1s
+
+#17 exporting to image
+#17 exporting layers
+#17 exporting layers 6.9s done
+#17 writing image sha256:43baddac43fb10ba222d5bdfc17ccade6923e58b4095ce391b712f4ff80fa644 done
+#17 naming to docker.io/library/mt-vm-p0-firecracker:1.17.0 done
+#17 DONE 6.9s
+
+#18 resolving provenance for metadata file
+#18 DONE 0.0s
+ Image mt-vm-p0-firecracker:1.17.0 Built 
+ Container mt-vm-p0-boot-fc Creating 
+ Container mt-vm-p0-boot-fc Created 
+Attaching to mt-vm-p0-boot-fc
+ Container mt-vm-p0-boot-fc Starting 
+mt-vm-p0-boot-fc  | container-init-status
+mt-vm-p0-boot-fc  | CapInh:	0000000000000000
+mt-vm-p0-boot-fc  | CapPrm:	00000000000010c0
+mt-vm-p0-boot-fc  | CapEff:	00000000000010c0
+mt-vm-p0-boot-fc  | CapBnd:	00000000000010c0
+mt-vm-p0-boot-fc  | CapAmb:	0000000000000000
+mt-vm-p0-boot-fc  | NoNewPrivs:	1
+mt-vm-p0-boot-fc  | Seccomp:	2
+mt-vm-p0-boot-fc  | 0x00000000000010c0=cap_setgid,cap_setuid,cap_net_admin
+ Container mt-vm-p0-boot-fc Started 
+mt-vm-p0-boot-fc  | swap-max=0
+mt-vm-p0-boot-fc  | {"uid": 10001, "swap_max": "0"}
+mt-vm-p0-boot-fc  | {"run": 1, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 1, "boot_ms": 2204.441656, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 2, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 2, "boot_ms": 2221.752658, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 3, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 3, "boot_ms": 2259.155718, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 4, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 4, "boot_ms": 2123.382121, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 5, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 5, "boot_ms": 2385.50307, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 6, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 6, "boot_ms": 2363.320658, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 7, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 7, "boot_ms": 2101.956417, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 8, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 8, "boot_ms": 2229.35045, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 9, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 9, "boot_ms": 2118.703596, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"run": 10, "vmm_status": {"Uid": "10001\t10001\t10001\t10001", "Gid": "10001\t10001\t10001\t10001", "Groups": "994", "CapInh": "0000000000000000", "CapPrm": "0000000000000000", "CapEff": "0000000000000000", "CapBnd": "00000000000010c0", "CapAmb": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"}}
+mt-vm-p0-boot-fc  | {"run": 10, "boot_ms": 2152.025347, "userspace_login": true}
+mt-vm-p0-boot-fc  | {"n": 10, "boot_p50_ms": 2204.441656, "boot_p95_ms": 2385.50307}
+[Kmt-vm-p0-boot-fc exited with code 0
+ Compose Stopping Aborting on container exit...
+ Container mt-vm-p0-boot-fc Stopping 
+ Container mt-vm-p0-boot-fc Stopped 

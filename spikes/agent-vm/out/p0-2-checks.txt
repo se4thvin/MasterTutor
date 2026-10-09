@@ -1,0 +1,10 @@
+coursebite, existing CI runner, 16 CPUs / 8 workers
+Python measurement helpers: 4/4 PASS
+pnpm typecheck: PASS
+pnpm lint: PASS
+pnpm test --maxWorkers=8 -t '^(?!.*(deployment files|the committed \.env\.test|fixture UI config)).*$':
+2310 passed, 1 failed, 9 skipped; 321 files passed, 1 failed, 2 skipped.
+Failure: tests/security/inventory.test.ts, lists every *.security.test.ts, so none runs unaccounted for.
+Reason: pre-existing apps/agent/src/guardrails/observer/guard.security.test.ts absent from INVENTORY.
+Two original skips; seven tests omitted with their env-reading suite names.
+DB integration: no application/DB package touched.

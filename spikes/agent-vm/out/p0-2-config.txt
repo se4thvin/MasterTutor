@@ -1,0 +1,1 @@
+ro=true privileged=false caps=["CAP_NET_ADMIN","CAP_SETGID","CAP_SETUID"] drops=["ALL"] memory=10737418240 memswap=10737418240 cpus=4000000000 pids=256 security=["no-new-privileges:true"] devices=[{"CgroupPermissions":"rwm","PathInContainer":"/dev/kvm","PathOnHost":"/dev/kvm"},{"CgroupPermissions":"rwm","PathInContainer":"/dev/net/tun","PathOnHost":"/dev/net/tun"}] ports={}

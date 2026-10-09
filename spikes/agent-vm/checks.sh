@@ -17,10 +17,10 @@ name="mt-vm-p0-check-$2"
 # Reuse the existing CI runner; no host package installs or new unlabelled image.
 image="$(docker image ls --format '{{.Repository}}:{{.Tag}}' --filter reference='mt-ci-runner:*' | head -1)"
 [[ -n "$image" ]] || { echo 'NO-GO: existing CI runner unavailable'; exit 2; }
-docker run --rm --name "$name" --label mt-vm-p0=1 --label "mt-vm-p0.run=$name" \
+docker run -i --rm --name "$name" --label mt-vm-p0=1 --label "mt-vm-p0.run=$name" \
   --cpus 16 --memory 32g --user "$(id -u):$(id -g)" \
   -v "$work:$work" -w "$work" -e HOME=/tmp -e CI=1 \
-  "$image" bash -c '
+  "$image" bash -s <<'CHECKS'
     pnpm install --frozen-lockfile --prefer-offline --reporter=append-only || exit
     status=0
     pnpm typecheck; result=$?; echo "P0_CHECK typecheck=$result"; [[ "$result" == 0 ]] || status=1
@@ -31,5 +31,5 @@ docker run --rm --name "$name" --label mt-vm-p0=1 --label "mt-vm-p0.run=$name" \
     pnpm test --maxWorkers=8 -t "^(?!.*(deployment files|the committed \.env\.test|fixture UI config)).*$"
     result=$?; echo "P0_CHECK unit=$result"; [[ "$result" == 0 ]] || status=1
     exit "$status"
-  '
+CHECKS
 REMOTE
