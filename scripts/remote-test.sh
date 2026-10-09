@@ -118,6 +118,17 @@ test_counts() {
 }
 
 if [[ "$suite" == all ]]; then
+  # One `all` at a time from this machine: parallel full runs overload the shared host and fail
+  # tests for load, not code. Other worktrees wait; a lock whose owner died is taken over.
+  lock=/tmp/mt-remote-all.lock
+  until mkdir "$lock" 2>/dev/null; do
+    owner="$(cat "$lock/pid" 2>/dev/null)"
+    if [[ -n "$owner" ]] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$lock"; continue; fi
+    [[ -n "${waited:-}" ]] || { echo "remote-test: waiting for another 'all' run (pid ${owner:-?})" >&2; waited=1; }
+    sleep 30
+  done
+  echo $$ >"$lock/pid"
+  trap 'rm -rf "$lock"' EXIT
   logs="$(mktemp -d "${TMPDIR:-/tmp}/mt-remote-all.XXXXXX")"
   echo "remote-test: all suites at once; logs in $logs" >&2
   start=$SECONDS
