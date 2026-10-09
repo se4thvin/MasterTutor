@@ -4,6 +4,7 @@ import { instrument } from "@mastertutor/telemetry/instrument";
 import { recordModelTokens } from "@mastertutor/telemetry/record";
 import { APIError } from "./openai.ts";
 import type { Clock } from "../runtime/clock.ts";
+import { DECIDE_SLOW_MS, DECIDE_TIMEOUT_MS } from "../runtime/config.ts";
 import { ContextOverflow, ModelUnavailable, interruptionOf } from "../runtime/errors.ts";
 import type { ModelClient, ModelReply, ModelRequest } from "./client.ts";
 import { costUsd } from "@mastertutor/contracts";
@@ -77,25 +78,48 @@ export class ModelCaller {
   readonly #clock: Clock;
   readonly #fallbackAfter5xx: number;
   readonly #maxAttempts: number;
+  readonly #decideTimeoutMs: number;
+  readonly #decideSlowMs: number;
 
   constructor(
     client: ModelClient,
-    options: { clock: Clock; fallbackAfter5xx: number; maxAttempts?: number },
+    options: {
+      clock: Clock;
+      fallbackAfter5xx: number;
+      maxAttempts?: number;
+      decideTimeoutMs?: number;
+      decideSlowMs?: number;
+    },
   ) {
     this.#client = client;
     this.#clock = options.clock;
     this.#fallbackAfter5xx = options.fallbackAfter5xx;
     this.#maxAttempts = options.maxAttempts ?? 10;
+    this.#decideTimeoutMs = options.decideTimeoutMs ?? DECIDE_TIMEOUT_MS;
+    this.#decideSlowMs = options.decideSlowMs ?? DECIDE_SLOW_MS;
   }
 
   /** Seam 4 (spec §7.3): one mt.model.request span covering every retry and the fallback. */
-  call(request: ModelRequest, signal: AbortSignal): Promise<CallResult> {
+  call(
+    request: ModelRequest,
+    signal: AbortSignal,
+    onProgress?: (caption: string) => Promise<void>,
+  ): Promise<CallResult> {
     return instrument(
       SPAN.modelRequest,
       { [ATTR.modelName]: request.model },
       async (span) => {
-        const result = await this.#attempts(request, signal, (attempt) =>
-          span.set({ [ATTR.modelAttempts]: attempt }),
+        if (request.format === "agent_turn")
+          span.set({ [ATTR.decideTimeouts]: 0, [ATTR.decideRetries]: 0 });
+        const result = await this.#attempts(
+          request,
+          signal,
+          (attempt, timeouts) => {
+            span.set({ [ATTR.modelAttempts]: attempt });
+            if (timeouts > 0) span.set({ [ATTR.decideRetries]: 1 });
+          },
+          (count) => span.set({ [ATTR.decideTimeouts]: count }),
+          onProgress,
         );
         const tokens = result.reply.usage;
         span.set({
@@ -116,17 +140,34 @@ export class ModelCaller {
   async #attempts(
     request: ModelRequest,
     signal: AbortSignal,
-    onAttempt: (attempt: number) => void,
+    onAttempt: (attempt: number, timeouts: number) => void,
+    onTimeout: (count: number) => void,
+    onProgress?: (caption: string) => Promise<void>,
   ): Promise<CallResult> {
     let model = request.model;
     let fallback: CallResult["fallback"] = null;
     let consecutive5xx = 0;
+    let timeouts = 0;
     for (let attempt = 1; ; attempt++) {
-      onAttempt(attempt);
+      signal.throwIfAborted();
+      onAttempt(attempt, timeouts);
+      const deadline = new AbortController();
       try {
-        return { reply: await this.#client.create({ ...request, model }, signal), model, fallback };
+        return {
+          reply: await this.#create({ ...request, model }, signal, deadline, onProgress),
+          model,
+          fallback,
+        };
       } catch (error) {
         if (signal.aborted) throw signal.reason;
+        if (deadline.signal.aborted) {
+          timeouts++;
+          onTimeout(timeouts);
+          if (timeouts === 2)
+            throw new ModelUnavailable("model_unavailable", "The model is unavailable.", error);
+          await this.#progress("Model slow, retrying…", signal, onProgress);
+          continue;
+        }
         const kind = classifyModelError(error);
         if (kind === "context_overflow") throw new ContextOverflow();
         if (kind === "fatal")
@@ -152,6 +193,45 @@ export class ModelCaller {
           throw new ModelUnavailable("model_rate_limited", "The model kept rate-limiting.", error);
         await this.#clock.sleep(backoffMs(attempt, retryAfterMs(error)), signal);
       }
+    }
+  }
+
+  async #create(
+    request: ModelRequest,
+    signal: AbortSignal,
+    deadline: AbortController,
+    onProgress?: (caption: string) => Promise<void>,
+  ): Promise<ModelReply> {
+    if (request.format !== "agent_turn") return this.#client.create(request, signal);
+    let notice: Promise<void> | undefined;
+    const slow = setTimeout(() => {
+      notice = this.#progress("Waiting on the model…", signal, onProgress);
+    }, this.#decideSlowMs);
+    const timeout = setTimeout(
+      () => deadline.abort(new DOMException("Decide deadline exceeded", "TimeoutError")),
+      this.#decideTimeoutMs,
+    );
+    try {
+      return await this.#client.create(request, AbortSignal.any([signal, deadline.signal]));
+    } finally {
+      clearTimeout(slow);
+      clearTimeout(timeout);
+      // A notice already being stored must precede the final step event.
+      await notice;
+    }
+  }
+
+  async #progress(
+    caption: string,
+    signal: AbortSignal,
+    onProgress?: (caption: string) => Promise<void>,
+  ): Promise<void> {
+    if (signal.aborted) return;
+    // A status update is best effort; it must never fail or retry a paid response.
+    try {
+      await onProgress?.(caption);
+    } catch {
+      /* The step's normal commit checks its lease. */
     }
   }
 }

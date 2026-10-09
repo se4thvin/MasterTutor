@@ -1,3 +1,7 @@
+/** No computer-use latency distribution is checked in; live decides normally take 3–5 s. */
+export const DECIDE_TIMEOUT_MS = 45_000;
+export const DECIDE_SLOW_MS = 15_000;
+
 /** Agent runtime timings and thresholds (spec §5). Tests shorten them; production uses the defaults. */
 export interface RuntimeConfig {
   heartbeatMs: number;

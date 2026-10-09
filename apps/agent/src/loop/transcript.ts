@@ -3,6 +3,7 @@ import { objectKeys, type Storage } from "@mastertutor/storage";
 import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
+import { TurnContextCheckpoint } from "./turn-context.ts";
 import { parseModelOutput, type PendingCall } from "../llm/items.ts";
 
 export const GARAGE_REF = "garage:";
@@ -10,6 +11,7 @@ export const GARAGE_REF = "garage:";
 /** One Responses item, stored with images replaced by Garage keys (spec §4 run_transcript). */
 export const TranscriptEntry = z.object({
   dir: z.enum(["in", "out"]),
+  turnContext: TurnContextCheckpoint.optional(),
   item: z.record(z.string(), z.unknown()),
   responseId: z.string().nullable(),
   userEventId: z.string().nullable(),

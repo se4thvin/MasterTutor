@@ -423,6 +423,12 @@ ShellResult = { exitCode: int, stdout: string ≤ 32000, stderr: string ≤ 8000
 - **Storage.** The original file is stored as an asset and a `downloads` row (`approvedBy` = the decider), and `download_ready` is emitted. So the file the person approved exporting is also theirs to keep.
 - **Provenance.** Blocks keep `origin: "pdf"` (docling or pdf.js). The source URL is `file://<basename>`, which is display only.
 
+### 10.5 Turn context (D56)
+
+`apps/agent/src/loop/turn-context.ts` is the single path for model-visible run facts. At a turn boundary it derives allowed origins, saved sign-in aliases/origins/field names, approval mode, budget, plan, takeover and wait state from their owners. It emits only changed facts as `Executor:` input, and restates all facts after compaction. No credential values or labels enter this context (D38 rule 3).
+
+Desktop facts plug into this same module: immutable run environment, the validated file list, shell cwd, per-lease taint and which apps are open. P1 supplies the environment/provider facts; P3 supplies validated desktop observations and shell state. Use data already loaded by the provider, observation and lease, with no second prompt or extra per-step DB reads. Guest-provided paths and app names remain bounded, validated untrusted data, never executor instructions. Desktop v1 continues to expose no vault tools or sessions (§12.1).
+
 ## 11. Approvals
 
 ### 11.1 Kinds (decision (c))

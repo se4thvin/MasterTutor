@@ -112,6 +112,7 @@ export async function setup(
     titler?: RunTitler;
     guards?: StepGuardFactory;
     observerMode?: ObserverMode;
+    modelTimings?: { decideTimeoutMs?: number; decideSlowMs?: number };
   } = {},
 ) {
   const name = `s${++counter}`;
@@ -131,7 +132,7 @@ export async function setup(
   const storage = createMemoryStorage();
   const caller = new ModelCaller(
     createOpenAIModelClient({ apiKey: "k", baseURL: `${mock.url}/v1` }),
-    { clock: instantClock(), fallbackAfter5xx: 3 },
+    { clock: instantClock(), fallbackAfter5xx: 3, ...options.modelTimings },
   );
   const deps = async () => ({
     db: agent.db,

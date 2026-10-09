@@ -60,7 +60,7 @@ export interface RunHooks {
   maskSources(runId: string): MaskSources;
   control: ControlTransitions;
   functionTools: readonly RegisteredTool[];
-  promptContext(run: RunSnapshot): Promise<string[]>;
+  promptContext(run: RunSnapshot, currentOrigin?: string | null): Promise<string[]>;
   /** Whether the run may sign in on this origin from the vault; without it a sign-in page pauses the run. */
   hasSignIn(run: RunSnapshot, origin: string): Promise<boolean>;
   /** After an executed computer click (B3 logout detection): the target's accessible name and the page URL. */
@@ -135,8 +135,8 @@ export function composeRunHooks(...parts: Partial<RunHooks>[]): Partial<RunHooks
     ...(tools.length > 0 ? { functionTools: tools } : {}),
     ...(contexts.length > 0
       ? {
-          promptContext: async (run: RunSnapshot) =>
-            (await Promise.all(contexts.map((context) => context(run)))).flat(),
+          promptContext: async (run: RunSnapshot, currentOrigin?: string | null) =>
+            (await Promise.all(contexts.map((context) => context(run, currentOrigin)))).flat(),
         }
       : {}),
     ...(leased.length > 0

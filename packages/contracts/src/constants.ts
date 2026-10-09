@@ -94,3 +94,6 @@ export const SlotList = z
 export function parseBrowserSlots(csv: string): string[] {
   return SlotList.parse(csv);
 }
+
+/** Includes origins inferred from source URLs in the goal. */
+export const MAX_ALLOWED_ORIGINS = 50;

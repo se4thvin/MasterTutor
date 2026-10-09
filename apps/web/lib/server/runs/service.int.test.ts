@@ -816,3 +816,21 @@ describe("runs.sendMessage delivery (run-mode: queue or interrupt)", () => {
     expect((await runRow(runId)).wakeRequestedAt).not.toBeNull();
   });
 });
+
+describe("goal sources at the server create boundary", () => {
+  it("persists goal URL origins before the agent can claim the run", async () => {
+    const goal =
+      "https://learn.zybooks.com/zybook/course/chapter/4/section/4\n\nTake notes on this page";
+    const run = await client().runs.create({ goal });
+    expect(await runRow(run.id)).toMatchObject({
+      goal,
+      allowedOrigins: ["https://learn.zybooks.com"],
+      status: "queued",
+    });
+  });
+  it("refuses a private goal source", async () => {
+    await expect(
+      client().runs.create({ goal: "Take notes http://127.0.0.1/private" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
