@@ -104,6 +104,13 @@ const clickNotes: MockTurn = { outputs: [{ type: "click_named", name: "Notes" }]
 const typeLong: MockTurn = {
   outputs: [{ type: "computer", actions: [{ type: "type", text: "y".repeat(5_000) }] }],
 };
+/**
+ * Typing after a hand back. Typing is one character per CDP call (about 5 ms each, so 5,000
+ * characters take about 25 s): only the act a takeover must interrupt needs to be long.
+ */
+const typeShort: MockTurn = {
+  outputs: [{ type: "computer", actions: [{ type: "type", text: "z".repeat(50) }] }],
+};
 const done: MockTurn = { outputs: [{ type: "turn", status: "done", reason: "Finished" }] };
 const isTyping = (action: unknown) =>
   ((action as { summary?: string } | null)?.summary ?? "").startsWith("type");
@@ -229,9 +236,9 @@ describe("takeover through B1's lock with the n.eko live view (spec §10.3, §12
       readInteractive,
       clickNotes,
       typeLong,
-      typeLong,
-      typeLong,
-      typeLong,
+      typeShort,
+      typeShort,
+      typeShort,
       done,
     ]);
     const runId = await createRun(agent, `[scenario:${name}] ${SITE}/interactive.html`);
@@ -271,7 +278,12 @@ describe("takeover through B1's lock with the n.eko live view (spec §10.3, §12
       windows.push([mark.at, next?.at ?? new Date(8.64e15)]);
     });
     expect(windows.length).toBeGreaterThan(0);
-    for (const step of (await steps(agent, runId)).filter((s) => s.phase === "act")) {
+    const acts = (await steps(agent, runId)).filter((s) => s.phase === "act");
+    // Not vacuous: the agent acted again after the last hand back (the take that ends the last
+    // window; a later take seats the agent as the lease ends), so a window could have caught it.
+    const lastHandBack = windows.at(-1)![1].getTime();
+    expect(acts.some((act) => act.createdAt.getTime() > lastHandBack)).toBe(true);
+    for (const step of acts) {
       for (const [given, taken] of windows) {
         const started = step.createdAt.getTime();
         expect(started > given.getTime() && started < taken.getTime(), `act ${step.seq}`).toBe(

@@ -3,12 +3,16 @@ import { createLogger } from "@mastertutor/contracts/server";
 import { SPAN } from "@mastertutor/contracts/telemetry";
 import { instrument, recordRunEvent } from "@mastertutor/telemetry";
 import { installTestTelemetry } from "@mastertutor/telemetry/testing";
+import { EMPTY_USAGE } from "@mastertutor/contracts";
+import type { Database } from "@mastertutor/db";
 import { describe, expect, it } from "vitest";
 import type { BrowserSession } from "./browser/session.ts";
 import { NO_MASK_SOURCES } from "./browser/masking.ts";
 import { APIError } from "./llm/openai.ts";
 import { ModelCaller } from "./llm/caller.ts";
 import { StepCollector } from "./loop/step-collector.ts";
+import { NO_SESSION_STORE, StepStore } from "./loop/step-store.ts";
+import { createMemoryStorage } from "./testing/memory-storage.ts";
 import { instantClock } from "./runtime/clock.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import { ToolError, register } from "./tools/types.ts";
@@ -70,6 +74,26 @@ describe("no secret, page text, prompt or screenshot leaves through telemetry (s
         )
         .catch(() => undefined);
       log.info({ password: CANARY, code: "123456" }, "fill attempted");
+      log.error({ err: new Error(`${PAGE_TEXT} ${CANARY}`), userId: CANARY }, "boot check failed");
+      // Seam 5: a commit whose database error quotes a value (Postgres does: "Key (x)=(…)").
+      const failing = {
+        select: (shape: Record<string, unknown>) => ({
+          from: () => ({
+            where: async () => ["usage" in shape ? { usage: EMPTY_USAGE } : { value: null }],
+          }),
+        }),
+        transaction: async () => {
+          throw new Error(`duplicate key value: Key (secret)=(${CANARY}) ${PAGE_TEXT}`);
+        },
+      } as unknown as Database;
+      const store = await StepStore.open({
+        db: failing,
+        storage: createMemoryStorage(),
+        sessionStore: NO_SESSION_STORE,
+        owner: "canary",
+        run: { id: ctx.runId, workspaceId: ctx.workspaceId },
+      });
+      await store.commit({ run: { usage: { ...EMPTY_USAGE, usd: 1 } } }).catch(() => undefined);
       recordRunEvent({ type: "user_message", text: CANARY });
       recordRunEvent({ type: "error", code: "needs_human", message: PAGE_TEXT });
       await instrument(
@@ -82,6 +106,7 @@ describe("no secret, page text, prompt or screenshot leaves through telemetry (s
     for (const canary of [CANARY, "CANARY-PAGE-TEXT", PNG, "123456", "token="])
       expect(exported, canary).not.toContain(canary);
     expect(exported).toContain("mt.step");
+    expect(telemetry.spans().map((s) => s.name)).toContain("mt.step.commit");
     await telemetry.shutdown();
   });
 });

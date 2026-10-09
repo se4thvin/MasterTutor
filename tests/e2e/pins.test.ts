@@ -20,4 +20,10 @@ describe("Playwright pins (P7-11)", () => {
   it("pins axe exactly", () => {
     expect(dep(manifest("apps/web/package.json"), "@axe-core/playwright")).toBe("4.13.0");
   });
+
+  it("takes pnpm's version from package.json packageManager, never a second copy (review Minor 5)", () => {
+    const dockerfile = readFileSync(new URL("./Dockerfile", import.meta.url), "utf8");
+    expect(dockerfile).not.toMatch(/pnpm@\d/);
+    expect(dockerfile).toMatch(/^RUN corepack enable/m);
+  });
 });

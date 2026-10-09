@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ComposeConfig } from "./compose-json.ts";
-import { prodModeProblems, WORKERS } from "./prod-mode.ts";
+import { LOCAL_INGRESS_SERVICE, prodModeProblems, WORKERS } from "./prod-mode.ts";
 
 const hardened = {
   read_only: true,
@@ -49,8 +50,8 @@ describe("prodModeProblems (D47)", () => {
     config.services["browser-1"]!.environment!.SLOT_EGRESS_ALLOW_CIDRS = "10.0.0.0/8";
     const problems = prodModeProblems(config);
     expect(problems).toEqual([
-      "service llm-mock: test-only, must not run (D47)",
-      "service fixtures: test-only, must not run (D47)",
+      "service llm-mock: not a production service (D47)",
+      "service fixtures: not a production service (D47)",
       "web.WEB_FIXTURE_API: must be unset (D47)",
       "agent.AGENT_TEST_MODE: must be 0 (D47)",
       "agent.OPENAI_BASE_URL: must be empty (real OpenAI only, D38/D47)",
@@ -129,5 +130,107 @@ describe("prodModeProblems (D47)", () => {
     const config = prodLike();
     delete config.services.agent!.environment!.AGENT_TEST_MODE;
     expect(prodModeProblems(config)).toEqual(["agent.AGENT_TEST_MODE: must be 0 (D47)"]);
+  });
+
+  it("refuses every service of the test stack's profiles, the bench fixture site included", () => {
+    const config = prodLike();
+    config.services["bench-fixtures"] = {};
+    expect(prodModeProblems(config)).toEqual([
+      "service bench-fixtures: not a production service (D47)",
+    ]);
+  });
+
+  it("refuses a test service under any name: production is an allowlist (review I2)", () => {
+    const config = prodLike();
+    config.services["model-proxy"] = { image: "nginx:1.30.5-alpine-slim" };
+    expect(prodModeProblems(config)).toEqual([
+      "service model-proxy: not a production service (D47)",
+    ]);
+  });
+
+  it("refuses a test image even under a production service name (review I2)", () => {
+    for (const image of [
+      "mastertutor/test-tools:local",
+      "mastertutor/e2e:local",
+      "registry.example/team/llm-mock:1",
+      "greenmail/standalone:2.1.14",
+    ]) {
+      const config = prodLike();
+      config.services["garage-init"] = { image };
+      expect(prodModeProblems(config), image).toEqual([
+        "service garage-init: runs a test image (D47)",
+      ]);
+    }
+  });
+});
+
+describe("the local-ingress exception (D47 bench and smoke only; group-2 final review I1)", () => {
+  const ingress = (): ComposeConfig["services"][string] => ({
+    image: "traefik:v3.7.13",
+    ports: [{ target: 80, published: "18080", host_ip: "127.0.0.1" }],
+    volumes: [
+      {
+        type: "bind",
+        source: "/var/run/docker.sock",
+        target: "/var/run/docker.sock",
+        read_only: true,
+      },
+    ],
+  });
+  const withService = (name: string, service: ComposeConfig["services"][string]) => {
+    const config = prodLike();
+    config.services[name] = service;
+    return config;
+  };
+
+  it("accepts the loopback Traefik only when the caller opts in", () => {
+    const config = withService(LOCAL_INGRESS_SERVICE, ingress());
+    expect(prodModeProblems(config, { localIngress: true })).toEqual([]);
+    // check-env (production) never opts in: there, it is not a production service.
+    expect(prodModeProblems(config)).toEqual(["service traefik: not a production service (D47)"]);
+  });
+
+  it("is strict: official image, loopback ports, docker.sock read-only, nothing else", () => {
+    const loose = ingress();
+    loose.image = "evil/traefik:latest";
+    loose.ports = [{ target: 80, published: "18080", host_ip: "0.0.0.0" }];
+    loose.volumes = [
+      { type: "bind", source: "/var/run/docker.sock", target: "/var/run/docker.sock" },
+      { type: "bind", source: "/", target: "/host", read_only: true },
+    ];
+    expect(
+      prodModeProblems(withService(LOCAL_INGRESS_SERVICE, loose), { localIngress: true }),
+    ).toEqual([
+      "traefik.image: must be the official traefik image (D47)",
+      "traefik.ports: must publish on 127.0.0.1 only (D47)",
+      "traefik.volumes: only docker.sock, read-only (D47)",
+      "traefik.volumes: only docker.sock, read-only (D47)",
+    ]);
+  });
+
+  it("still refuses a renamed test service, even with the exception", () => {
+    const renamed = withService("proxy", { image: "mastertutor/test-tools:local" });
+    expect(prodModeProblems(renamed, { localIngress: true })).toEqual([
+      "service proxy: not a production service (D47)",
+      "service proxy: runs a test image (D47)",
+    ]);
+    const disguised = withService(LOCAL_INGRESS_SERVICE, {
+      ...ingress(),
+      image: "mastertutor/test-tools:local",
+    });
+    expect(prodModeProblems(disguised, { localIngress: true })).toEqual([
+      "traefik.image: must be the official traefik image (D47)",
+      "service traefik: runs a test image (D47)",
+    ]);
+  });
+});
+
+describe("production gates (review I2)", () => {
+  it("is fed every profile by each production gate: check-env and the prod smoke (review I2)", () => {
+    for (const file of ["../../scripts/deploy/check-env.ts", "../smoke/prod-smoke.ts"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(source, file).toMatch(/prodModeProblems\(\s*resolveForProdCheck\(/);
+      expect(source, file).not.toMatch(/prodModeProblems\(\s*(config|composeConfig)\b/);
+    }
   });
 });

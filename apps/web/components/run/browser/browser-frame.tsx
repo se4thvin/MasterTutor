@@ -10,7 +10,7 @@ import {
   actNumber,
   captionFor,
   hostAndPath,
-  pausedCopy,
+  statePillLabels,
   stepLabel,
 } from "../model/copy.ts";
 import {
@@ -104,11 +104,7 @@ export function BrowserFrame(p: BrowserFrameProps) {
               Bypass
             </span>
           ) : null}
-          <StatePill
-            label={state === "paused" ? pausedCopy(model).title : pill.label}
-            tone={pill.tone}
-            pulse={pill.pulse}
-          />
+          <StatePill {...statePillLabels(state, model)} tone={pill.tone} pulse={pill.pulse} />
           <FullscreenButton target={frameRef} />
         </div>
       </div>

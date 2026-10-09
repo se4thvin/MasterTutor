@@ -12,6 +12,7 @@ const capture = (url: string, png = TINY_PNG): Observation => ({
   screenshot: { png, width: 1, height: 1, scale: 1, masked: 0, dropped: false, withheld: null },
   phash: [7],
   captcha: false,
+  signIn: false,
   scroll: { x: 0, y: 0 },
   videoTime: null,
 });

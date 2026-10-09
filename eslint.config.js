@@ -171,6 +171,9 @@ export default defineConfig(
       "packages/db/migrations/**",
       "apps/web/test-results/**",
       "apps/web/playwright-report/**",
+      // Generated test output (gitignored): the stack suite's report and the canary scan's dump.
+      "apps/web/e2e/.out/**",
+      "tests/security/.out/**",
       "orchestration/**",
       "design/**",
       "docs/**",
@@ -310,9 +313,14 @@ export default defineConfig(
     },
   },
   {
-    // D50: the alert seam tests assert their spans and metrics through the in-memory harness
-    // (@mastertutor/telemetry/testing). They test server code; client code stays banned.
-    files: ["apps/web/lib/server/alerts/*.test.ts"],
+    // Server-side web tests and the instrumentation hook are server code: they may use the
+    // Node-only contracts and telemetry (D50) like the code they test or start.
+    files: [
+      "apps/web/lib/server/**/*.test.{ts,tsx}",
+      "apps/web/app/api/**/*.test.{ts,tsx}",
+      "apps/web/instrumentation.ts",
+      "apps/web/instrumentation.test.ts",
+    ],
     rules: {
       "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
         server: true,

@@ -249,6 +249,12 @@ describe("fixture runs (F3)", () => {
     const keys = recordedSteps().flatMap((s) => (s.screenshotKey ? [s.screenshotKey] : []));
     expect(keys.length).toBeGreaterThan(0);
     for (const key of keys) expect(key).toMatch(/^runs\/[0-9a-f-]{36}\/steps\/\d+-[a-z0-9]+\.png$/);
+    // The agent screenshots what it observes; act steps carry none (group 1 review, Minor 4).
+    const shotPhases = [
+      ...recordedSteps(),
+      ...recordedEvents().flatMap((r) => (r.event.type === "step" ? [r.event] : [])),
+    ].flatMap((s) => (s.screenshotKey ? [s.phase] : []));
+    expect(new Set(shotPhases)).toEqual(new Set(["observe"]));
     const computer = recordedSteps().filter((s) => s.action?.tool === "computer");
     expect(computer.some((s) => s.action?.pointer === undefined)).toBe(true);
     expect(recordedEvents().map((r) => r.id)).toEqual([

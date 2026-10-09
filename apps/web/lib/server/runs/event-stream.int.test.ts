@@ -1,6 +1,8 @@
 import { RunEventRecord, decodeRunEventData, type RunEvent } from "@mastertutor/contracts";
 import { createDb, emitRunEvent, runs, workspaceMembers, type DbHandle } from "@mastertutor/db";
 import { seedMember, seedRun, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import { METRIC } from "@mastertutor/contracts/telemetry";
+import { installTestTelemetry } from "@mastertutor/telemetry/testing";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runEventStream } from "./event-stream.ts";
@@ -236,6 +238,26 @@ describe("GET /api/runs/:id/events (Task 0D)", () => {
       );
     const tail = await read(res, () => false, 3_000);
     expect(tail.ended).toBe(true);
+  });
+
+  it("counts each open stream once and releases it once when it closes (SSE gauge)", async () => {
+    const telemetry = installTestTelemetry();
+    const open_ = async () => (await telemetry.metric(METRIC.sseConnections.name))[0]?.value ?? 0;
+    try {
+      const runId = await seedRun(owner.db, { workspaceId, status: "running" });
+      const first = open(runId);
+      const second = open(runId);
+      await read(await first.response, (text) => text.includes("retry:"));
+      await read(await second.response, (text) => text.includes("retry:"));
+      expect(await open_()).toBe(2);
+      first.abort.abort();
+      first.abort.abort();
+      await emit(runId, status("completed"));
+      expect((await read(await second.response, () => false)).ended).toBe(true);
+      await vi.waitFor(async () => expect(await open_()).toBe(0));
+    } finally {
+      await telemetry.shutdown();
+    }
   });
 
   it("validates each record once on the hot path", async () => {

@@ -38,7 +38,7 @@ function request(
 }
 
 beforeAll(async () => {
-  fx = await startVaultFixtures({ account, mail: null });
+  fx = await startVaultFixtures({ account, mail: null, fixedOtp: "246810" });
 });
 afterAll(async () => fx?.close());
 
@@ -87,5 +87,19 @@ describe("vault fixture server", () => {
   it("sizes the PIN boxes from the account's PIN", async () => {
     const page = await request("login.fixtures.test", "/pin");
     expect(page.body.match(/id="pin\d"/g)).toHaveLength(6);
+  });
+
+  it("accepts only the fixed one-time code on /otp-fixed (E2E: the person types it)", async () => {
+    expect((await request("login.fixtures.test", "/otp-fixed")).body).toContain(
+      'autocomplete="one-time-code"',
+    );
+    const post = (code: string) =>
+      request("login.fixtures.test", "/otp-fixed", {
+        method: "POST",
+        type: "application/x-www-form-urlencoded",
+        body: `code=${code}`,
+      });
+    expect((await post("246810")).body).toContain("Code accepted");
+    expect((await post("246811")).status).toBe(401);
   });
 });

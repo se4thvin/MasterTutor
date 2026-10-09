@@ -9,9 +9,9 @@ setup("owner session", async ({ request }) => {
     failOnStatusCode: false,
   });
   if (signUp.status() !== 200) {
-    // A kept stack (KEEP_STACK=1) already has the owner: Better Auth answers 422 for the existing
-    // email, and 403 once sign-up has closed after the first user (Phase 0). Sign in instead.
-    expect([403, 422]).toContain(signUp.status());
+    // A kept stack (KEEP_STACK=1) already has the owner, so sign-up is closed (Phase 0). Closed
+    // sign-up answers 403 for every email, registered or not (no enumeration). Sign in instead.
+    expect(signUp.status()).toBe(403);
     const signIn = await request.post("/api/auth/sign-in/email", {
       headers,
       data: { email: OWNER.email, password: OWNER.password },

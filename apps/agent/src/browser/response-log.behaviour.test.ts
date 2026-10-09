@@ -35,6 +35,8 @@ describe("the main-frame response log (Task 0 review I3, M12)", () => {
     const ids = session.recentResponses().map((entry) => entry.requestId);
     expect(ids.length).toBeGreaterThan(0);
     expect(new Set(ids).size).toBe(ids.length);
-    await opener.close();
+    // Stops tab A's fetching. Closing it would close the slot's last tab: Chromium exits and the
+    // slot restarts under the next file (its CDP connect hangs up).
+    await opener.goto("about:blank");
   });
 });

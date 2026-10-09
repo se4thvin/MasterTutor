@@ -11,5 +11,7 @@ export const STACK_CANARIES = {
   password: "OSPREY8CANARY1LANTERN",
   totpSeed: "PELICANCANARYSEEDQ7X2KZ4MWV3RTYB",
   pin: "582614",
+  /** The code the vault-fixtures /otp-fixed page accepts; the person types it into CodeSlots. */
+  otp: "381952",
   imapPassword: GREENMAIL_USER.password,
 } as const;
