@@ -179,3 +179,23 @@ export function decideSafetyChecks(
   if (mode === "ask" || !originAllowed || checks.length === 0) return "ask";
   return checks.every((check) => check.code === AUTO_CLEARABLE_SAFETY_CHECK) ? "approved" : "ask";
 }
+
+/**
+ * A pending card when a person switches the run's mode mid-run (run-mode): what the new mode
+ * decides for it, by the same rules the agent applies (decideByPolicy, decideSafetyChecks).
+ * Switching to ask never resolves anything. A decision only a person may make stays pending in
+ * every mode: a sign-in card (a person's approval is a lasting vault grant, and a form posting
+ * off-origin must be a person's, D44) and a card the agent sent to a person (`personOnly`: the
+ * page could not be guarded).
+ */
+export function decideOnModeChange(
+  mode: ApprovalMode,
+  pending: { request: ApprovalRequest; personOnly: boolean },
+  originAllowed: boolean,
+): PolicyDecision {
+  const { request } = pending;
+  if (mode === "ask" || pending.personOnly || request.kind === "credential_first_use") return "ask";
+  if (request.kind === "risky_click" && request.safetyChecks)
+    return decideSafetyChecks(mode, request.safetyChecks, originAllowed);
+  return decideByPolicy(mode, request.kind);
+}

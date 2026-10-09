@@ -7,6 +7,7 @@
 import type { AlertRule } from "./alerts.ts";
 import type {
   ApprovalKind,
+  ApprovalMode,
   ApprovalStatus,
   BlockOrigin,
   BlockType,
@@ -53,6 +54,8 @@ export const ATTR = {
   approvalKind: "mt.approval.kind",
   approvalStatus: "mt.approval.status",
   approvalDecider: "mt.approval.decider",
+  approvalMode: "mt.approval.mode",
+  sendMode: "mt.send.mode",
   vaultAlias: "mt.vault.alias",
   captureFidelity: "mt.capture.fidelity",
   captureCoverage: "mt.capture.coverage",
@@ -90,6 +93,8 @@ export const TOOL_OUTCOMES = [
 export type ToolOutcome = (typeof TOOL_OUTCOMES)[number];
 export const APPROVAL_DECIDERS = ["person", "policy", "bypass"] as const;
 export type ApprovalDecider = (typeof APPROVAL_DECIDERS)[number];
+export const SEND_MODES = ["queue", "interrupt"] as const;
+export type SendMode = (typeof SEND_MODES)[number];
 export const SLOT_OUTCOMES = ["leased", "released", "ok", "timeout"] as const;
 export type SlotOutcome = (typeof SLOT_OUTCOMES)[number];
 export const TAKEOVER_OUTCOMES = ["ok", "takeover_failed", "control_restore_failed"] as const;
@@ -139,6 +144,8 @@ export interface AttributeValues {
   "mt.approval.kind": ApprovalKind;
   "mt.approval.status": ApprovalStatus;
   "mt.approval.decider": ApprovalDecider;
+  "mt.approval.mode": ApprovalMode;
+  "mt.send.mode": SendMode;
   "mt.vault.alias": string;
   "mt.capture.fidelity": Fidelity;
   "mt.capture.coverage": number;
@@ -266,6 +273,20 @@ export const METRIC = {
     unit: "{approval}",
     description: "Approvals decided",
     dimensions: [ATTR.approvalStatus, ATTR.approvalDecider],
+  }),
+  approvalModeChanges: metric({
+    name: "mt.approval_mode.changes",
+    kind: "counter",
+    unit: "{change}",
+    description: "Approval modes changed mid-run, by the new mode",
+    dimensions: [ATTR.approvalMode],
+  }),
+  runSends: metric({
+    name: "mt.run.sends",
+    kind: "counter",
+    unit: "{message}",
+    description: "Messages a person sent to a run, queued or interrupting",
+    dimensions: [ATTR.sendMode],
   }),
   controlChanges: metric({
     name: "mt.control.changes",

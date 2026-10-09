@@ -32,8 +32,12 @@ export interface GateVerdict {
    */
   allowDownload?: { url: string; approvedBy: string };
 }
-/** false: do not run; true: run (no classification to hold it to); or the gate's verdict. */
-export type ActionGate = (action: ComputerAction) => Promise<boolean | GateVerdict>;
+/** Stop the batch here for a reason other than approval (the note says why), e.g. Send now. */
+export interface GateStop {
+  stop: string;
+}
+/** false: do not run; true: run (no classification to hold it to); a stop; or the gate's verdict. */
+export type ActionGate = (action: ComputerAction) => Promise<boolean | GateStop | GateVerdict>;
 
 export const FOCUS_MOVED_REFUSAL =
   "Stopped typing: the page moved focus into another part of the page (another frame) while typing, and the rest was not typed there. Look at the screen and decide again.";
@@ -137,6 +141,10 @@ export class ComputerExecutor {
         notes.push(
           `Stopped before action ${index + 1} (${action.type}): it needs the user's approval on the page as it is now. Ask for it again as its own step.`,
         );
+        break;
+      }
+      if (verdict !== true && "stop" in verdict) {
+        notes.push(verdict.stop);
         break;
       }
       const urlBefore = this.#session.page.url();

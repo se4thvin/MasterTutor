@@ -97,6 +97,23 @@ export const CreateRunInput = z
   });
 export type CreateRunInput = z.infer<typeof CreateRunInput>;
 
+/**
+ * Changes a live run's approval mode (run-mode). Bypass needs the same acknowledgement as at
+ * creation; auto mode's allowed origins are checked against the run itself (autoModeNeedsOrigins).
+ */
+export const SetApprovalModeInput = z
+  .object({ runId: Uuid, mode: ApprovalMode, bypassAcknowledged: BypassAcknowledged })
+  .strict()
+  .refine(
+    (input) =>
+      bypassNeedsAcknowledgement({
+        approvalMode: input.mode,
+        bypassAcknowledged: input.bypassAcknowledged,
+      }),
+    BYPASS_UNACKNOWLEDGED,
+  );
+export type SetApprovalModeInput = z.infer<typeof SetApprovalModeInput>;
+
 export const ListRunsInput = PageInput.extend({ status: RunStatus.nullable().default(null) });
 export type ListRunsInput = z.infer<typeof ListRunsInput>;
 
@@ -201,6 +218,8 @@ export type RunStepView = z.infer<typeof RunStepView>;
 export const SendMessageInput = z.object({
   runId: Uuid,
   text: z.string().trim().min(1).max(4_000),
+  /** Send now: stop the current model call and the rest of the batch (run-mode). */
+  interrupt: z.boolean().default(false),
 });
 export type SendMessageInput = z.infer<typeof SendMessageInput>;
 

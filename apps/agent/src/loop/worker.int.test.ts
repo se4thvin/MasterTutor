@@ -1249,3 +1249,130 @@ describe("B6: a hand back the live view cannot complete (A12 carry-over)", () =>
     expect(browser.computerRuns).toHaveLength(1);
   });
 });
+
+/* --------------------------------- run-mode --------------------------------- */
+
+/** The web's setApprovalMode for a run with no open card: the row and its audit event. */
+async function switchMode(id: string, mode: "ask" | "auto_within_allowlist" | "bypass") {
+  await owner.db.transaction(async (tx) => {
+    const [before] = await tx.select().from(runs).where(eq(runs.id, id));
+    await tx.update(runs).set({ approvalMode: mode }).where(eq(runs.id, id));
+    await emitRunEvent(tx, id, {
+      type: "approval_mode_changed",
+      from: before!.approvalMode,
+      to: mode,
+      by: "user-1",
+    });
+  });
+}
+/** The web's sendMessage with Send now: the event, a wake request, NOTIFY run_control then run_wake. */
+async function sendNow(id: string, text: string) {
+  await owner.db.transaction(async (tx) => {
+    await emitRunEvent(tx, id, { type: "user_message", text, interrupt: true });
+    await tx
+      .update(runs)
+      .set({ wakeRequestedAt: sql`now()` })
+      .where(eq(runs.id, id));
+  });
+  await owner.sql.notify("run_control", encodeNotify("run_control", { runId: id }));
+  await owner.sql.notify("run_wake", encodeNotify("run_wake", { runId: id, reason: "message" }));
+}
+const eventsOf = async (id: string) =>
+  (
+    await owner.db
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, id))
+      .orderBy(asc(runEvents.id))
+  ).map((e) => e.payload);
+
+describe("run-mode: the approval mode changes mid-run", () => {
+  it("the next decision uses the new mode: a risky click after a switch to bypass is not asked", async () => {
+    await start();
+    // The switch lands while the model is deciding the turn that holds the risky click.
+    const { run, browser, name } = await queue(
+      [{ ...click, hold: holdFor(1_500) }, done],
+      "ask",
+      (b) => b.targets.set("10,20", riskyTarget),
+    );
+    await waitFor(async () => mock.requestsFor(name).length === 1, { label: "deciding" });
+    await switchMode(run.id, "bypass");
+    await until(run.id, (r) => r.status === "completed", "completed without asking");
+    expect(browser.computerRuns).toHaveLength(1);
+    const cards = await owner.db.select().from(approvals).where(eq(approvals.runId, run.id));
+    expect(cards.map((c) => [c.status, c.decidedBy])).toEqual([["approved", "bypass"]]);
+    // The model is told, so it does not expect to be asked.
+    expect(JSON.stringify(mock.requestsFor(name)[1]!.body.input)).toContain(
+      "the user changed the approval mode",
+    );
+  });
+
+  it("a switch back to ask makes the next risky click wait for a person", async () => {
+    await start();
+    const { run, name } = await queue([{ ...click, hold: holdFor(1_500) }, done], "ask", (b) =>
+      b.targets.set("10,20", riskyTarget),
+    );
+    await owner.db.update(runs).set({ approvalMode: "bypass" }).where(eq(runs.id, run.id));
+    await waitFor(async () => mock.requestsFor(name).length === 1, { label: "deciding" });
+    await switchMode(run.id, "ask");
+    await until(run.id, (r) => r.status === "waiting" || r.status === "sleeping", "asks");
+    const cards = await owner.db.select().from(approvals).where(eq(approvals.runId, run.id));
+    expect(cards.map((c) => c.status)).toEqual(["pending"]);
+  });
+});
+
+describe("run-mode: Send now interrupts, Send queues", () => {
+  it("an interrupt aborts a long model call at once and the next decide carries the message", async () => {
+    await start();
+    const { run, name } = await queue([
+      { ...click, hold: holdFor(10_000) },
+      { ...done, check: expectInput("Message from the user: Stop and summarise") },
+    ]);
+    await waitFor(async () => mock.requestsFor(name).length === 1, { label: "deciding" });
+    const sent = Date.now();
+    await sendNow(run.id, "Stop and summarise");
+    await until(run.id, (r) => r.status === "completed", "completed after the interrupt");
+    expect(Date.now() - sent).toBeLessThan(5_000);
+    const aborted = (await stepsOf(run.id)).filter((s) => s.state === "aborted");
+    expect(aborted.map((s) => [s.phase, s.caption])).toEqual([
+      ["decide", "Interrupted by your message"],
+    ]);
+    const read = (await eventsOf(run.id)).filter((e) => e.type === "user_messages_read");
+    expect(read).toHaveLength(1);
+  });
+
+  it("a queued message waits for the current step and is read by the next decide", async () => {
+    await start();
+    const { run, name } = await queue([
+      { ...click, hold: holdFor(1_500) },
+      { ...done, check: expectInput("Message from the user: Then reading 3") },
+    ]);
+    await waitFor(async () => mock.requestsFor(name).length === 1, { label: "deciding" });
+    await sendMessage(run.id, "Then reading 3");
+    await until(run.id, (r) => r.status === "completed", "completed");
+    expect((await stepsOf(run.id)).filter((s) => s.state === "aborted")).toEqual([]);
+    expect(JSON.stringify(mock.requestsFor(name)[0]!.body.input)).not.toContain("Then reading 3");
+  });
+
+  it("an approval card still blocks after an interrupt: no model call until a person decides", async () => {
+    await start();
+    const { run, name } = await queue(
+      [click, { ...done, check: expectInput("Message from the user: Go on") }],
+      "ask",
+      (b) => b.targets.set("10,20", riskyTarget),
+    );
+    await until(run.id, (r) => r.status === "waiting" || r.status === "sleeping", "asking");
+    await sendNow(run.id, "Go on");
+    // The wake is used up and the card still waits.
+    await waitFor(async () => (await row(run.id)).wakeRequestedAt === null, {
+      label: "wake consumed",
+      timeoutMs: 15_000,
+    });
+    expect(["waiting", "sleeping"]).toContain((await row(run.id)).status);
+    expect(mock.requestsFor(name)).toHaveLength(1);
+    const cards = await owner.db.select().from(approvals).where(eq(approvals.runId, run.id));
+    expect(cards.map((c) => c.status)).toEqual(["pending"]);
+    await approve(run.id);
+    await until(run.id, (r) => r.status === "completed", "completed after the decision");
+  });
+});

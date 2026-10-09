@@ -45,6 +45,8 @@ export function snapshotOf(row: RunRecord): RunSnapshot {
 
 export interface RunControl {
   status: RunStatus;
+  /** A person may change it mid-run (run-mode): the worker applies it before every step. */
+  approvalMode: ApprovalMode;
   waitReason: WaitReason | null;
   controller: Controller;
   leaseOwner: string | null;
@@ -54,6 +56,7 @@ export async function readRunControl(db: Database, runId: string): Promise<RunCo
   const [row] = await db
     .select({
       status: runs.status,
+      approvalMode: runs.approvalMode,
       waitReason: runs.waitReason,
       controller: runs.controller,
       leaseOwner: runs.leaseOwner,

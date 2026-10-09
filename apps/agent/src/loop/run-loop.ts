@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type ApprovalMode,
   decideByPolicy,
   decideSafetyChecks,
   BYPASS_DECIDER,
@@ -38,7 +39,7 @@ import {
 import { UNGUARDED_CLICK_REFUSAL, UNRESPONSIVE_REFUSAL } from "../tools/computer.ts";
 import type { CallApproval } from "../tools/types.ts";
 import type { CallResult as ModelCall, ModelCaller } from "../llm/caller.ts";
-import { NUDGE, agentInstructions, goalText } from "../llm/instructions.ts";
+import { NUDGE, agentInstructions, approvalModeText, goalText } from "../llm/instructions.ts";
 import {
   callSignature,
   computerCallOutput,
@@ -65,6 +66,7 @@ import {
   loadPendingApproval,
   loadUserMessages,
   markApprovalSuperseded,
+  newestInterrupt,
   safetyItem,
   type ApproveStepResult,
   type ItemDecision,
@@ -175,6 +177,14 @@ const KEPT_THROUGH_TAKEOVER: ReadonlyArray<WaitReason | null> = [
   ...WAITS_KEPT_THROUGH_TAKEOVER,
 ];
 const POLICY_BLOCKED = "Blocked by this run's approval policy.";
+/** Send now (run-mode): what the step shows, and what the model is told about what did not run. */
+export const INTERRUPTED_BY_MESSAGE = "Interrupted by your message";
+const SENT_NOW = "Not run: the user sent a message that interrupts this. Read it and decide again.";
+const sentNowStop = (index: number) =>
+  `Stopped before action ${index}: the user sent a message that interrupts this batch. Read it and decide again.`;
+/** Event ids are bigserials as text; the larger one, or whichever is set. */
+const newerId = (a: string | null, b: string | null) =>
+  a === null ? b : b === null ? a : Number(a) >= Number(b) ? a : b;
 
 /** What an approval was for; an approved action only runs while its target still classifies the same. */
 function riskOf(request: ApprovalRequest): { kind: string | null; label: string | null } {
@@ -233,6 +243,14 @@ export class RunLoop {
   #history: TranscriptEntry[] = [];
   /** Recent screenshots as data URLs, by storage key, so a request never re-reads them (M5). */
   readonly #images = new Map<string, string>();
+  /** Send now arrived since the last decide read the messages: the batch stops (run-mode). */
+  #interruptPending = false;
+  /** The newest interrupting message already taken or read, so none is acted on twice. */
+  #interruptSeen: string | null = null;
+  /** A decide's model call is in flight: Send now aborts it at once. */
+  #modelInFlight = false;
+  /** This act stopped its batch for Send now. */
+  #cutByMessage = false;
 
   private constructor(
     deps: RunLoopDeps,
@@ -272,6 +290,31 @@ export class RunLoop {
 
   get hasPendingApproval(): boolean {
     return this.#pending !== null;
+  }
+
+  /**
+   * The run's approval mode as stored now: a person may change it mid-run (run-mode). The worker
+   * applies it before every step, so it governs the next decision; the model is told.
+   */
+  useApprovalMode(mode: ApprovalMode): void {
+    if (mode === this.#run.approvalMode) return;
+    this.#run = { ...this.#run, approvalMode: mode };
+    this.#notes.push(`Executor: the user changed the approval mode. ${approvalModeText(mode)}`);
+  }
+
+  /**
+   * Send now (run-mode), on a run_control NOTIFY: whether an interrupting message arrived that
+   * nothing has acted on yet. "abort": a model call is in flight and the caller aborts it now;
+   * "soft": the batch stops before its next action (one that is running finishes); null: nothing
+   * new. Approvals, the click guard and person-only cards are untouched either way.
+   */
+  async takeInterrupt(): Promise<"abort" | "soft" | null> {
+    const after = newerId(this.#interruptSeen, this.#userCursor);
+    const id = await newestInterrupt(this.#deps.db, this.#run.id, after);
+    if (id === null) return null;
+    this.#interruptSeen = id;
+    this.#interruptPending = true;
+    return this.#modelInFlight ? "abort" : "soft";
   }
 
   /**
@@ -530,8 +573,11 @@ export class RunLoop {
     const obs = this.#obs();
     // Read the wake request before the messages, so the messages it announced are among them (I1).
     const wake = await readWakeRequest(db, runId);
+    // Cleared before the read: a Send now after it is not in this input and still interrupts.
+    this.#interruptPending = false;
     const messages = await loadUserMessages(db, runId, this.#userCursor);
     const cursor = messages.at(-1)?.id ?? this.#userCursor;
+    this.#interruptSeen = newerId(this.#interruptSeen, cursor);
     const extra = this.#firstTurn ? await hooks.promptContext(this.#run) : [];
     const userTexts = messages.map((message) => `Message from the user: ${message.text}`);
     const { items: pending, carried } = this.#buildInput(obs, userTexts, extra);
@@ -557,7 +603,14 @@ export class RunLoop {
     const guarded = {
       call: async (request: Parameters<ModelCaller["call"]>[0], callSignal: AbortSignal) => {
         await this.#assertAgentControl(callSignal);
-        return caller.call(request, callSignal);
+        // Send now arrived after this input was built: it is not in it, so this call is not made.
+        if (this.#interruptPending) throw new Interrupted("message");
+        this.#modelInFlight = true;
+        try {
+          return await caller.call(request, callSignal);
+        } finally {
+          this.#modelInFlight = false;
+        }
       },
     };
     const compactionDeps = {
@@ -628,6 +681,7 @@ export class RunLoop {
     } catch (error) {
       // A compaction that succeeded was paid for even if the turn failed afterwards.
       if (deltas.length > 0) await this.#charge(deltas).catch(() => undefined);
+      if (interruptionOf(error) === "message") await this.#markInterrupted("decide", "aborted");
       throw error;
     }
     if (!compacted) record("in", pending, null);
@@ -654,6 +708,9 @@ export class RunLoop {
       ...(reasoning ? { reasoning } : {}),
     };
     const events: RunEvent[] = [{ type: "budget", usage, budget: this.#run.budget }];
+    // The thread shows each message as picked up once a decide has read it (run-mode).
+    if (messages.length > 0 && cursor !== null)
+      events.push({ type: "user_messages_read", through: cursor });
     if (call.fallback)
       events.unshift({ type: "model_fallback", from: call.fallback.from, to: call.fallback.to });
     const stored = await this.#deps.store.commit({
@@ -712,6 +769,15 @@ export class RunLoop {
     if (this.#deps.leaseExpired?.()) throw new Interrupted("lease_lost");
     const control = await readRunControl(this.#deps.db, this.#run.id);
     if (control?.controller === "user") throw new ControlHeld();
+  }
+
+  /** The step a Send now cut short, shown in the thread (run-mode). Best effort: it never fails the run. */
+  async #markInterrupted(phase: "decide" | "act", state: "aborted" | "skipped"): Promise<void> {
+    await this.#deps.store
+      .commit({
+        steps: [{ seq: this.#deps.store.nextSeq(), phase, state, caption: INTERRUPTED_BY_MESSAGE }],
+      })
+      .catch(() => undefined);
   }
 
   async #charge(deltas: readonly Usage[]): Promise<void> {
@@ -873,6 +939,7 @@ export class RunLoop {
         item: ask.item,
         target: ask.target,
         context: ask.context,
+        personOnly: toPerson,
       });
     this.#next = "act";
     return CONTINUE;
@@ -885,6 +952,8 @@ export class RunLoop {
       item: string | null;
       target?: string | null;
       context?: string | null;
+      /** Only a person may decide it (m10): a mode change never resolves it (run-mode). */
+      personOnly?: boolean;
     },
   ): Promise<StepOutcome> {
     const obs = this.#obs();
@@ -899,6 +968,7 @@ export class RunLoop {
       url: obs.url,
       domHash: obs.domHash,
       decided: [...this.#decided.values()],
+      personOnly: scope.personOnly ?? false,
     };
     await this.#deps.store.commit({
       steps: [{ seq, phase: "approve", state: "started", result }],
@@ -969,6 +1039,11 @@ export class RunLoop {
       let index = -1;
       const gate = async (action: ComputerAction) => {
         index += 1;
+        // Send now: the action that is running finished; nothing after it starts (run-mode).
+        if (this.#interruptPending) {
+          this.#cutByMessage = true;
+          return { stop: sentNowStop(index + 1) };
+        }
         const decision = this.#decided.get(actionItem(call.callId, index));
         if (decision && !decision.approved) {
           refusals.push(`Action ${index + 1} (${action.type}): ${decision.note ?? DENIED}`);
@@ -1087,8 +1162,15 @@ export class RunLoop {
     let handOver: string | null = null;
     // Downloads approved since the last act: the model repeats what started them now.
     for (const card of this.#downloadAllowances.splice(0)) await browser.allowDownload(card);
+    this.#cutByMessage = false;
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
+      // Send now: nothing that has not started runs; the next decide reads the message.
+      if (this.#interruptPending) {
+        this.#cutByMessage = true;
+        this.#results.set(call.callId, notRun(call, SENT_NOW));
+        continue;
+      }
       // The page is beyond what the agent can act on safely: nothing after runs; the user takes over.
       if (handOver) {
         this.#results.set(call.callId, notRun(call, HANDED_OVER));
@@ -1147,6 +1229,7 @@ export class RunLoop {
       });
       await step.afterCommitted(this.#deps.log);
     }
+    if (this.#cutByMessage) await this.#markInterrupted("act", "skipped");
     this.#next = "observe";
     const blocked = browser.drainBlockedNavigations();
     const origins = [...new Map(blocked.map((entry) => [entry.origin, entry])).values()];

@@ -204,6 +204,13 @@ export const fixtureRouter = os.router({
       unfinishedRun(stateFor(context.ns), input.runId);
       return { ok: true as const };
     }),
+    // The mode a fixture run shows comes from its stream (approval_mode_changed); the UI specs emit it.
+    setApprovalMode: os.runs.setApprovalMode.handler(({ input, context }) => {
+      const { summary } = fixtureRun(stateFor(context.ns), input.runId);
+      unfinishedRun(stateFor(context.ns), input.runId);
+      if (summary) summary.approvalMode = input.mode;
+      return { ok: true as const };
+    }),
     decideApproval: os.runs.decideApproval.handler(({ input, context }) => {
       // The recorded run's approval is the only one fixture mode has.
       if (input.approvalId !== RECORDED_APPROVAL_ID) throw notFound("Approval");

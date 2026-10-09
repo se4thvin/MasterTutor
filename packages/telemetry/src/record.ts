@@ -35,7 +35,7 @@ function safely(record: () => void): void {
   }
 }
 
-/** Seam 6: every RunEvent written by emitRunEvent (agent and web). Text fields are never read. */
+/** Seam 6: every RunEvent written by emitRunEvent (agent and web). Text fields and user ids are never read. */
 export function recordRunEvent(event: RunEvent): void {
   safely(() => {
     const m = instruments();
@@ -53,6 +53,14 @@ export function recordRunEvent(event: RunEvent): void {
         m.approvalsResolved.add(1, {
           [ATTR.approvalStatus]: event.status,
           [ATTR.approvalDecider]: deciderOf(event.decidedBy),
+        });
+        return;
+      case "approval_mode_changed":
+        m.approvalModeChanges.add(1, { [ATTR.approvalMode]: event.to });
+        return;
+      case "user_message":
+        m.runSends.add(1, {
+          [ATTR.sendMode]: event.interrupt === true ? "interrupt" : "queue",
         });
         return;
       case "control":

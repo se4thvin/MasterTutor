@@ -7,6 +7,8 @@ export interface Instruments {
   runErrors: Counter;
   approvalsRequested: Counter;
   approvalsResolved: Counter;
+  approvalModeChanges: Counter;
+  runSends: Counter;
   controlChanges: Counter;
   slotLeases: Counter;
   blocksAdded: Counter;
@@ -41,6 +43,8 @@ export function instruments(): Instruments {
     runErrors: counter(METRIC.runErrors),
     approvalsRequested: counter(METRIC.approvalsRequested),
     approvalsResolved: counter(METRIC.approvalsResolved),
+    approvalModeChanges: counter(METRIC.approvalModeChanges),
+    runSends: counter(METRIC.runSends),
     controlChanges: counter(METRIC.controlChanges),
     slotLeases: counter(METRIC.slotLeases),
     blocksAdded: counter(METRIC.blocksAdded),

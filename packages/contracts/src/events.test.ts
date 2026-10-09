@@ -48,7 +48,14 @@ describe("RunEvent", () => {
         origin: "dom",
       },
       budget: { type: "budget", usage: EMPTY_USAGE, budget: DEFAULT_BUDGET },
-      user_message: { type: "user_message", text: "Do reading 2 next" },
+      user_message: { type: "user_message", text: "Do reading 2 next", interrupt: true },
+      user_messages_read: { type: "user_messages_read", through: "42" },
+      approval_mode_changed: {
+        type: "approval_mode_changed",
+        from: "ask",
+        to: "bypass",
+        by: "6f2c8a3e-0000-4000-8000-000000000000",
+      },
       download_ready: {
         type: "download_ready",
         downloadId: id,
@@ -80,6 +87,20 @@ describe("RunEvent", () => {
       unknown
     >;
     expect(RunEvent.safeParse(withoutAsset).success).toBe(false);
+  });
+
+  it("keeps user_message's interrupt optional, so messages stored before it still parse", () => {
+    expect(RunEvent.parse({ type: "user_message", text: "hi" })).toEqual({
+      type: "user_message",
+      text: "hi",
+    });
+    expect(RunEvent.safeParse({ type: "user_messages_read", through: "not-an-id" }).success).toBe(
+      false,
+    );
+    expect(
+      RunEvent.safeParse({ type: "approval_mode_changed", from: "ask", to: "yolo", by: "u" })
+        .success,
+    ).toBe(false);
   });
 
   it("rejects unknown event types", () => {

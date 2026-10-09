@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ApprovalRequest } from "./approval.ts";
 import { Budget, Usage } from "./budget.ts";
 import {
+  ApprovalMode,
   ApprovalStatus,
   BlockOrigin,
   BlockType,
@@ -44,6 +45,8 @@ export const RUN_EVENT_TYPES = [
   "block_added",
   "budget",
   "user_message",
+  "user_messages_read",
+  "approval_mode_changed",
   "download_ready",
   "download_pending",
   "error",
@@ -89,7 +92,24 @@ export const RunEvent = z.discriminatedUnion("type", [
     origin: BlockOrigin,
   }),
   z.object({ type: z.literal("budget"), usage: Usage, budget: Budget }),
-  z.object({ type: z.literal("user_message"), text: z.string().min(1).max(4_000) }),
+  /**
+   * A person's message. `interrupt` (Send now) stops the agent's current model call and the rest
+   * of its batch; absent or false, it waits for the next decide (queued).
+   */
+  z.object({
+    type: z.literal("user_message"),
+    text: z.string().min(1).max(4_000),
+    interrupt: z.boolean().optional(),
+  }),
+  /** The agent read every user_message up to and including this event id (into a decide). */
+  z.object({ type: z.literal("user_messages_read"), through: z.string().regex(/^[0-9]+$/) }),
+  /** A person changed the run's approval mode mid-run (run-mode); `by` is their user id. */
+  z.object({
+    type: z.literal("approval_mode_changed"),
+    from: ApprovalMode,
+    to: ApprovalMode,
+    by: z.string().min(1).max(64),
+  }),
   /**
    * A download made while a person held control, waiting for them to keep or discard it at
    * hand-back. Nothing is stored or shown to the agent until it is kept.
