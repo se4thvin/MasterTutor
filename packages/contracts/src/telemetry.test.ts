@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  SECRET_SCRUB_PATTERNS,
   ATTR,
   BASE_ATTRIBUTES,
   DERIVED_METRIC,
@@ -77,4 +79,15 @@ describe("Observer names (spec §6.11)", () => {
     expect(OBSERVER_ROLES).toEqual(["guard", "watcher", "copilot"]);
     expect(SPEND_PURPOSES).toEqual(["run", "copilot"]);
   });
+});
+
+it("pins code snapshot scrubbing to the collector's five value patterns", () => {
+  const yaml = readFileSync(new URL("../../../infra/otel/collector.yaml", import.meta.url), "utf8");
+  expect(SECRET_SCRUB_PATTERNS).toHaveLength(5);
+  for (const text of [
+    "sk-[A-Za-z0-9_-]{16,}",
+    "eyJ[A-Za-z0-9_-]{8,}",
+    "NEKO_SESSION|live_slot|better-auth",
+  ])
+    expect(yaml).toContain(text);
 });

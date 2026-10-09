@@ -21,6 +21,7 @@ export interface O2Client {
     path: string,
     body?: unknown,
     schema?: z.ZodType<T>,
+    options?: { signal?: AbortSignal },
   ): Promise<T>;
 }
 
@@ -42,14 +43,16 @@ export function createO2Client(options: O2ClientOptions): O2Client {
   const doFetch = options.fetchImpl ?? fetch;
   return {
     org: options.org ?? OBSERVE_ORG,
-    async call(operation, method, path, body, schema) {
+    async call(operation, method, path, body, schema, callOptions) {
       const headers: Record<string, string> = { authorization };
       if (body !== undefined) headers["content-type"] = "application/json";
       const response = await doFetch(`${base}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+        signal: callOptions?.signal
+          ? AbortSignal.any([callOptions.signal, AbortSignal.timeout(options.timeoutMs ?? 15_000)])
+          : AbortSignal.timeout(options.timeoutMs ?? 15_000),
       });
       const text = await response.text();
       if (!response.ok) throw new O2Error(operation, response.status);

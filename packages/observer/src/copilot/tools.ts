@@ -1,10 +1,4 @@
-import {
-  CHART_KINDS,
-  COPILOT_LIMITS,
-  ResultId,
-  RunStatus,
-  type CopilotToolName,
-} from "@mastertutor/contracts";
+import { ChartSpec, COPILOT_LIMITS, RunStatus, type CopilotToolName } from "@mastertutor/contracts";
 import { LOG_STREAMS, TRACE_STREAM } from "@mastertutor/contracts/telemetry";
 import { z } from "zod";
 import { RunHandle } from "./handles.ts";
@@ -12,7 +6,7 @@ import { RunHandle } from "./handles.ts";
 /** OpenAI strict tools need every field present: optional values are nullable (spec §7.5). */
 const CodePath = z
   .string()
-  .regex(/^(?:apps|packages|infra)\/[A-Za-z0-9._/-]{1,240}$/)
+  .regex(/^(?:apps|packages|infra)\/[A-Za-z0-9._/()[\]-]{1,240}$/)
   .refine((p) => !p.includes(".."), "No ..");
 
 export const MetricsQueryArgs = z.strictObject({
@@ -43,7 +37,7 @@ export const CodeSearchArgs = z.strictObject({
   query: z.string().min(2).max(100),
   pathPrefix: z
     .string()
-    .regex(/^(?:apps|packages|infra)(?:\/[A-Za-z0-9._/-]*)?$/)
+    .regex(/^(?:apps|packages|infra)(?:\/[A-Za-z0-9._/()[\]-]*)?$/)
     .refine((p) => !p.includes(".."), "No ..")
     .nullable(),
 });
@@ -52,13 +46,7 @@ export const CodeReadArgs = z.strictObject({
   startLine: z.number().int().min(1),
   endLine: z.number().int().min(1),
 });
-export const RenderChartArgs = z.strictObject({
-  resultId: ResultId,
-  kind: z.enum(CHART_KINDS),
-  x: z.string().min(1).max(64),
-  y: z.array(z.string().min(1).max(64)).min(1).max(4),
-  title: z.string().max(80),
-});
+export const RenderChartArgs = ChartSpec;
 
 export const COPILOT_TOOLS = {
   metrics_query: {

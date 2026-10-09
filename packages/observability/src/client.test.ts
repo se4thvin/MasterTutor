@@ -3,6 +3,22 @@ import { z } from "zod";
 import { O2Error, createO2Client } from "./client.ts";
 
 describe("createO2Client", () => {
+  it("honours cancellation before a fetch completes", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const client = createO2Client({
+      baseUrl: "http://o2",
+      email: "fake",
+      password: "fake",
+      fetchImpl: async (_url, init) => {
+        init?.signal?.throwIfAborted();
+        return new Response("null");
+      },
+    });
+    await expect(
+      client.call("search", "POST", "/x", undefined, undefined, { signal: abort.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
   it("sends basic auth and JSON, parses with the schema", async () => {
     const seen: Array<{ url: string; init: RequestInit }> = [];
     const client = createO2Client({
