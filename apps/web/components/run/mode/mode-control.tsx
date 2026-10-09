@@ -10,8 +10,7 @@ import {
 } from "@/components/approval-mode/modes.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
-import { LiquidGlass } from "@/components/ui/liquid-glass.tsx";
-import { Menu } from "@/components/ui/menu.tsx";
+import { Menu, MenuPanel } from "@/components/ui/menu.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import { modeTriggerProps } from "./mode-trigger.tsx";
 
@@ -43,45 +42,31 @@ export function ModeControl({
     <>
       <Menu.Root>
         <Menu.Trigger {...modeTriggerProps(mode, disabled)} />
-        <Menu.Portal>
-          <Menu.Positioner
-            align="end"
-            sideOffset={6}
-            collisionPadding={12}
-            className="popover-positioner"
-          >
-            <Menu.Popup className="menu run-mode-menu">
-              <LiquidGlass className="menu-glass">
-                <Menu.Group>
-                  <Menu.GroupLabel className="eyebrow run-mode-heading">Approvals</Menu.GroupLabel>
-                  <Menu.RadioGroup
-                    value={mode}
-                    onValueChange={(next) => choose(next as ApprovalMode)}
-                  >
-                    {APPROVAL_MODE_ITEMS.map((item) => (
-                      <Menu.RadioItem
-                        key={item.value}
-                        value={item.value}
-                        closeOnClick
-                        className="menu-item run-mode-item"
-                      >
-                        <span className="run-mode-check" aria-hidden="true">
-                          <Menu.RadioItemIndicator>
-                            <Icon name="check" size="sm" />
-                          </Menu.RadioItemIndicator>
-                        </span>
-                        <span className="run-mode-text">
-                          <span>{item.label}</span>
-                          <span className="run-mode-desc">{APPROVAL_MODE_TEXT[item.value]}</span>
-                        </span>
-                      </Menu.RadioItem>
-                    ))}
-                  </Menu.RadioGroup>
-                </Menu.Group>
-              </LiquidGlass>
-            </Menu.Popup>
-          </Menu.Positioner>
-        </Menu.Portal>
+        <MenuPanel className="run-mode-menu">
+          <Menu.Group>
+            <Menu.GroupLabel className="eyebrow run-mode-heading">Approvals</Menu.GroupLabel>
+            <Menu.RadioGroup value={mode} onValueChange={(next) => choose(next as ApprovalMode)}>
+              {APPROVAL_MODE_ITEMS.map((item) => (
+                <Menu.RadioItem
+                  key={item.value}
+                  value={item.value}
+                  closeOnClick
+                  className="menu-item run-mode-item"
+                >
+                  <span className="run-mode-check" aria-hidden="true">
+                    <Menu.RadioItemIndicator>
+                      <Icon name="check" size="sm" />
+                    </Menu.RadioItemIndicator>
+                  </span>
+                  <span className="run-mode-text">
+                    <span>{item.label}</span>
+                    <span className="run-mode-desc">{APPROVAL_MODE_TEXT[item.value]}</span>
+                  </span>
+                </Menu.RadioItem>
+              ))}
+            </Menu.RadioGroup>
+          </Menu.Group>
+        </MenuPanel>
       </Menu.Root>
       <Sheet
         open={confirming}

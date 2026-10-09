@@ -36,7 +36,14 @@ export function ThreadPane({ id, onHide, ...p }: ThreadProps & { id: string; onH
   const titleId = useId();
   usePrefetchThreadBody();
   return (
-    <LiquidGlass as="aside" id={id} className="thread" aria-labelledby={titleId} data-qa-obstacle>
+    <LiquidGlass
+      as="aside"
+      blur={false}
+      id={id}
+      className="thread"
+      aria-labelledby={titleId}
+      data-qa-obstacle
+    >
       <div className="thread-head">
         <h2 id={titleId} className="thread-title">
           Thread
@@ -65,7 +72,7 @@ export function ThreadSheet({
   const line = untrustedText(peekLine(p.items, p.thinking), 120);
   return (
     <>
-      <LiquidGlass className="thread-peek-glass">
+      <LiquidGlass blur={false} className="thread-peek-glass">
         <button
           type="button"
           className="thread-peek"

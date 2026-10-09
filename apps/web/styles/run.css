@@ -1870,6 +1870,11 @@
   .run-mode-menu {
     width: min(20rem, calc(100vw - 1.5rem));
   }
+  /* The run's menus are touch targets everywhere (44px), not only on coarse pointers. */
+  .run-mode-menu .menu-item,
+  .run-send-menu .menu-item {
+    min-height: var(--hit);
+  }
   .run-mode-heading {
     padding: 0.35rem 0.65rem 0.25rem;
   }

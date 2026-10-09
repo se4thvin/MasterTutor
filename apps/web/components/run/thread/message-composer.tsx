@@ -3,8 +3,7 @@
 import { useId, useState } from "react";
 import { IconButton } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
-import { LiquidGlass } from "@/components/ui/liquid-glass.tsx";
-import { Menu } from "@/components/ui/menu.tsx";
+import { Menu, MenuPanel } from "@/components/ui/menu.tsx";
 
 /**
  * The thread's message box (run-mode): Send queues the message for the agent's next step (Enter);
@@ -76,30 +75,18 @@ export function MessageComposer({
             >
               <Icon name="chevronDown" size="sm" />
             </Menu.Trigger>
-            <Menu.Portal>
-              <Menu.Positioner
-                side="top"
-                align="end"
-                sideOffset={6}
-                collisionPadding={12}
-                className="popover-positioner"
-              >
-                <Menu.Popup className="menu">
-                  <LiquidGlass className="menu-glass">
-                    <Menu.Item className="menu-item" onClick={() => void send(false)}>
-                      <Icon name="send" size="sm" />
-                      <span>Send</span>
-                      <kbd className="menu-kbd">↵</kbd>
-                    </Menu.Item>
-                    <Menu.Item className="menu-item" onClick={() => void send(true)}>
-                      <Icon name="stop" size="sm" />
-                      <span>Send now</span>
-                      <kbd className="menu-kbd">⌘↵</kbd>
-                    </Menu.Item>
-                  </LiquidGlass>
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
+            <MenuPanel side="top" className="run-send-menu">
+              <Menu.Item className="menu-item" onClick={() => void send(false)}>
+                <Icon name="send" size="sm" />
+                <span>Send</span>
+                <kbd className="menu-kbd">↵</kbd>
+              </Menu.Item>
+              <Menu.Item className="menu-item" onClick={() => void send(true)}>
+                <Icon name="stop" size="sm" />
+                <span>Send now</span>
+                <kbd className="menu-kbd">⌘↵</kbd>
+              </Menu.Item>
+            </MenuPanel>
           </Menu.Root>
         </div>
       </form>
