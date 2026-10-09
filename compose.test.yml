@@ -7,7 +7,7 @@
 # shared by web and the e2e runner. OpenObserve itself is not in this stack.
 x-e2e-observability: &e2e-observability
   ALERT_WEBHOOK_SECRET: e2e-alert-webhook-secret-0123456789abcdef
-  OBSERVE_VIEWER_PASSWORD: E2e-viewer-password-0123456789abcdef!
+  OBSERVE_VIEWER_PASSWORD: E2e-viewer-password-0123456789abcdef
 
 services:
   traefik:
