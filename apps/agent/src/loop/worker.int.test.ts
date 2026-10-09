@@ -32,6 +32,7 @@ import { FakeLoopBrowser, unavailableBrowserCdp } from "../testing/fake-loop-bro
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { crashSupervisor } from "../testing/crash.ts";
 import { waitFor } from "../testing/wait.ts";
+import { manualClock } from "../testing/manual-clock.ts";
 import type { RunHooks } from "./hooks.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -1488,3 +1489,84 @@ for (const ending of ["sleep", "cancel"] as const) {
       .where(eq(runs.id, run.id));
   });
 }
+
+describe("human wait slot retention (D56)", () => {
+  it.each(["takeover", "captcha"] as const)(
+    "keeps the %s page through 60 seconds, then sleeps at ten minutes",
+    async (needHuman) => {
+      const time = manualClock();
+      await start({ config: { idleSleepMs: 60_000 } }, time.clock);
+      const { run, browser, name } = await queue([
+        {
+          outputs: [
+            {
+              type: "turn",
+              status: "need_human",
+              needHuman,
+              reason: "A person needs to continue on this page",
+            },
+          ],
+        },
+        done,
+      ]);
+      await until(
+        run.id,
+        (r) => r.status === "waiting" && r.waitReason === needHuman,
+        "human wait",
+      );
+      await waitFor(async () => time.pending() === 1, { label: "wait timer registered" });
+      const held = await row(run.id);
+      const page = browser.url;
+      time.advance(60_000);
+      expect(time.pending()).toBe(1);
+      expect(await row(run.id)).toMatchObject({
+        status: "waiting",
+        waitReason: needHuman,
+        slotName: held.slotName,
+        currentUrl: page,
+      });
+      expect(browsers.get(run.id)).toBe(browser);
+      expect(mock.requestsFor(name)).toHaveLength(1);
+      // Stale wake notifications do not shorten or extend the original deadline.
+      await owner.sql.notify(
+        "run_wake",
+        encodeNotify("run_wake", { runId: run.id, reason: "message" }),
+      );
+      time.advance(539_999);
+      expect(time.pending()).toBe(1);
+      expect(await row(run.id)).toMatchObject({ status: "waiting", slotName: held.slotName });
+      time.advance(1);
+      await until(
+        run.id,
+        (r) => r.status === "sleeping" && r.slotName === null,
+        "sleeps at human wait limit",
+      );
+      expect(mock.requestsFor(name)).toHaveLength(1);
+    },
+  );
+
+  it.each(["approval", "otp"] as const)("keeps the existing idleSleepMs for %s", async (reason) => {
+    const time = manualClock();
+    await start({ config: { idleSleepMs: 60_000 } }, time.clock);
+    const first =
+      reason === "approval"
+        ? click
+        : {
+            outputs: [
+              {
+                type: "function" as const,
+                name: "fill_credential",
+                args: { alias: "site", field: "otp", target: "e1" },
+              },
+            ],
+          };
+    const { run } = await queue([first, done], "ask", (browser) => {
+      if (reason === "approval") browser.targets.set("10,20", riskyTarget);
+      else browser.functionWait = () => "otp";
+    });
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === reason, "normal wait");
+    await waitFor(async () => time.pending() === 1, { label: "idle timer registered" });
+    time.advance(60_000);
+    await until(run.id, (r) => r.status === "sleeping" && r.slotName === null, "normal idle limit");
+  });
+});

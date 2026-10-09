@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Budget, Usage, Plan, Origin } from "@mastertutor/contracts";
+import { Budget, Usage, Plan, Origin, type WaitReason } from "@mastertutor/contracts";
 import { budgetExceeded } from "../guardrails/budget.ts";
 import { allowedOriginsText, approvalModeText } from "../llm/instructions.ts";
 import type { RunHooks } from "./hooks.ts";
@@ -101,4 +101,11 @@ export class TurnContext {
   accept(): void {
     this.#announced = { ...this.#facts };
   }
+}
+
+/** A person needs the live page to sign in or solve a CAPTCHA before its slot can be released. */
+export const HUMAN_WAIT_SLOT_MS = 10 * 60_000;
+
+export function waitRetentionMs(reason: WaitReason | null, idleSleepMs: number): number {
+  return reason === "takeover" || reason === "captcha" ? HUMAN_WAIT_SLOT_MS : idleSleepMs;
 }
