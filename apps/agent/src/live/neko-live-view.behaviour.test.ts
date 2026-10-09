@@ -112,16 +112,24 @@ describe("NekoLiveView against a real slot (spec §10.1)", () => {
 
   it("reads the X idle time, which XTest input resets", async () => {
     const probe = createSlotIdleProbe({ url: () => idleUrlForTests(SLOT) });
-    await waitFor(async () => (await probe.userIdleMs(SLOT)) >= 1_000, {
-      label: "X idle grows without input",
-      timeoutMs: 10_000,
-      intervalMs: 200,
-    });
-    await xdotool(SLOT, "mousemove", "211", "157");
-    await waitFor(async () => (await probe.userIdleMs(SLOT)) < 800, {
-      label: "XTest input resets X idle",
-      timeoutMs: 5_000,
-      intervalMs: 100,
-    });
+    const before = await waitFor(
+      async () => {
+        const idleMs = await probe.userIdleMs(SLOT);
+        // The X sample preceded the response, so this bounds the last input from above.
+        return idleMs >= 1_000 ? { latestInputAt: performance.now() - idleMs } : null;
+      },
+      { label: "X idle grows without input", timeoutMs: 10_000, intervalMs: 200 },
+    );
+    // Two positions ensure a real move even if the pointer already starts at the first one.
+    await xdotool(SLOT, "mousemove", "211", "157", "mousemove", "--sync", "212", "157");
+    await waitFor(
+      async () => {
+        const readStartedAt = performance.now();
+        const idleMs = await probe.userIdleMs(SLOT);
+        // Bound the new input from below; a reset stays observable even after driver latency.
+        return readStartedAt - idleMs > before.latestInputAt;
+      },
+      { label: "XTest input resets X idle", timeoutMs: 5_000, intervalMs: 100 },
+    );
   });
 });
