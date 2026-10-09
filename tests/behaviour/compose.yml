@@ -47,6 +47,7 @@ services:
           [
             site.fixtures.test,
             other.fixtures.test,
+            sso.fixtures.test,
             other.fixtures-isolated.test,
             ads.fixtures-hung.test,
           ]

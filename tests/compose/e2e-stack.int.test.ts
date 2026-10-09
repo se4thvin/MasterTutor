@@ -62,7 +62,8 @@ describe("compose.test.yml E2E stack (one overlay, X2)", () => {
       expect.arrayContaining([
         host(SITE),
         host(OTHER),
-        "other.fixtures-isolated.test",
+        "other.fixtures.test",
+        "sso.fixtures.test",
         "ads.fixtures-hung.test",
       ]),
     );

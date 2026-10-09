@@ -241,6 +241,90 @@ describe("agent behaviour on real slots (spec §12)", () => {
     expect(run.currentUrl?.startsWith(OTHER)).toBe(false);
   });
 
+  describe("the McGraw-Hill sign-in pattern (D51, MH hang)", () => {
+    // sso-login.html: the button posts (after a pause, like an XHR) to sso.fixtures.test, another
+    // host of the same site, which redirects back home or on to another site.
+    const pending = async (runId: string) =>
+      (await agent.owner.db.select().from(approvals).where(eq(approvals.runId, runId))).filter(
+        (a) => a.status === "pending",
+      );
+    /** Approves every card before one of `kind` (a submit card in ask mode), which it returns. */
+    const approveUntil = async (runId: string, kind: string) => {
+      for (;;) {
+        await waitFor(async () => (await pending(runId)).length > 0, {
+          timeoutMs: 60_000,
+          label: `a pending approval on the way to ${kind}`,
+        });
+        const [card] = await pending(runId);
+        if (card!.kind === kind) return card!;
+        await decideApproval(agent, runId, "approved");
+        await waitFor(async () => (await pending(runId)).length === 0, {
+          timeoutMs: 30_000,
+          label: "the card decided",
+        });
+      }
+    };
+    // The page posts 500 ms after the click: the model's next answer is held past that, so the
+    // redirect chain has run before the run goes on (the loop tests cover a later navigation).
+    const afterRedirects: MockTurn = {
+      ...readText,
+      hold: () => new Promise((resolve) => setTimeout(resolve, 2_000)),
+    };
+    const signIn = (next: string, last: MockTurn) =>
+      scenario(`sso-${next}`, [readInteractive, clickNamed("Sign in"), afterRedirects, last]);
+
+    it("crosses subdomains of the same site without asking", async () => {
+      const name = signIn("home", doneExpecting("Page two"));
+      const runId = await createRun(agent, `[scenario:${name}] ${SITE}/sso-login.html?next=home`, {
+        approvalMode: "bypass",
+      });
+      const run = await waitForRun(agent, runId, (r) => r.status === "completed", "completed");
+      expect(run.currentUrl).toBe(`${SITE}/page2.html`);
+      const asked = await agent.owner.db.select().from(approvals).where(eq(approvals.runId, runId));
+      expect(asked.filter((a) => a.kind === "new_origin")).toEqual([]);
+    });
+
+    it("then to another site: ask mode raises a card (never hangs), and approving opens it", async () => {
+      const name = signIn("other", doneExpecting(`the user allowed ${OTHER}`));
+      const runId = await createRun(agent, `[scenario:${name}] ${SITE}/sso-login.html?next=other`);
+      const card = await approveUntil(runId, "new_origin");
+      expect(card.request).toMatchObject({ origin: OTHER });
+      await decideApproval(agent, runId, "approved");
+      const run = await waitForRun(agent, runId, (r) => r.status === "completed", "completed");
+      expect(run.currentUrl?.startsWith(OTHER)).toBe(true);
+      expect(run.allowedOrigins).toEqual([SITE, OTHER]);
+    });
+
+    it("bypass mode approves the other site as bypass; auto mode denies it with a step", async () => {
+      const approved = signIn("other", doneExpecting("allowed by this run's bypass mode"));
+      const bypassRun = await createRun(
+        agent,
+        `[scenario:${approved}] ${SITE}/sso-login.html?next=other`,
+        { approvalMode: "bypass" },
+      );
+      const opened = await waitForRun(agent, bypassRun, (r) => r.status === "completed", "done");
+      expect(opened.currentUrl?.startsWith(OTHER)).toBe(true);
+
+      const denied = signIn("other", doneExpecting(`navigation to ${OTHER} was blocked`));
+      const autoRun = await createRun(
+        agent,
+        `[scenario:${denied}] ${SITE}/sso-login.html?next=other`,
+        { approvalMode: "auto_within_allowlist" },
+      );
+      const stayed = await waitForRun(agent, autoRun, (r) => r.status === "completed", "done");
+      expect(stayed.currentUrl?.startsWith(OTHER)).toBe(false);
+      const decided = await agent.owner.db
+        .select()
+        .from(approvals)
+        .where(eq(approvals.runId, autoRun));
+      expect(decided.map((a) => [a.kind, a.status, a.decidedBy])).toContainEqual([
+        "new_origin",
+        "denied",
+        POLICY_DECIDER,
+      ]);
+    });
+  });
+
   it("restores after a crash without retrying the started action", async () => {
     const name = scenario("crash", [
       readInteractive,
