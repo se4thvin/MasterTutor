@@ -83,6 +83,16 @@ export const MOTIONS: readonly Motion[] = [
     durationMs: 700,
   },
   {
+    // fe-run-chat: a new thread entry enters on the spring (AnimatedList, CSS-only) and a running
+    // action card wipes its fill (CallChip); both on transform and opacity only.
+    id: "thread-entry",
+    files: ["apps/web/components/bits/animated-list.tsx", "apps/web/components/bits/call-chip.tsx"],
+    scope: ".alist-list",
+    open: openRun,
+    trigger: async (page) => emitNow(page, [recordedEvents()[0]!]),
+    durationMs: 700,
+  },
+  {
     id: "takeover-transition",
     files: ["apps/web/components/run/browser/browser-frame.tsx"],
     scope: '[data-testid="browser-frame"]',

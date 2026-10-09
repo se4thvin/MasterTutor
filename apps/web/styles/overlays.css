@@ -163,6 +163,16 @@
       min-height: var(--hit);
     }
   }
+  .menu-kbd {
+    margin-inline-start: auto;
+    padding-inline-start: 1rem;
+    color: var(--label-2);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+  [data-highlighted] > .menu-kbd {
+    color: inherit;
+  }
   .menu-item-danger {
     color: var(--danger);
     &[data-highlighted] {

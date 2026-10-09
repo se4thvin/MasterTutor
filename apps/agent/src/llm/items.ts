@@ -29,6 +29,8 @@ export type PendingCall =
 export interface ParsedOutput {
   turn: AgentTurn | null;
   calls: PendingCall[];
+  /** The model's reasoning summaries, joined; raw model text, screened before anyone sees it. */
+  reasoning: string | null;
 }
 
 type Loose = Record<string, unknown>;
@@ -112,16 +114,27 @@ function parseTurn(item: Loose): AgentTurn | null {
   }
 }
 
+/** The text of a reasoning item's summary parts (`reasoning.summary: "auto"`). */
+function summaryTexts(item: Loose): string[] {
+  const parts = Array.isArray(item.summary) ? (item.summary as Loose[]) : [];
+  return parts
+    .filter((part) => part.type === "summary_text" && typeof part.text === "string")
+    .map((part) => (part.text as string).trim())
+    .filter((text) => text !== "");
+}
+
 export function parseModelOutput(output: readonly unknown[]): ParsedOutput {
   let turn: AgentTurn | null = null;
   const calls: PendingCall[] = [];
+  const summaries: string[] = [];
   for (const raw of output) {
     const item = raw as Loose;
     if (item.type === "computer_call") calls.push(parseComputer(item));
     else if (item.type === "function_call") calls.push(parseFunction(item));
     else if (item.type === "message") turn = parseTurn(item) ?? turn;
+    else if (item.type === "reasoning") summaries.push(...summaryTexts(item));
   }
-  return { turn, calls };
+  return { turn, calls, reasoning: summaries.length > 0 ? summaries.join("\n\n") : null };
 }
 
 export const pngDataUrl = (png: Uint8Array) =>

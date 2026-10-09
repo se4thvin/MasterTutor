@@ -141,6 +141,14 @@ export class FakeLoopBrowser implements LoopBrowser {
     for (const action of actions) {
       const verdict = await gate(action);
       this.verdicts.push(verdict);
+      if (verdict !== true && verdict !== false && "stop" in verdict)
+        return {
+          executed,
+          notes: [verdict.stop],
+          effects: effects(executed),
+          targets: effects(executed).map(() => null),
+          handOver: null,
+        };
       if (!verdict)
         return {
           executed,

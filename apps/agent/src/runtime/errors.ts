@@ -1,4 +1,6 @@
-export type InterruptCause = "takeover" | "cancel" | "kill" | "shutdown" | "lease_lost" | "crash";
+/** `message`: a person's Send now stopped the model call in flight (run-mode). */
+export type InterruptCause =
+  "takeover" | "cancel" | "kill" | "shutdown" | "lease_lost" | "crash" | "message";
 
 /** The abort reason for a run's AbortController; tells the worker why the action stopped. */
 export class Interrupted extends Error {

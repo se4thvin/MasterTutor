@@ -41,6 +41,10 @@ export const durations = {
   drift: 2600,
   /** One turn of the Reconnecting spinner (the only spinner, spec §11.4). */
   spin: 1000,
+  /** A running action card's progress wipe (CallChip): it holds at 90% until the step is done. */
+  callWipe: 2400,
+  /** A cancelled action card's shake (CallChip), on transform only. */
+  shake: 450,
 } as const;
 
 export const easings = {

@@ -8,6 +8,7 @@ import {
   listRuns,
   resumeRun,
   sendRunMessage,
+  setRunApprovalMode,
 } from "../runs/service.ts";
 import { served } from "../service-error.ts";
 import { workspaceScoped } from "./workspace-scope.ts";
@@ -46,6 +47,10 @@ export function createRunProcedures(deps: { db(): DbHandle }) {
     }),
     sendMessage: scoped.runs.sendMessage.handler(async ({ context, input }) => {
       await served(() => sendRunMessage(context.db.db, scopeOf(context), input));
+      return { ok: true as const };
+    }),
+    setApprovalMode: scoped.runs.setApprovalMode.handler(async ({ context, input }) => {
+      await served(() => setRunApprovalMode(context.db.db, scopeOf(context), input));
       return { ok: true as const };
     }),
     decideApproval: scoped.runs.decideApproval.handler(async ({ context, input }) => {

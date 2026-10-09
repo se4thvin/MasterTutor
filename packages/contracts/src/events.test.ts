@@ -9,6 +9,7 @@ import {
   pointerOf,
   type RunEventType,
 } from "./events.ts";
+import { REASONING_SUMMARY_MAX } from "./step-result.ts";
 
 const id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
@@ -47,7 +48,14 @@ describe("RunEvent", () => {
         origin: "dom",
       },
       budget: { type: "budget", usage: EMPTY_USAGE, budget: DEFAULT_BUDGET },
-      user_message: { type: "user_message", text: "Do reading 2 next" },
+      user_message: { type: "user_message", text: "Do reading 2 next", interrupt: true },
+      user_messages_read: { type: "user_messages_read", through: "42" },
+      approval_mode_changed: {
+        type: "approval_mode_changed",
+        from: "ask",
+        to: "bypass",
+        by: "6f2c8a3e-0000-4000-8000-000000000000",
+      },
       download_ready: {
         type: "download_ready",
         downloadId: id,
@@ -92,6 +100,26 @@ describe("RunEvent", () => {
     expect(RunEvent.safeParse(withoutAsset).success).toBe(false);
   });
 
+  it("keeps user_message's interrupt optional, so messages stored before it still parse", () => {
+    expect(RunEvent.parse({ type: "user_message", text: "hi" })).toEqual({
+      type: "user_message",
+      text: "hi",
+    });
+    expect(RunEvent.safeParse({ type: "user_messages_read", through: "not-an-id" }).success).toBe(
+      false,
+    );
+    expect(
+      RunEvent.safeParse({ type: "approval_mode_changed", from: "ask", to: "yolo", by: "u" })
+        .success,
+    ).toBe(false);
+    // Only a person changes the mode: a machine decider is never recorded as `by` (D52).
+    for (const by of ["policy", "bypass", "observer", "agent", "Policy"])
+      expect(
+        RunEvent.safeParse({ type: "approval_mode_changed", from: "ask", to: "bypass", by })
+          .success,
+      ).toBe(false);
+  });
+
   it("rejects unknown event types", () => {
     expect(RunEvent.safeParse({ type: "screencast_frame" }).success).toBe(false);
   });
@@ -121,5 +149,28 @@ describe("StepAction.pointer (run view A1)", () => {
     expect(pointerOf({ type: "keypress", keys: ["ENTER"] })).toBeUndefined();
     expect(pointerOf({ type: "type", text: "x" })).toBeUndefined();
     expect(pointerOf({ type: "wait" })).toBeUndefined();
+  });
+});
+
+describe("step reasoning summaries (fe-run-chat)", () => {
+  const step = {
+    type: "step",
+    seq: 4,
+    phase: "decide",
+    state: "done",
+    caption: "Planning the sign-in",
+    url: null,
+    screenshotKey: null,
+    action: null,
+  } as const;
+  it("is optional, so events stored before it still parse", () => {
+    expect(RunEvent.parse(step)).not.toHaveProperty("reasoning");
+    expect(RunEvent.parse({ ...step, reasoning: "Find the sign-in link first." })).toMatchObject({
+      reasoning: "Find the sign-in link first.",
+    });
+  });
+  it("is capped at REASONING_SUMMARY_MAX", () => {
+    const long = "x".repeat(REASONING_SUMMARY_MAX + 1);
+    expect(RunEvent.safeParse({ ...step, reasoning: long }).success).toBe(false);
   });
 });

@@ -11,19 +11,24 @@ export { Menu };
 export function MenuPanel({
   children,
   align = "end",
+  side,
+  className,
 }: {
   children: ReactNode;
   align?: "start" | "center" | "end";
+  side?: "top" | "bottom";
+  className?: string;
 }) {
   return (
     <Menu.Portal>
       <Menu.Positioner
+        side={side}
         align={align}
         sideOffset={6}
         collisionPadding={12}
         className="popover-positioner"
       >
-        <Menu.Popup className={`menu ${LIQUID_GLASS}`}>{children}</Menu.Popup>
+        <Menu.Popup className={cx("menu", LIQUID_GLASS, className)}>{children}</Menu.Popup>
       </Menu.Positioner>
     </Menu.Portal>
   );

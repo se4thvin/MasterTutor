@@ -12,8 +12,11 @@ import {
   HeldDownloadView,
   ListNotesInput,
   RunDetail,
+  RunStepView,
   StoredDownloadView,
   RunSummary,
+  SendMessageInput,
+  SetApprovalModeInput,
   SetSecretInput,
   SettingsView,
   SubmitOtpInput,
@@ -140,6 +143,33 @@ describe("vault secret validation in the DTOs (E3, E4)", () => {
     expect(SetSecretInput.safeParse({ itemId, field: "pin", value: "1234" }).success).toBe(true);
     expect(SetSecretInput.safeParse({ itemId, field: "pin", value: "12" }).success).toBe(false);
     expect(SetSecretInput.safeParse({ itemId, field: "totp", value: "bad" }).success).toBe(false);
+  });
+});
+
+describe("SetApprovalModeInput (run-mode)", () => {
+  it("takes any mode for a run; bypass only with bypassAcknowledged: true, as at creation", () => {
+    for (const mode of ["ask", "auto_within_allowlist"] as const)
+      expect(SetApprovalModeInput.parse({ runId, mode })).toEqual({ runId, mode });
+    expect(SetApprovalModeInput.safeParse({ runId, mode: "bypass" }).success).toBe(false);
+    expect(
+      SetApprovalModeInput.safeParse({ runId, mode: "bypass", bypassAcknowledged: false }).success,
+    ).toBe(false);
+    expect(
+      SetApprovalModeInput.safeParse({ runId, mode: "bypass", bypassAcknowledged: true }).success,
+    ).toBe(true);
+  });
+  it("validates the boundary: a run id, a known mode, nothing else", () => {
+    expect(SetApprovalModeInput.safeParse({ runId: "x", mode: "ask" }).success).toBe(false);
+    expect(SetApprovalModeInput.safeParse({ runId, mode: "yolo" }).success).toBe(false);
+    expect(SetApprovalModeInput.safeParse({ runId }).success).toBe(false);
+  });
+});
+
+describe("SendMessageInput delivery (run-mode: queue or interrupt)", () => {
+  it("queues by default and takes interrupt: true for Send now", () => {
+    expect(SendMessageInput.parse({ runId, text: "hi" }).interrupt).toBe(false);
+    expect(SendMessageInput.parse({ runId, text: "hi", interrupt: true }).interrupt).toBe(true);
+    expect(SendMessageInput.safeParse({ runId, text: "hi", interrupt: "yes" }).success).toBe(false);
   });
 });
 
@@ -338,6 +368,25 @@ describe("RunDetail.downloads (reload of a finished run)", () => {
     expect(StoredDownloadView.safeParse({ ...ok, filename: "x".repeat(256) }).success).toBe(false);
     expect(StoredDownloadView.safeParse({ ...ok, bytes: -1 }).success).toBe(false);
     expect(StoredDownloadView.safeParse({ ...ok, assetId: null }).success).toBe(false);
+  });
+});
+
+describe("RunStepView.reasoning (fe-run-chat)", () => {
+  const view = {
+    seq: 2,
+    phase: "decide",
+    state: "done",
+    caption: null,
+    url: null,
+    screenshotKey: null,
+    action: null,
+    createdAt: "2026-10-05T17:04:05.000Z",
+  };
+  it("defaults to null and keeps a summary", () => {
+    expect(RunStepView.parse(view).reasoning).toBeNull();
+    expect(RunStepView.parse({ ...view, reasoning: "Sign in first." }).reasoning).toBe(
+      "Sign in first.",
+    );
   });
 });
 

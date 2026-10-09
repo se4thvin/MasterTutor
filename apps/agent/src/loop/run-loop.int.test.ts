@@ -35,6 +35,7 @@ import { runtimeConfig } from "../runtime/config.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser, PLAIN_TARGET } from "../testing/fake-loop-browser.ts";
+import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { UNGUARDED_CLICK_REFUSAL } from "../tools/computer.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { withHooks, type RunHooks } from "./hooks.ts";
@@ -212,6 +213,55 @@ describe("RunLoop (spec §5.3)", () => {
     ]);
     expect(await status(run.id)).toMatchObject({ status: "completed", usage: { steps: 2 } });
     expect(JSON.stringify(mock.requests.at(-1)?.body.input)).toContain("computer_call_output");
+  });
+
+  it("asks for reasoning summaries and stores each turn's, screened, on its decide step and event (fe-run-chat)", async () => {
+    const secret = "hunter2-canary";
+    const redact = (text: string) => text.replaceAll(secret, "[secret]");
+    const { name, run, loop } = await setup(
+      [
+        {
+          outputs: [
+            { type: "reasoning", text: `**Signing in**\n\nThe box shows ${secret}.\u202e` },
+            ...click().outputs!,
+          ],
+        },
+        done(`Typed ${secret}`),
+      ],
+      { hooks: { maskSources: () => ({ ...NO_MASK_SOURCES, hasSecrets: () => true, redact }) } },
+    );
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    for (const request of mock.requestsFor(name))
+      expect(request.body.reasoning).toEqual({ effort: "medium", summary: "auto" });
+    const decides = (
+      await owner.db
+        .select()
+        .from(runSteps)
+        .where(and(eq(runSteps.runId, run.id), eq(runSteps.phase, "decide")))
+        .orderBy(asc(runSteps.seq))
+    ).map((step) => ({ caption: step.caption, result: step.result }));
+    expect(decides).toEqual([
+      {
+        caption: "click (10, 20)",
+        result: {
+          status: null,
+          calls: 1,
+          reasoning: "**Signing in**\n\nThe box shows [secret].",
+        },
+      },
+      { caption: "Typed [secret]", result: { status: "done", calls: 0 } },
+    ]);
+    const stepEvents = (await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id)))
+      .map((row) => row.payload)
+      .filter((event) => event.type === "step" && event.phase === "decide");
+    expect(stepEvents.map((event) => ("reasoning" in event ? event.reasoning : null))).toEqual([
+      "**Signing in**\n\nThe box shows [secret].",
+      null,
+    ]);
+    const stored = JSON.stringify(
+      await owner.db.select().from(runSteps).where(eq(runSteps.runId, run.id)),
+    );
+    expect(stored).not.toContain(secret);
   });
 
   it("tells the model when a step's screenshot was withheld (I-1)", async () => {
@@ -2038,6 +2088,13 @@ describe("RunLoop (spec §5.3)", () => {
         ["approved", "bypass"],
         ["pending", null],
       ]);
+      // The card is marked as a person's alone, so a mode change never resolves it (run-mode).
+      const pending = (await approvalRows(run.id)).at(-1)!;
+      const [step] = await owner.db
+        .select()
+        .from(runSteps)
+        .where(and(eq(runSteps.runId, run.id), eq(runSteps.seq, pending.stepSeq)));
+      expect(step!.result).toMatchObject({ personOnly: true });
     });
 
     it("still waits for a person at a budget hit (a spending cap, not an action)", async () => {
@@ -2169,6 +2226,72 @@ describe("tool profiles reach the model (Phase 10)", () => {
     const { name, loop } = await setup([done()]);
     await drive(loop);
     expect((mock.requestsFor(name)[0]!.body as { tools?: unknown[] }).tools).toHaveLength(7);
+  });
+});
+
+describe("run-mode: Send now during an act", () => {
+  const interrupt = (runId: string, text: string) =>
+    owner.db.transaction((tx) =>
+      emitRunEvent(tx, runId, { type: "user_message", text, interrupt: true }),
+    );
+
+  it("finishes the action that is running, skips the rest of the batch, then decides with the message", async () => {
+    const { run, browser, loop } = await setup([
+      {
+        outputs: [
+          {
+            type: "computer",
+            actions: [
+              { type: "click", x: 10, y: 20, button: "left" },
+              { type: "type", text: "hello" },
+              { type: "keypress", keys: ["ENTER"] },
+            ],
+          },
+          { type: "computer", actions: [{ type: "click", x: 30, y: 40, button: "left" }] },
+        ],
+      },
+      doneExpecting("Message from the user: Stop, wrong page"),
+    ]);
+    const taken: Array<string | null> = [];
+    browser.actionHook = async (action) => {
+      if (action.type !== "click" || taken.length > 0) return;
+      await interrupt(run.id, "Stop, wrong page");
+      taken.push(await loop.takeInterrupt());
+    };
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    // Not mid-model-call, so nothing is aborted: the click finished, nothing after it ran.
+    expect(taken).toEqual(["soft"]);
+    expect(browser.executed).toEqual([{ type: "click", x: 10, y: 20, button: "left" }]);
+    const steps = await owner.db
+      .select()
+      .from(runSteps)
+      .where(eq(runSteps.runId, run.id))
+      .orderBy(asc(runSteps.seq));
+    expect(
+      steps.filter((s) => s.caption === "Interrupted by your message").map((s) => s.phase),
+    ).toEqual(["act"]);
+    const last = JSON.stringify(mock.requests.at(-1)?.body.input);
+    expect(last).toContain("the user sent a message");
+    // The interrupt is used up: another look finds nothing new.
+    expect(await loop.takeInterrupt()).toBeNull();
+  });
+
+  it("an interrupt never lifts an open approval card", async () => {
+    const { run, browser, loop } = await setup([
+      click(),
+      doneExpecting("Message from the user: Go"),
+    ]);
+    browser.targets.set("10,20", risky("Delete"));
+    expect(await drive(loop)).toEqual({ kind: "waiting", reason: "approval" });
+    await interrupt(run.id, "Go");
+    expect(await loop.takeInterrupt()).toBe("soft");
+    expect(await loop.hasNews("approval")).toBe(true);
+    expect(await loop.resume(new AbortController().signal)).toEqual({
+      kind: "waiting",
+      reason: "approval",
+    });
+    expect((await approvalRows(run.id)).map((r) => r.status)).toEqual(["pending"]);
+    expect(browser.executed).toEqual([]);
   });
 });
 

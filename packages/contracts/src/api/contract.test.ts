@@ -20,6 +20,7 @@ describe("apiContract", () => {
         "openLive",
         "resume",
         "sendMessage",
+        "setApprovalMode",
         "steps",
         "submitOtp",
         "takeControl",

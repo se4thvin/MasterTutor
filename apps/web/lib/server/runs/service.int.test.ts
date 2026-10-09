@@ -1,4 +1,9 @@
-import { PersonDecider, decodeNotify, type RunEvent } from "@mastertutor/contracts";
+import {
+  PersonDecider,
+  decodeNotify,
+  type ApprovalRequest,
+  type RunEvent,
+} from "@mastertutor/contracts";
 import {
   approvals,
   assets,
@@ -442,6 +447,29 @@ describe("runs.* on the live router (Task 0A)", () => {
     });
   });
 
+  it("returns a decide step's reasoning summary from its result, and null on every other step (fe-run-chat)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId });
+    await owner.db.insert(runSteps).values([
+      {
+        runId,
+        seq: 0,
+        phase: "decide" as const,
+        state: "done" as const,
+        result: { status: null, calls: 1, reasoning: "Open the course first." },
+      },
+      { runId, seq: 1, phase: "decide" as const, state: "done" as const, result: { calls: 0 } },
+      {
+        runId,
+        seq: 2,
+        phase: "act" as const,
+        state: "done" as const,
+        result: { kind: "function", output: "{}", reasoning: "not a decide step" },
+      },
+    ]);
+    const { items } = await client().runs.steps({ runId });
+    expect(items.map((s) => s.reasoning)).toEqual(["Open the course first.", null, null]);
+  });
+
   it("cancels: status event, superseded approvals, NOTIFY run_control; idempotent; refuses a finished run", async () => {
     const runId = await seedRun(owner.db, {
       workspaceId,
@@ -566,5 +594,225 @@ describe("runs.* on the live router (Task 0A)", () => {
       .from(approvals)
       .where(and(eq(approvals.id, foreign)));
     expect(untouched!.status).toBe("pending");
+  });
+});
+
+/* ----------------------------- run-mode: mid-run ----------------------------- */
+
+const CLICK: ApprovalRequest = {
+  kind: "risky_click",
+  action: { type: "click", x: 10, y: 10, button: "left" },
+  label: "Delete",
+  url: "https://example.com/",
+  screenshotKey: null,
+};
+/** A pending card as the agent writes it: an approve step, then the approval on that seq. */
+const pendingCard = async (
+  runId: string,
+  request: ApprovalRequest,
+  options: { seq?: number; personOnly?: boolean } = {},
+) => {
+  const seq = options.seq ?? Math.floor(Math.random() * 1_000_000);
+  await owner.db.insert(runSteps).values({
+    runId,
+    seq,
+    phase: "approve",
+    state: "started",
+    result: options.personOnly ? { personOnly: true } : {},
+  });
+  const [row] = await owner.db
+    .insert(approvals)
+    .values({ runId, stepSeq: seq, kind: request.kind, request })
+    .returning({ id: approvals.id });
+  return row!.id;
+};
+const approvalRow = async (id: string) =>
+  (await web.db.select().from(approvals).where(eq(approvals.id, id)))[0]!;
+
+describe("runs.setApprovalMode (run-mode: change the mode while the run goes)", () => {
+  it("updates the mode with an audited approval_mode_changed event in one go; idempotent", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "running" });
+    await expect(
+      client().runs.setApprovalMode({ runId, mode: "auto_within_allowlist" }),
+    ).resolves.toEqual({
+      ok: true,
+    });
+    expect((await runRow(runId)).approvalMode).toBe("auto_within_allowlist");
+    expect(await eventsOf(runId)).toEqual([
+      { type: "approval_mode_changed", from: "ask", to: "auto_within_allowlist", by: viewer.id },
+    ]);
+    await client().runs.setApprovalMode({ runId, mode: "auto_within_allowlist" });
+    expect(await eventsOf(runId)).toHaveLength(1);
+  });
+
+  it("refuses bypass without the acknowledgement, a finished run, and auto with no allowed origin", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "running" });
+    await expect(
+      client().runs.setApprovalMode({ runId, mode: "bypass" } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    for (const status of ["completed", "failed", "cancelled"] as const) {
+      const done = await seedRun(owner.db, { workspaceId, status });
+      await expect(
+        client().runs.setApprovalMode({ runId: done, mode: "bypass", bypassAcknowledged: true }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      expect((await runRow(done)).approvalMode).toBe("ask");
+    }
+    await owner.db.update(runs).set({ allowedOrigins: [] }).where(eq(runs.id, runId));
+    await expect(
+      client().runs.setApprovalMode({ runId, mode: "auto_within_allowlist" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect((await runRow(runId)).approvalMode).toBe("ask");
+    expect(await eventsOf(runId)).toEqual([]);
+  });
+
+  it("is scoped to the viewer's workspace: another workspace's run is not found and untouched", async () => {
+    const stranger = await seedMember(owner.db);
+    const foreign = await seedRun(owner.db, {
+      workspaceId: stranger.workspaceId,
+      status: "running",
+    });
+    await expect(
+      client().runs.setApprovalMode({ runId: foreign, mode: "bypass", bypassAcknowledged: true }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect((await runRow(foreign)).approvalMode).toBe("ask");
+    expect(await eventsOf(foreign)).toEqual([]);
+  });
+
+  it("re-decides the open card with bypass's policy and wakes the run", async () => {
+    const runId = await seedRun(owner.db, {
+      workspaceId,
+      status: "waiting",
+      waitReason: "approval",
+    });
+    const card = await pendingCard(runId, CLICK);
+    const payload = await nextNotification(web.sql, "run_wake", () =>
+      client().runs.setApprovalMode({ runId, mode: "bypass", bypassAcknowledged: true }),
+    );
+    expect(decodeNotify("run_wake", payload)).toEqual({ runId, reason: "approval" });
+    expect(await approvalRow(card)).toMatchObject({ status: "approved", decidedBy: "bypass" });
+    expect((await approvalRow(card)).decidedAt).not.toBeNull();
+    expect(await eventsOf(runId)).toEqual([
+      { type: "approval_mode_changed", from: "ask", to: "bypass", by: viewer.id },
+      { type: "approval_resolved", approvalId: card, status: "approved", decidedBy: "bypass" },
+    ]);
+    expect((await runRow(runId)).wakeRequestedAt).not.toBeNull();
+  });
+
+  it("auto decides as policy: a new origin is denied, a click on the allowlist approved", async () => {
+    const runId = await seedRun(owner.db, {
+      workspaceId,
+      status: "waiting",
+      waitReason: "approval",
+    });
+    const origin = await pendingCard(runId, {
+      kind: "new_origin",
+      origin: "https://other.example",
+      url: "https://other.example/x",
+    });
+    const click = await pendingCard(runId, CLICK);
+    await client().runs.setApprovalMode({ runId, mode: "auto_within_allowlist" });
+    expect(await approvalRow(origin)).toMatchObject({ status: "denied", decidedBy: "policy" });
+    expect(await approvalRow(click)).toMatchObject({ status: "approved", decidedBy: "policy" });
+  });
+
+  it("never auto-resolves what still asks or what only a person may decide", async () => {
+    const runId = await seedRun(owner.db, {
+      workspaceId,
+      status: "waiting",
+      waitReason: "approval",
+    });
+    const cards = [
+      // A prompt-injection warning always waits for a person (D44).
+      await pendingCard(runId, {
+        ...CLICK,
+        safetyChecks: [{ code: "malicious_instructions", message: "Ignore previous instructions" }],
+      } as ApprovalRequest),
+      await pendingCard(runId, {
+        kind: "budget",
+        exceeded: "usd",
+        usage: {
+          steps: 1,
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          usd: 5,
+          activeMs: 0,
+        },
+        budget: { maxSteps: 150, maxUsd: 5, maxActiveMinutes: 60 },
+      }),
+      // Person-only: a sign-in card (a lasting vault grant), a form posting off-origin, and a
+      // card the agent sent to a person because the page could not be guarded.
+      await pendingCard(runId, {
+        kind: "credential_first_use",
+        alias: "uni",
+        origin: "https://example.com",
+      }),
+      await pendingCard(runId, {
+        kind: "credential_first_use",
+        alias: "uni",
+        origin: "https://example.com",
+        postsTo: "https://evil.example/collect",
+      }),
+      await pendingCard(runId, CLICK, { personOnly: true }),
+    ];
+    await client().runs.setApprovalMode({ runId, mode: "bypass", bypassAcknowledged: true });
+    await client().runs.setApprovalMode({ runId, mode: "auto_within_allowlist" });
+    for (const card of cards)
+      expect(await approvalRow(card)).toMatchObject({ status: "pending", decidedBy: null });
+    // Nothing was decided, so nothing woke the run.
+    expect((await runRow(runId)).wakeRequestedAt).toBeNull();
+    expect((await eventsOf(runId)).map((e) => e.type)).toEqual([
+      "approval_mode_changed",
+      "approval_mode_changed",
+    ]);
+  });
+
+  it("switching to ask never resolves anything", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "running" });
+    await client().runs.setApprovalMode({ runId, mode: "bypass", bypassAcknowledged: true });
+    await owner.db
+      .update(runs)
+      .set({ status: "waiting", waitReason: "approval" })
+      .where(eq(runs.id, runId));
+    const card = await pendingCard(runId, CLICK);
+    await client().runs.setApprovalMode({ runId, mode: "ask" });
+    expect(await approvalRow(card)).toMatchObject({ status: "pending", decidedBy: null });
+    expect((await runRow(runId)).approvalMode).toBe("ask");
+  });
+});
+
+describe("runs.sendMessage delivery (run-mode: queue or interrupt)", () => {
+  it("a queued message is as before: no interrupt flag, no run_control", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "running" });
+    let controls = 0;
+    const listener = await web.sql.listen("run_control", () => void (controls += 1));
+    // An interrupt notifies run_control before run_wake in the same commit, so once the wake has
+    // arrived, a run_control would have too.
+    await nextNotification(web.sql, "run_wake", () =>
+      client().runs.sendMessage({ runId, text: "Then reading 3" }),
+    );
+    await listener.unlisten();
+    expect(await eventsOf(runId)).toEqual([{ type: "user_message", text: "Then reading 3" }]);
+    expect(controls).toBe(0);
+  });
+
+  it("Send now stores interrupt: true and tells the worker through NOTIFY run_control", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "running" });
+    const payload = await nextNotification(web.sql, "run_control", () =>
+      client().runs.sendMessage({ runId, text: "Stop, do reading 2", interrupt: true }),
+    );
+    expect(decodeNotify("run_control", payload)).toEqual({ runId });
+    expect(await eventsOf(runId)).toEqual([
+      { type: "user_message", text: "Stop, do reading 2", interrupt: true },
+    ]);
+  });
+
+  it("Send now still wakes a sleeping run, as a queued message does", async () => {
+    const runId = await seedRun(owner.db, { workspaceId, status: "sleeping" });
+    const payload = await nextNotification(web.sql, "run_wake", () =>
+      client().runs.sendMessage({ runId, text: "Now", interrupt: true }),
+    );
+    expect(decodeNotify("run_wake", payload)).toEqual({ runId, reason: "message" });
+    expect((await runRow(runId)).wakeRequestedAt).not.toBeNull();
   });
 });

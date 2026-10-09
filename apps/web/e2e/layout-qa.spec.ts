@@ -193,18 +193,18 @@ test.describe("layout detector: 44px targets, struck-out words, run-view obstacl
     expect((await findLayoutIssues(page)).join("\n")).toContain("clipped by");
   });
 
-  test("the run callout and leader avoid the timeline, and the rule bites when they meet (P8-5)", async ({
+  test("the run callout and leader avoid the thread, and the rule bites when they meet (P8-5)", async ({
     page,
   }) => {
     await gotoRun(page);
     await emit(page, [recordedEvents()[0]!]);
     await expect(page.locator(".run-callout[data-qa-avoid]")).toBeVisible();
     await expect(page.locator(".run-leader[data-qa-avoid]")).toBeAttached();
-    await expect(page.locator("aside.run-tl[data-qa-obstacle]")).toBeVisible();
+    await expect(page.locator("aside.thread[data-qa-obstacle]")).toBeVisible();
     expect((await findLayoutIssues(page)).filter((i) => i.startsWith("overlaps"))).toEqual([]);
     await page.evaluate(() => {
       const callout = document.querySelector(".run-callout")!.getBoundingClientRect();
-      const timeline = document.querySelector<HTMLElement>("aside.run-tl")!;
+      const timeline = document.querySelector<HTMLElement>("aside.thread")!;
       Object.assign(timeline.style, {
         position: "fixed",
         left: `${callout.left}px`,
@@ -289,4 +289,18 @@ test.describe("run frame chrome at 390: nothing overlaps in any status (coordina
       .evaluate((el) => void (el.style.flexWrap = "nowrap"));
     expect((await chromeCollisions(page)).join("\n")).toMatch(/overlaps|leaves the chrome/);
   });
+});
+
+test.describe("run frame chrome beside the thread pane: nothing overlaps (fe-run-chat)", () => {
+  test.skip(
+    ({ viewport }) => ![1440, 1180, 1024].includes(viewport?.width ?? 0),
+    "the pane widths, where the frame is narrowest",
+  );
+  for (const s of RUN_SCENARIOS) {
+    test(`${s.name}`, async ({ page }) => {
+      await s.setup(page);
+      await expect(frame(page)).toHaveAttribute("data-state", s.state, { timeout: 5_000 });
+      expect(await chromeCollisions(page)).toEqual([]);
+    });
+  }
 });

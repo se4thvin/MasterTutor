@@ -128,7 +128,12 @@ export async function startLlmMock(
   };
   setScenarios(options.scenarios ?? []);
 
-  const build = (outputs: readonly MockOutput[], state: ScenarioState) =>
+  /** Summaries come back only when the request sets `reasoning.summary`, as with the real API. */
+  const wantsSummary = (body: MockRequestBody) => {
+    const reasoning = body.reasoning as { summary?: unknown } | undefined;
+    return typeof reasoning?.summary === "string";
+  };
+  const build = (outputs: readonly MockOutput[], state: ScenarioState, summarize: boolean) =>
     outputs.map((output) => {
       switch (output.type) {
         case "computer":
@@ -190,7 +195,7 @@ export async function startLlmMock(
             type: "reasoning",
             id: nextId("rs"),
             encrypted_content: `enc_${counter.toString(36)}`,
-            summary: output.text ? [{ type: "summary_text", text: output.text }] : [],
+            summary: output.text && summarize ? [{ type: "summary_text", text: output.text }] : [],
           };
         case "function":
           return {
@@ -522,7 +527,7 @@ export async function startLlmMock(
       }
       let output: unknown[];
       try {
-        output = build(turn.outputs ?? [], state);
+        output = build(turn.outputs ?? [], state, wantsSummary(body));
       } catch (error) {
         failures.push(
           `${name} turn ${index}: ${error instanceof Error ? error.message : String(error)}`,

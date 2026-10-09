@@ -1,7 +1,8 @@
 "use client";
 
 import { stepScreenshotPath, untrustedText } from "@mastertutor/contracts";
-import { useId, useRef, type ReactNode } from "react";
+import { Suspense, useId, useRef, type ReactNode } from "react";
+import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
 import { AgentCursor } from "../cursor/agent-cursor.tsx";
 import { toViewport, type Point } from "../cursor/cursor-path.ts";
 import { canTakeOver, type BrowserState } from "../model/browser-state.ts";
@@ -27,7 +28,11 @@ import { Caption } from "./caption.tsx";
 import { FullscreenButton } from "./fullscreen-button.tsx";
 import { LiveFrame, type LiveStatus } from "./live-frame.tsx";
 import { OriginPill, StatePill } from "./origin-pill.tsx";
-import { StepCallout } from "./step-callout.tsx";
+
+/** Callouts show only at wide widths with the toggle on: off the run page's first load (budget). */
+const { Component: StepCallout, usePrefetch: usePrefetchStepCallout } = lazyComponent(() =>
+  import("./step-callout.tsx").then((mod) => mod.StepCallout),
+);
 
 interface BrowserFrameProps {
   runId: string;
@@ -57,6 +62,7 @@ export function BrowserFrame(p: BrowserFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const size = useElementSize(viewportRef);
+  usePrefetchStepCallout();
   const maskId = `spot-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const { model, state } = p;
   const replaying = state === "replay";
@@ -148,12 +154,14 @@ export function BrowserFrame(p: BrowserFrameProps) {
           <rect data-scrim="" width="100%" height="100%" mask={`url(#${maskId})`} />
         </svg>
         {callout && target && size ? (
-          <StepCallout
-            text={untrustedText(callout.action?.summary ?? callout.caption, 160)}
-            number={actNumber(model, callout.seq)}
-            target={target}
-            box={size}
-          />
+          <Suspense fallback={null}>
+            <StepCallout
+              text={untrustedText(callout.action?.summary ?? callout.caption, 160)}
+              number={actNumber(model, callout.seq)}
+              target={target}
+              box={size}
+            />
+          </Suspense>
         ) : null}
         <AgentCursor
           target={target}

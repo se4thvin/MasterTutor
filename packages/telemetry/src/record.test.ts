@@ -67,6 +67,27 @@ describe("run event recorders (spec §5.3, seam 6)", () => {
     expect(await telemetry.exported()).not.toContain("canary note");
   });
 
+  it("counts mode changes by the new mode and messages by delivery, never who or what (run-mode)", async () => {
+    recordRunEvent({
+      type: "approval_mode_changed",
+      from: "ask",
+      to: "bypass",
+      by: "6f2c8a3e-0000-4000-8000-000000000000",
+    });
+    expect((await telemetry.metric(METRIC.approvalModeChanges.name))[0]!.attributes).toEqual({
+      "mt.approval.mode": "bypass",
+    });
+    recordRunEvent({ type: "user_message", text: "my secret canary note", interrupt: true });
+    recordRunEvent({ type: "user_message", text: "another canary note" });
+    const deliveries = (await telemetry.metric(METRIC.runSends.name)).map((p) => p.attributes);
+    expect(deliveries).toEqual(
+      expect.arrayContaining([{ "mt.send.mode": "interrupt" }, { "mt.send.mode": "queue" }]),
+    );
+    const exported = await telemetry.exported();
+    expect(exported).not.toContain("canary note");
+    expect(exported).not.toContain("6f2c8a3e");
+  });
+
   it("records downloads by state and size, and error codes normalised", async () => {
     recordRunEvent({
       type: "download_ready",

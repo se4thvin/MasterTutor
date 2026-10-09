@@ -12,7 +12,7 @@ type ApprovalRow = typeof approvals.$inferSelect;
 type StepRow = Pick<
   typeof runSteps.$inferSelect,
   "seq" | "phase" | "state" | "caption" | "url" | "screenshotKey" | "action" | "createdAt"
->;
+> & { reasoning: string | null };
 
 /** DB rows to API views: one mapping each, shared by create-run.ts and service.ts. */
 export function runSummaryOf(row: RunRow): RunSummary {
@@ -61,6 +61,7 @@ export function stepViewOf(row: StepRow): RunStepView {
     url: row.url,
     screenshotKey: row.screenshotKey,
     action: action.success ? action.data : null,
+    reasoning: row.reasoning,
     createdAt: row.createdAt.toISOString(),
   };
 }

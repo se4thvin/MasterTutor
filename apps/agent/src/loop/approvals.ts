@@ -46,6 +46,11 @@ export const ApproveStepResult = z.object({
   url: z.string(),
   domHash: z.string(),
   decided: z.array(ItemDecision),
+  /**
+   * Only a person may decide this card (the page could not be guarded, m10). The web reads it as
+   * run_steps.result->>'personOnly', so a mid-run mode change never resolves it (run-mode).
+   */
+  personOnly: z.boolean().default(false),
 });
 export type ApproveStepResult = z.infer<typeof ApproveStepResult>;
 export interface PendingApproval extends ApproveStepResult {
@@ -186,6 +191,31 @@ export async function loadUserMessages(
   return rows.flatMap((row) =>
     row.payload.type === "user_message" ? [{ id: String(row.id), text: row.payload.text }] : [],
   );
+}
+
+/**
+ * The newest Send now (an interrupting user_message) after `afterId`, or null. Read on a
+ * run_control NOTIFY only, never per step; bounded by the run's message cursor.
+ */
+export async function newestInterrupt(
+  db: Database,
+  runId: string,
+  afterId: string | null,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: runEvents.id })
+    .from(runEvents)
+    .where(
+      and(
+        eq(runEvents.runId, runId),
+        eq(runEvents.type, "user_message"),
+        sql`(${runEvents.payload} ->> 'interrupt')::boolean`,
+        afterId ? gt(runEvents.id, Number(afterId)) : undefined,
+      ),
+    )
+    .orderBy(desc(runEvents.id))
+    .limit(1);
+  return row ? String(row.id) : null;
 }
 
 /** A one-time code the user submitted for this run that is still usable (spec §9 CodeSlots). */
