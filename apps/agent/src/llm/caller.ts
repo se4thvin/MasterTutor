@@ -127,6 +127,7 @@ export class ModelCaller {
           [ATTR.modelFallback]: result.fallback !== null,
           [ATTR.tokensInput]: tokens.input,
           [ATTR.tokensCached]: tokens.cached,
+          [ATTR.tokensCachedRatio]: tokens.input === 0 ? 0 : tokens.cached / tokens.input,
           [ATTR.tokensOutput]: tokens.output,
           [ATTR.costUsd]: costUsd(result.model, tokens),
         });
