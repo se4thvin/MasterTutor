@@ -218,9 +218,6 @@
       0 0 0 0.03125rem var(--hairline),
       var(--e2);
     transform-origin: 50% 40%;
-    /* It scales on takeover (D28): the hint keeps its layer and raster scale, so the transition
-       never repaints the frame as it starts or ends. */
-    will-change: scale;
     transition-property: scale;
     transition-duration: var(--motion-spring-dur);
     transition-timing-function: var(--motion-spring);

@@ -146,10 +146,15 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
   const layoutFrames = new Set<number>();
   const changedFrames = new Set<number>();
   const painted = new Map<number, Set<number>>(); // frame -> the scoped layers that painted
+  const startsOwnMotion = new Map<number, number>(); // element -> the frame it starts to move
   for (const e of events) {
     if (e.ts < triggered || e.ts > settled) continue;
     const at = frameOf(e.ts);
-    if ((e.name === LAYOUT_CHANGE || e.name === STYLE_CHANGE) && motion(e)) changedFrames.add(at);
+    if ((e.name === LAYOUT_CHANGE || e.name === STYLE_CHANGE) && motion(e)) {
+      changedFrames.add(at);
+      const moved = node(e) ?? -1;
+      if (!startsOwnMotion.has(moved)) startsOwnMotion.set(moved, at);
+    }
     if (e.name === LAYOUT_CHANGE && content(e)) contentFrames.add(at);
     if (e.name === LAYOUT_CHANGE && motion(e)) layoutFrames.add(at);
     const layer = node(e) ?? -1;
@@ -164,12 +169,16 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
   const inMotion = (at: number) => at > started;
   // Per element (layer): its first paint in the window is it appearing, wherever the motion is by
   // then; under slow frames a caption or cursor that arrives after the motion started is first
-  // painted inside the counted frames. Every later paint of that layer counts.
+  // painted inside the counted frames. Likewise the frame where a layer's own element starts to
+  // move: a transition starting on it (a frame that scales on takeover) rasters it once for the
+  // animation, wherever the rest of the motion is. Every other paint of that layer counts.
   const seen = new Set<number>();
   let paints = 0;
   const glassFrames = new Map<number, number>(); // glass panel -> frames it painted on
   for (const at of [...painted.keys()].sort((a, b) => a - b)) {
-    const repainted = [...painted.get(at)!].filter((layer) => seen.has(layer));
+    const repainted = [...painted.get(at)!].filter(
+      (layer) => seen.has(layer) && startsOwnMotion.get(layer) !== at,
+    );
     for (const layer of painted.get(at)!) seen.add(layer);
     if (repainted.length === 0) continue;
     if (!inMotion(at) || !changedFrames.has(at) || contentFrames.has(at)) continue;

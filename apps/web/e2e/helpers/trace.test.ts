@@ -28,7 +28,12 @@ const laidOut = (ts: number, nodeId: number, reason = "Style changed") =>
 /** Nodes 7 and 8 animate, in their own layer owned by 7 (isolate); 9 holds an iframe; 1 is #document; 99 is elsewhere. */
 const SCOPE: MotionScope = { nodes: new Set([7, 8, 9]), glass: new Set(), embeds: new Set([9]) };
 /** The motion's first frame (7 starts moving), which mounts and promotes and is never counted. */
-const start = (): TraceEvent[] => [styled(6_000, 7), paint(6_100, 7), laidOut(6_200, 7)];
+const start = (): TraceEvent[] => [
+  styled(6_000, 7),
+  styled(6_050, 8),
+  paint(6_100, 7),
+  laidOut(6_200, 7),
+];
 const window = (...events: TraceEvent[]) => [
   mark(MOTION_MARKS.ready, 0),
   mark(MOTION_MARKS.triggered, 5_000),
@@ -211,6 +216,36 @@ describe("analyzeTrace (D28, P8-28, I6)", () => {
       SCOPE,
     );
     expect(open.paints).toBe(1);
+  });
+
+  it("does not count a layer rastered as its own animation starts; its paints after that count", () => {
+    // 8 moves from the motion's first frame; 7 (already painted) starts its own transition later.
+    const run = (...events: TraceEvent[]) =>
+      analyzeTrace(
+        [
+          mark(MOTION_MARKS.ready, 0),
+          mark(MOTION_MARKS.triggered, 5_000),
+          styled(6_000, 8),
+          paint(6_100, 7),
+          frame(7_000),
+          styled(10_000, 8),
+          frame(11_000),
+          ...events,
+          mark(MOTION_MARKS.end, 200_000),
+        ],
+        SCOPE,
+      );
+    expect(run(styled(30_000, 7), paint(30_100, 7), frame(31_000)).paints).toBe(0);
+    expect(
+      run(
+        styled(30_000, 7),
+        paint(30_100, 7),
+        frame(31_000),
+        styled(40_000, 7),
+        paint(40_100, 7), // and repaints on its next frame: a finding
+        frame(41_000),
+      ).paints,
+    ).toBe(1);
   });
 
   describe("frosted-glass panels (D49)", () => {
