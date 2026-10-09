@@ -9,6 +9,7 @@ import {
   FIDELITIES,
   FILED_BY,
   MEMBER_ROLES,
+  OBSERVER_MODES,
   RUN_STATUSES,
   SLOT_STATES,
   SOURCE_KINDS,
@@ -25,6 +26,7 @@ export const runStatusEnum = pgEnum("run_status", RUN_STATUSES);
 export const waitReasonEnum = pgEnum("wait_reason", WAIT_REASONS);
 export const controllerEnum = pgEnum("controller", CONTROLLERS);
 export const approvalModeEnum = pgEnum("approval_mode", APPROVAL_MODES);
+export const observerModeEnum = pgEnum("observer_mode", OBSERVER_MODES);
 export const stepPhaseEnum = pgEnum("step_phase", STEP_PHASES);
 export const stepStateEnum = pgEnum("step_state", STEP_STATES);
 export const approvalKindEnum = pgEnum("approval_kind", APPROVAL_KINDS);

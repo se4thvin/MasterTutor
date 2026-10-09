@@ -11,6 +11,7 @@ import {
 import { SlotList } from "./constants.ts";
 import { DEFAULT_CDP_SUBNET_PREFIX } from "./live.ts";
 import { ALERT_WEBHOOK_INTERNAL_URL, OBSERVE_INTERNAL_URL } from "./observability.ts";
+import { COPILOT_LIMITS, OBSERVER_PORT } from "./observer.ts";
 
 export const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 export const LogLevel = z.enum(LOG_LEVELS);
@@ -87,6 +88,8 @@ export const WebEnv = z
     ALERT_WEBHOOK_SECRET: Secret.optional(),
     /** The viewer user ForwardAuth injects for /observability (spec §12): unset means unavailable. */
     OBSERVE_VIEWER_PASSWORD: ObservePassword.optional(),
+    /** ForwardAuth's answer to Traefik for /api/observer/* (spec §7.2): unset means unavailable. */
+    OBSERVER_INTERNAL_TOKEN: Secret.optional(),
     /** web's cdp address is <prefix>.11: the Host Traefik's ForwardAuth calls carry (D50 I-1). */
     CDP_SUBNET_PREFIX: z
       .string()
@@ -128,6 +131,8 @@ export const MigrateEnv = z.object({
   DATABASE_URL: PostgresUrl,
   WEB_DB_PASSWORD: DbPassword,
   AGENT_DB_PASSWORD: DbPassword,
+  /** observer_role's LOGIN password (spec §7.3); unset leaves the role NOLOGIN. */
+  OBSERVER_DB_PASSWORD: DbPassword.optional(),
   BROWSER_SLOTS: SlotList,
 });
 export type MigrateEnv = z.infer<typeof MigrateEnv>;
@@ -164,11 +169,35 @@ export const ObservabilityInitEnv = z.object({
   OBSERVE_ROOT_PASSWORD_PREVIOUS: ObservePassword.optional(),
   OBSERVE_INGEST_PASSWORD: ObservePassword,
   OBSERVE_VIEWER_PASSWORD: ObservePassword,
+  /** The Copilot's own OpenObserve user (spec §7.4); unset provisions none. */
+  OBSERVE_COPILOT_PASSWORD: ObservePassword.optional(),
   ALERT_WEBHOOK_SECRET: Secret,
   ALERT_WEBHOOK_URL: z.url().default(ALERT_WEBHOOK_INTERNAL_URL),
   SPEND_ALERT_USD_PER_HOUR: z.coerce.number().positive().max(1_000).default(25),
 });
 export type ObservabilityInitEnv = z.infer<typeof ObservabilityInitEnv>;
+
+/**
+ * observer (spec §5.1, §7): observer_role's database URL, the one OpenAI key (D36), its own
+ * OpenObserve user, the internal bearer ForwardAuth injects. No S3, vault, sealing or auth secret.
+ */
+export const ObserverEnv = z.object({
+  ...Common,
+  ...Telemetry,
+  DATABASE_URL: PostgresUrl,
+  OPENAI_API_KEY: z.string().min(1),
+  OPENAI_BASE_URL: z.url().optional(),
+  /** The app's origin: the same-origin write check compares Origin with it. */
+  PUBLIC_URL: z.url(),
+  OBSERVER_INTERNAL_TOKEN: Secret,
+  OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
+  OBSERVE_COPILOT_PASSWORD: ObservePassword,
+  OBSERVER_DAILY_USD: z.coerce.number().positive().max(100).default(COPILOT_LIMITS.dailyUsdDefault),
+  OBSERVER_PORT: z.coerce.number().int().min(1).max(65_535).default(OBSERVER_PORT),
+  /** Built into the image by build-code-index.ts (spec §7.5). */
+  OBSERVER_CODE_INDEX: z.string().min(1).default("/app/code-index.json"),
+});
+export type ObserverEnv = z.infer<typeof ObserverEnv>;
 
 export class EnvError extends Error {
   readonly problems: string[];

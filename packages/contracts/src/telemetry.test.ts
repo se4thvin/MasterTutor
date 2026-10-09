@@ -5,6 +5,8 @@ import {
   DERIVED_METRIC,
   EXPORTABLE_ATTRIBUTES,
   METRIC,
+  OBSERVER_ROLES,
+  SPEND_PURPOSES,
   SPAN,
   SPANMETRIC_DIMENSIONS,
   SPANMETRICS_NAMESPACE,
@@ -51,5 +53,28 @@ describe("product telemetry names (spec §5)", () => {
   it("derives span metrics under one namespace", () => {
     expect(DERIVED_METRIC.spanCalls).toBe(`${SPANMETRICS_NAMESPACE}.calls`);
     expect(DERIVED_METRIC.spanDuration).toBe(`${SPANMETRICS_NAMESPACE}.duration`);
+  });
+});
+
+describe("Observer names (spec §6.11)", () => {
+  it("adds the observer span, attribute and metric names under mt.observer and a spend purpose", () => {
+    expect(SPAN.observerReview).toBe("mt.observer.review");
+    expect(METRIC.spendUsd.dimensions).toEqual([ATTR.spendPurpose]);
+    expect(METRIC.observerVerdicts.dimensions).toEqual([
+      ATTR.observerVerdict,
+      ATTR.observerCategory,
+      ATTR.observerRollout,
+    ]);
+    for (const dimension of [
+      ATTR.observerRole,
+      ATTR.observerStage,
+      ATTR.observerOutcome,
+      ATTR.observerTool,
+    ])
+      expect(SPANMETRIC_DIMENSIONS).toContain(dimension);
+  });
+  it("names the roles and charges everything but the Copilot to the run", () => {
+    expect(OBSERVER_ROLES).toEqual(["guard", "watcher", "copilot"]);
+    expect(SPEND_PURPOSES).toEqual(["run", "copilot"]);
   });
 });

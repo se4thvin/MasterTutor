@@ -6,7 +6,7 @@ import { APIError } from "./openai.ts";
 import type { Clock } from "../runtime/clock.ts";
 import { ContextOverflow, ModelUnavailable, interruptionOf } from "../runtime/errors.ts";
 import type { ModelClient, ModelReply, ModelRequest } from "./client.ts";
-import { costUsd } from "./pricing.ts";
+import { costUsd } from "@mastertutor/contracts";
 
 export type ModelErrorKind = "rate_limited" | "server" | "transient" | "context_overflow" | "fatal";
 

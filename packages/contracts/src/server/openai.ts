@@ -66,6 +66,26 @@ export interface StructuredRequest<S extends z.ZodType> {
   name: string;
   /** A hard cap on output tokens (reasoning included); a cut-off answer does not parse. */
   maxOutputTokens?: number;
+  /**
+   * Only where the spike pinned support (spec §10): gpt-6-luna takes "none" or "low",
+   * gpt-6.1-sol "low" at the least; "minimal" is refused by both.
+   */
+  reasoningEffort?: "none" | "low";
+}
+
+/**
+ * A structured answer that came back but did not parse (prose, cut off, off-schema). OpenAI bills
+ * it all the same, so it carries the usage: callers charge it, then fail closed. Never the text.
+ */
+export class StructuredParseError extends Error {
+  readonly model: string;
+  readonly tokens: TokenCounts;
+  constructor(model: string, tokens: TokenCounts) {
+    super("The structured reply did not match its schema");
+    this.name = "StructuredParseError";
+    this.model = model;
+    this.tokens = tokens;
+  }
 }
 
 export interface StructuredReply<T> {
@@ -160,14 +180,18 @@ export function createOpenAI(options: {
             input: request.input,
             text: { format: zodTextFormat(request.schema, request.name) },
             ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
+            ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
           },
           requestOptions,
         );
-        return {
-          parsed: request.schema.parse(JSON.parse(outputText(response))),
-          model: response.model,
-          tokens: tokensOf(response),
-        };
+        const tokens = tokensOf(response);
+        let parsed: z.output<typeof request.schema>;
+        try {
+          parsed = request.schema.parse(JSON.parse(outputText(response)));
+        } catch {
+          throw new StructuredParseError(response.model, tokens);
+        }
+        return { parsed, model: response.model, tokens };
       },
     },
     embeddings: {

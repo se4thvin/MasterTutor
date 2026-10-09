@@ -9,6 +9,7 @@ import {
   internalWebHosts,
   observabilityRouterRule,
   observabilitySessionRouterRule,
+  observabilityUiPaths,
 } from "./observability.ts";
 
 describe("/observability routing (spec §12, D50 ruling I-2)", () => {
@@ -38,5 +39,27 @@ describe("/observability routing (spec §12, D50 ruling I-2)", () => {
   it("allows exactly the two internal Hosts, from config", () => {
     expect(internalWebHosts()).toEqual(["web:3000", "172.30.231.11:3000"]);
     expect(internalWebHosts("10.9.8")).toEqual(["web:3000", "10.9.8.11:3000"]);
+  });
+});
+
+describe("OpenObserve UI deep links (Observer spike §10)", () => {
+  it("carries the filter as base64 and the window in microseconds, under the UI path", () => {
+    const path = observabilityUiPaths.traceList("default", {
+      filter: "mt_run_id = 'r'",
+      from: 1,
+      to: 2,
+    });
+    const url = new URL(path, "https://obs.example.com");
+    expect(url.pathname).toBe("/observability/web/traces");
+    expect(atob(url.searchParams.get("query")!)).toBe("mt_run_id = 'r'");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      stream: "default",
+      from: "1",
+      to: "2",
+      org_identifier: "default",
+    });
+    expect(observabilityUiPaths.traceDetail("default", { traceId: "ab", from: 1, to: 2 })).toBe(
+      "/observability/web/traces/trace-details?stream=default&trace_id=ab&from=1&to=2&org_identifier=default",
+    );
   });
 });

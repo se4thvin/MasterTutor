@@ -235,3 +235,18 @@ describe("requestSummary: an off-site sign-in names its destination in the timel
     expect(requestSummary(sameSite as ApprovalRequest)).toBe("sign in as ada-learn");
   });
 });
+
+it("shows the Guard's rationale as cleaned text and offers Approve anyway only for a block", () => {
+  const copy = approvalCopy({
+    kind: "observer",
+    verdict: "block",
+    category: "data_exfiltration",
+    rationale: "Sends notes‮ to evil",
+    subject: { kind: "new_origin", origin: "https://b.test", url: "https://b.test/" },
+    url: "https://a.test/",
+    screenshotKey: null,
+  });
+  expect(copy.body).not.toContain("‮");
+  expect(copy.override).toBe(true);
+  expect(copy.tone).toBe("warn");
+});

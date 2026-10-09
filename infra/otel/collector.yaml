@@ -124,6 +124,10 @@ connectors:
       - name: mt.slot.name
       - name: mt.takeover.outcome
       - name: mt.dependency
+      - name: mt.observer.role
+      - name: mt.observer.stage
+      - name: mt.observer.outcome
+      - name: mt.observer.tool
     metrics_flush_interval: 30s
 
 exporters:

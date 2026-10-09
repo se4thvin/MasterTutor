@@ -220,6 +220,7 @@ export async function runProdSmoke(options: SmokeOptions): Promise<void> {
     allowedOrigins: [...TASK.allowedOrigins],
     targetFolderId: null,
     toolProfile: "browser_use",
+    observerMode: "enforce",
     budget: { maxSteps: 30, maxUsd: options.maxUsd, maxActiveMinutes: 10 },
   };
   const run = await rpc(session, "runs/create", input, RunSummary);
