@@ -5,31 +5,12 @@
  */
 import { z } from "zod";
 import { ApprovalKind, ApprovalMode } from "./enums.ts";
+import { GuardCategory, GuardStage, GuardVerdictName } from "./guard-codes.ts";
 import { DEFAULT_CDP_SUBNET_PREFIX, webCdpOrigin } from "./live.ts";
 import { Alias, IsoDateTime, Origin, Uuid } from "./primitives.ts";
-import { ToolName } from "./tools.ts";
+import { ToolName } from "./tool-call.ts";
 
 /* ----------------------------------- Guard ----------------------------------- */
-
-export const GUARD_VERDICTS = ["allow", "flag", "escalate", "block"] as const;
-export const GuardVerdictName = z.enum(GUARD_VERDICTS);
-export type GuardVerdictName = z.infer<typeof GuardVerdictName>;
-
-export const GUARD_CATEGORIES = [
-  "goal_drift",
-  "data_exfiltration",
-  "credential_misuse",
-  "injection_followed",
-  "destructive_or_financial",
-  "unexpected_origin",
-  /** The review could not run (timeout, error, unparseable answer, redaction trip): fail closed. */
-  "guard_unavailable",
-  /** 3 consecutive or 20 total blocks (spec §6.7). */
-  "denial_limit",
-  "other",
-] as const;
-export const GuardCategory = z.enum(GUARD_CATEGORIES);
-export type GuardCategory = z.infer<typeof GuardCategory>;
 
 export const GUARD_TRIGGERS = [
   "risky_item",
@@ -41,10 +22,6 @@ export const GUARD_TRIGGERS = [
 ] as const;
 export const GuardTrigger = z.enum(GUARD_TRIGGERS);
 export type GuardTrigger = z.infer<typeof GuardTrigger>;
-
-export const GUARD_STAGES = ["rules", "screen", "review"] as const;
-export const GuardStage = z.enum(GUARD_STAGES);
-export type GuardStage = z.infer<typeof GuardStage>;
 
 export const ACTION_CLASSES = [
   "click",
