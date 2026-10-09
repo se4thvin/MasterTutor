@@ -19,6 +19,8 @@ export const Anchor = z
   .object({
     selector: z.string().max(2000).nullable(),
     xpath: z.string().max(2000).nullable(),
+    /** Child-node path from the document, used to order overlapping DOM captures. */
+    domOrder: z.array(z.number().int().nonnegative()).max(256).optional(),
     start: Offset,
     end: Offset,
     textFragment: z.string().max(2000).nullable(),

@@ -111,13 +111,15 @@ export interface PageExtract {
   smallFrames: number;
 }
 export interface BlockSnippet {
+  selector?: string | null;
   head: string;
   tail: string;
 }
 export interface LocatedBlock {
   selector: string | null;
   xpath: string | null;
-  /** Offsets into the root's normalized rendered text (NFKC, lower-case, single spaces). */
+  domOrder?: number[];
+  /** Offsets into the target element's normalized rendered text (NFKC, lower-case, single spaces). */
   start: number | null;
   end: number | null;
 }

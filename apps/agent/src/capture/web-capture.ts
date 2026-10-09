@@ -281,7 +281,8 @@ async function captureDocument(
   const located = await worlds.call(
     pageLocateBlocks,
     [
-      plains.map((plain) => ({
+      plains.map((plain, i) => ({
+        selector: textual[i]?.selector ?? null,
         head: plain.slice(0, 60),
         tail: plain.length > 60 ? plain.slice(-60) : "",
       })),
@@ -302,6 +303,7 @@ async function captureDocument(
       anchor: {
         selector: where?.selector ?? p.selector,
         xpath: where?.xpath ?? null,
+        ...(where?.domOrder ? { domOrder: where.domOrder } : {}),
         start: where?.start ?? null,
         end: where?.end ?? null,
         textFragment: plain ? textFragment(plain) : null,

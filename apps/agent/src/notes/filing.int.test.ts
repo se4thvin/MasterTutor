@@ -85,6 +85,36 @@ describe("fileRunNote", () => {
     expect(step.usage.usd).toBeGreaterThan(0);
   });
 
+  it("files every document in the run, preserving user moves", async () => {
+    const { scope, noteId } = await runNote();
+    const [second] = await h.db
+      .insert(notes)
+      .values({
+        workspaceId: scope.workspaceId,
+        runId: scope.runId,
+        title: "Section 2",
+        filedBy: "agent",
+      })
+      .returning();
+    await h.db.update(notes).set({ filedBy: "user" }).where(eq(notes.id, noteId));
+    const target = await createFolder(h.db, scope.workspaceId, {
+      name: "Sections",
+      parentId: null,
+    });
+    const step = new StepCollector();
+    await fileRunNote(
+      services({ decide: async () => ({ path: ["Sections"], createLeaf: false }) }),
+      scope,
+      step,
+    );
+    await commitStep(h.db, scope.runId, step);
+    const [stored] = await h.db.select().from(notes).where(eq(notes.id, second!.id));
+    expect(stored?.folderId).toBe(target.id);
+    expect((await filed(scope.runId)).map((e) => e.payload)).toEqual([
+      expect.objectContaining({ noteId: second!.id }),
+    ]);
+  });
+
   it("reuses a case-variant sibling created meanwhile instead of adding a near-duplicate (QA-083)", async () => {
     const { scope, noteId } = await runNote();
     const bio = await createFolder(h.db, scope.workspaceId, { name: "Biology", parentId: null });
