@@ -25,8 +25,8 @@ const styled = (ts: number, nodeId: number, reason = "Animation") =>
 const laidOut = (ts: number, nodeId: number, reason = "Style changed") =>
   event("LayoutInvalidationTracking", ts, { data: { nodeId, reason } });
 
-/** Nodes 7 and 8 animate, in their own layer owned by 7 (ISOLATE); 1 is #document; 99 is elsewhere. */
-const SCOPE: MotionScope = { nodes: new Set([7, 8]), glass: new Set() };
+/** Nodes 7 and 8 animate, in their own layer owned by 7 (isolate); 9 holds an iframe; 1 is #document; 99 is elsewhere. */
+const SCOPE: MotionScope = { nodes: new Set([7, 8, 9]), glass: new Set(), embeds: new Set([9]) };
 /** The motion's first frame (7 starts moving), which mounts and promotes and is never counted. */
 const start = (): TraceEvent[] => [styled(6_000, 7), paint(6_100, 7), laidOut(6_200, 7)];
 const window = (...events: TraceEvent[]) => [
@@ -175,9 +175,47 @@ describe("analyzeTrace (D28, P8-28, I6)", () => {
     expect(analyzeTrace(repaints, SCOPE).paints).toBe(1);
   });
 
+  it("does not count an embedded page re-rastering inside the frame (the live view's iframe)", () => {
+    const v = analyzeTrace(
+      window(
+        frame(10_000),
+        paint(10_100, 9), // 9 holds the iframe: its first paint
+        styled(20_000, 7),
+        paint(20_100, 9), // the frame around it scales; the remote page re-rasters
+        frame(21_000),
+        styled(30_000, 7),
+        paint(30_100, 9),
+        frame(31_000),
+      ),
+      SCOPE,
+    );
+    expect(v.paints).toBe(0);
+  });
+
+  it("counts within the animation: a re-raster after the scope came to rest is not motion", () => {
+    const v = analyzeTrace(
+      window(
+        styled(20_000, 7),
+        frame(21_000),
+        mark(MOTION_MARKS.settled, 30_000),
+        styled(40_000, 7),
+        paint(40_100, 7), // the layer re-rastered at its final scale, after the motion ended
+        frame(41_000),
+      ),
+      SCOPE,
+    );
+    expect(v).toMatchObject({ paints: 0, layouts: 0 });
+    // Without the settled mark (an endless motion), the window runs to the end mark.
+    const open = analyzeTrace(
+      window(styled(20_000, 7), frame(21_000), styled(40_000, 7), paint(40_100, 7), frame(41_000)),
+      SCOPE,
+    );
+    expect(open.paints).toBe(1);
+  });
+
   describe("frosted-glass panels (D49)", () => {
     // Node 8 is a glass panel in its own layer; 7 owns the subtree's layer.
-    const GLASS: MotionScope = { nodes: new Set([7, 8]), glass: new Set([8]) };
+    const GLASS: MotionScope = { nodes: new Set([7, 8]), glass: new Set([8]), embeds: new Set() };
     const glassFrames = (count: number, also: TraceEvent[] = []) => {
       // The panel appears (its first paint) with the motion's first frame.
       const events: TraceEvent[] = [paint(6_500, 8), frame(10_000)];

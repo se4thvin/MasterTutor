@@ -26,6 +26,8 @@ export interface MotionVerdict {
 export const MOTION_MARKS = {
   ready: "mt-motion-ready",
   triggered: "mt-motion-triggered",
+  /** The scope came to rest: its CSS animations and transitions ended and no inline style moves. */
+  settled: "mt-motion-settled",
   end: "mt-motion-end",
 } as const;
 const FRAME_BUDGET_US = 16_700;
@@ -35,6 +37,12 @@ export interface MotionScope {
   nodes: ReadonlySet<number>;
   /** Its frosted-glass panels (a backdrop-filter): each may repaint on a few frames (D49). */
   glass: ReadonlySet<number>;
+  /**
+   * Holders of an embedded page (an element whose child is an <iframe>: the live view). The page
+   * inside is another document, the remote browser's: re-rastered as the frame around it moves,
+   * its pixels are not this app's motion, so its layer's paints are not counted.
+   */
+  embeds: ReadonlySet<number>;
 }
 
 /**
@@ -51,8 +59,23 @@ export const GLASS_PAINT_FRAMES = 4;
  * document), where any unrelated repaint in the same frame, a ticking timer or a cursor elsewhere,
  * looked like the motion's. In its own layer, a Paint of the subtree is the subtree's. `opacity`
  * promotes without making a containing block, so fixed and sticky descendants keep their layout.
+ * It is added to whatever will-change the element already has (a frame that scales keeps its
+ * transform hint, and is measured as the product ships it): on the scope's elements present now
+ * inline, and by a rule for a scope the trigger mounts later.
  */
-const ISOLATE = (scope: string) => `${scope} { will-change: opacity !important }`;
+async function isolate(page: Page, scope: string): Promise<void> {
+  await page.evaluate((selector) => {
+    for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+      const own = getComputedStyle(el).willChange;
+      const hints = own === "auto" ? "opacity" : `${own}, opacity`;
+      el.style.setProperty("will-change", hints, "important");
+      el.setAttribute("data-mt-isolated", "");
+    }
+  }, scope);
+  await page.addStyleTag({
+    content: `${scope}:not([data-mt-isolated]) { will-change: opacity !important }`,
+  });
+}
 
 /** Invalidation tracking names the element whose style or layout changed (I6). */
 const INVALIDATION_CATEGORY = "disabled-by-default-devtools.timeline.invalidationTracking";
@@ -76,7 +99,7 @@ const CONTENT_REASONS = new Set([
  * - a layout frame has a layout invalidation on a scoped element (invalidation tracking names the
  *   element even when the relayout's root is the document);
  * - a paint frame has a style or layout invalidation on a scoped element and a Paint of the
- *   subtree's own layer (ISOLATE). Chromium emits no Paint for transform or opacity changes, so
+ *   subtree's own layer (isolate). Chromium emits no Paint for transform or opacity changes, so
  *   compositor-only motion counts zero.
  * Content entering or leaving the page is not motion and does not count, nor does a paint in a
  * frame where scoped content entered (a new digit, a new caption), nor a layer's first paint in
@@ -91,6 +114,14 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
   const end = markAt(MOTION_MARKS.end);
   if (start === undefined || triggered === undefined || end === undefined)
     throw new Error("trace is missing the motion marks");
+  // Layout and paint count within the animation only: once the scope has come to rest, Chromium
+  // re-rasters a layer that was scaled or moved at its final scale (one paint, after the motion),
+  // and on a slow host that lands before the end mark. Frame times still run to the end mark.
+  const settledAt = events
+    .filter((e) => e.name === "TimeStamp" && e.args?.data?.message === MOTION_MARKS.settled)
+    .map((e) => e.ts)
+    .filter((ts) => ts <= end);
+  const settled = settledAt.length > 0 ? Math.max(...settledAt) : end;
 
   const frames = events
     .filter((e) => e.name === "DrawFrame" && e.ts > start && e.ts <= end)
@@ -116,13 +147,13 @@ export function analyzeTrace(events: readonly TraceEvent[], scope: MotionScope):
   const changedFrames = new Set<number>();
   const painted = new Map<number, Set<number>>(); // frame -> the scoped layers that painted
   for (const e of events) {
-    if (e.ts < triggered || e.ts > end) continue;
+    if (e.ts < triggered || e.ts > settled) continue;
     const at = frameOf(e.ts);
     if ((e.name === LAYOUT_CHANGE || e.name === STYLE_CHANGE) && motion(e)) changedFrames.add(at);
     if (e.name === LAYOUT_CHANGE && content(e)) contentFrames.add(at);
     if (e.name === LAYOUT_CHANGE && motion(e)) layoutFrames.add(at);
     const layer = node(e) ?? -1;
-    if (e.name === "Paint" && scope.nodes.has(layer))
+    if (e.name === "Paint" && scope.nodes.has(layer) && !scope.embeds.has(layer))
       painted.set(at, (painted.get(at) ?? new Set()).add(layer));
   }
   // The motion's own window: it starts on the first frame a scoped element moves, which also
@@ -189,7 +220,12 @@ async function motionScope(cdp: CDPSession, selector: string): Promise<MotionSco
     root.nodeId,
     `${selector}[data-mt-glass], ${selector} [data-mt-glass]`,
   );
-  return { nodes: new Set(nodes), glass: new Set(glass) };
+  const embeds = await backendIds(
+    cdp,
+    root.nodeId,
+    `${selector} :has(> iframe), ${selector} iframe`,
+  );
+  return { nodes: new Set(nodes), glass: new Set(glass), embeds: new Set(embeds) };
 }
 
 /**
@@ -206,6 +242,44 @@ const stampAfterFrames = (label: string) =>
       }),
     ),
   );
+
+/**
+ * Stamps a mark once the motion comes to rest: after something in the scope moved, its finite CSS
+ * animations and transitions have finished and (for motion's requestAnimationFrame springs) no
+ * inline style in it changed since the frame before (confirmed by one more still frame). Endless ambient animations (a pulse, a drift) are not
+ * the motion and do not hold it open. Counted in frames, so a slow host only moves it later; never
+ * stamped before the motion started (an async trigger), so the window then runs to the end mark.
+ */
+const stampWhenSettled = async ({ scope, label }: { scope: string; label: string }) => {
+  const inScope = () => [...document.querySelectorAll(`${scope}, ${scope} *`)];
+  const styles = () =>
+    inScope()
+      .map((el) => el.getAttribute("style") ?? "")
+      .join("|");
+  let previous = styles();
+  let moved = false;
+  for (let still = 0; still < 2;) {
+    await new Promise(requestAnimationFrame);
+    const scoped = new Set(inScope());
+    const running = document.getAnimations().filter((a) => {
+      const target = (a.effect as KeyframeEffect | null)?.target;
+      return (
+        target instanceof Element &&
+        scoped.has(target) &&
+        a.playState === "running" &&
+        a.effect?.getTiming().iterations !== Infinity
+      );
+    });
+    const next = styles();
+    const moving = running.length > 0 || next !== previous;
+    moved ||= moving;
+    still = moved && !moving ? still + 1 : 0;
+    // Stamped on the first still frame, before it is painted: the re-raster at the final scale
+    // comes in this very frame. Motion that resumes stamps again; the last stamp counts.
+    if (still === 1) console.timeStamp(label);
+    previous = next;
+  }
+};
 
 /**
  * Traces one motion: tracing and the ready mark come before the trigger (which may navigate, so
@@ -226,7 +300,7 @@ export async function traceMotion(
   );
   // Before tracing, so promoting the layer is not in the trace; a subtree the trigger mounts
   // matches the rule too.
-  await page.addStyleTag({ content: ISOLATE(run.scope) });
+  await isolate(page, run.scope);
   await cdp.send("Tracing.start", {
     transferMode: "ReportEvents",
     traceConfig: {
@@ -243,6 +317,10 @@ export async function traceMotion(
     await page.evaluate((label) => console.timeStamp(label), MOTION_MARKS.ready);
     await run.trigger(page);
     await page.evaluate(stampAfterFrames, MOTION_MARKS.triggered);
+    // Runs alongside the window; one that never settles is simply dropped when the page goes.
+    void page
+      .evaluate(stampWhenSettled, { scope: run.scope, label: MOTION_MARKS.settled })
+      .catch(() => undefined);
     await page.waitForTimeout(run.durationMs);
     await page.evaluate(stampAfterFrames, MOTION_MARKS.end);
   } finally {
