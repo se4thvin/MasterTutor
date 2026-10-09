@@ -2,6 +2,7 @@
 
 import type { ApprovalDecisionInput } from "@mastertutor/contracts";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RunPip, useRunPip } from "@/components/mascot/run-pip.tsx";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
@@ -22,7 +23,13 @@ import { useCalloutsPreference } from "./callout-preference.ts";
 import { approvalCopy } from "./model/approval-copy.ts";
 import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
 import { INFO_ERROR_COPY, hostAndPath, shortRunId } from "./model/copy.ts";
-import { isInformational, isTerminal, latestError, type RunModel } from "./model/run-model.ts";
+import {
+  isInformational,
+  isTerminal,
+  latestError,
+  latestStep,
+  type RunModel,
+} from "./model/run-model.ts";
 import { inControl } from "./model/takeover.ts";
 import {
   summaryLabel,
@@ -116,6 +123,12 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   useEffect(() => {
     if (playing && replayStep === null) setPlaying(false);
   }, [playing, replayStep]);
+  const lastStep = view ? latestStep(view) : null;
+  const [pipState, sendPip] = useRunPip(
+    view?.status ?? null,
+    lastStep?.phase === "act" && lastStep.action?.tool === "capture",
+  );
+  const pipTyped = useCallback(() => sendPip({ type: "type" }), [sendPip]);
   const items = useMemo(
     () => (view ? timelineItems(view, pending, viewerId) : []),
     [view, pending, viewerId],
@@ -266,7 +279,11 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
         </Button>
       </Toolbar>
       <div className="wrap run">
-        <RunHeader model={view} state={state} />
+        <RunHeader
+          model={view}
+          state={state}
+          pip={<RunPip state={pipState} onPoke={() => sendPip({ type: "poke" })} />}
+        />
         <div className="run-body">
           <section className="run-stage" aria-label="Agent browser">
             <BrowserFrame
@@ -328,6 +345,7 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
             }}
             canMessage={!isTerminal(view.status)}
             onSend={send}
+            onType={pipTyped}
           />
         </div>
       </div>

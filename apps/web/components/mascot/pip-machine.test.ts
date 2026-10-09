@@ -46,7 +46,7 @@ describe("runPipState: run status → Pip", () => {
   });
 });
 
-describe("New task: arrival, typing, pause, start", () => {
+describe("New task: arrival, typing, start", () => {
   it("starts idle and reports nothing until something changes", () => {
     const m = machine();
     expect(m.state).toBe("idle");
@@ -63,33 +63,40 @@ describe("New task: arrival, typing, pause, start", () => {
     expect(seen).toEqual(["waving", "idle"]);
   });
 
-  it("is attentive while typing, thinks after a pause, then goes idle", () => {
+  it("thinks from the first keystroke until typingMs after the last one", () => {
     const m = machine();
     m.send({ type: "type" });
-    expect(m.state).toBe("attentive");
-    // Keystrokes inside the pause window keep it attentive.
-    for (let i = 0; i < 5; i++) {
-      advance(T.thinkAfterMs - 1);
-      m.send({ type: "type" });
-    }
-    expect(seen).toEqual(["attentive"]);
-    advance(T.thinkAfterMs);
     expect(m.state).toBe("thinking");
-    advance(T.thinkMs - 1);
+    // A short pause never stops the thought.
+    advance(5_000);
+    expect(m.state).toBe("thinking");
+    advance(T.typingMs - 5_000 - 1);
     expect(m.state).toBe("thinking");
     advance(1);
-    expect(seen).toEqual(["attentive", "thinking", "idle"]);
+    expect(m.state).toBe("idle");
+    expect(seen).toEqual(["thinking", "idle"]);
   });
 
-  it("typing again while thinking goes straight back to attentive", () => {
+  it("still thinks at 29 s, idles at 30 s", () => {
     const m = machine();
     m.send({ type: "type" });
-    advance(T.thinkAfterMs);
-    m.send({ type: "type" });
-    advance(T.minDwellMs);
-    expect(m.state).toBe("attentive");
-    advance(T.thinkMs);
+    advance(29_000);
     expect(m.state).toBe("thinking");
+    advance(1_000);
+    expect(m.state).toBe("idle");
+  });
+
+  it("each keystroke restarts the 30 s timer, with one timer in flight", () => {
+    const m = machine();
+    m.send({ type: "type" });
+    advance(20_000);
+    m.send({ type: "type" });
+    expect(vi.getTimerCount()).toBe(1);
+    advance(29_000);
+    expect(m.state).toBe("thinking");
+    advance(1_000);
+    expect(m.state).toBe("idle");
+    expect(seen).toEqual(["thinking", "idle"]);
   });
 
   it("typing cuts the arrival wave short", () => {
@@ -97,21 +104,19 @@ describe("New task: arrival, typing, pause, start", () => {
     m.send({ type: "arrive" });
     advance(T.minDwellMs);
     m.send({ type: "type" });
-    expect(m.state).toBe("attentive");
+    expect(m.state).toBe("thinking");
   });
 
-  it("celebrates on Start, then works, and ignores typing and dozing once started", () => {
+  it("Start works at once, without a celebration, and ends the thought", () => {
     const m = machine({ doze: true });
     m.send({ type: "type" });
     advance(T.minDwellMs);
     m.send({ type: "start" });
-    expect(m.state).toBe("celebrating");
-    advance(T.celebrateMs);
     expect(m.state).toBe("working");
     m.send({ type: "type" });
     advance(T.dozeAfterMs * 2);
     expect(m.state).toBe("working");
-    expect(seen).toEqual(["attentive", "celebrating", "working"]);
+    expect(seen).toEqual(["thinking", "working"]);
   });
 
   it("a failed start says oops, then is idle and usable again", () => {
@@ -124,7 +129,7 @@ describe("New task: arrival, typing, pause, start", () => {
     expect(m.state).toBe("idle");
     advance(T.minDwellMs);
     m.send({ type: "type" });
-    expect(m.state).toBe("attentive");
+    expect(m.state).toBe("thinking");
   });
 });
 
@@ -158,11 +163,11 @@ describe("dozing", () => {
     expect(m.state).toBe("idle");
   });
 
-  it("typing wakes it straight into attentive", () => {
+  it("typing wakes it straight into thinking", () => {
     const m = machine({ doze: true });
     advance(T.dozeAfterMs + T.minDwellMs);
     m.send({ type: "type" });
-    expect(m.state).toBe("attentive");
+    expect(m.state).toBe("thinking");
   });
 });
 
@@ -188,7 +193,9 @@ describe("poke", () => {
 
   it("never cuts a celebration short", () => {
     const m = machine();
-    m.send({ type: "start" });
+    m.send({ type: "run", status: "running", capturing: false });
+    advance(T.minDwellMs);
+    m.send({ type: "run", status: "completed", capturing: false });
     m.send({ type: "poke" });
     expect(m.state).toBe("celebrating");
   });
@@ -221,6 +228,19 @@ describe("run view", () => {
     expect(m.state).toBe("celebrating");
     advance(1);
     expect(seen).toEqual(["working", "celebrating", "idle"]);
+  });
+
+  it("thinks over the run status while the person types a message, then mirrors it again", () => {
+    const m = machine();
+    m.send({ type: "run", status: "running", capturing: false });
+    advance(T.minDwellMs);
+    m.send({ type: "type" });
+    expect(m.state).toBe("thinking");
+    m.send({ type: "run", status: "running", capturing: true });
+    advance(T.typingMs - 1);
+    expect(m.state).toBe("thinking");
+    advance(1);
+    expect(m.state).toBe("reading");
   });
 
   it("an already completed run opens idle, without a celebration", () => {

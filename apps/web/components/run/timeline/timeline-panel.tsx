@@ -23,6 +23,7 @@ interface TimelinePanelProps {
   onReplay(seq: number): void;
   canMessage: boolean;
   onSend(text: string): Promise<boolean>;
+  onType(): void;
 }
 
 function Row({
@@ -191,7 +192,7 @@ export function TimelinePanel(p: TimelinePanelProps) {
       p.onReplay(shotSeq);
     },
   };
-  const composer = <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />;
+  const composer = <MessageComposer disabled={!p.canMessage} onSend={p.onSend} onType={p.onType} />;
   if (regular) {
     return (
       <aside className="run-tl" aria-labelledby={`${id}-title`} data-qa-obstacle>

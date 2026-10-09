@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { useFolders } from "@/components/library/use-folders.ts";
 import { PipLazy } from "@/components/mascot/pip-lazy.tsx";
-import { pipStartFloor, usePipMachine } from "@/components/mascot/use-pip-machine.ts";
+import { usePipMachine } from "@/components/mascot/use-pip-machine.ts";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Chip } from "@/components/ui/chip.tsx";
@@ -35,8 +35,6 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
   const goalId = useId();
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const [pipState, sendPip] = usePipMachine({ doze: true, arrive: true });
-  // Pip looks at the goal field while the person types in it.
-  const [goalCenter, setGoalCenter] = useState<{ x: number; y: number } | null>(null);
   const settings = useQuery(orpc.settings.get.queryOptions({ input: {} }));
   const folders = useFolders();
   const [goal, setGoal] = useState("");
@@ -98,7 +96,7 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
     setBusy(true);
     sendPip({ type: "start" });
     try {
-      const [run] = await Promise.all([api.runs.create(input), pipStartFloor()]);
+      const run = await api.runs.create(input);
       // Only a created run retires the draft; a failed start keeps it (and the page) as it was.
       savedDraft.clear();
       router.push(`/runs/${run.id}`);
@@ -151,10 +149,6 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
               aria-describedby={goalError ? `${goalId}-error` : undefined}
               onChange={(e) => setGoal(e.target.value)}
               onInput={() => sendPip({ type: "type" })}
-              onFocus={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                setGoalCenter({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
-              }}
             />
             {sources.length ? (
               <ul className="nt-chips" aria-label="Sources">
@@ -239,12 +233,7 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
           </div>
         </div>
         <div className="nt-hero">
-          <PipLazy
-            state={pipState}
-            size="hero"
-            lookAt={pipState === "attentive" ? goalCenter : null}
-            onPoke={() => sendPip({ type: "poke" })}
-          />
+          <PipLazy state={pipState} size="hero" onPoke={() => sendPip({ type: "poke" })} />
         </div>
       </section>
       <OptionsGrid
