@@ -120,6 +120,7 @@
   /* MarqueeText: one line, cut with a trailing fade when it does not fit; the text glides (WAAPI
      transform) on hover or keyboard focus of its host. */
   .marquee {
+    --marquee-fade: 16px; /* px: marquee-behaviour.ts reads it as a number */
     display: block;
     min-width: 0;
     overflow: hidden;

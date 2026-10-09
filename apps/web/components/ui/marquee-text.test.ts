@@ -90,7 +90,13 @@ describe("MarqueeText: markup", () => {
   });
 
   it("checks reduced motion at the moment of the glide, since WAAPI ignores motion.css", () => {
-    const source = readFileSync(new URL("./marquee-text.tsx", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./marquee-behaviour.ts", import.meta.url), "utf8");
     expect(source).toMatch(/matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
+  });
+
+  it("keeps the behaviour off first-load JS: it is imported after mount", () => {
+    const source = readFileSync(new URL("./marquee-text.tsx", import.meta.url), "utf8");
+    expect(source).toContain('import("./marquee-behaviour.ts")');
+    expect(source).not.toMatch(/^import .*marquee-behaviour/m);
   });
 });
