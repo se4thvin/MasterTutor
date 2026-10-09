@@ -121,6 +121,20 @@ export function o2UserUpdateBody(password: string, role: string, name: string) {
   };
 }
 
+/**
+ * A user changing its own password (root's rotation, review I4): OpenObserve demands the existing
+ * password, and ignores ZO_ROOT_USER_PASSWORD once root exists, so this call is the only way.
+ */
+export function o2OwnPasswordChangeBody(previous: string, password: string, name: string) {
+  return {
+    change_password: true,
+    old_password: previous,
+    new_password: password,
+    first_name: name,
+    last_name: "mastertutor",
+  };
+}
+
 /** Stream create body: OpenObserve requires both keys. */
 export function o2StreamCreateBody(retentionDays?: number): { fields: []; settings: object } {
   return {

@@ -154,6 +154,8 @@ export const ObservabilityInitEnv = z.object({
   ...Common,
   OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
   OBSERVE_ROOT_PASSWORD: ObservePassword,
+  /** Set for one deploy to rotate root: the password OpenObserve still has (review I4). */
+  OBSERVE_ROOT_PASSWORD_PREVIOUS: ObservePassword.optional(),
   OBSERVE_INGEST_PASSWORD: ObservePassword,
   OBSERVE_VIEWER_PASSWORD: ObservePassword,
   ALERT_WEBHOOK_SECRET: Secret,

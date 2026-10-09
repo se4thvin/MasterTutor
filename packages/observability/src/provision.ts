@@ -1,11 +1,12 @@
 import { OBSERVE_USERS } from "@mastertutor/contracts";
 import { LOG_STREAMS, RETENTION_DAYS, TRACE_STREAM } from "@mastertutor/contracts/telemetry";
-import { O2Error, type O2Client } from "./client.ts";
+import { O2Error, createO2Client, type O2Client, type O2ClientOptions } from "./client.ts";
 import {
   O2_ROLES,
   O2_TEMPLATE_RULE_VARIABLE,
   UserList,
   o2Paths,
+  o2OwnPasswordChangeBody,
   o2StreamCreateBody,
   o2UserCreateBody,
   o2UserUpdateBody,
@@ -18,6 +19,50 @@ export const ALERT_DESTINATION_NAME = "mastertutor-web";
 /** The webhook body (spec §13.2): the rule's name only, never counts, rows or query text. */
 export function alertTemplateBody(): string {
   return `{"rule":"${O2_TEMPLATE_RULE_VARIABLE}"}`;
+}
+
+const isUnauthorized = (error: unknown) => error instanceof O2Error && error.status === 401;
+
+/**
+ * The root client (review I4). OpenObserve keeps root's password after first boot, so a rotated
+ * OBSERVE_ROOT_PASSWORD is applied here: when it is refused and OBSERVE_ROOT_PASSWORD_PREVIOUS is
+ * accepted, root changes its own password. When neither works it throws, naming keys only.
+ */
+export async function provisionRoot(
+  options: Omit<O2ClientOptions, "email" | "password"> & { current: string; previous?: string },
+): Promise<O2Client> {
+  const { current, previous, ...connection } = options;
+  const as = (password: string) =>
+    createO2Client({ ...connection, email: OBSERVE_USERS.root, password });
+  const root = as(current);
+  const check = (client: O2Client) => client.call("listUsers", "GET", o2Paths.users(client.org));
+  try {
+    await check(root);
+    return root;
+  } catch (error) {
+    if (!isUnauthorized(error)) throw error;
+  }
+  const refused = new Error(
+    "OpenObserve refused OBSERVE_ROOT_PASSWORD" +
+      (previous
+        ? " and OBSERVE_ROOT_PASSWORD_PREVIOUS"
+        : "; to rotate it, set OBSERVE_ROOT_PASSWORD_PREVIOUS") +
+      " (infra/deploy-runbook.md §13)",
+  );
+  if (!previous) throw refused;
+  const old = as(previous);
+  try {
+    await old.call(
+      "rotateRoot",
+      "PUT",
+      o2Paths.user(old.org, OBSERVE_USERS.root),
+      o2OwnPasswordChangeBody(previous, current, "root"),
+    );
+  } catch (error) {
+    throw isUnauthorized(error) ? refused : error;
+  }
+  await check(root);
+  return root;
 }
 
 /** Creates the ingest and viewer users, or resets an existing one's role and password. */

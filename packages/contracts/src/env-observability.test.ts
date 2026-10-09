@@ -60,6 +60,16 @@ describe("observability env (D50)", () => {
     expect(env.OBSERVE_URL).toBe("http://openobserve:5080/observability");
     expect(env.ALERT_WEBHOOK_URL).toBe("http://web:3000/api/alerts/webhook");
     expect(env.SPEND_ALERT_USD_PER_HOUR).toBe(25);
+    expect(env.OBSERVE_ROOT_PASSWORD_PREVIOUS).toBeUndefined();
+    expect(() =>
+      parseEnv(ObservabilityInitEnv, {
+        OBSERVE_ROOT_PASSWORD: o2Password,
+        OBSERVE_ROOT_PASSWORD_PREVIOUS: secret,
+        OBSERVE_INGEST_PASSWORD: o2Password,
+        OBSERVE_VIEWER_PASSWORD: o2Password,
+        ALERT_WEBHOOK_SECRET: secret,
+      }),
+    ).toThrow(/OBSERVE_ROOT_PASSWORD_PREVIOUS/);
   });
 });
 

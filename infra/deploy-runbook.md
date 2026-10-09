@@ -252,6 +252,17 @@ Notes:
   only in web's ForwardAuth answer, never in a browser. The collector's networks are internal except
   `obs-ingest`, which exists only to publish the loopback port and has IP masquerade disabled, so
   the collector has no route to the internet.
-- **Rotation [approval]:** change an `OBSERVE_*` password or `ALERT_WEBHOOK_SECRET` in the env and
-  redeploy; `observability-init` applies it. The root password is OpenObserve's boot credential:
-  change it in OpenObserve first (as root), then in the env.
+- **Rotation [approval]:** change `OBSERVE_INGEST_PASSWORD`, `OBSERVE_VIEWER_PASSWORD` or
+  `ALERT_WEBHOOK_SECRET` in the env and redeploy; `observability-init` applies it.
+- **Root rotation [approval]:** OpenObserve keeps root's password after its first boot (it ignores
+  a changed `ZO_ROOT_USER_PASSWORD`), so root changes its own password through `observability-init`:
+  1. in the env file, move the current `OBSERVE_ROOT_PASSWORD` value to
+     `OBSERVE_ROOT_PASSWORD_PREVIOUS` and leave `OBSERVE_ROOT_PASSWORD=` empty; `pnpm env:init --out
+<file>` fills it with a new compliant password. Run `pnpm deploy:check-env <file>` and redeploy;
+  2. check the job: `docker compose -p <app> -f compose.yml -f compose.prod.yml ps -a observability-init`
+     must show exit 0, and its log must end with "observability ready";
+  3. remove `OBSERVE_ROOT_PASSWORD_PREVIOUS` from the env and redeploy.
+
+  If root's password and `OBSERVE_ROOT_PASSWORD` ever disagree without `_PREVIOUS`, the job logs a
+  fatal "cannot sign in as OpenObserve's root" line naming the keys and exits 1, and users,
+  dashboards and alerts are not re-applied: check its exit code after every deploy (step 2).
