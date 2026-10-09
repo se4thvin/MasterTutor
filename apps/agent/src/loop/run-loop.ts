@@ -1,8 +1,22 @@
+import { strictest } from "@mastertutor/observer/guard";
+import { recordObserverOverride } from "@mastertutor/telemetry/record";
+import type {
+  GuardItemOutcome,
+  GuardTurnResult,
+  SeenItem,
+  StepGuard,
+  StepGuardFactory,
+} from "../guardrails/observer/types.ts";
 import { ProvenanceStore } from "../guardrails/provenance.ts";
 import type { EgressContext } from "../guardrails/policy.ts";
 import { randomUUID } from "node:crypto";
 import {
   type ApprovalMode,
+  GUARD_BLOCKED_NOTE,
+  OBSERVER_DECIDER,
+  type Decider,
+  type ObserverRequest,
+  type PolicyDecision,
   decideByPolicy,
   decideSafetyChecks,
   AGENT_DECIDER,
@@ -22,7 +36,12 @@ import {
   type CallResult,
 } from "@mastertutor/contracts";
 import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
-import { emitRunEvent, returnControlToAgent, type Database } from "@mastertutor/db";
+import {
+  insertGuardReview,
+  emitRunEvent,
+  returnControlToAgent,
+  type Database,
+} from "@mastertutor/db";
 import { instrument } from "@mastertutor/telemetry/instrument";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
@@ -123,6 +142,9 @@ export type StepOutcome =
   | { kind: "cancelled" };
 
 export interface RunLoopDeps {
+  /** The Guard (D52): built per run in restore. Production always wires it (boot check, G8). */
+  guards?: StepGuardFactory;
+
   db: Database;
   storage: Storage;
   caller: ModelCaller;
@@ -266,6 +288,7 @@ export class RunLoop {
   /** A generated title that arrived and waits for the next step boundary to be committed. */
   #title: RunTitle | null = null;
   readonly #provenance: ProvenanceStore;
+  #guard: StepGuard | null = null;
 
   private constructor(
     deps: RunLoopDeps,
@@ -287,6 +310,13 @@ export class RunLoop {
     for (const entry of transcript)
       if (entry.item.type === "function_call_output" && typeof entry.item.output === "string")
         loop.#provenance.ingestToolOutput(entry.item.output);
+
+    loop.#guard = deps.guards
+      ? await deps.guards.forRun(run, {
+          db: deps.db,
+          redact: (text) => deps.hooks.maskSources(run.id).redact(text),
+        })
+      : null;
 
     loop.#calls = unansweredCalls(transcript);
     loop.#pending = await loadPendingApproval(deps.db, run.id);
@@ -868,18 +898,33 @@ export class RunLoop {
   /* --------------------------------- approve --------------------------------- */
 
   /** Every risky item of the unanswered calls, classified in code (spec §5.5). */
-  async #riskyItems(url: string, signal: AbortSignal): Promise<RiskyItem[]> {
-    const items: RiskyItem[] = [];
+  async #riskyItems(
+    url: string,
+    signal: AbortSignal,
+  ): Promise<{ risky: RiskyItem[]; seen: SeenItem[] }> {
+    const risky: RiskyItem[] = [];
+    const seen: SeenItem[] = [];
     for (const call of this.#calls) {
       if (this.#results.has(call.callId)) continue;
       if (call.kind === "function") {
-        // The tool asks against the page as it is now (e.g. where a sign-in form posts).
         const request = isFunctionTool(call.name)
           ? await this.#deps.browser.functionApproval(call.name, call.args, signal)
           : null;
+        const item = functionItem(call.callId);
+        seen.push({
+          item,
+          callId: call.callId,
+          index: null,
+          action: null,
+          tool: isFunctionTool(call.name) ? call.name : null,
+          args: call.args,
+          target: null,
+          request,
+          policy: null,
+        });
         if (request)
-          items.push({
-            item: functionItem(call.callId),
+          risky.push({
+            item,
             callId: call.callId,
             index: null,
             request,
@@ -889,29 +934,41 @@ export class RunLoop {
           });
         continue;
       }
-      // The model's own warning comes before any click approval of the same call (review M6).
       if (call.safetyChecks.length > 0) {
         const label = `Safety check: ${call.safetyChecks.map((check) => check.message ?? check.code ?? check.id).join("; ")}`;
         const checks = call.safetyChecks.map((check) => ({
           code: check.code?.slice(0, 100) ?? null,
           message: check.message,
         }));
-        items.push({
-          item: safetyItem(call.callId),
+        const request: ApprovalRequest = {
+          kind: "risky_click",
+          action: call.actions[0] ?? { type: "screenshot" },
+          label: label.slice(0, 500),
+          url: url.slice(0, 4_096),
+          screenshotKey: this.#screenshotKey,
+          safetyChecks: checks.slice(0, 20),
+          context: null,
+        };
+        const item = safetyItem(call.callId);
+        risky.push({
+          item,
           callId: call.callId,
           index: null,
-          request: {
-            kind: "risky_click",
-            action: call.actions[0] ?? { type: "screenshot" },
-            label: label.slice(0, 500),
-            url: url.slice(0, 4_096),
-            screenshotKey: this.#screenshotKey,
-            safetyChecks: checks.slice(0, 20),
-            context: null,
-          },
+          request,
           safetyChecks: checks,
           target: null,
           context: null,
+        });
+        seen.push({
+          item,
+          callId: call.callId,
+          index: null,
+          action: call.actions[0] ?? null,
+          tool: null,
+          args: null,
+          target: null,
+          request,
+          policy: null,
         });
       }
       let previous: TargetDescription | null = null;
@@ -919,110 +976,226 @@ export class RunLoop {
         const target = await this.#deps.browser.targetFor(action, previous, signal);
         if (action.type === "click" || action.type === "double_click") previous = target;
         const need = needsApproval(action, target, this.#egress());
-        if (need)
-          items.push({
-            item: actionItem(call.callId, index),
+        const request = need
+          ? approvalRequestFor(need, url, this.#screenshotKey, approvalExcerpt(target?.excerpt))
+          : null;
+        const item = actionItem(call.callId, index);
+        seen.push({
+          item,
+          callId: call.callId,
+          index,
+          action,
+          tool: null,
+          args: null,
+          target,
+          request,
+          policy: null,
+        });
+        if (request)
+          risky.push({
+            item,
             callId: call.callId,
             index,
-            request: approvalRequestFor(
-              need,
-              url,
-              this.#screenshotKey,
-              approvalExcerpt(target?.excerpt),
-            ),
+            request,
             safetyChecks: null,
             target: target?.path ?? null,
             context: target?.context ?? null,
           });
       }
     }
-    return items;
+    return { risky, seen };
   }
 
-  /**
-   * Asks for (or decides by policy) one approval per risky item. In ask mode the run waits for the
-   * first undecided item; after its decision the loop comes back here for the next one.
-   */
   async #approve(signal: AbortSignal): Promise<StepOutcome> {
     for (const call of this.#calls) {
       if (call.invalid !== null && !this.#results.has(call.callId))
         this.#results.set(call.callId, notRun(call, `Invalid call: ${call.invalid}.`));
     }
-    const items = (await this.#riskyItems(this.#obs().url, signal)).filter(
-      (item) => !this.#decided.has(item.item) && !this.#unreachable(item),
-    );
+    const { risky, seen } = await this.#riskyItems(this.#obs().url, signal);
+    const items = risky.filter((item) => !this.#decided.has(item.item) && !this.#unreachable(item));
     const toPerson = this.#personNext;
     this.#personNext = false;
-    if (items.length === 0) {
-      if (this.#decided.size === 0)
-        await this.#deps.store.commit({
-          steps: [{ seq: this.#deps.store.nextSeq(), phase: "approve", state: "skipped" }],
-        });
-      this.#next = "act";
-      return CONTINUE;
-    }
-    const rows: Array<{ id: string; request: ApprovalRequest; status: "approved" | "denied" }> = [];
-    let ask: RiskyItem | null = null;
     const origin = this.#obs().origin;
     const originAllowed = origin !== null && this.#run.allowedOrigins.includes(origin);
+    const policy = new Map<string, PolicyDecision>();
     for (const item of items) {
-      if (this.#results.has(item.callId) || this.#unreachable(item)) continue;
-      const decision = toPerson
-        ? "ask"
-        : item.safetyChecks
-          ? decideSafetyChecks(this.#run.approvalMode, item.safetyChecks, originAllowed)
-          : decideByPolicy(this.#run.approvalMode, item.request.kind);
-      if (decision === "ask") {
+      if (this.#results.has(item.callId)) continue;
+      policy.set(
+        item.item,
+        toPerson
+          ? "ask"
+          : item.safetyChecks
+            ? decideSafetyChecks(this.#run.approvalMode, item.safetyChecks, originAllowed)
+            : decideByPolicy(this.#run.approvalMode, item.request.kind),
+      );
+    }
+    // The Guard sees what is still open this turn (spec §6.1): risky items with their policy
+    // decision, and plain actions and calls it may trigger on. Policy decided first, unchanged.
+    const open = seen
+      .filter(
+        (s) => !this.#decided.has(s.item) && !(s.callId !== null && this.#results.has(s.callId)),
+      )
+      .map((s) => ({ ...s, policy: policy.get(s.item) ?? null }));
+    const guard = await this.#guardReview(open, signal);
+    if (guard?.limit) {
+      await this.#commitGuard(guard, [], []);
+      return this.#ask(this.#hold("escalate", "denial_limit", ""), { callIds: [], item: null });
+    }
+    const byItem = new Map(items.map((item) => [item.item, item]));
+    const policyRows: Array<{
+      id: string;
+      request: ApprovalRequest;
+      status: "approved" | "denied";
+    }> = [];
+    const observerRows: typeof policyRows = [];
+    let ask: { request: ApprovalRequest; seen: SeenItem } | null = null;
+    for (const s of open) {
+      const riskyItem = byItem.get(s.item) ?? null;
+      const outcome = guard?.outcomes.get(s.item);
+      if (!riskyItem && !outcome) continue;
+      if (riskyItem && (this.#unreachable(riskyItem) || this.#results.has(riskyItem.callId)))
+        continue;
+      const base: PolicyDecision = riskyItem ? policy.get(s.item)! : "approved";
+      const final = strictest(base, outcome?.effect ?? "none");
+      // The Guard caused or shares this outcome: the person sees its warning (an observer card).
+      const byGuard = outcome !== undefined && (final !== base || final === "ask");
+      const request: ApprovalRequest = byGuard
+        ? this.#observerRequest(outcome!, s.request)
+        : s.request!;
+      if (final === "ask") {
         // Items are in order (safety checks first); nothing after this is decided until a person answers.
-        ask = item;
+        ask = { request, seen: s };
         break;
       }
-      rows.push({ id: randomUUID(), request: item.request, status: decision });
+      const status = final === "approved" ? "approved" : "denied";
+      (byGuard ? observerRows : policyRows).push({ id: randomUUID(), request, status });
       this.#applyDecision({
-        item: item.item,
-        approved: decision === "approved",
-        note: decision === "denied" ? POLICY_BLOCKED : null,
-        ...riskOf(item.request),
-        target: item.target,
-        context: item.context,
-        decidedBy: policyDecider(this.#run.approvalMode),
+        item: s.item,
+        approved: status === "approved",
+        note: status === "denied" ? (byGuard ? GUARD_BLOCKED_NOTE : POLICY_BLOCKED) : null,
+        ...riskOf(request),
+        target: s.target?.path ?? null,
+        context: s.target?.context ?? null,
+        decidedBy: byGuard ? OBSERVER_DECIDER : policyDecider(this.#run.approvalMode),
         decidedAt: Date.now(),
       });
     }
-    if (rows.length > 0) {
-      const seq = this.#deps.store.nextSeq();
-      await this.#deps.store.commit({
-        steps: [
-          {
-            seq,
-            phase: "approve",
-            state: "done",
-            result: { policy: rows.map((row) => row.status) },
-          },
-        ],
-        events: rows.flatMap((row): RunEvent[] => [
-          { type: "approval_requested", approvalId: row.id, request: row.request },
-          {
-            type: "approval_resolved",
-            approvalId: row.id,
-            status: row.status,
-            decidedBy: policyDecider(this.#run.approvalMode),
-          },
-        ]),
-        extra: (tx) =>
-          insertApprovals(tx, this.#run.id, seq, rows, policyDecider(this.#run.approvalMode)),
+    if (guard)
+      this.#guard?.recordApplied(guard, {
+        blocked: observerRows.filter((row) => row.status === "denied").length,
+        asked: ask?.request.kind === "observer",
       });
-    }
+    const wrote = await this.#commitGuard(guard, policyRows, observerRows);
     if (ask)
       return this.#ask(ask.request, {
-        callIds: [ask.callId],
-        item: ask.item,
-        target: ask.target,
-        context: ask.context,
+        callIds: ask.seen.callId === null ? [] : [ask.seen.callId],
+        item: ask.seen.item,
+        target: ask.seen.target?.path ?? null,
+        context: ask.seen.target?.context ?? null,
         personOnly: toPerson,
+      });
+    if (!wrote && this.#decided.size === 0)
+      await this.#deps.store.commit({
+        steps: [{ seq: this.#deps.store.nextSeq(), phase: "approve", state: "skipped" }],
       });
     this.#next = "act";
     return CONTINUE;
+  }
+
+  /** The Guard's review of what is open, its spend charged to the run (spec §6.5). */
+  async #guardReview(
+    open: readonly SeenItem[],
+    signal: AbortSignal,
+  ): Promise<GuardTurnResult | null> {
+    if (!this.#guard || open.length === 0) return null;
+    const result = await this.#guard.review(
+      {
+        seen: open,
+        mode: this.#run.approvalMode,
+        pageOrigin: this.#obs().origin,
+        allowedOrigins: this.#run.allowedOrigins,
+        loopHits: this.#loops.pressure,
+        label: (text, pageOrigin) => this.#provenance.label(text, pageOrigin),
+      },
+      signal,
+    );
+    this.#run = { ...this.#run, usage: addUsage(this.#run.usage, result.usage) };
+    return result;
+  }
+
+  /**
+   * One approve-step commit for this turn's automatic decisions: policy rows (policy or bypass),
+   * Guard rows (observer), the guard event, the guard_reviews row and the Guard's spend.
+   */
+  async #commitGuard(
+    guard: GuardTurnResult | null,
+    policyRows: ReadonlyArray<{
+      id: string;
+      request: ApprovalRequest;
+      status: "approved" | "denied";
+    }>,
+    observerRows: ReadonlyArray<{
+      id: string;
+      request: ApprovalRequest;
+      status: "approved" | "denied";
+    }>,
+  ): Promise<boolean> {
+    if (policyRows.length === 0 && observerRows.length === 0 && !guard?.event && !guard?.review)
+      return false;
+    const seq = this.#deps.store.nextSeq();
+    const policyDecidedBy = policyDecider(this.#run.approvalMode);
+    const resolved = (rows: typeof policyRows, decidedBy: Decider): RunEvent[] =>
+      rows.flatMap((row): RunEvent[] => [
+        { type: "approval_requested", approvalId: row.id, request: row.request },
+        { type: "approval_resolved", approvalId: row.id, status: row.status, decidedBy },
+      ]);
+    await this.#deps.store.commit({
+      steps: [
+        {
+          seq,
+          phase: "approve",
+          state: "done",
+          result: {
+            policy: policyRows.map((row) => row.status),
+            ...(guard?.event ? { guard: guard.event.verdict } : {}),
+          },
+        },
+      ],
+      events: [
+        ...resolved(policyRows, policyDecidedBy),
+        ...resolved(observerRows, OBSERVER_DECIDER),
+        ...(guard?.event ? [guard.event] : []),
+      ],
+      run: { usage: this.#run.usage },
+      extra: async (tx) => {
+        await insertApprovals(tx, this.#run.id, seq, policyRows, policyDecidedBy);
+        await insertApprovals(tx, this.#run.id, seq, observerRows, OBSERVER_DECIDER);
+        if (guard?.review)
+          await insertGuardReview(tx, { ...guard.review, runId: this.#run.id, stepSeq: seq });
+      },
+    });
+    return true;
+  }
+
+  #observerRequest(outcome: GuardItemOutcome, subject: ApprovalRequest | null): ObserverRequest {
+    return {
+      kind: "observer",
+      verdict: outcome.verdict,
+      category: outcome.category,
+      rationale: outcome.rationale,
+      subject: subject && subject.kind !== "observer" ? subject : null,
+      url: this.#obs().url.slice(0, 4_096),
+      screenshotKey: this.#screenshotKey,
+    };
+  }
+
+  /** A run-level Guard hold (denial limit, or the watcher): "should this run continue?" */
+  #hold(
+    verdict: "escalate" | "block",
+    category: GuardItemOutcome["category"],
+    rationale: string,
+  ): ObserverRequest {
+    return this.#observerRequest({ effect: "ask", verdict, category, rationale }, null);
   }
 
   async #ask(
@@ -1073,8 +1246,11 @@ export class RunLoop {
     return { kind: "waiting", reason: "approval" };
   }
 
-  async #recordPolicy(request: ApprovalRequest, status: "approved" | "denied"): Promise<void> {
-    const decider = policyDecider(this.#run.approvalMode);
+  async #recordDecision(
+    request: ApprovalRequest,
+    status: "approved" | "denied",
+    decider: Decider,
+  ): Promise<void> {
     const seq = this.#deps.store.nextSeq();
     const id = randomUUID();
     await this.#deps.store.commit({
@@ -1336,7 +1512,22 @@ export class RunLoop {
       const request = downloadRequest(entry.url, entry.filename);
       const decision = decideByPolicy(this.#run.approvalMode, "download");
       if (decision === "approved") {
-        await this.#recordPolicy(request, decision);
+        const stopped = await this.#guardRunLevel(request, signal);
+        if (stopped?.effect === "ask" && !wait && !handOver)
+          return this.#ask(
+            this.#observerRequest(stopped, stopped.category === "denial_limit" ? null : request),
+            { callIds: [], item: null },
+          );
+        if (stopped) {
+          await this.#recordDecision(
+            this.#observerRequest(stopped, request),
+            "denied",
+            OBSERVER_DECIDER,
+          );
+          this.#notes.push(`${downloadBlockedNote(entry.url)} ${GUARD_BLOCKED_NOTE}`);
+          continue;
+        }
+        await this.#recordDecision(request, decision, policyDecider(this.#run.approvalMode));
         if (request.kind === "download")
           this.#downloadAllowances.push({
             ...request,
@@ -1353,7 +1544,8 @@ export class RunLoop {
           this.#notes.push(downloadBlockedNote(later.url));
         return this.#ask(request, { callIds: [], item: null });
       }
-      if (decision === "denied") await this.#recordPolicy(request, decision);
+      if (decision === "denied")
+        await this.#recordDecision(request, decision, policyDecider(this.#run.approvalMode));
       this.#notes.push(downloadBlockedNote(entry.url));
     }
     if (handOver) return this.#wait("takeover", handOver);
@@ -1373,6 +1565,34 @@ export class RunLoop {
    * mode denies with a recorded step. A form post is not reopened as a GET: approving allows the
    * origin and the model runs the action again. Returns an outcome when the run must stop here.
    */
+  /** G4 (spec §6.1): a run-level request bypass would approve goes through the Guard first. */
+  async #guardRunLevel(
+    request: ApprovalRequest,
+    signal: AbortSignal,
+  ): Promise<GuardItemOutcome | null> {
+    const result = await this.#guardReview(
+      [
+        {
+          item: "run",
+          callId: null,
+          index: null,
+          action: null,
+          tool: null,
+          args: null,
+          target: null,
+          request,
+          policy: "approved",
+        },
+      ],
+      signal,
+    );
+    if (!result) return null;
+    await this.#commitGuard(result, [], []);
+    if (result.limit)
+      return { effect: "ask", verdict: "escalate", category: "denial_limit", rationale: "" };
+    return result.outcomes.get("run") ?? null;
+  }
+
   async #blockedNavigations(
     signal: AbortSignal,
     pausing: { wait: "otp" | null; handOver: string | null },
@@ -1398,10 +1618,28 @@ export class RunLoop {
         continue;
       }
       if (decision === "approved" && !wait && !handOver) {
+        const stopped = await this.#guardRunLevel(request, signal);
+        if (stopped?.effect === "ask")
+          return this.#ask(
+            this.#observerRequest(stopped, stopped.category === "denial_limit" ? null : request),
+            { callIds: [], item: null },
+          );
+        if (stopped?.effect === "deny") {
+          await this.#recordDecision(
+            this.#observerRequest(stopped, request),
+            "denied",
+            OBSERVER_DECIDER,
+          );
+          this.#notes.push(
+            `Executor: navigation to ${entry.origin} was not opened. ${GUARD_BLOCKED_NOTE}`,
+          );
+          continue;
+        }
+
         // Bypass mode (D44): the origin is allowed for the rest of the run and opened. The network
         // policy still applies to it (no private ranges). Never while the page is being handed
         // over or a code is awaited (m4).
-        await this.#recordPolicy(request, decision);
+        await this.#recordDecision(request, decision, policyDecider(this.#run.approvalMode));
         await this.#allowOrigin(entry.origin);
         this.#notes.push(
           await this.#openApproved(
@@ -1419,7 +1657,7 @@ export class RunLoop {
           );
         return this.#ask(request, { callIds: [], item: null });
       }
-      await this.#recordPolicy(request, decision);
+      await this.#recordDecision(request, decision, policyDecider(this.#run.approvalMode));
       this.#notes.push(
         `Executor: navigation to ${entry.origin} was blocked: it is not one of this run's allowed origins.`,
       );
@@ -1531,7 +1769,14 @@ export class RunLoop {
         usage: this.#tick(),
       },
     };
-    const request = pending.request;
+    // A Guard card about a run-level request decides that request (new origin, download).
+    const request =
+      pending.request.kind === "observer" &&
+      pending.request.subject !== null &&
+      pending.item === null
+        ? pending.request.subject
+        : pending.request;
+    if (pending.request.kind === "observer" && approved) recordObserverOverride();
 
     if (request.kind === "budget") {
       if (!approved) {
@@ -1606,6 +1851,51 @@ export class RunLoop {
         this.#notes.push(`Executor: the user did not allow opening ${request.origin}.`);
         this.#next = "decide";
       }
+      return CONTINUE;
+    }
+
+    if (request.kind === "observer" && pending.item === null) {
+      if (!approved) {
+        await this.#deps.store.commit({
+          ...base,
+          steps: [step, approveStep("skipped")],
+          transition: {
+            from: ["waiting", "running"],
+            to: "cancelled",
+            waitReason: null,
+            reason: "observer",
+            error: null,
+          },
+        });
+        return { kind: "cancelled" };
+      }
+      const cleared =
+        request.category === "denial_limit" ? this.#guard?.personCleared() : undefined;
+      if (instruction) this.#notes.push(`Message from the user: ${instruction}`);
+      await this.#deps.store.commit({
+        ...base,
+        steps: [step, approveStep("done")],
+        transition: TO_RUNNING,
+        ...(cleared
+          ? {
+              extra: (tx) =>
+                insertGuardReview(tx, {
+                  runId: this.#run.id,
+                  stepSeq: pending.stepSeq,
+                  stage: "rules",
+                  verdict: "allow",
+                  category: "denial_limit",
+                  rollout: this.#guard!.rollout,
+                  applied: false,
+                  input: null,
+                  latencyMs: 0,
+                  usd: 0,
+                  ...cleared,
+                }),
+            }
+          : {}),
+      });
+      this.#next = this.#allAnswered() ? "decide" : "approve";
       return CONTINUE;
     }
 

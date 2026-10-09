@@ -1,203 +1,47 @@
 import { randomUUID } from "node:crypto";
+import { wrapUntrusted, EMPTY_USAGE, MODELS, PersonDecider } from "@mastertutor/contracts";
+
 import {
-  wrapUntrusted,
-  EMPTY_USAGE,
-  MODELS,
-  type ApprovalMode,
-  type Budget,
-  type ToolProfile,
-  PersonDecider,
-} from "@mastertutor/contracts";
-import { createLogger } from "@mastertutor/contracts/server";
-import {
-  approvals,
-  createDb,
   emitRunEvent,
   requestHandBack,
   requestTakeover,
   runEvents,
   runSteps,
   runs,
-  type DbHandle,
 } from "@mastertutor/db";
-import { seedMember, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import { seedMember } from "@mastertutor/db/testing";
 import { and, asc, eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { MockTurn } from "../../../../tests/llm-mock/src/scenario.ts";
-import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
-import { ModelCaller } from "../llm/caller.ts";
+
 import { NUDGE } from "../llm/instructions.ts";
-import { FORBIDDEN_RESPONSE_FIELDS } from "../llm/openai.ts";
-import { createOpenAIModelClient } from "../llm/client.ts";
+
 import { createOpenAI } from "../llm/openai.ts";
 import { createRunTitler, type RunTitle, type RunTitler } from "../llm/run-title.ts";
-import { instantClock } from "../runtime/clock.ts";
-import { runtimeConfig } from "../runtime/config.ts";
+
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
-import { insertRun, seedWorkspace } from "../testing/db.ts";
-import { FakeLoopBrowser, PLAIN_TARGET } from "../testing/fake-loop-browser.ts";
+
+import { type FakeLoopBrowser, PLAIN_TARGET } from "../testing/fake-loop-browser.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { UNGUARDED_CLICK_REFUSAL } from "../tools/computer.ts";
-import { createMemoryStorage } from "../testing/memory-storage.ts";
-import { withHooks, type RunHooks } from "./hooks.ts";
-import { RunLoop, type StepOutcome } from "./run-loop.ts";
-import { snapshotOf } from "./run-state.ts";
-import { NO_SESSION_STORE, StepStore } from "./step-store.ts";
 
-const log = createLogger({ service: "test", level: "silent" });
-const OWNER = "loop-test";
-let database: TestDatabase;
-let owner: DbHandle;
-let agent: DbHandle;
-let mock: LlmMock;
-let workspaceId: string;
-let counter = 0;
-
-beforeAll(async () => {
-  database = await startTestDatabase();
-  owner = createDb(database.ownerUrl);
-  agent = createDb(database.agentUrl);
-  mock = await startLlmMock();
-  workspaceId = await seedWorkspace(owner.db);
-});
-afterAll(async () => {
-  await mock?.close();
-  await agent?.close();
-  await owner?.close();
-  await database?.stop();
-});
-const ALLOWED_PATHS = new Set(["/v1/responses", "/v1/embeddings", "/v1/audio/transcriptions"]);
-/** openai-data-policy.md rule 6: stateless, anonymous and allowlisted only. */
-function expectPolicy(requests: typeof mock.requests): void {
-  for (const request of requests) {
-    expect(ALLOWED_PATHS.has(request.path)).toBe(true);
-    expect(request.body.store).toBe(false);
-    for (const field of FORBIDDEN_RESPONSE_FIELDS) expect(request.body).not.toHaveProperty(field);
-  }
-}
-let policyChecked = 0;
-// Every model call must be answered by exactly one output; the mock records any pairing problem.
-// Every request a test made also goes through the data policy, whatever order the tests run in.
-afterEach(() => {
-  expect(mock.failures.splice(0)).toEqual([]);
-  expectPolicy(mock.requests.slice(policyChecked));
-  policyChecked = mock.requests.length;
-});
-
-const done = (reason = "Finished"): MockTurn => ({
-  outputs: [{ type: "turn", status: "done", reason }],
-});
-const click = (x = 10, y = 20): MockTurn => ({
-  outputs: [{ type: "computer", actions: [{ type: "click", x, y, button: "left" }] }],
-});
-const doneExpecting = (text: string): MockTurn => ({
-  outputs: [{ type: "turn", status: "done", reason: "ok" }],
-  check: (r) => {
-    if (!JSON.stringify(r.body.input).includes(text)) throw new Error(`no "${text}" in the input`);
-  },
-});
-const risky = (label: string, path = `button:${label}`, context = "page") => ({
-  label,
-  tag: "button",
-  path,
-  context,
-  isFormSubmit: false,
-  formKind: null,
-  isSecretField: false,
-  editable: false,
-  interactive: true,
-});
-
-async function setup(
-  turns: MockTurn[],
-  options: {
-    approvalMode?: ApprovalMode;
-    toolProfile?: ToolProfile;
-    budget?: Budget;
-    hooks?: Partial<RunHooks>;
-    leaseExpired?: () => boolean;
-    allowedOrigins?: string[];
-    titler?: RunTitler;
-  } = {},
-) {
-  const name = `s${++counter}`;
-  mock.setScenarios([{ name, turns }]);
-  const row = await insertRun(owner.db, {
-    workspaceId,
-    goal: `[scenario:${name}] Do the task`,
-    allowedOrigins: options.allowedOrigins,
-    status: "running",
-    leaseOwner: OWNER,
-    approvalMode: options.approvalMode,
-    toolProfile: options.toolProfile,
-    budget: options.budget,
-  });
-  const browser = new FakeLoopBrowser();
-  const storage = createMemoryStorage();
-  const caller = new ModelCaller(
-    createOpenAIModelClient({ apiKey: "k", baseURL: `${mock.url}/v1` }),
-    { clock: instantClock(), fallbackAfter5xx: 3 },
-  );
-  const deps = async () => ({
-    db: agent.db,
-    storage,
-    caller,
-    browser,
-    hooks: withHooks(options.hooks),
-    ...(options.leaseExpired ? { leaseExpired: options.leaseExpired } : {}),
-    ...(options.titler ? { titler: options.titler } : {}),
-    clock: instantClock(),
-    config: runtimeConfig(),
-    log,
-    store: await StepStore.open({
-      db: agent.db,
-      storage,
-      sessionStore: NO_SESSION_STORE,
-      owner: OWNER,
-      run: row,
-    }),
-  });
-  const reload = async () => {
-    const [fresh] = await owner.db.select().from(runs).where(eq(runs.id, row.id));
-    return RunLoop.restore(await deps(), snapshotOf(fresh!));
-  };
-  return { name, run: row, browser, storage, loop: await reload(), reload };
-}
-
-async function drive(loop: RunLoop, max = 60): Promise<StepOutcome> {
-  for (let i = 0; i < max; i++) {
-    const outcome = await loop.step(new AbortController().signal);
-    if (outcome.kind !== "continue") return outcome;
-  }
-  throw new Error("the loop did not stop");
-}
-
-const phases = async (runId: string) =>
-  (
-    await owner.db
-      .select()
-      .from(runSteps)
-      .where(eq(runSteps.runId, runId))
-      .orderBy(asc(runSteps.seq))
-  ).map((s) => `${s.phase}:${s.state}`);
-const status = async (runId: string) =>
-  (await owner.db.select().from(runs).where(eq(runs.id, runId)))[0];
-const approvalRows = (runId: string) =>
-  owner.db
-    .select()
-    .from(approvals)
-    .where(eq(approvals.runId, runId))
-    .orderBy(asc(approvals.createdAt));
-/** Decides the pending approval(s) only; earlier decisions stay as they were. */
-const decideApproval = (
-  runId: string,
-  outcome: "approved" | "denied" | "edited",
-  edit: unknown = null,
-) =>
-  owner.db
-    .update(approvals)
-    .set({ status: outcome, decidedBy: PersonDecider.parse("user-1"), edit: edit as never })
-    .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")));
+import {
+  counter,
+  expectPolicy,
+  owner,
+  mock,
+  workspaceId,
+  setup,
+  drive,
+  phases,
+  status,
+  approvalRows,
+  decideApproval,
+  done,
+  click,
+  doneExpecting,
+  risky,
+} from "./testing/loop-harness.ts";
 
 describe("RunLoop (spec §5.3)", () => {
   it("runs observe → decide → approve → act and completes", async () => {
