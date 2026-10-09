@@ -67,6 +67,7 @@ describe("approval modes reach only the approval decisions (D44 hard invariants)
     const approvalBoundary = new Set([
       "guardrails/observer/guard.ts",
       "guardrails/observer/types.ts",
+      "guardrails/observer/watcher.ts",
     ]);
     expect(readers.filter((file) => !approvalBoundary.has(file))).toEqual([]);
   });

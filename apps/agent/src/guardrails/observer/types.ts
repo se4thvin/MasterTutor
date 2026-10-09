@@ -83,6 +83,7 @@ export interface GuardHold {
 /** The Guard for one run (spec §6). Injected through RunLoopDeps.guards; tests may omit it. */
 export interface StepGuard {
   readonly rollout: ObserverMode;
+  updateContext(mode: ApprovalMode, allowedOrigins: readonly string[]): void;
   review(turn: GuardTurnRequest, signal: AbortSignal): Promise<GuardTurnResult>;
   /** Reconcile proposed outcomes with decisions the loop actually applied. */
   recordApplied(result: GuardTurnResult, applied: { blocked: number; asked: boolean }): void;
@@ -94,6 +95,10 @@ export interface StepGuard {
   takeHold(): GuardHold | null;
   /** G6: spend of async reviews not charged yet, taken once at the next step boundary. */
   takeUsage(): Usage | null;
+  /** G6: the watcher's own guard event, taken once at the next step boundary. */
+  takeEvent(): GuardEvent | null;
+  /** Drains bounded reviews before completion; also used for deterministic tests. */
+  settled?(): Promise<void>;
 }
 
 export interface StepGuardFactory {

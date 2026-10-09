@@ -14,11 +14,31 @@ import {
   risky,
 } from "./testing/loop-harness.ts";
 
+import type { StepGuard, StepGuardFactory } from "../guardrails/observer/types.ts";
+import type { RunLoop } from "./run-loop.ts";
+
 const h = harness();
-const guards = () =>
-  createStepGuardFactory({
+const liveGuards = new Map<string, StepGuard>();
+const guards = (): StepGuardFactory => {
+  const factory = createStepGuardFactory({
     reviewer: createGuardReviewer(createOpenAI({ apiKey: "k", baseURL: `${h.mock.url}/v1` })),
   });
+  return {
+    async forRun(run, deps) {
+      const guard = await factory.forRun(run, deps);
+      liveGuards.set(run.id, guard);
+      return guard;
+    },
+  };
+};
+async function driveGuard(loop: RunLoop) {
+  for (let i = 0; i < 60; i++) {
+    const outcome = await loop.step(new AbortController().signal);
+    await liveGuards.get(loop.run.id)?.settled?.();
+    if (outcome.kind !== "continue") return outcome;
+  }
+  throw new Error("the loop did not stop");
+}
 const answer = (screen: "allow" | "review", review?: Record<string, unknown>) => {
   h.mock.setStructured("guard_screen", () => ({ decision: screen }));
   h.mock.setStructured(
@@ -244,4 +264,95 @@ it("retains a policy denial when the Guard allows a download", async () => {
     status: "denied",
     decidedBy: "policy",
   });
+});
+describe("the trajectory watcher in the loop (spec §6.9)", () => {
+  it("holds the run at the next observe after an escalation, and cancels it on a denial", async () => {
+    h.mock.setStructured("guard_screen", () => ({ decision: "review" }));
+    h.mock.setStructured("guard_review", () => ({
+      verdict: "escalate",
+      category: "goal_drift",
+      itemKeys: [],
+      rationale: "Wandering.",
+    }));
+    const turns = ["a", "b", "c", "d", "e", "f"].map(() => click());
+    // Every host is allowed, so the synchronous Guard never triggers: only the watcher acts here.
+    const hosts = [
+      "http://site.fixtures.test",
+      ...[1, 2, 3, 4, 5, 6, 7].map((i) => `http://h${i}.fixtures.test`),
+    ];
+    const s = await h.setup([...turns, done()], {
+      approvalMode: "bypass",
+      observerMode: "enforce",
+      guards: guards(),
+      allowedOrigins: hosts,
+    });
+    let host = 0;
+    s.browser.actionHook = () => {
+      s.browser.url = `http://h${++host}.fixtures.test/`;
+    };
+    const outcome = await driveGuard(s.loop);
+    expect(outcome).toEqual({ kind: "waiting", reason: "approval" });
+    const pending = (await approvalRows(s.run.id)).find((r) => r.status === "pending");
+    expect(pending?.request).toMatchObject({
+      kind: "observer",
+      category: "goal_drift",
+      subject: null,
+    });
+    await decideApproval(s.run.id, "denied");
+    expect(await s.loop.resume(new AbortController().signal)).toEqual({ kind: "cancelled" });
+  });
+});
+
+it("charges an asynchronous review that finishes while the run completes", async () => {
+  answer("review");
+  let started!: () => void;
+  let release!: () => void;
+  const seen = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.mock.setStructured("guard_review", async () => {
+    started();
+    await gate;
+    return { verdict: "allow", category: "other", itemKeys: [], rationale: "" };
+  });
+  const hosts = [
+    "http://site.fixtures.test",
+    ...[1, 2, 3, 4, 5].map((i) => `http://h${i}.fixtures.test`),
+  ];
+  const factory = guards();
+  const flushing: StepGuardFactory = {
+    async forRun(run, deps) {
+      const g = await factory.forRun(run, deps);
+      return {
+        ...g,
+        settled: async () => {
+          release();
+          await g.settled?.();
+        },
+      };
+    },
+  };
+  const s = await h.setup([...Array.from({ length: 5 }, () => click()), done()], {
+    approvalMode: "bypass",
+    observerMode: "shadow",
+    guards: flushing,
+    allowedOrigins: hosts,
+  });
+  let host = 0;
+  s.browser.actionHook = () => {
+    s.browser.url = `http://h${++host}.fixtures.test/`;
+  };
+  const finished = drive(s.loop);
+  await seen;
+  expect((await finished).kind).toBe("completed");
+  release();
+  await liveGuards.get(s.run.id)?.settled?.();
+  expect(
+    (await h.events(s.run.id, "guard")).some(
+      (e) => e.type === "guard" && e.items === 0 && e.stage === "review",
+    ),
+  ).toBe(true);
 });

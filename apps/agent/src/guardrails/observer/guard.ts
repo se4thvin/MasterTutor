@@ -4,7 +4,6 @@ import {
   POST_INJECTION_STEPS,
   type GuardInput,
   type GuardVerdict,
-  type RiskLevel,
 } from "@mastertutor/contracts";
 import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
 import { loadGuardLedger } from "@mastertutor/db";
@@ -20,6 +19,7 @@ import { instrument } from "@mastertutor/telemetry/instrument";
 import { recordObserverFailure, recordObserverSpend } from "@mastertutor/telemetry/record";
 import type { RunSnapshot } from "../../loop/run-state.ts";
 import { UNAVAILABLE_VERDICT, type GuardReviewer, type ReviewOutcome } from "./reviewer.ts";
+import { TrajectoryWatcher } from "./watcher.ts";
 import { guardItemOf } from "./turn.ts";
 import type {
   GuardItemOutcome,
@@ -53,7 +53,7 @@ export function createStepGuard(options: {
   let turns = 0;
   let injectionAt: number | null = null;
   let injectionSignals = 0;
-  const riskLevel: RiskLevel = "normal";
+  const watcher = new TrajectoryWatcher({ run, reviewer, redact });
 
   const row = (
     verdict: GuardVerdict,
@@ -74,11 +74,13 @@ export function createStepGuard(options: {
 
   return {
     rollout,
+    updateContext: (mode, origins) => watcher.updateContext(mode, origins),
     review(turn, signal) {
       return instrument(
         SPAN.observerReview,
         { [ATTR.runId]: run.id, [ATTR.observerRole]: "guard", [ATTR.observerRollout]: rollout },
         async (span) => {
+          watcher.updateContext(turn.mode ?? run.approvalMode, turn.allowedOrigins);
           turns += 1;
           if (
             turn.seen.some(
@@ -95,7 +97,7 @@ export function createStepGuard(options: {
             allowedOrigins: turn.allowedOrigins,
             actuatedOrigins: actuated,
             injectionWindow: injectionAt !== null && turns - injectionAt <= POST_INJECTION_STEPS,
-            riskLevel,
+            riskLevel: watcher.riskLevel,
             label: turn.label,
           };
           const reviewed: Array<{ seen: SeenItem; draft: GuardItemDraft }> = [];
@@ -179,7 +181,7 @@ export function createStepGuard(options: {
                 denials: ledger.state,
                 loopHits: turn.loopHits,
                 injectionSignals,
-                riskLevel,
+                riskLevel: watcher.riskLevel,
               },
             });
             // Nothing leaves the process if the exact-match redactor would change one character.
@@ -263,9 +265,11 @@ export function createStepGuard(options: {
       ledger.personCleared();
       return ledger.state;
     },
-    ingest() {},
-    takeHold: () => null,
-    takeUsage: () => null,
+    ingest: (events) => watcher.ingest(events),
+    takeHold: () => watcher.takeHold(),
+    takeUsage: () => watcher.takeUsage(),
+    takeEvent: () => watcher.takeEvent(),
+    settled: () => watcher.settled(),
   };
 }
 

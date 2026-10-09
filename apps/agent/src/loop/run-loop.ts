@@ -318,6 +318,12 @@ export class RunLoop {
         })
       : null;
 
+    if (loop.#guard)
+      deps.store.onCommitted((events) => {
+        loop.#guard!.updateContext(loop.#run.approvalMode, loop.#run.allowedOrigins);
+        loop.#guard!.ingest(events);
+      });
+
     loop.#calls = unansweredCalls(transcript);
     loop.#pending = await loadPendingApproval(deps.db, run.id);
     loop.#lastInputTokens = await lastInputTokens(deps.db, run.id);
@@ -380,6 +386,16 @@ export class RunLoop {
     const pending = this.#pending;
     if (pending) {
       const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
+      if (decision && decision.status !== "pending" && decision.decidedBy)
+        this.#guard?.ingest([
+          {
+            type: "approval_resolved",
+            approvalId: pending.approvalId,
+            status: decision.status,
+            decidedBy: decision.decidedBy,
+          },
+        ]);
+
       if (decision && decision.status !== "pending") return true;
     }
     if (waitReason === "otp" && (await hasUnusedOtpCode(this.#deps.db, this.#run.id))) return true;
@@ -399,6 +415,7 @@ export class RunLoop {
   /** Seam 1 (spec §7.3): each phase is one mt.step span, the root of its trace (spec §7.2). */
   async step(signal: AbortSignal): Promise<StepOutcome> {
     if (this.#title) await this.#commitTitle(this.#title);
+    await this.#commitWatcher();
     const phase = this.#next;
     return instrument(
       SPAN.step,
@@ -411,6 +428,23 @@ export class RunLoop {
       },
       { expected: interruptionOf },
     );
+  }
+
+  /** The watcher's spend and verdict event, committed at a step boundary like the title. */
+  async #commitWatcher(): Promise<void> {
+    const usage = this.#guard?.takeUsage() ?? null;
+    const events: RunEvent[] = [];
+    let event = this.#guard?.takeEvent();
+    while (event) {
+      events.push(event);
+      event = this.#guard?.takeEvent();
+    }
+    if (!usage && events.length === 0) return;
+    if (usage) this.#run = { ...this.#run, usage: addUsage(this.#run.usage, usage) };
+    await this.#deps.store.commit({
+      run: { usage: this.#run.usage },
+      ...(events.length > 0 ? { events } : {}),
+    });
   }
 
   #phase(phase: Phase, signal: AbortSignal): Promise<StepOutcome> {
@@ -632,6 +666,14 @@ export class RunLoop {
         { kind: "budget", exceeded, usage: this.#run.usage, budget: this.#run.budget },
         { callIds: [], item: null },
       );
+    // A watcher hold (spec §6.9) is asked before the model decides again: "should this run continue?"
+    const hold = this.#guard?.takeHold();
+    if (hold)
+      return this.#ask(this.#hold(hold.verdict, hold.category, hold.rationale), {
+        callIds: [],
+        item: null,
+      });
+
     this.#next = "decide";
     return CONTINUE;
   }
@@ -1494,7 +1536,9 @@ export class RunLoop {
       // Spend already happened (OCR, embeddings…), so it is charged even for a failed tool.
       this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
       await store.commit({
-        steps: [{ seq, phase: "act", state: "done", action, result: executed.result }],
+        steps: [
+          { seq, phase: "act", state: "done", action, url: obs.url, result: executed.result },
+        ],
         storage,
         ...step.commitParts(),
         run: { usage: this.#run.usage },
@@ -1691,6 +1735,15 @@ export class RunLoop {
   /* --------------------------------- endings --------------------------------- */
 
   async #complete(signal: AbortSignal): Promise<StepOutcome> {
+    // Charge bounded async reviews before the worker releases this run.
+    await this.#guard?.settled?.();
+    await this.#commitWatcher();
+    const hold = this.#guard?.takeHold();
+    if (hold)
+      return this.#ask(this.#hold(hold.verdict, hold.category, hold.rationale), {
+        callIds: [],
+        item: null,
+      });
     const step = new StepCollector();
     const result = await this.#deps.hooks.onComplete({
       run: this.#run,
@@ -1733,6 +1786,16 @@ export class RunLoop {
     }
     const wake = await readWakeRequest(this.#deps.db, this.#run.id);
     const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
+    if (decision && decision.status !== "pending" && decision.decidedBy)
+      this.#guard?.ingest([
+        {
+          type: "approval_resolved",
+          approvalId: pending.approvalId,
+          status: decision.status,
+          decidedBy: decision.decidedBy,
+        },
+      ]);
+
     if (!decision || decision.status === "pending") {
       const control = await readRunControl(this.#deps.db, this.#run.id);
       // Still waiting: this wake is used up, so a later sleep is not undone by it (I1).

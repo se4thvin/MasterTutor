@@ -7,3 +7,5 @@ export {
   GUARD_SCREEN_INSTRUCTIONS,
   TRAJECTORY_REVIEW_INSTRUCTIONS,
 } from "./prompts.ts";
+
+export { Trajectory, entriesOf } from "./trajectory.ts";
