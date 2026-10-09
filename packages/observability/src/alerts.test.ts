@@ -20,10 +20,13 @@ describe("alerts as code (spec §13.1)", () => {
   });
 
   it("uses the registered streams and thresholds", () => {
+    const failed = 'mt_runs_ended{mt_run_status="failed"}';
     expect(specs.run_failed.query).toMatchObject({
       type: "promql",
       stream: "mt_runs_ended",
-      expr: 'sum (increase(mt_runs_ended{mt_run_status="failed"}[5m]))',
+      expr:
+        `sum (max_over_time(${failed}[5m]) - min_over_time(${failed}[6m]) + ` +
+        `min_over_time(${failed}[6m]) * (count_over_time(${failed}[6m]) == bool count_over_time(${failed}[12m])))`,
     });
     expect(specs.model_request_rejected.query).toMatchObject({
       expr: expect.stringContaining('mt_error_code="model_request_rejected"'),
@@ -34,6 +37,11 @@ describe("alerts as code (spec §13.1)", () => {
     expect(specs.spend_jump.threshold).toBe(25);
     expect(specs.slot_crash_loop.threshold).toBe(3);
     expect(specs.error_spike).toMatchObject({ threshold: 20, periodMinutes: 5 });
+  });
+
+  it("never uses increase(), which reads a counter born at 1 as no change (review I1)", () => {
+    for (const spec of Object.values(specs))
+      if (spec.query.type === "promql") expect(spec.query.expr).not.toContain("increase(");
   });
 
   it("names the alert after the rule and delivers to web with a 30 min silence", () => {

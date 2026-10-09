@@ -132,6 +132,8 @@ export const O2_EMPTY_PANEL_FILTER = {
  * of rows returned, so a count belongs in HAVING with a trigger threshold of 1. A PromQL alert compares
  * its value through promql_condition (column "value") and its trigger threshold counts matching
  * series, so 1 there too. Both verified firing (and not firing) against the image.
+ * Its PromQL engine gets set operators wrong (`m or m` and `m unless absent_metric` are empty), so
+ * alert expressions use arithmetic only (eventsWithin, dashboards/queries.ts).
  */
 export const O2_ALERT_TRIGGER_THRESHOLD = 1;
 

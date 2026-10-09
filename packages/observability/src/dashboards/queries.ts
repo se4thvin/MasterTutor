@@ -50,6 +50,36 @@ export function allSpanCalls(labels: readonly Label[], extra = "", window = "5m"
   return `sum${by(labels)} (increase(${calls}${extra ? `{${extra}}` : ""}[${window}]))`;
 }
 
+/**
+ * Events counted over the last `minutes` (review I1). OTel counters and spanmetrics start a series
+ * at its first value (1, not 0), and a restarted process starts new series (their `start_time`
+ * label differs), so increase() reads a process's first event as no change. A series is new when it
+ * has no samples before the window; then all of its value counts. The window's baseline reaches one
+ * minute back, past the 30 s export interval. OpenObserve v1.0.4's `or` and `unless` are unusable
+ * (o2-api.ts), hence the `== bool` weight.
+ */
+export function eventsWithin(
+  selector: string,
+  minutes: number,
+  labels: readonly Label[] = [],
+): string {
+  const span = `${minutes + 1}m`;
+  const before = `${2 * (minutes + 1)}m`;
+  const baseline = `min_over_time(${selector}[${span}])`;
+  const isNew = `(count_over_time(${selector}[${span}]) == bool count_over_time(${selector}[${before}]))`;
+  return `sum${by(labels)} (max_over_time(${selector}[${minutes}m]) - ${baseline} + ${baseline} * ${isNew})`;
+}
+
+/** The selector of one counter, optionally filtered. */
+export function metricSelector(metric: MetricSpec, filter = ""): string {
+  return `${o2StreamName(metric.name)}${filter ? `{${filter}}` : ""}`;
+}
+
+/** The spanmetrics calls selector of one product span. */
+export function spanCallsSelector(span: SpanName, extra = ""): string {
+  return `${calls}{${spanFilter(span, extra)}}`;
+}
+
 /** Error rate of one product span (0..1). */
 export function spanErrorRate(span: SpanName, labels: readonly AttributeName[] = []): string {
   return `${spanCalls(span, labels, SPAN_ERROR)} / ${spanCalls(span, labels)}`;

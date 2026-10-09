@@ -1,7 +1,12 @@
 import type { AlertRule } from "@mastertutor/contracts";
 import { ATTR, DERIVED_METRIC, LOG_STREAMS, METRIC, SPAN } from "@mastertutor/contracts/telemetry";
 import type { O2Client } from "./client.ts";
-import { SPAN_ERROR, increase, spanCalls } from "./dashboards/queries.ts";
+import {
+  SPAN_ERROR,
+  eventsWithin,
+  metricSelector,
+  spanCallsSelector,
+} from "./dashboards/queries.ts";
 import { o2Label, o2StreamName } from "./names.ts";
 import { AlertList, O2_FIELDS, O2_ALERT_TRIGGER_THRESHOLD, o2Paths } from "./o2-api.ts";
 import { ALERT_DESTINATION_NAME, ensureStream } from "./provision.ts";
@@ -37,11 +42,9 @@ export function alertSpecs(options: { spendUsdPerHour: number }): Record<AlertRu
       query: {
         type: "promql",
         stream: o2StreamName(METRIC.runFailures.name),
-        expr: increase(
-          METRIC.runFailures,
-          [],
-          "5m",
-          `${o2Label(ATTR.errorCode)}="model_request_rejected"`,
+        expr: eventsWithin(
+          metricSelector(METRIC.runFailures, `${o2Label(ATTR.errorCode)}="model_request_rejected"`),
+          5,
         ),
       },
       threshold: 1,
@@ -52,7 +55,10 @@ export function alertSpecs(options: { spendUsdPerHour: number }): Record<AlertRu
       query: {
         type: "promql",
         stream: o2StreamName(METRIC.runsEnded.name),
-        expr: increase(METRIC.runsEnded, [], "5m", `${o2Label(ATTR.runStatus)}="failed"`),
+        expr: eventsWithin(
+          metricSelector(METRIC.runsEnded, `${o2Label(ATTR.runStatus)}="failed"`),
+          5,
+        ),
       },
       threshold: 1,
       periodMinutes: 5,
@@ -62,7 +68,7 @@ export function alertSpecs(options: { spendUsdPerHour: number }): Record<AlertRu
       query: {
         type: "promql",
         stream: o2StreamName(DERIVED_METRIC.spanCalls),
-        expr: `max(${spanCalls(SPAN.slotReset, [ATTR.slotName], SPAN_ERROR, "10m")})`,
+        expr: `max(${eventsWithin(spanCallsSelector(SPAN.slotReset, SPAN_ERROR), 10, [ATTR.slotName])})`,
       },
       threshold: 3,
       periodMinutes: 10,
@@ -72,7 +78,7 @@ export function alertSpecs(options: { spendUsdPerHour: number }): Record<AlertRu
       query: {
         type: "promql",
         stream: o2StreamName(METRIC.spendUsd.name),
-        expr: increase(METRIC.spendUsd, [], "60m"),
+        expr: eventsWithin(metricSelector(METRIC.spendUsd), 60),
       },
       threshold: options.spendUsdPerHour,
       periodMinutes: 60,

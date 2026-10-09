@@ -3,7 +3,9 @@ import type { AddressInfo } from "node:net";
 import { LOG_STREAMS } from "@mastertutor/contracts/telemetry";
 import { TestContainers } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { upsertAlerts } from "./alerts.ts";
+import { eventsWithin } from "./dashboards/queries.ts";
 import { AlertList, o2Paths } from "./o2-api.ts";
 import { provisionAlertDelivery, provisionStreams } from "./provision.ts";
 import { startTestOpenObserve, type TestOpenObserve } from "./testing.ts";
@@ -62,55 +64,120 @@ describe("upsertAlerts against the pinned image", () => {
     expect(JSON.stringify(stored)).toContain('"value":30');
   });
 
-  it("fires the SQL and PromQL rules that hold, and only those, with the rule name and bearer", async () => {
+  it("fires on the first event of a new series (born at 1) and the SQL count, and only those (review I1)", async () => {
     await o2.root.call(
       "ingest",
       "POST",
       o2Paths.jsonIngest("default", LOG_STREAMS.app),
       Array.from({ length: 25 }, (_, i) => ({ severity: "ERROR", body: `e${i}` })),
     );
-    const now = BigInt(Date.now()) * 1_000_000n;
-    for (const [value, offset] of [
-      [1, 20_000_000_000n],
-      [3, 0n],
-    ] as const)
-      await o2.root.call("otlpMetrics", "POST", o2Paths.otlp("default", "metrics"), {
-        resourceMetrics: [
-          {
-            resource: { attributes: [] },
-            scopeMetrics: [
-              {
-                metrics: [
-                  {
-                    name: "mt.runs.ended",
-                    sum: {
-                      aggregationTemporality: 2,
-                      isMonotonic: true,
-                      dataPoints: [
-                        {
-                          asInt: String(value),
-                          startTimeUnixNano: String(now - 30_000_000_000n),
-                          timeUnixNano: String(now - offset),
-                          attributes: [{ key: "mt.run.status", value: { stringValue: "failed" } }],
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      });
+    // A process's first failed run and first rejected request: one point each, at value 1.
+    const now = nowNanos();
+    await ingestCounter("mt.runs.ended", { "mt.run.status": "failed" }, [[1, now]], now);
+    await ingestCounter(
+      "mt.run.failures",
+      { "mt.error.code": "model_request_rejected" },
+      [[1, now]],
+      now,
+    );
     // Rules are evaluated once a minute; wait for two rounds at most.
     const deadline = Date.now() + 150_000;
-    while (deliveries.length < 2 && Date.now() < deadline)
+    while (deliveries.length < 3 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     await new Promise((resolve) => setTimeout(resolve, 5_000));
     expect(deliveries.map((d) => d.body).sort()).toEqual([
       '{"rule":"error_spike"}',
+      '{"rule":"model_request_rejected"}',
       '{"rule":"run_failed"}',
     ]);
     expect(deliveries.every((d) => d.authorization === `Bearer ${SECRET}`)).toBe(true);
   }, 180_000);
+
+  it("counts events, not series: a steady old counter is 0, a grown one its growth, a new one its value", async () => {
+    const now = nowNanos();
+    const s = 1_000_000_000n;
+    const born = now - 900n * s;
+    // Exported every 30 s, as the SDK and spanmetrics do, for 12 minutes.
+    const every30s = (value: (t: bigint) => number) =>
+      Array.from({ length: 24 }, (_, i) => {
+        const t = now - BigInt(720 - i * 30) * s;
+        return [value(t), t] as [number, bigint];
+      });
+    await ingestCounter(
+      "mt.runs.ended",
+      { "mt.run.status": "steady" },
+      every30s(() => 1),
+      born,
+    );
+    await ingestCounter(
+      "mt.runs.ended",
+      { "mt.run.status": "grew" },
+      every30s((t) => (t > now - 120n * s ? 3 : 1)),
+      born,
+    );
+    await ingestCounter(
+      "mt.runs.ended",
+      { "mt.run.status": "new" },
+      [[1, now - 60n * s]],
+      now - 60n * s,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const PromValue = z.object({
+      data: z.object({ result: z.array(z.object({ value: z.tuple([z.number(), z.string()]) })) }),
+    });
+    const count = async (status: string) => {
+      const expr = eventsWithin(`mt_runs_ended{mt_run_status="${status}"}`, 5);
+      const result = await o2.root.call(
+        "promQuery",
+        "GET",
+        o2Paths.promQuery("default", expr),
+        undefined,
+        PromValue,
+      );
+      return Number(result.data.result[0]?.value[1]);
+    };
+    expect(await count("steady")).toBe(0);
+    expect(await count("grew")).toBe(2);
+    expect(await count("new")).toBe(1);
+  });
 });
+
+const nowNanos = () => BigInt(Date.now()) * 1_000_000n;
+
+/** OTLP cumulative counter points for one series (cumulative from `start`, like the SDK exports). */
+async function ingestCounter(
+  name: string,
+  attributes: Record<string, string>,
+  points: ReadonlyArray<readonly [number, bigint]>,
+  start: bigint,
+) {
+  await o2.root.call("otlpMetrics", "POST", o2Paths.otlp("default", "metrics"), {
+    resourceMetrics: [
+      {
+        resource: { attributes: [] },
+        scopeMetrics: [
+          {
+            metrics: [
+              {
+                name,
+                sum: {
+                  aggregationTemporality: 2,
+                  isMonotonic: true,
+                  dataPoints: points.map(([value, time]) => ({
+                    asInt: String(value),
+                    startTimeUnixNano: String(start),
+                    timeUnixNano: String(time),
+                    attributes: Object.entries(attributes).map(([key, v]) => ({
+                      key,
+                      value: { stringValue: v },
+                    })),
+                  })),
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
