@@ -43,4 +43,48 @@ describe("module dependency map (plan: no cycles, spec §4.3)", () => {
       for (const spec of imports(file).filter((s) => s.startsWith("@mastertutor/telemetry")))
         expect(spec, file).toBe("@mastertutor/telemetry/record");
   });
+
+  it("observer imports only contracts, zod and node", () => {
+    for (const file of files("packages/observer/src"))
+      for (const spec of imports(file))
+        expect(spec, file).toMatch(/^(\.|node:|zod$|@mastertutor\/contracts)/);
+  });
+
+  it("the agent reaches the observer core through ./guard and ./layout only", () => {
+    for (const file of files("apps/agent/src"))
+      for (const spec of imports(file).filter((s) => s.startsWith("@mastertutor/observer")))
+        expect(spec, file).toMatch(/^@mastertutor\/observer(\/guard|\/layout)?$/);
+  });
+
+  it("the observer service uses ./copilot and observability/query only, and nothing imports it", () => {
+    for (const file of files("apps/observer/src"))
+      for (const spec of imports(file)) {
+        if (spec.startsWith("@mastertutor/observer"))
+          expect(spec, file).toMatch(/^@mastertutor\/observer(\/copilot)?$/);
+        if (spec.startsWith("@mastertutor/observability"))
+          expect(spec, file).toBe("@mastertutor/observability/query");
+      }
+    for (const dir of ["apps/agent/src", "apps/web", "packages"])
+      for (const file of files(dir).filter((f) => !f.includes("node_modules")))
+        for (const spec of imports(file)) expect(spec, file).not.toMatch(/apps\/observer/);
+  });
+
+  it("web imports neither the observer core nor observability", () => {
+    for (const dir of ["apps/web/app", "apps/web/components", "apps/web/lib"])
+      for (const file of files(dir))
+        for (const spec of imports(file))
+          expect(spec, file).not.toMatch(/^@mastertutor\/(observer|observability)/);
+  });
+
+  it("no running service but the observer imports observability, and only ./query", () => {
+    for (const dir of [
+      "apps/agent/src",
+      "packages/db/src",
+      "packages/telemetry/src",
+      "packages/storage/src",
+    ])
+      for (const file of files(dir))
+        for (const spec of imports(file))
+          expect(spec, file).not.toMatch(/^@mastertutor\/observability/);
+  });
 });
