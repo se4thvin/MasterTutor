@@ -34,7 +34,7 @@ import {
 } from "./scene/capture-timeline.ts";
 import { bar, lathe, slab } from "./scene/geometry.ts";
 import { LENS, lensProfile } from "./scene/lens-profile.ts";
-import { createSpring, smoothstep, stepSprings } from "./scene/motion.ts";
+import { createSpring, smoothstep, stepSprings } from "@/lib/spring.ts";
 import { IDLE_AFTER_MS, shouldRender } from "./scene/pacing.ts";
 import { pageTexture } from "./scene/page-texture.ts";
 import { buildStudio, readSceneTokens } from "./scene/studio.ts";

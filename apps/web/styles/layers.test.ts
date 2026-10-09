@@ -48,6 +48,7 @@ describe("component stylesheets", () => {
     "run.css",
     "new-task.css",
     "hero.css",
+    "mascot.css",
   ];
   it.each(SHEETS)("%s keeps every rule inside @layer components", (sheet) => {
     const blocks = topLevel(readFileSync(new URL(`./${sheet}`, import.meta.url), "utf8"));

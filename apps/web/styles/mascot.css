@@ -1,0 +1,45 @@
+/* Pip, the mascot: the per-state poster crossfades to the live 3D canvas (components/mascot). */
+@layer components {
+  .pip {
+    position: relative;
+    display: block;
+    flex: none;
+    aspect-ratio: 1;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-lg);
+    background: none;
+    contain: layout paint;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pip[data-size="hero"] {
+    width: min(100%, 22.5rem);
+  }
+  .pip[data-size="compact"] {
+    width: 3rem;
+  }
+  button.pip {
+    cursor: pointer;
+  }
+  .pip-poster,
+  .pip-canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    transition-property: opacity;
+    transition-duration: var(--motion-dur-base);
+    transition-timing-function: var(--motion-ease-out);
+    user-select: none;
+  }
+  .pip-canvas {
+    opacity: 0;
+  }
+  .pip[data-live] .pip-canvas {
+    opacity: 1;
+  }
+  .pip[data-live] .pip-poster {
+    opacity: 0;
+  }
+}

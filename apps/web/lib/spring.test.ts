@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { springs } from "@/lib/motion-tokens.ts";
-import { createSpring, smoothstep, stepSprings } from "./motion.ts";
+import { createSpring, smoothstep, stepSprings } from "./spring.ts";
 
 const spring = springs.spring;
 
-describe("hero springs", () => {
+describe("springs (hero and Pip)", () => {
   it("settles the D21 spring in ~450ms with ~3% overshoot", () => {
     const s = createSpring(0, spring);
     s.target = 1;

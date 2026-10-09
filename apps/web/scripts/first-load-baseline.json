@@ -3,6 +3,7 @@
   "routes": {
     "/": 204.7,
     "/design": 390.1,
+    "/design/mascot": 384.9,
     "/library": 388.5,
     "/new": 389.6,
     "/notes/[noteId]": 441.6,

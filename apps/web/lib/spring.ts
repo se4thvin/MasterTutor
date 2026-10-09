@@ -1,5 +1,5 @@
-/** Damped spring with unit mass, ported from the run 16 prototype. Parameters come from motion-tokens. */
-interface Spring {
+/** Damped spring with unit mass (run 16 prototype), shared by the 3D hero and Pip. Parameters come from motion-tokens. */
+export interface Spring {
   x: number;
   v: number;
   target: number;

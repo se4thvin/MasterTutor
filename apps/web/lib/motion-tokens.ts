@@ -11,6 +11,14 @@ export const springs = {
   heroParallax: { type: "spring", stiffness: 60, damping: 13, mass: 1 },
   /** 3D hero: the lens leans toward the focused composer. */
   heroAttention: { type: "spring", stiffness: 170, damping: 22, mass: 1 },
+  /** Pip: state crossfade weights, critically damped so a blend never overshoots. */
+  pipBlend: { type: "spring", stiffness: 140, damping: 24, mass: 1 },
+  /** Pip: head and eyes turning toward the cursor or a target. */
+  pipLook: { type: "spring", stiffness: 120, damping: 16, mass: 1 },
+  /** Pip: the sprout's leaves flaring and fluttering (underdamped: they flutter). */
+  pipLeaf: { type: "spring", stiffness: 220, damping: 9, mass: 1 },
+  /** Pip: the jelly squash after a poke (deliberately underdamped). */
+  pipSquash: { type: "spring", stiffness: 380, damping: 11, mass: 1 },
 } as const;
 
 /** Milliseconds. */

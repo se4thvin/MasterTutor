@@ -13,7 +13,7 @@ const ANIMATION_BANS = {
 };
 const THREE_BAN = {
   group: ["three", "three/*"],
-  message: "three may be imported only from components/hero/.",
+  message: "three may be imported only from components/hero/ and components/mascot/scene/.",
 };
 const LUCIDE_BAN = { group: ["lucide-react"], message: "Use <Icon> from components/ui/icon.tsx." };
 // P7-14: the fixture API (apps/web/lib/fixtures) is a test double. Runtime web code reaches it only
@@ -377,7 +377,9 @@ export default defineConfig(
     },
   },
   {
-    files: ["apps/web/components/hero/**"],
+    // The two homes of three (D43): the 3D hero and Pip's scene. Both are reached only through
+    // import() from a component that renders a poster first.
+    files: ["apps/web/components/hero/**", "apps/web/components/mascot/scene/**"],
     rules: {
       "no-restricted-imports": webImports([LUCIDE_BAN]),
       "no-restricted-syntax": dynamicImportBan([...ALL_BANNED, "lucide-react"]),
