@@ -1564,7 +1564,7 @@ describe("RunLoop (spec §5.3)", () => {
       { hooks: { promptContext } },
     );
     expect(await drive(loop)).toEqual({ kind: "completed" });
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
   });
 
   it("keeps the hooks.promptContext lines in the context after a compaction (B3 final review)", async () => {

@@ -32,6 +32,7 @@ import { FakeLoopBrowser, unavailableBrowserCdp } from "../testing/fake-loop-bro
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { crashSupervisor } from "../testing/crash.ts";
 import { waitFor } from "../testing/wait.ts";
+import { manualClock } from "../testing/manual-clock.ts";
 import type { RunHooks } from "./hooks.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -199,17 +200,32 @@ async function handBackTo(id: string) {
 }
 /** A clock whose sleeps (the idle → sleep timer) end only when the test says so. */
 function gatedClock() {
-  const sleepers: Array<() => void> = [];
+  const sleepers = new Set<() => void>();
   const clock: Clock = {
     now: () => Date.now(),
     sleep: (_ms, signal) =>
       new Promise<void>((resolve, reject) => {
         signal?.throwIfAborted();
-        sleepers.push(resolve);
-        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        sleepers.add(resolve);
+        signal?.addEventListener(
+          "abort",
+          () => {
+            sleepers.delete(resolve);
+            reject(signal.reason);
+          },
+          { once: true },
+        );
       }),
   };
-  return { clock, wakeSleepers: () => sleepers.splice(0).forEach((wake) => wake()) };
+  return {
+    clock,
+    wakeSleepers: async () => {
+      await waitFor(async () => sleepers.size > 0, { label: "idle timer registered" });
+      const pending = [...sleepers];
+      sleepers.clear();
+      for (const wake of pending) wake();
+    },
+  };
 }
 /** The web's sendMessage (Task 18 web contract): event row, wake request, NOTIFY run_wake. */
 async function sendMessage(id: string, text: string) {
@@ -653,7 +669,7 @@ describe("RunWorker + Supervisor", () => {
     await until(run.id, (r) => r.status === "waiting" && r.waitReason === "approval", "asking");
     await approve(run.id);
     await until(run.id, (r) => r.status === "waiting" && r.waitReason === "takeover", "human wait");
-    wakeSleepers(); // the idle timer fires: the run goes to sleep
+    await wakeSleepers(); // the idle timer fires: the run goes to sleep
     await until(run.id, (r) => r.status === "sleeping", "asleep");
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(await row(run.id)).toMatchObject({ status: "sleeping", wakeRequestedAt: null });
@@ -1335,7 +1351,7 @@ describe("run-mode: the approval mode changes mid-run", () => {
     expect(cards.map((c) => [c.status, c.decidedBy])).toEqual([["approved", "bypass"]]);
     // The model is told, so it does not expect to be asked.
     expect(JSON.stringify(mock.requestsFor(name)[1]!.body.input)).toContain(
-      "the user changed the approval mode",
+      "Approval mode: actions are approved automatically.",
     );
   });
 
@@ -1482,7 +1498,7 @@ for (const ending of ["sleep", "cancel"] as const) {
       }),
     );
     await until(run.id, (r) => r.status === "waiting", "approval waiting");
-    if (ending === "sleep") wakeSleepers();
+    if (ending === "sleep") await wakeSleepers();
     else {
       await owner.db
         .update(runs)
@@ -1501,3 +1517,84 @@ for (const ending of ["sleep", "cancel"] as const) {
       .where(eq(runs.id, run.id));
   });
 }
+
+describe("human wait slot retention (D56)", () => {
+  it.each(["takeover", "captcha"] as const)(
+    "keeps the %s page through 60 seconds, then sleeps at ten minutes",
+    async (needHuman) => {
+      const time = manualClock();
+      await start({ config: { idleSleepMs: 60_000 } }, time.clock);
+      const { run, browser, name } = await queue([
+        {
+          outputs: [
+            {
+              type: "turn",
+              status: "need_human",
+              needHuman,
+              reason: "A person needs to continue on this page",
+            },
+          ],
+        },
+        done,
+      ]);
+      await until(
+        run.id,
+        (r) => r.status === "waiting" && r.waitReason === needHuman,
+        "human wait",
+      );
+      await waitFor(async () => time.pending() === 1, { label: "wait timer registered" });
+      const held = await row(run.id);
+      const page = browser.url;
+      time.advance(60_000);
+      expect(time.pending()).toBe(1);
+      expect(await row(run.id)).toMatchObject({
+        status: "waiting",
+        waitReason: needHuman,
+        slotName: held.slotName,
+        currentUrl: page,
+      });
+      expect(browsers.get(run.id)).toBe(browser);
+      expect(mock.requestsFor(name)).toHaveLength(1);
+      // Stale wake notifications do not shorten or extend the original deadline.
+      await owner.sql.notify(
+        "run_wake",
+        encodeNotify("run_wake", { runId: run.id, reason: "message" }),
+      );
+      time.advance(539_999);
+      expect(time.pending()).toBe(1);
+      expect(await row(run.id)).toMatchObject({ status: "waiting", slotName: held.slotName });
+      time.advance(1);
+      await until(
+        run.id,
+        (r) => r.status === "sleeping" && r.slotName === null,
+        "sleeps at human wait limit",
+      );
+      expect(mock.requestsFor(name)).toHaveLength(1);
+    },
+  );
+
+  it.each(["approval", "otp"] as const)("keeps the existing idleSleepMs for %s", async (reason) => {
+    const time = manualClock();
+    await start({ config: { idleSleepMs: 60_000 } }, time.clock);
+    const first =
+      reason === "approval"
+        ? click
+        : {
+            outputs: [
+              {
+                type: "function" as const,
+                name: "fill_credential",
+                args: { alias: "site", field: "otp", target: "e1" },
+              },
+            ],
+          };
+    const { run } = await queue([first, done], "ask", (browser) => {
+      if (reason === "approval") browser.targets.set("10,20", riskyTarget);
+      else browser.functionWait = () => "otp";
+    });
+    await until(run.id, (r) => r.status === "waiting" && r.waitReason === reason, "normal wait");
+    await waitFor(async () => time.pending() === 1, { label: "idle timer registered" });
+    time.advance(60_000);
+    await until(run.id, (r) => r.status === "sleeping" && r.slotName === null, "normal idle limit");
+  });
+});
