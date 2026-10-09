@@ -138,6 +138,11 @@ test.describe("run events through Traefik (Review Focus 2, X13)", () => {
       .poll(() => shot.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
       .toBe(true);
     await expect(page.getByRole("button", { name: /^Replay step:/ }).first()).toBeVisible();
+    // The model's reasoning summary (llm-mock answers only when the agent asks for summaries)
+    // went through the agent, run_steps and runs.steps into the thread (fe-run-chat).
+    await expect(
+      page.getByRole("complementary", { name: "Thread" }).getByText("Looking at the page."),
+    ).toBeVisible();
   });
 
   test("a running run shows the live browser through the real openLive and /live route; cancel ends it", async ({

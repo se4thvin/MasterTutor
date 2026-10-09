@@ -3,8 +3,6 @@
 import { IconButton } from "@/components/ui/button.tsx";
 import type { StepRow } from "../model/run-model.ts";
 
-export const REPLAY_INTERVAL_MS = 1_000;
-
 interface ReplayScrubberProps {
   steps: StepRow[];
   seq: number | null;

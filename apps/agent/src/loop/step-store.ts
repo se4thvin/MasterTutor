@@ -58,6 +58,8 @@ export interface StepRecord {
   action?: (StepAction & { callId?: string }) | null;
   result?: unknown;
   caption?: string | null;
+  /** A decide step's screened reasoning summary: streamed on its step event (also in `result`). */
+  reasoning?: string | null;
   url?: string | null;
   screenshotKey?: string | null;
   /**
@@ -299,6 +301,7 @@ export class StepStore {
           url: step.url?.slice(0, 4_096) ?? null,
           screenshotKey: step.screenshotKey ?? null,
           action,
+          ...(step.reasoning ? { reasoning: step.reasoning } : {}),
         });
       }
       if (entries.length > 0) {

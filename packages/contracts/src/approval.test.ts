@@ -10,6 +10,7 @@ import {
   PersonDecider,
   RESERVED_DECIDERS,
   decideByPolicy,
+  decideOnModeChange,
   decideSafetyChecks,
   deciderClass,
   deciderShapeSql,
@@ -135,6 +136,79 @@ describe("bypass mode (D44)", () => {
       [],
     ])
       expect(decideSafetyChecks("bypass", list, true)).toBe("ask");
+  });
+});
+
+describe("decideOnModeChange (run-mode: a pending card when the mode changes mid-run)", () => {
+  const url = "https://a.example/x";
+  const click = (safetyChecks?: Array<{ code: string | null; message: string | null }>) =>
+    ApprovalRequest.parse({
+      kind: "risky_click",
+      action: { type: "click", x: 1, y: 2, button: "left" },
+      label: "Delete",
+      url,
+      screenshotKey: null,
+      ...(safetyChecks ? { safetyChecks } : {}),
+    });
+  const pending = (request: ApprovalRequest, personOnly = false) => ({ request, personOnly });
+  const check = (code: string) => [{ code, message: null }];
+
+  it("switching to ask never resolves anything", () => {
+    expect(decideOnModeChange("ask", pending(click()), true)).toBe("ask");
+    expect(
+      decideOnModeChange(
+        "ask",
+        pending({ kind: "new_origin", origin: "https://b.example", url }),
+        true,
+      ),
+    ).toBe("ask");
+  });
+
+  it("auto and bypass re-decide with that mode's policy", () => {
+    expect(decideOnModeChange("auto_within_allowlist", pending(click()), true)).toBe("approved");
+    expect(decideOnModeChange("bypass", pending(click()), false)).toBe("approved");
+    const origin = { kind: "new_origin", origin: "https://b.example", url } as const;
+    expect(decideOnModeChange("auto_within_allowlist", pending(origin), true)).toBe("denied");
+    expect(decideOnModeChange("bypass", pending(origin), true)).toBe("approved");
+    const download = { kind: "download", url, filename: "a.pdf" } as const;
+    expect(decideOnModeChange("auto_within_allowlist", pending(download), true)).toBe("denied");
+    expect(decideOnModeChange("bypass", pending(download), true)).toBe("approved");
+  });
+
+  it("safety checks follow decideSafetyChecks: prompt injection always stays with a person", () => {
+    const injection = pending(click(check("malicious_instructions")));
+    for (const mode of APPROVAL_MODES)
+      expect(decideOnModeChange(mode, injection, true)).toBe("ask");
+    const irrelevant = pending(click(check("irrelevant_domain")));
+    expect(decideOnModeChange("auto_within_allowlist", irrelevant, true)).toBe("approved");
+    expect(decideOnModeChange("auto_within_allowlist", irrelevant, false)).toBe("ask");
+    expect(decideOnModeChange("bypass", pending(click(check("sensitive_domain"))), false)).toBe(
+      "approved",
+    );
+  });
+
+  it("a budget hit still waits for a person in every mode", () => {
+    const budget = pending({
+      kind: "budget",
+      exceeded: "usd",
+      usage: EMPTY_USAGE,
+      budget: DEFAULT_BUDGET,
+    });
+    for (const mode of APPROVAL_MODES) expect(decideOnModeChange(mode, budget, true)).toBe("ask");
+  });
+
+  it("never auto-resolves a person-only decision: a sign-in card or a card sent to a person", () => {
+    const onOrigin = {
+      kind: "credential_first_use",
+      alias: "uni",
+      origin: "https://a.example",
+    } as const;
+    const offOrigin = { ...onOrigin, postsTo: "https://evil.example/collect" };
+    for (const mode of APPROVAL_MODES) {
+      expect(decideOnModeChange(mode, pending(onOrigin), true)).toBe("ask");
+      expect(decideOnModeChange(mode, pending(offOrigin), true)).toBe("ask");
+      expect(decideOnModeChange(mode, pending(click(), true), true)).toBe("ask");
+    }
   });
 });
 

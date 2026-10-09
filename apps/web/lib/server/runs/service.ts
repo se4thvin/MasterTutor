@@ -1,6 +1,10 @@
 import {
   TERMINAL_RUN_STATUSES,
+  autoModeNeedsOrigins,
+  decideOnModeChange,
   isPersonDecider,
+  policyDecider,
+  toOrigin,
   type ApprovalDecisionInput,
   type ApprovalEdit,
   type ListRunStepsInput,
@@ -10,6 +14,7 @@ import {
   type RunStepView,
   type RunSummary,
   type SendMessageInput,
+  type SetApprovalModeInput,
 } from "@mastertutor/contracts";
 import {
   KeysetCursorInvalid,
@@ -149,6 +154,10 @@ export async function listRunSteps(
       url: runSteps.url,
       screenshotKey: runSteps.screenshotKey,
       action: runSteps.action,
+      // DecideResult.reasoning; only a decide step's result is read for it.
+      reasoning: sql<
+        string | null
+      >`case when ${runSteps.phase} = 'decide' then ${runSteps.result} ->> 'reasoning' end`,
       createdAt: runSteps.createdAt,
     })
     .from(runSteps)
@@ -220,7 +229,11 @@ export async function resumeRun(db: Database, scope: RunScope, runId: string): P
   });
 }
 
-/** A user message is a run event the agent reads (loadUserMessages) plus a wake (spec §5.4). */
+/**
+ * A user message is a run event the agent reads (loadUserMessages) plus a wake (spec §5.4). Send
+ * now (`interrupt`) also NOTIFYs run_control, before the wake: the worker stops its model call and
+ * the rest of its batch and decides again with the message (run-mode).
+ */
 export async function sendRunMessage(
   db: Database,
   scope: RunScope,
@@ -229,13 +242,96 @@ export async function sendRunMessage(
   await db.transaction(async (tx) => {
     const run = await lockRun(tx, scope, input.runId);
     if (TERMINAL.has(run.status)) throw finishedRun();
-    await emitRunEvent(tx, input.runId, { type: "user_message", text: input.text });
+    await emitRunEvent(tx, input.runId, {
+      type: "user_message",
+      text: input.text,
+      ...(input.interrupt ? { interrupt: true } : {}),
+    });
+    if (input.interrupt) await notifyRunControl(tx, input.runId);
     if (run.status === "sleeping")
       await tx
         .update(runs)
         .set({ wakeRequestedAt: sql`now()` })
         .where(eq(runs.id, input.runId));
     await notifyRunWake(tx, input.runId, "message");
+  });
+}
+
+const personOnly = sql<boolean>`coalesce((${runSteps.result} ->> 'personOnly')::boolean, false)`;
+
+/**
+ * A person changes a live run's approval mode (run-mode). The row, an audited
+ * approval_mode_changed event and any re-decided cards commit together. The worker re-reads the
+ * mode before every step (readRunControl), so it applies from the next decision. Open cards are
+ * decided again with the new mode's policy (decideOnModeChange): anything it still asks for, and
+ * anything only a person may decide, stays pending; switching to ask resolves nothing. The same
+ * mode again changes nothing. Lock order: run row, then approval rows.
+ */
+export async function setRunApprovalMode(
+  db: Database,
+  scope: RunScope,
+  input: SetApprovalModeInput,
+): Promise<void> {
+  if (!isPersonDecider(scope.actor))
+    throw new ServiceError("forbidden", "Only a person can change the approval mode.");
+  await db.transaction(async (tx) => {
+    const [run] = await tx
+      .select({
+        status: runs.status,
+        approvalMode: runs.approvalMode,
+        allowedOrigins: runs.allowedOrigins,
+      })
+      .from(runs)
+      .where(inScope(scope, input.runId))
+      .for("update");
+    if (!run) throw missingRun();
+    if (TERMINAL.has(run.status)) throw finishedRun();
+    if (run.approvalMode === input.mode) return;
+    if (!autoModeNeedsOrigins({ approvalMode: input.mode, allowedOrigins: run.allowedOrigins }))
+      throw new ServiceError("invalid", "Auto mode needs at least one allowed domain on this run.");
+    await tx.update(runs).set({ approvalMode: input.mode }).where(eq(runs.id, input.runId));
+    await emitRunEvent(tx, input.runId, {
+      type: "approval_mode_changed",
+      from: run.approvalMode,
+      to: input.mode,
+      by: scope.actor,
+    });
+    if (input.mode === "ask") return;
+    const open = await tx
+      .select({ id: approvals.id, request: approvals.request, personOnly })
+      .from(approvals)
+      .leftJoin(
+        runSteps,
+        and(eq(runSteps.runId, approvals.runId), eq(runSteps.seq, approvals.stepSeq)),
+      )
+      .where(and(eq(approvals.runId, input.runId), eq(approvals.status, "pending")))
+      .orderBy(asc(approvals.createdAt))
+      .for("update", { of: approvals });
+    const decider = policyDecider(input.mode);
+    let decided = 0;
+    for (const card of open) {
+      const origin = "url" in card.request ? toOrigin(card.request.url) : null;
+      const originAllowed = origin !== null && run.allowedOrigins.includes(origin);
+      const decision = decideOnModeChange(input.mode, card, originAllowed);
+      if (decision === "ask") continue;
+      await tx
+        .update(approvals)
+        .set({ status: decision, decidedBy: decider, decidedAt: sql`now()` })
+        .where(eq(approvals.id, card.id));
+      await emitRunEvent(tx, input.runId, {
+        type: "approval_resolved",
+        approvalId: card.id,
+        status: decision,
+        decidedBy: decider,
+      });
+      decided += 1;
+    }
+    if (decided === 0) return;
+    await tx
+      .update(runs)
+      .set({ wakeRequestedAt: sql`now()` })
+      .where(and(eq(runs.id, input.runId), inArray(runs.status, ["waiting", "sleeping"])));
+    await notifyRunWake(tx, input.runId, "approval");
   });
 }
 

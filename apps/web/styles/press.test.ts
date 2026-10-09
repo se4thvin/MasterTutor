@@ -17,6 +17,8 @@ const PRESS_TARGETS = {
     ".callout",
     ".src-pick",
     ".ftile",
+    ".thread-peek",
+    ".th-replay",
   ],
 } as const;
 

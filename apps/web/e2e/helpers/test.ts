@@ -19,4 +19,6 @@ export { expect };
 export { expectCleanScreen } from "./clean-screen.ts";
 
 export const isCompact = (page: Page) => (page.viewportSize()?.width ?? 0) <= 820;
+/** Phone width (≤420px): the run thread is a peek bar and a bottom sheet, not a pane. */
+export const isPhone = (page: Page) => (page.viewportSize()?.width ?? 0) <= 420;
 export const isWide = (page: Page) => (page.viewportSize()?.width ?? 0) > 1180;

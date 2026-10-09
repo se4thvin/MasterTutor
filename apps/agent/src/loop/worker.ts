@@ -107,15 +107,22 @@ export class RunWorker {
     this.#latch.open();
   }
 
-  /** run_control: takeover, hand back or cancel. Aborts the in-flight action at once (target ≤ 300 ms). */
+  /**
+   * run_control: takeover, hand back, cancel or Send now. Aborts the in-flight action at once
+   * (target ≤ 300 ms); Send now aborts only a model call in flight, and otherwise stops the batch
+   * before its next action (RunLoop.takeInterrupt).
+   */
   control(): void {
     void readRunControl(this.#deps.db, this.runId)
-      .then((run) => {
+      .then(async (run) => {
         if (!run) return;
         if (isTerminal(run.status)) this.#abort.abort(new Interrupted("cancel"));
         else if (run.controller === "user" && !this.#guard.held) {
           this.#guard.hold();
           this.#abort.abort(new Interrupted("takeover"));
+        } else if (run.controller === "agent" && this.#loop) {
+          if ((await this.#loop.takeInterrupt()) === "abort")
+            this.#abort.abort(new Interrupted("message"));
         }
       })
       .catch(() =>
@@ -275,6 +282,8 @@ export class RunWorker {
     const run = await readRunControl(this.#deps.db, this.runId);
     if (!run || isTerminal(run.status)) return { kind: "cancelled" };
     if (run.controller === "user") return this.#holdForUser();
+    // A person may change the mode mid-run (run-mode): it governs this step's decisions.
+    this.#loop!.useApprovalMode(run.approvalMode);
     return this.#loop!.step(this.#abort.signal);
   }
 

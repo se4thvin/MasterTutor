@@ -295,7 +295,9 @@
     justify-self: center;
     gap: 0.45rem;
     min-width: 0;
-    max-width: 34rem;
+    /* Never wider than its column: beside the thread pane the frame is narrow, and the path (not
+       the host) gives way before the pill reaches the status group. */
+    max-width: min(34rem, 100%);
     height: 1.875rem;
     padding: 0 0.4rem 0 0.75rem;
     border-radius: var(--r-pill);
@@ -847,22 +849,42 @@
     font: var(--weight-regular) var(--text-13)/1.45 var(--font-ui);
     resize: vertical;
   }
-  /* Run view page (Task 13). */
+  /* Run view page (Task 13; fe-run-chat): the browser is the hero; at md and up the thread pane
+     runs the full height beside the header and the stage (a split view). */
   .run {
+    --thread-w: clamp(18rem, 28vw, 22rem);
+    max-width: 110rem;
     padding-bottom: 6rem;
+    @variant lg {
+      padding-inline: 1.5rem;
+    }
+    @variant sm {
+      display: grid;
+      gap: 1rem;
+      padding-bottom: 1.5rem;
+    }
     @variant md {
-      padding-bottom: 4rem;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "head" "stage" "meters";
+      grid-template-rows: auto auto 1fr;
+      gap: 0 1.25rem;
+      padding-bottom: 1rem;
+      &[data-thread] {
+        grid-template-columns: minmax(0, 1fr) var(--thread-w);
+        grid-template-areas: "head pane" "stage pane" "meters pane";
+      }
     }
   }
   .run-head {
     display: grid;
     align-items: end;
-    gap: 1rem;
-    padding-block: 1.5rem 1rem;
+    gap: 0.75rem;
+    padding-block: 1rem 0.75rem;
     @variant md {
+      grid-area: head;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 1.5rem;
-      padding-block: 2.5rem 1.5rem;
+      gap: 1rem;
+      padding-block: 1.25rem 1rem;
     }
   }
   .run-head-text {
@@ -898,32 +920,49 @@
     margin: 0;
     overflow: hidden;
     color: var(--label);
-    font: var(--weight-bold) var(--text-display)/1.08 var(--font-ui);
-    letter-spacing: var(--tracking-display);
+    font: var(--weight-bold) var(--text-22)/1.15 var(--font-ui);
+    letter-spacing: var(--tracking-title);
     overflow-wrap: anywhere;
+    @variant md {
+      font-size: var(--text-28);
+    }
     /* The two-line clamp ends in an ellipsis: a long goal is cut on purpose, not clipped. */
     text-overflow: ellipsis;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
-  .run-body {
-    display: grid;
-    align-items: start;
-    gap: 2rem;
-    @variant lg {
-      grid-template-columns: minmax(0, 1fr) 23.5rem;
-    }
+  /* The whole frame stays above the fold: the stage's width is capped by the height left under
+     the toolbar, header and meters (a 16:10 viewport plus chrome and caption), and it centres. */
+  .run-stage,
+  .run > .run-meters {
+    width: 100%;
+    min-width: 0;
+    max-width: max(36rem, calc((100dvh - var(--toolbar-h) - 20rem) * 1.6));
+    margin-inline: auto;
   }
   .run-stage {
     display: flex;
     flex-direction: column;
-    gap: 2rem;
-    min-width: 0;
+    gap: 1rem;
+    @variant md {
+      grid-area: stage;
+    }
+  }
+  .run > .run-meters {
+    margin-top: 1rem;
+    @variant sm {
+      margin-top: 0;
+    }
+    @variant md {
+      grid-area: meters;
+      align-self: start;
+      margin-top: 1rem;
+    }
   }
   .run-skel-head {
     display: block;
     height: 4rem;
-    margin-block: 2.5rem 1.5rem;
+    margin-block: 1.25rem 1rem;
     border-radius: var(--r-md);
   }
   .run-skel-frame {
@@ -1258,9 +1297,9 @@
     display: grid;
     gap: 1rem;
     margin: 0;
-    padding-top: 1.5rem;
+    padding-top: 1rem;
     border-top: 0.0625rem solid var(--sep);
-    @variant md {
+    @variant sm {
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 1.5rem;
     }
@@ -1275,12 +1314,9 @@
   }
   .run-meter-num {
     color: var(--label);
-    font: var(--weight-semibold) var(--text-28)/1 var(--font-ui);
-    letter-spacing: var(--tracking-display);
+    font: var(--weight-semibold) var(--text-22)/1 var(--font-ui);
+    letter-spacing: var(--tracking-title);
     white-space: nowrap;
-    @variant md {
-      font-size: var(--text-34);
-    }
     & small {
       color: var(--label-2);
       font-size: var(--text-14);
@@ -1307,119 +1343,203 @@
     color: var(--label-2);
     font-size: var(--text-12);
   }
-  /* Timeline (Task 15): aside at md and up, Sheet below. */
-  .run-tl {
+  /* Thread (fe-run-chat): a hideable glass pane beside the browser at md and up, under it at
+     tablet width, a peek bar + bottom sheet at phone width. */
+  .thread {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    min-width: 0;
-    @variant lg {
-      position: sticky;
-      top: calc(var(--toolbar-h) + 1rem);
-      align-self: start;
-      max-height: calc(100dvh - var(--toolbar-h) - 2rem);
-    }
-  }
-  .run-tl-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-  .run-tl-title {
-    margin: 0;
-    color: var(--label);
-    font: var(--weight-semibold) var(--text-20)/1.2 var(--font-ui);
-  }
-  .run-tl-summary {
-    color: var(--label-2);
-    font-size: var(--text-12);
-  }
-  .run-tl-toggle {
-    width: 100%;
-  }
-  .run-tl-list {
-    flex: 1;
-    min-height: 12rem;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    @variant lg {
-      overflow: auto;
-      scrollbar-width: thin;
-    }
-  }
-  .run-tl-row {
-    position: relative;
-    & + & {
-      border-top: 0.0625rem solid var(--sep);
-    }
-  }
-  .run-tl-pad {
-    padding: 0.7rem 0.5rem;
-  }
-  .run-tl-body {
-    display: grid;
-    grid-template-columns: 3.5rem minmax(0, 1fr) auto;
-    gap: 0.75rem;
-    width: 100%;
-    padding: 0.7rem 0.5rem;
-    border: 0;
-    border-radius: var(--r-md);
-    background: none;
-    color: inherit;
-    font: inherit;
-    text-align: start;
-  }
-  button.run-tl-body {
-    cursor: pointer;
-    &:hover {
-      background: var(--fill-2);
-    }
-  }
-  .run-tl-row[data-selected] .run-tl-body {
-    background: var(--tint-wash);
-  }
-  .run-tl-thumb {
-    display: grid;
-    place-items: center;
-    width: 3.5rem;
-    height: 2.1875rem;
-    border-radius: var(--r-xs);
-    background: var(--bg-2);
-    box-shadow: var(--e1);
-    color: var(--label-2);
-    object-fit: cover;
-  }
-  .run-tl-row[data-current] .run-tl-thumb {
-    box-shadow: 0 0 0 0.09375rem var(--signal);
-  }
-  .run-tl-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    min-width: 0;
-    font: var(--weight-medium) var(--text-13)/1.38 var(--font-ui);
-  }
-  .run-tl-line {
-    --smark-size: 1rem;
-    display: flex;
-    align-items: flex-start;
     gap: 0.5rem;
     min-width: 0;
-    color: var(--label);
-    font: var(--weight-medium) var(--text-13)/1.38 var(--font-ui);
-    overflow-wrap: anywhere;
-    & .smark {
-      margin-top: 0.1rem;
+    height: min(34rem, calc(100dvh - var(--toolbar-h) - var(--tabbar-h) - 2rem));
+    padding: 0.75rem;
+    border-radius: var(--r-xl);
+    transition-property: opacity, transform;
+    transition-duration: var(--motion-spring-dur);
+    transition-timing-function: var(--motion-spring);
+    @starting-style {
+      opacity: 0;
+      transform: translateX(0.75rem);
+    }
+    @variant md {
+      grid-area: pane;
+      position: sticky;
+      top: calc(var(--toolbar-h) + 1rem);
+      height: calc(100dvh - var(--toolbar-h) - 2rem);
+      margin-top: 1rem;
     }
   }
-  .run-tl-row[data-tone="warn"] .run-tl-thumb {
-    color: var(--warn);
+  .thread-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-inline-start: 0.5rem;
   }
-  .run-tl-verb {
+  .thread-title {
+    margin: 0;
+    color: var(--label);
+    font: var(--weight-semibold) var(--text-17)/1.2 var(--font-ui);
+    letter-spacing: var(--tracking-heading);
+  }
+  .thread-summary {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
     color: var(--label-2);
-    font: var(--weight-semibold) var(--text-11)/1 var(--font-ui);
+    font: var(--weight-regular) var(--text-12)/1.3 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .run-thread-toggle {
+    display: none;
+    @variant sm {
+      display: inline-flex;
+    }
+  }
+  .run-thread-unread {
+    padding: 0.0625rem 0.4375rem;
+    border-radius: var(--r-pill);
+    background: var(--tint);
+    color: var(--on-tint);
+    font: var(--weight-semibold) var(--text-11)/1.4 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Phone width: one line of the newest agent activity; the whole bar opens the sheet. */
+  .thread-peek-glass {
+    border-radius: var(--r-lg);
+  }
+  .thread-peek {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    min-height: var(--hit);
+    padding: 0.5rem 0.75rem;
+    border: 0;
+    border-radius: var(--r-lg);
+    background: none;
+    color: var(--label-2);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+  .thread-peek-glyph {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: var(--tint-wash);
+    color: var(--tint-text);
+  }
+  .thread-peek-text {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: 0.125rem;
+    & bdi {
+      overflow: hidden;
+      color: var(--label);
+      font: var(--weight-medium) var(--text-14)/1.3 var(--font-ui);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+  .thread-peek-summary {
+    font: var(--weight-regular) var(--text-12)/1.3 var(--font-ui);
+  }
+  /* The thread's content is lazily loaded (run-mode budget): until it arrives the solid surface
+     already holds its place, so the pane never changes shape. */
+  .thread-loading {
+    flex: 1;
+    min-height: 0;
+    border-radius: var(--r-lg);
+    background: var(--elevated);
+    box-shadow: 0 0 0 0.03125rem var(--hairline);
+  }
+  /* AnimatedList (React Bits, CSS-only): the scroller and its scroll-edge fades. */
+  /* The conversation is content: a solid surface inside the glass pane or sheet (HIG). */
+  .alist {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    border-radius: var(--r-lg);
+    background: var(--elevated);
+    box-shadow: 0 0 0 0.03125rem var(--hairline);
+  }
+  .alist-list {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 0.375rem 0.375rem 0.75rem;
+    overflow: auto;
+    border-radius: inherit;
+    overscroll-behavior: contain;
+    /* The thread pins itself to its end (thread-body.tsx): the browser's own scroll anchoring
+       would move it when an entry above resizes, and read as the reader scrolling away. */
+    overflow-anchor: none;
+    list-style: none;
+    scrollbar-width: thin;
+    .sheet & {
+      max-height: 62dvh;
+    }
+  }
+  .alist-edge {
+    position: absolute;
+    inset-inline: 0;
+    height: 2rem;
+    pointer-events: none;
+    opacity: 0;
+    &[data-edge="top"] {
+      top: 0;
+      border-radius: var(--r-lg) var(--r-lg) 0 0;
+      background: linear-gradient(var(--elevated), transparent);
+    }
+    &[data-edge="bottom"] {
+      bottom: 0;
+      border-radius: 0 0 var(--r-lg) var(--r-lg);
+      background: linear-gradient(transparent, var(--elevated));
+    }
+  }
+  .alist-item[data-enter] {
+    transition-property: opacity, transform;
+    transition-duration: var(--motion-spring-dur);
+    transition-timing-function: var(--motion-spring);
+    @starting-style {
+      opacity: 0;
+      transform: translateY(0.5rem) scale(0.98);
+    }
+  }
+  /* Thread entries. Agent entries hug the leading edge, the person's the trailing one. */
+  .th-item {
+    display: flex;
+    flex-direction: column;
+    padding-block: 0.25rem;
+    border-radius: var(--r-md);
+    &[data-side="agent"] + &[data-side="person"],
+    &[data-side="person"] + &[data-side="agent"],
+    &[data-side="system"] + &:not([data-side="system"]),
+    &:not([data-side="system"]) + &[data-side="system"] {
+      margin-top: 0.5rem;
+    }
+    &[data-side="person"] {
+      align-items: flex-end;
+    }
+  }
+  .th-ts {
+    flex: none;
+    margin-inline-start: auto;
+    color: var(--label-2);
+    font: var(--weight-regular) var(--text-11)/1.4 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+  .th-verb {
+    color: var(--label-2);
+    font: var(--weight-semibold) var(--text-11)/1.2 var(--font-ui);
     letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
     &[data-kind="cred"] {
@@ -1429,7 +1549,191 @@
       color: var(--signal);
     }
   }
-  .run-tl-alias {
+  .th-line {
+    min-width: 0;
+    color: var(--label);
+    font: var(--weight-medium) var(--text-13)/1.38 var(--font-ui);
+    overflow-wrap: anywhere;
+  }
+  .th-thought {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+  }
+  .th-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0;
+    color: var(--tint-text);
+    font: var(--weight-semibold) var(--text-12)/1.3 var(--font-ui);
+  }
+  .th-thought-title {
+    margin: 0;
+    color: var(--label);
+    font: var(--weight-semibold) var(--text-14)/1.35 var(--font-ui);
+    overflow-wrap: anywhere;
+  }
+  .th-thought-body {
+    display: grid;
+    gap: 0.375rem;
+    color: var(--label-2);
+    font: var(--weight-regular) var(--text-13)/1.45 var(--font-ui);
+    overflow-wrap: anywhere;
+    & p {
+      margin: 0;
+    }
+    &[data-clamped] {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 4;
+    }
+  }
+  .th-more {
+    justify-self: start;
+    min-height: var(--hit);
+    margin-block: -0.75rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--tint-text);
+    font: var(--weight-medium) var(--text-12)/1 var(--font-ui);
+    cursor: pointer;
+  }
+  .th-page,
+  .th-action {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    min-height: var(--hit);
+    padding: 0.375rem 0.5rem;
+    border: 0;
+    border-radius: var(--r-md);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+  }
+  .th-replay {
+    cursor: pointer;
+    &:hover {
+      background: var(--fill-2);
+    }
+  }
+  .th-item[data-selected] :is(.th-page, .th-action) {
+    background: var(--tint-wash);
+  }
+  .th-thumb {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 3.5rem;
+    height: 2.1875rem;
+    border-radius: var(--r-xs);
+    background: var(--bg-2);
+    box-shadow: var(--e1);
+    color: var(--label-2);
+    object-fit: cover;
+  }
+  .th-page-text {
+    display: grid;
+    gap: 0.125rem;
+    min-width: 0;
+  }
+  .th-page-url {
+    display: flex;
+    min-width: 0;
+    font: var(--weight-medium) var(--text-13)/1.35 var(--font-ui);
+  }
+  /* The host is never truncated (S7); the path gives way first. */
+  .th-host {
+    flex: none;
+    color: var(--label);
+  }
+  .th-path {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--label-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* CallChip (React Bits): the action card. Only transform and opacity animate. */
+  .cchip {
+    position: relative;
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 0.625rem;
+    min-width: 0;
+    padding: 0.375rem;
+    margin: -0.375rem;
+    overflow: hidden;
+    border-radius: var(--r-md);
+  }
+  .cchip-fill {
+    position: absolute;
+    inset: 0;
+    background: var(--tint-wash);
+    opacity: 0;
+    transform: scaleX(0);
+    transform-origin: left;
+    pointer-events: none;
+    :dir(rtl) & {
+      transform-origin: right;
+    }
+  }
+  .cchip[data-status="running"] .cchip-fill {
+    opacity: 1;
+    transform: scaleX(0.9);
+    transition-property: transform;
+    transition-duration: var(--motion-dur-call-wipe);
+    transition-timing-function: var(--motion-ease-linear);
+    @starting-style {
+      transform: scaleX(0);
+    }
+  }
+  .cchip[data-status="done"] .cchip-fill {
+    background: var(--ok-wash);
+    transform: scaleX(1);
+    /* The wipe completes, then its wash fades. */
+    transition-property: transform, opacity;
+    transition-duration: var(--motion-dur-base), var(--motion-dur-panel);
+    transition-delay: calc(var(--motion-dur-base) * 0), var(--motion-dur-base);
+    transition-timing-function: var(--motion-ease-out);
+  }
+  .cchip-glyph {
+    --smark-size: 0.875rem;
+    position: relative;
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: var(--fill-2);
+    color: var(--label);
+    & .smark {
+      position: absolute;
+      right: -0.25rem;
+      bottom: -0.25rem;
+      border-radius: 50%;
+      background: var(--elevated);
+      box-shadow: 0 0 0 0.125rem var(--elevated);
+    }
+  }
+  .th-action[data-current] .cchip-glyph {
+    background: var(--tint-wash);
+    color: var(--tint-text);
+  }
+  .cchip-text {
+    position: relative;
+    display: grid;
+    gap: 0.1875rem;
+    min-width: 0;
+  }
+  .th-alias {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
@@ -1438,27 +1742,65 @@
     border-radius: var(--r-pill);
     background: var(--tint-wash);
     color: var(--tint-text);
-    font-size: var(--text-11);
+    font: var(--weight-medium) var(--text-11)/1.4 var(--font-ui);
   }
-  .run-tl-ts {
-    color: var(--label-2);
-    font: var(--weight-regular) var(--text-11)/1.4 var(--font-ui);
-    font-variant-numeric: tabular-nums;
-  }
-  .run-tl-message {
-    margin: 0.5rem;
-    padding: 0.6rem 0.75rem;
+  .th-approval {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem;
     border-radius: var(--r-md);
+    background: var(--signal-wash);
+    box-shadow: inset 0 0 0 0.0625rem var(--signal-wash);
+  }
+  .th-approval-icon {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: var(--elevated);
+    color: var(--signal);
+  }
+  .th-approval-text {
+    display: grid;
+    flex: 1;
+    gap: 0.1875rem;
+    min-width: 0;
+  }
+  .th-msg {
+    max-width: 85%;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--r-lg) var(--r-lg) var(--r-xs) var(--r-lg);
     background: var(--tint-wash);
     & p {
       margin: 0.25rem 0 0;
-      font-size: var(--text-13);
+      color: var(--label);
+      font: var(--weight-regular) var(--text-13)/1.4 var(--font-ui);
       overflow-wrap: anywhere;
       white-space: pre-wrap;
     }
     &[data-pending] p {
       color: var(--label-2);
     }
+  }
+  .th-system {
+    --smark-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0;
+    padding: 0.25rem 0.5rem;
+    color: var(--label-2);
+    font: var(--weight-regular) var(--text-12)/1.35 var(--font-ui);
+    overflow-wrap: anywhere;
+    &[data-tone="warn"] .ic {
+      color: var(--warn);
+    }
+  }
+  .th-item[data-kind="thinking"] {
+    padding: 0.5rem;
   }
   .run-composer {
     display: flex;
@@ -1491,6 +1833,77 @@
     background: var(--tint);
     color: var(--on-tint);
     border-radius: 50%;
+  }
+  /* Send | more (run-mode): Send queues; the menu holds Send now (⌘↵). */
+  .run-send-split {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .run-send-more {
+    width: 1.75rem;
+    &::after {
+      inset: -0.25rem -0.5rem;
+    }
+  }
+  .run-composer-hint {
+    margin: 0.25rem 0.5rem 0;
+    color: var(--label-2);
+    font: var(--weight-regular) var(--text-11)/1.3 var(--font-ui);
+  }
+  .th-msg-read {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--label-2);
+    font: var(--weight-regular) var(--text-11)/1.3 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+  /* The run's approval mode in the toolbar (run-mode): icon only at phone width, named above. */
+  .run-mode-btn {
+    &[data-mode="bypass"] .ic:first-child {
+      color: var(--warn);
+    }
+    & .run-mode-label {
+      display: none;
+      @variant sm {
+        display: inline;
+      }
+    }
+  }
+  .run-mode-menu {
+    width: min(20rem, calc(100vw - 1.5rem));
+  }
+  /* The run's menus are touch targets everywhere (44px), not only on coarse pointers. */
+  .run-mode-menu .menu-item,
+  .run-send-menu .menu-item {
+    min-height: var(--hit);
+  }
+  .run-mode-heading {
+    padding: 0.35rem 0.65rem 0.25rem;
+  }
+  .run-mode-item {
+    align-items: flex-start;
+    padding-block: 0.5rem;
+    &[data-highlighted] .run-mode-desc {
+      color: inherit;
+    }
+  }
+  .run-mode-check {
+    display: inline-grid;
+    flex: none;
+    width: 1rem;
+    padding-top: 0.0625rem;
+  }
+  .run-mode-text {
+    display: grid;
+    gap: 0.125rem;
+    min-width: 0;
+  }
+  .run-mode-desc {
+    color: var(--label-2);
+    font-size: var(--text-12);
+    line-height: 1.35;
+    white-space: normal;
   }
   /* OTP card (Task 15). */
   .run-otp {

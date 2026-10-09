@@ -76,6 +76,7 @@ export function controlHandlers(): Record<string, RpcHandler> {
     "runs/decideApproval": () => OK,
     "runs/submitOtp": () => OK,
     "runs/sendMessage": () => OK,
+    "runs/setApprovalMode": () => OK,
     "runs/cancel": () => OK,
     "runs/resume": () => OK,
   };
@@ -233,5 +234,7 @@ export async function gotoRun(page: Page, opts: GotoRunOptions = {}): Promise<Rp
   });
   await page.goto(`/runs/${detail?.id ?? RECORDED_RUN_ID}`);
   await expect(frame(page)).toBeVisible();
+  // The thread's content is lazily loaded: a test starts once the pane holds it.
+  await expect(page.locator(".thread-loading")).toHaveCount(0);
   return calls;
 }
