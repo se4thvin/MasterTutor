@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
+import { LiquidGlass } from "@/components/ui/liquid-glass.tsx";
 import type { Viewer } from "@/lib/server/viewer.ts";
 import { NAV_ITEMS, isNavActive } from "./nav-items.ts";
 import { RecentNotes } from "./recent-notes.tsx";
@@ -29,7 +30,7 @@ export function Sidebar({
   const pathname = usePathname();
   const pulse = useRunPulse();
   return (
-    <aside className="sidebar glass" aria-label="Sidebar">
+    <LiquidGlass as="aside" className="sidebar" aria-label="Sidebar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true">
           <Icon name="agentNote" size="sm" />
@@ -83,6 +84,6 @@ export function Sidebar({
       <div className="sidebar-foot">
         <UserMenu viewer={viewer} onSignOut={onSignOut} />
       </div>
-    </aside>
+    </LiquidGlass>
   );
 }

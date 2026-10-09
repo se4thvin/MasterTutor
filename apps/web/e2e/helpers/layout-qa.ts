@@ -6,6 +6,8 @@ export interface LayoutQaOptions {
    * the shooter and the swarm already pass 44.
    */
   minTargetPx?: number;
+  /** Checks targets only inside this selector (one region's 44px audit on a page that has others). */
+  targetScope?: string;
 }
 
 /**
@@ -18,7 +20,7 @@ export async function findLayoutIssues(
   options: LayoutQaOptions = {},
 ): Promise<string[]> {
   return page.evaluate(
-    ({ minTargetPx }) => {
+    ({ minTargetPx, targetScope }) => {
       const TOL = 1;
       const issues: string[] = [];
       const describe = (el: Element): string => {
@@ -260,7 +262,7 @@ export async function findLayoutIssues(
         const TARGETS =
           'a[href],button,input:not([type="hidden"]),select,textarea,summary,[role="button"],' +
           '[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],' +
-          '[role="menuitem"],[role="option"]';
+          '[role="menuitem"],[role="option"],[role="treeitem"]';
         const px = (value: string) =>
           value.endsWith("px") ? Number.parseFloat(value) : Number.NaN;
         const hitBox = (el: Element) => {
@@ -310,6 +312,7 @@ export async function findLayoutIssues(
           );
         for (const el of seen) {
           if (!el.matches(TARGETS) || el.matches(":disabled,[aria-disabled='true']")) continue;
+          if (targetScope && !el.closest(targetScope)) continue;
           if (el.closest("[inert],[aria-hidden='true']")) continue;
           const style = getComputedStyle(el);
           if (style.pointerEvents === "none" || inlineInText(el, style)) continue;
@@ -325,6 +328,6 @@ export async function findLayoutIssues(
       }
       return [...new Set(issues)];
     },
-    { minTargetPx: options.minTargetPx ?? 0 },
+    { minTargetPx: options.minTargetPx ?? 0, targetScope: options.targetScope ?? null },
   );
 }

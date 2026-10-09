@@ -169,6 +169,20 @@ test.describe("layout detector: 44px targets, struck-out words, run-view obstacl
     expect(issues).not.toContain("clipped by");
   });
 
+  test("a tree row is a target, and targetScope audits one region alone (fe-sidebar-glass)", async ({
+    page,
+  }) => {
+    await page.setContent(`
+      <ul role="tree" class="t"><li role="treeitem" tabindex="0" style="height:30px">Folder</li></ul>
+      <button style="width:30px;height:30px;padding:0">x</button>`);
+    const all = (await findLayoutIssues(page, { minTargetPx: 44 })).join("\n");
+    expect(all).toContain("target smaller than 44px (");
+    expect(all).toContain('li "Folder"');
+    const scoped = await findLayoutIssues(page, { minTargetPx: 44, targetScope: ".t" });
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]).toContain('li "Folder"');
+  });
+
   test("ellipsis exempts text, not a clipped control (isTextOnly sees the element itself)", async ({
     page,
   }) => {

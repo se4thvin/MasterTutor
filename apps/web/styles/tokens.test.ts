@@ -135,3 +135,47 @@ describe("F3/F5 art tokens", () => {
     expect(Number(light["z-pip"])).toBeLessThan(Number(light["z-scrim"]));
   });
 });
+
+describe("Liquid Glass legibility over any backdrop (LiquidGlass)", () => {
+  /** The backdrop behind glass can be anything; pure black and white bound every colour's luminance. */
+  const BACKDROPS: Array<[string, Rgba]> = [
+    ["black", [0, 0, 0, 1]],
+    ["white", [255, 255, 255, 1]],
+  ];
+  /**
+   * Text on the glass, and on a selected or hovered row's fill on the glass. Secondary text is
+   * never set on a fill there (the account row lifts its email to --label on hover, shell.css).
+   */
+  const ON_GLASS: Array<[string, string | null, number]> = [
+    ["label", null, 4.5],
+    ["label-2", null, 4.5],
+    ["label", "fill", 4.5],
+    ["label", "fill-2", 4.5],
+    // Row and nav icons are tinted graphics: the 1.4.11 non-text minimum.
+    ["tint-text", null, 3],
+  ];
+  describe.each([
+    ["light", blockAfter("/* light */")],
+    ["dark", blockAfter("prefers-color-scheme: dark")],
+  ])("%s", (_scheme, vars) => {
+    const tokens = { ...blockAfter("/* light */"), ...vars };
+    for (const [name, backdrop] of BACKDROPS) {
+      it.each(ON_GLASS)(`%s on %s over a ${name} backdrop`, (fg, fill, min) => {
+        // Glass tint, then its sheen at full strength (the brightest point), then the row fill.
+        let back = over(parseColor(tokens["glass-liquid"] ?? ""), backdrop);
+        back = over(parseColor(tokens["glass-sheen"] ?? ""), back);
+        if (fill) back = over(parseColor(tokens[fill] ?? ""), back);
+        expect(contrast(over(parseColor(tokens[fg] ?? ""), back), back)).toBeGreaterThanOrEqual(
+          min,
+        );
+      });
+    }
+  });
+
+  it("goes solid when people ask for less transparency", () => {
+    const reduced = tokens.slice(tokens.indexOf("prefers-reduced-transparency"));
+    expect(reduced).toMatch(/--glass-liquid:\s*var\(--bg-2\);/);
+    expect(reduced).toMatch(/--glass-sheen:\s*transparent;/);
+    expect(reduced).toMatch(/--blur:\s*none;/);
+  });
+});
