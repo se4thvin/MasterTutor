@@ -34,6 +34,11 @@ export class LoopDetector {
     return this.#stale >= NO_PROGRESS_LIMIT;
   }
 
+  /** How close the loop detector is to a stuck verdict (for the Guard's run metadata). */
+  get pressure(): number {
+    return Math.max(this.#repeat?.count ?? 0, this.#stale);
+  }
+
   reset(): void {
     this.#repeat = null;
     this.#last = null;

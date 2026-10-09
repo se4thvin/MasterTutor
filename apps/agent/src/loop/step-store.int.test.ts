@@ -1,5 +1,6 @@
 import { createDb, runEvents, runSteps, runTranscript, runs, type DbHandle } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
+import type { RunEvent } from "@mastertutor/contracts";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LeaseLost, RunChanged } from "../runtime/errors.ts";
@@ -225,4 +226,47 @@ describe("StepStore.commit (spec §5.3)", () => {
     await owner.db.insert(runTranscript).values({ runId: run.id, seq: 0, item: { garbage: true } });
     await expect(loadTranscript(agent.db, run.id)).rejects.toThrow(/unparseable/);
   });
+});
+
+it("notifies the watcher after commit with generated steps and explicit events, never on rollback", async () => {
+  const { run, store } = await open();
+  const batches: RunEvent[][] = [];
+  store.onCommitted((events) => batches.push([...events]));
+  await store.commit({
+    steps: [
+      {
+        seq: store.nextSeq(),
+        phase: "act",
+        state: "done",
+        url: "https://a.test",
+        action: { tool: "computer", summary: "text", point: null },
+      },
+    ],
+    events: [
+      {
+        type: "guard",
+        verdict: "flag",
+        category: "other",
+        stage: "screen",
+        rollout: "shadow",
+        applied: false,
+        items: 1,
+        flows: 0,
+      },
+    ],
+  });
+  expect(batches[0]?.map((e) => e.type)).toEqual(["step", "guard"]);
+  await owner.db.update(runs).set({ leaseOwner: "other" }).where(eq(runs.id, run.id));
+  await expect(
+    store.commit({ steps: [{ seq: store.nextSeq(), phase: "act", state: "done" }] }),
+  ).rejects.toBeInstanceOf(LeaseLost);
+  expect(batches).toHaveLength(1);
+});
+it("a failing watcher listener cannot undo a successful transaction", async () => {
+  const { run, store } = await open();
+  store.onCommitted(() => {
+    throw new Error("watcher broke");
+  });
+  await store.commit({ steps: [{ seq: store.nextSeq(), phase: "observe", state: "done" }] });
+  expect(await owner.db.select().from(runSteps).where(eq(runSteps.runId, run.id))).toHaveLength(1);
 });

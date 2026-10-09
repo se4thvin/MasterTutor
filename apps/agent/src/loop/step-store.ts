@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   TERMINAL_RUN_STATUSES,
   type Budget,
+  type GuardState,
   type Plan,
   type RunError,
   type RunEvent,
@@ -17,7 +18,11 @@ import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
 import { emitRunEvents, runSteps, runTranscript, runs, type Database } from "@mastertutor/db";
 import { objectKeys, type Storage } from "@mastertutor/storage";
 import { instrument } from "@mastertutor/telemetry/instrument";
-import { recordRunFailure, recordSpend } from "@mastertutor/telemetry/record";
+import {
+  recordRunFailure,
+  recordSpend,
+  recordObserverFailure,
+} from "@mastertutor/telemetry/record";
 import { and, eq, gt, inArray, max, sql } from "drizzle-orm";
 import type { BrowserStorageState, CollectedStorage } from "../browser/storage-state.ts";
 import { LeaseLost, RunChanged } from "../runtime/errors.ts";
@@ -144,6 +149,17 @@ export class StepStore {
     );
   }
 
+  /** The observer stages only metadata inside the transaction, then starts work after commit. */
+  onCommitted(
+    listener: (events: readonly RunEvent[]) => void,
+    checkpoint?: (events: readonly RunEvent[]) => GuardState,
+  ): void {
+    this.#onCommitted = listener;
+    this.#observerStage = checkpoint ?? null;
+  }
+
+  #observerStage: ((events: readonly RunEvent[]) => GuardState) | null = null;
+
   nextSeq(): number {
     return this.#seq++;
   }
@@ -153,10 +169,19 @@ export class StepStore {
     return objectKeys.stepScreenshot(this.#options.run.id, seq, randomUUID().replaceAll("-", ""));
   }
 
+  #onCommitted: ((events: readonly RunEvent[]) => void) | null = null;
+
   /** Seam 5 (spec §7.3): the step transaction's span; spend and failures counted only once committed. */
   commit(commit: StepCommit): Promise<TranscriptEntry[]> {
     return instrument(SPAN.stepCommit, { [ATTR.runId]: this.#options.run.id }, async () => {
-      const entries = await this.#commitOnce(commit);
+      const { entries, events } = await this.#commitOnce(commit);
+      if (events.length) {
+        try {
+          this.#onCommitted?.(events);
+        } catch {
+          recordObserverFailure("watcher", "error");
+        }
+      }
       const usd = commit.run?.usage?.usd;
       if (usd !== undefined) {
         recordSpend(usd - this.#usd, "run");
@@ -169,11 +194,14 @@ export class StepStore {
   }
 
   /** Commits in one transaction; returns the transcript entries as stored (images as refs). */
-  async #commitOnce(commit: StepCommit): Promise<TranscriptEntry[]> {
+  async #commitOnce(
+    commit: StepCommit,
+  ): Promise<{ entries: TranscriptEntry[]; events: RunEvent[] }> {
     const { storage, run } = this.#options;
     const nonce = randomUUID().replaceAll("-", "");
     const uploaded: string[] = [];
     let entries: TranscriptEntry[];
+    let events: RunEvent[];
     try {
       const shots = (commit.steps ?? []).flatMap((step) =>
         step.screenshot && step.screenshotKey
@@ -190,7 +218,7 @@ export class StepStore {
         ...shots.map((shot) => storage.put(shot.key, shot.body, { contentType: "image/png" })),
       ]);
       entries = stored;
-      await this.#write(commit, entries);
+      events = await this.#write(commit, entries);
     } catch (error) {
       // Nothing was committed: do not leave this attempt's uploads behind (best effort).
       await Promise.allSettled(
@@ -199,12 +227,12 @@ export class StepStore {
       throw error;
     }
     this.#transcriptSeq += entries.length;
-    return entries.map(inJsonbOrder);
+    return { entries: entries.map(inJsonbOrder), events };
   }
 
-  async #write(commit: StepCommit, entries: readonly TranscriptEntry[]): Promise<void> {
+  async #write(commit: StepCommit, entries: readonly TranscriptEntry[]): Promise<RunEvent[]> {
     const { db, sessionStore, owner, run } = this.#options;
-    await db.transaction(async (tx) => {
+    return db.transaction(async (tx) => {
       const patch = commit.run ?? {};
       const transition = commit.transition;
       const terminal = transition
@@ -331,7 +359,13 @@ export class StepStore {
         });
       events.push(...(commit.events ?? []));
       await commit.extra?.(tx);
+      if (this.#observerStage)
+        await tx
+          .update(runs)
+          .set({ guardState: this.#observerStage(events) })
+          .where(eq(runs.id, run.id));
       await emitRunEvents(tx, run.id, events);
+      return events;
     });
   }
 }

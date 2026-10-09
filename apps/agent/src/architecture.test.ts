@@ -43,7 +43,7 @@ describe("module boundaries (CLAUDE.md principle 5: no circular dependencies)", 
 });
 
 describe("approval modes reach only the approval decisions (D44 hard invariants)", () => {
-  it("the browser, network policy, masking, vault, tools and guardrails never read the approval mode", async () => {
+  it("only the approval boundary reads the mode; browser, masking, vault and tools cannot", async () => {
     const readers: string[] = [];
     for (const dir of ["browser", "vault", "tools", "guardrails", "slots", "runtime"]) {
       const walk = async (path: string): Promise<void> => {
@@ -63,7 +63,13 @@ describe("approval modes reach only the approval decisions (D44 hard invariants)
     }
     // So bypass mode cannot switch off the network policy, the sandbox, secret masking, the
     // vault's origin pinning, the kill switch or takeover: none of them can see the mode.
-    expect(readers).toEqual([]);
+    // D52: the Observer is part of the approval boundary and can only tighten decisions.
+    const approvalBoundary = new Set([
+      "guardrails/observer/guard.ts",
+      "guardrails/observer/types.ts",
+      "guardrails/observer/watcher.ts",
+    ]);
+    expect(readers.filter((file) => !approvalBoundary.has(file))).toEqual([]);
   });
 });
 

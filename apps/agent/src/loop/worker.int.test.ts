@@ -1,8 +1,10 @@
+import { createStepGuard } from "../guardrails/observer/guard.ts";
+import type { StepGuardFactory } from "../guardrails/observer/types.ts";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeNotify, PersonDecider } from "@mastertutor/contracts";
+import { encodeNotify, PersonDecider, EMPTY_USAGE } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
   approvals,
@@ -88,6 +90,7 @@ async function start(
     control?: BrowserControl;
     hooks?: Partial<RunHooks>;
     storage?: ReturnType<typeof createMemoryStorage>;
+    guards?: StepGuardFactory;
   } = {},
   clock: Clock = instantClock(),
 ) {
@@ -96,6 +99,7 @@ async function start(
     db: agentDb,
     storage: options.storage ?? createMemoryStorage(),
     hooks: options.hooks,
+    guards: options.guards,
     model: createOpenAIModelClient({ apiKey: "k", baseURL: `${mock.url}/v1` }),
     slots: SLOTS,
     cdpBaseUrl: async (name) => `http://${name}`,
@@ -1379,3 +1383,93 @@ describe("run-mode: Send now interrupts, Send queues", () => {
     await until(run.id, (r) => r.status === "completed", "completed after the decision");
   });
 });
+
+for (const ending of ["sleep", "cancel"] as const) {
+  it(`accounts for a delayed watcher before ${ending} releases the lease`, async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const guards: StepGuardFactory = {
+      async forRun(run, deps) {
+        const guard = createStepGuard({
+          run,
+          redact: deps.redact,
+          ledger: { consecutive: 0, total: 0 },
+          reviewer: {
+            review: async () => ({
+              verdict: {
+                verdict: "allow",
+                category: "other",
+                stage: "screen",
+                itemKeys: [],
+                rationale: "",
+              },
+              usage: EMPTY_USAGE,
+              latencyMs: 0,
+              failure: null,
+            }),
+            reviewTrajectory: async () => {
+              await gate;
+              return {
+                verdict: {
+                  verdict: "allow",
+                  category: "other",
+                  stage: "review",
+                  itemKeys: [],
+                  rationale: "",
+                },
+                usage: { ...EMPTY_USAGE, usd: 0.017 },
+                latencyMs: 1,
+                failure: null,
+              };
+            },
+          },
+        });
+        guard.ingest(
+          Array.from({ length: 5 }, () => ({ type: "error", code: "test", message: "untrusted" })),
+        );
+        return {
+          ...guard,
+          settled: async () => {
+            release();
+            await guard.settled?.();
+          },
+        };
+      },
+    };
+    const { clock, wakeSleepers } = gatedClock();
+    await start({ guards }, clock);
+    const { run } = await queue([click, done], "ask", (browser) =>
+      browser.targets.set("10,20", {
+        label: "Buy now",
+        tag: "button",
+        path: "buy",
+        context: "page",
+        isFormSubmit: false,
+        formKind: null,
+        isSecretField: false,
+        editable: false,
+        interactive: true,
+      }),
+    );
+    await until(run.id, (r) => r.status === "waiting", "approval waiting");
+    if (ending === "sleep") wakeSleepers();
+    else {
+      await owner.db
+        .update(runs)
+        .set({ status: "cancelled", waitReason: null })
+        .where(eq(runs.id, run.id));
+      await owner.sql.notify("run_control", encodeNotify("run_control", { runId: run.id }));
+    }
+    await until(run.id, (r) => r.slotName === null, "released");
+    release();
+    expect((await row(run.id)).usage.usd).toBeGreaterThanOrEqual(0.017);
+    const events = await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id));
+    expect(events.some((e) => e.payload.type === "guard" && e.payload.items === 0)).toBe(true);
+    await owner.db
+      .update(runs)
+      .set({ status: "cancelled", waitReason: null, wakeRequestedAt: null })
+      .where(eq(runs.id, run.id));
+  });
+}

@@ -1,3 +1,4 @@
+import type { StepGuardFactory } from "../guardrails/observer/types.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RunStatus, WaitReason } from "@mastertutor/contracts";
 import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
@@ -44,6 +45,7 @@ export interface WorkerDeps {
   log: Log;
   connect: ConnectBrowser;
   titler?: RunTitler;
+  guards?: StepGuardFactory;
 }
 
 const CONTINUE: StepOutcome = { kind: "continue" };
@@ -147,6 +149,7 @@ export class RunWorker {
   }
 
   #loseLease(): void {
+    this.#loop?.stopGuard();
     this.#stop = "lease_lost";
     this.#abort.abort(new Interrupted("lease_lost"));
     this.#latch.open();
@@ -258,6 +261,7 @@ export class RunWorker {
         log: this.#deps.log,
         leaseExpired: () => this.#guard.expired,
         titler: this.#deps.titler,
+        guards: this.#deps.guards,
       },
       snapshotOf(run),
     );
@@ -457,6 +461,7 @@ export class RunWorker {
   async #release(options: { transition?: Transition; wake?: boolean }): Promise<void> {
     const { pool, config, log } = this.#deps;
     const slotName = this.#claim.slotName;
+    await this.#loop?.releaseGuard();
     const storage =
       options.transition?.to === "failed"
         ? null

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isRiskyLabel, type ApprovalRequest, type ComputerAction } from "@mastertutor/contracts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
+import type { ProvenanceLabel } from "./provenance.ts";
 import { normalizeCombo } from "../tools/keys.ts";
 
 /** TargetDescription.tag of a history move (reload, back, forward) rather than a page element. */
@@ -11,7 +12,14 @@ const LINE_BREAK = /[\r\n]/;
 export type ApprovalNeed =
   | { kind: "risky_click"; label: string; action: ComputerAction }
   | { kind: "form_submit"; formSummary: string; action: ComputerAction }
-  | { kind: "download"; url: string; filename: string | null; action: ComputerAction };
+  | { kind: "download"; url: string; filename: string | null; action: ComputerAction }
+  | {
+      kind: "data_egress";
+      fromOrigin: string;
+      toOrigin: string;
+      chars: number;
+      action: ComputerAction;
+    };
 
 /**
  * Spec §5.5 approval list, for computer actions. Classification is code; the prompt never decides.
@@ -33,10 +41,42 @@ function activationNeed(action: ComputerAction, target: TargetDescription): Appr
   return null;
 }
 
+/** What the egress rule needs to know about the page (spec §6.3); null outside the loop. */
+export interface EgressContext {
+  pageOrigin: string | null;
+  allowedOrigins: readonly string[];
+  label(text: string, pageOrigin: string | null): ProvenanceLabel;
+}
+
+/**
+ * Data read on origin A, typed into origin B outside the allowlist (D52): checked first, so the
+ * approve phase and the execute-time gate (both call needsApproval) classify the same way.
+ */
+function egressNeed(
+  action: ComputerAction,
+  egress: EgressContext | null | undefined,
+): ApprovalNeed | null {
+  if (action.type !== "type" || !egress || egress.pageOrigin === null) return null;
+  if (egress.allowedOrigins.includes(egress.pageOrigin)) return null;
+  const sent = egress.label(action.text, egress.pageOrigin);
+  if (sent.provenance !== "other_origin" || sent.sourceOrigin === null) return null;
+  if (sent.sourceOrigin === egress.pageOrigin) return null;
+  return {
+    kind: "data_egress",
+    fromOrigin: sent.sourceOrigin,
+    toOrigin: egress.pageOrigin,
+    chars: sent.chars,
+    action,
+  };
+}
+
 export function needsApproval(
   action: ComputerAction,
   target: TargetDescription | null,
+  egress?: EgressContext | null,
 ): ApprovalNeed | null {
+  const egressed = egressNeed(action, egress);
+  if (egressed) return egressed;
   if (!target) return null;
   // Reload/back/forward onto a page made by a form submission sends the form again (M11).
   if (target.tag === HISTORY_TAG && target.isFormSubmit)
@@ -185,6 +225,17 @@ export function approvalRequestFor(
   screenshotKey: string | null,
   excerpt: string | null,
 ): ApprovalRequest {
+  if (need.kind === "data_egress")
+    return {
+      kind: "data_egress",
+      action: need.action,
+      url: url.slice(0, 4_096),
+      fromOrigin: need.fromOrigin,
+      toOrigin: need.toOrigin,
+      chars: need.chars,
+      screenshotKey,
+    };
+
   if (need.kind === "download") return downloadRequest(need.url, need.filename);
   const pageUrl = url.slice(0, 4_096);
   return need.kind === "risky_click"

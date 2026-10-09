@@ -70,6 +70,8 @@ export const GUARD_LIMITS = {
 } as const;
 
 const Count = z.number().int().min(0).max(1_000_000);
+export const GuardLedgerState = z.strictObject({ consecutive: Count, total: Count });
+export type GuardLedgerState = z.infer<typeof GuardLedgerState>;
 export const GuardItemKey = z.string().regex(/^i(?:[1-9]|1[0-9]|20)$/);
 const SafetyCode = z.string().regex(/^[a-z_]{1,64}$/);
 
@@ -113,7 +115,7 @@ export const GuardInput = z.strictObject({
   run: z.strictObject({
     step: Count,
     newOrigins: Count,
-    denials: z.strictObject({ consecutive: Count, total: Count }),
+    denials: GuardLedgerState,
     loopHits: Count,
     injectionSignals: Count,
     riskLevel: RiskLevel,
@@ -196,6 +198,44 @@ export const WATCHER_RULES = {
   guardFlags: { count: 3, window: 20 },
   errorBurst: { count: 5, window: 20 },
 } as const;
+
+/** Durable, bounded metadata for the in-agent Guard; never sent as a model input. */
+export const GuardHold = z.strictObject({
+  verdict: z.enum(["escalate", "block"]),
+  category: GuardCategory,
+  /** Cleaned model warning for the person's card only. */
+  rationale: z.string().max(GUARD_LIMITS.rationaleChars),
+});
+export type GuardHold = z.infer<typeof GuardHold>;
+export const TrajectoryState = z.strictObject({
+  entries: z.array(TrajectoryEntry).max(TRAJECTORY_MAX),
+  flows: z.array(Count).max(WATCHER_RULES.egressFlows.window),
+  fired: z.array(WatcherSignal).max(WATCHER_SIGNALS.length),
+  guardReviews: Count,
+});
+export type TrajectoryState = z.infer<typeof TrajectoryState>;
+export const GuardState = z.strictObject({
+  turns: Count,
+  initialOrigins: Count,
+  injectionAt: Count.nullable(),
+  injectionSignals: Count,
+  actuatedOrigins: z.array(Origin).max(10_000),
+  ledger: GuardLedgerState,
+  trajectory: TrajectoryState,
+  reviewDue: z.boolean(),
+  hold: GuardHold.nullable(),
+});
+export type GuardState = z.infer<typeof GuardState>;
+
+/** Retained per-item tightening decisions and accounting across a turn's approval cards. */
+export const GuardItemOutcome = GuardHold.extend({ effect: z.enum(["ask", "deny"]) });
+export type GuardItemOutcome = z.infer<typeof GuardItemOutcome>;
+export const GuardTurnState = z.strictObject({
+  outcomes: z.array(GuardItemOutcome.extend({ item: z.string().max(512) })).max(10_000),
+  ledgerBefore: GuardLedgerState.nullable(),
+  blocked: Count,
+});
+export type GuardTurnState = z.infer<typeof GuardTurnState>;
 
 /* ---------------------------------- Copilot ---------------------------------- */
 

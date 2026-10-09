@@ -50,6 +50,7 @@ const options = (over: Partial<SuiteRunOptions> = {}): SuiteRunOptions => ({
   tracks: ["computer_use", "browser_use"],
   only: null,
   approvalMode: null,
+  observerMode: "shadow",
   bypassAcknowledged: false,
   maxTotalUsd: 10,
   maxRunUsd: 1,
@@ -302,6 +303,7 @@ describe("fresh login and spend (P10b-4, X10)", () => {
       expect.objectContaining({
         budget: { maxSteps: 20, maxUsd: 0.5, maxActiveMinutes: 5 },
         approvalMode: "auto_within_allowlist",
+        observerMode: "shadow",
         toolProfile: "browser_use",
       }),
     );
@@ -441,4 +443,16 @@ describe("grading, modes and selection", () => {
       specName("fixtures", spec(), "auto_within_allowlist", false, budget),
     );
   });
+});
+
+it("passes the selected Observer rollout to main and verify runs", async () => {
+  const { deps, api } = fake();
+  const result = await runSuite(suite(spec()), options({ observerMode: "enforce" }), deps);
+  expect(api.benchmarks.start).toHaveBeenCalledWith(
+    expect.objectContaining({ observerMode: "enforce" }),
+  );
+  expect(api.runs.create).toHaveBeenCalledWith(
+    expect.objectContaining({ observerMode: "enforce" }),
+  );
+  expect(result.results[0]).toMatchObject({ observerMode: "enforce" });
 });

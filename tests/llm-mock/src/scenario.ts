@@ -64,4 +64,9 @@ export interface Scenario {
   name: string;
   turns: MockTurn[];
   compaction?: Record<string, unknown>;
+  /**
+   * The Guard's answers for runs of this scenario (D52): routed by the scenario name found in the
+   * GuardInput's goal (redactForTitle keeps the name). Default: allow at the screen.
+   */
+  guard?: (input: unknown) => { screen: "allow" | "review"; review?: Record<string, unknown> };
 }

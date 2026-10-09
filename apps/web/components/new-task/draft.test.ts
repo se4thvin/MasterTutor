@@ -98,7 +98,7 @@ describe("buildCreateRunInput", () => {
       budget: DEFAULT_BUDGET,
       targetFolderId: null,
       approvalMode: "ask",
-      observerMode: "enforce",
+      observerMode: "shadow",
       toolProfile: "browser_use",
     });
   });

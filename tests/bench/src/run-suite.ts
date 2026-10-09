@@ -1,3 +1,4 @@
+import type { ObserverMode } from "@mastertutor/contracts";
 import { createHash } from "node:crypto";
 import type { Budget, ToolProfile } from "@mastertutor/contracts";
 import { suggestFailureClass, type WatchSummary } from "./classify.ts";
@@ -62,6 +63,7 @@ export interface SuiteRunOptions {
   /** Overrides each spec's mode; null keeps the spec's. */
   approvalMode: BenchApprovalMode | null;
   bypassAcknowledged: boolean;
+  observerMode: ObserverMode;
   maxTotalUsd: number;
   /** Per-run budget: caps Budget.maxUsd of every run the harness creates (D47). */
   maxRunUsd: number;
@@ -233,6 +235,7 @@ async function verifyRun(
     budget,
     targetFolderId: null,
     approvalMode: "auto_within_allowlist",
+    observerMode: options.observerMode,
     toolProfile: "browser_use",
   });
   guard.track(run.id);
@@ -338,7 +341,10 @@ export async function runBenchmark(
       budget,
       withScenario(spec.task, options.mock ? (spec.mockScenarios?.main ?? null) : null),
     );
-    const started = await deps.api.benchmarks.start({ benchmarkId });
+    const started = await deps.api.benchmarks.start({
+      benchmarkId,
+      observerMode: options.observerMode,
+    });
     guard.track(started.runId);
     deps.log(`started ${name}: run ${started.runId}`);
     const state = await watched(deps, guard, started.runId, options.policy);
@@ -380,6 +386,7 @@ export async function runBenchmark(
       name,
       toolProfile: spec.toolProfile,
       approvalMode: mode,
+      observerMode: options.observerMode,
       attempt,
       benchmarkRunId: started.benchmarkRunId,
       runId: started.runId,
@@ -425,6 +432,7 @@ function errorResult(
     ),
     toolProfile: spec.toolProfile,
     approvalMode: mode,
+    observerMode: options.observerMode,
     attempt,
     benchmarkRunId: null,
     runId: null,
@@ -534,6 +542,7 @@ export function runBaseline(
       verdict,
       error: tainted ? new TaintedVerify().message : null,
       approvalMode: mode,
+      observerMode: options.observerMode,
       watch: {
         budgetHit: false,
         stalled: false,
