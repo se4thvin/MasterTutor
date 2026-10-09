@@ -2222,10 +2222,10 @@ describe("tool profiles reach the model (Phase 10)", () => {
     expect(body.instructions).not.toContain("read_page");
   });
 
-  it("a browser_use run keeps all seven tools", async () => {
+  it("a browser_use run keeps all six tools (D55.1 removed annotate)", async () => {
     const { name, loop } = await setup([done()]);
     await drive(loop);
-    expect((mock.requestsFor(name)[0]!.body as { tools?: unknown[] }).tools).toHaveLength(7);
+    expect((mock.requestsFor(name)[0]!.body as { tools?: unknown[] }).tools).toHaveLength(6);
   });
 });
 
