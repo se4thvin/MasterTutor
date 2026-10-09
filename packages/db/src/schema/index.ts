@@ -6,3 +6,5 @@ export * from "./runs.ts";
 export * from "./vault.ts";
 export * from "./benchmarks.ts";
 export * from "./alerts.ts";
+export * from "./guard.ts";
+export * from "./observer.ts";

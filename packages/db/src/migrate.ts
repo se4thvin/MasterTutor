@@ -14,6 +14,8 @@ export interface MigrateOptions {
   databaseUrl: string;
   webPassword: string;
   agentPassword: string;
+  /** observer_role's LOGIN password (spec §7.3); unset leaves the role NOLOGIN. */
+  observerPassword?: string;
   slots: readonly string[];
 }
 
@@ -21,6 +23,8 @@ export async function runMigrations(options: MigrateOptions): Promise<void> {
   // DbPassword's alphabet has no quotes or backslashes, so interpolation below is safe.
   const webPassword = DbPassword.parse(options.webPassword);
   const agentPassword = DbPassword.parse(options.agentPassword);
+  const observerPassword =
+    options.observerPassword === undefined ? null : DbPassword.parse(options.observerPassword);
   const sql = postgres(options.databaseUrl, { max: 1, onnotice: () => undefined });
   try {
     await migrate(drizzle({ client: sql }), { migrationsFolder: MIGRATIONS_DIR });
@@ -29,6 +33,11 @@ export async function runMigrations(options: MigrateOptions): Promise<void> {
       await tx.unsafe(grants);
       await tx.unsafe(`ALTER ROLE web_role WITH LOGIN PASSWORD '${webPassword}'`);
       await tx.unsafe(`ALTER ROLE agent_role WITH LOGIN PASSWORD '${agentPassword}'`);
+      await tx.unsafe(
+        observerPassword
+          ? `ALTER ROLE observer_role WITH LOGIN PASSWORD '${observerPassword}'`
+          : "ALTER ROLE observer_role WITH NOLOGIN",
+      );
       await syncBrowserSlots(tx, options.slots);
     });
   } finally {

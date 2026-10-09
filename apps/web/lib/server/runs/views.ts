@@ -25,8 +25,7 @@ export function runSummaryOf(row: RunRow): RunSummary {
     waitReason: row.waitReason,
     controller: row.controller,
     approvalMode: row.approvalMode,
-    // runs.observer_mode arrives with migration 0015 (Task 4); every run enforces until then.
-    observerMode: "enforce",
+    observerMode: row.observerMode,
     toolProfile: row.toolProfile,
     model: row.model,
     noteId: row.noteId,

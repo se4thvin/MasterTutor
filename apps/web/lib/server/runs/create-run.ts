@@ -49,6 +49,7 @@ export async function createRun(
         workspaceId: scope.workspaceId,
         goal: valid.goal,
         approvalMode: valid.approvalMode,
+        observerMode: valid.observerMode,
         toolProfile: valid.toolProfile,
         budget: valid.budget ?? workspace.defaultBudget,
         allowedOrigins: [...new Set(valid.allowedOrigins)],

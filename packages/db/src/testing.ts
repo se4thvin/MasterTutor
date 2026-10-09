@@ -10,16 +10,18 @@ import { browserSlots, runs, user, workspaceMembers, workspaces } from "./schema
 export const TEST_ROLE_PASSWORDS = {
   web: "test_web_password_0123456789ab",
   agent: "test_agent_password_0123456789",
+  observer: "test_observer_password_012345",
 } as const;
 
 export interface TestDatabase {
   ownerUrl: string;
   webUrl: string;
   agentUrl: string;
+  observerUrl: string;
   stop(): Promise<void>;
 }
 
-/** A migrated pgvector Postgres in Testcontainers with web_role/agent_role ready to log in. */
+/** A migrated pgvector Postgres in Testcontainers with web_role, agent_role and observer_role ready to log in. */
 export async function startTestDatabase(options: { slots?: string[] } = {}): Promise<TestDatabase> {
   const container = await new PostgreSqlContainer("pgvector/pgvector:pg17")
     .withDatabase("mastertutor")
@@ -31,6 +33,7 @@ export async function startTestDatabase(options: { slots?: string[] } = {}): Pro
     databaseUrl: ownerUrl,
     webPassword: TEST_ROLE_PASSWORDS.web,
     agentPassword: TEST_ROLE_PASSWORDS.agent,
+    observerPassword: TEST_ROLE_PASSWORDS.observer,
     slots: options.slots ?? ["browser-1"],
   });
   const asRole = (role: string, password: string) => {
@@ -43,6 +46,7 @@ export async function startTestDatabase(options: { slots?: string[] } = {}): Pro
     ownerUrl,
     webUrl: asRole("web_role", TEST_ROLE_PASSWORDS.web),
     agentUrl: asRole("agent_role", TEST_ROLE_PASSWORDS.agent),
+    observerUrl: asRole("observer_role", TEST_ROLE_PASSWORDS.observer),
     stop: async () => {
       await container.stop();
     },

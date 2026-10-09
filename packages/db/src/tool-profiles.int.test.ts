@@ -43,7 +43,8 @@ describe("tool_profiles migration (journal order, never a hard-coded number: P10
       { table_name: string; column_name: string; column_default: string; is_nullable: string }[]
     >`
       select table_name, column_name, column_default, is_nullable from information_schema.columns
-      where (table_name, column_name) in (('runs','tool_profile'),('benchmarks','tool_profile'),('benchmark_runs','takeovers'))
+      where table_schema = 'public'
+        and (table_name, column_name) in (('runs','tool_profile'),('benchmarks','tool_profile'),('benchmark_runs','takeovers'))
       order by table_name, column_name`;
     expect(
       rows.map((r) => `${r.table_name}.${r.column_name}=${r.column_default} null:${r.is_nullable}`),

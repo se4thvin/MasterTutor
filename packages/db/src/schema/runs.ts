@@ -35,6 +35,7 @@ import {
   approvalModeEnum,
   approvalStatusEnum,
   controllerEnum,
+  observerModeEnum,
   runStatusEnum,
   slotStateEnum,
   stepPhaseEnum,
@@ -81,6 +82,8 @@ export const runs = pgTable(
     /** Who last opened the live view (openLive): their open n.eko session is closed on sign-out. */
     liveViewerId: text("live_viewer_id"),
     approvalMode: approvalModeEnum("approval_mode").notNull().default("ask"),
+    /** Guard rollout (D52, spec §6.8): shadow records only. */
+    observerMode: observerModeEnum("observer_mode").notNull().default("enforce"),
     toolProfile: toolProfileEnum("tool_profile").notNull().default("browser_use"),
     model: text("model").notNull().default(MODELS.agentPrimary),
     previousResponseId: text("previous_response_id"),
@@ -119,7 +122,7 @@ export const runs = pgTable(
   ],
 );
 
-const runRef = () =>
+export const runRef = () =>
   uuid("run_id")
     .notNull()
     .references(() => runs.id, { onDelete: "cascade" });
