@@ -8,6 +8,7 @@ import { seedRun } from "../testing/notes.ts";
 import { createLocalOcr } from "../browser/local-ocr.ts";
 import { createSecretFingerprints } from "../vault/fingerprints.ts";
 import { createCaptureTool } from "./capture-tool.ts";
+import { mhtmlTexts } from "./mhtml-mask.ts";
 import { pageExtract } from "./page/extract.ts";
 import { captureWorlds } from "./worlds.ts";
 
@@ -219,7 +220,7 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
     expect(kept || result.fidelity !== "verified").toBe(true);
   });
 
-  it("stores no secret: MHTML skipped and no artefact holds the canary (W8)", async () => {
+  it("stores no secret: a masked MHTML, and no artefact holds the canary, raw or decoded (W8, snapshot ruling)", async () => {
     // B3 seam: a run whose vault holds the canary.
     const vault: MaskSources = {
       nodeIds: () => [],
@@ -227,11 +228,13 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       redact: (text: string) => text.replaceAll("hunter2-canary", "[secret]"),
     };
     const { source, blocks } = await capture("secret/field.html", page, vault);
-    expect(source.mhtmlKey).toBeNull();
+    expect(source.mhtmlKey).toMatch(/^snapshots\/.+\/page\.mhtml$/);
     expect(blocks.every((b) => !b.markdown.includes("hunter2-canary"))).toBe(true);
     const canary = new TextEncoder().encode("hunter2-canary");
     for (const bytes of env.storage.objects.values())
       expect(Buffer.from(bytes).includes(Buffer.from(canary))).toBe(false);
+    const mhtml = new TextDecoder().decode(env.storage.objects.get(source.mhtmlKey!)!);
+    expect(mhtmlTexts(mhtml).join("\n")).not.toContain("hunter2-canary");
   });
 
   it("refuses a page that shows a secret and leaves no rows or objects behind (D8)", async () => {

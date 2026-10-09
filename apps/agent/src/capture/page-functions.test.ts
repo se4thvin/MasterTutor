@@ -4,6 +4,7 @@ import { pageExtract } from "./page/extract.ts";
 import { pageInstallLib } from "./page/lib.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
 import { pageInstallStructure } from "./page/structure.ts";
+import { pageStripSecretFields } from "./page/strip-fields.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import {
   pageContentType,
@@ -34,6 +35,7 @@ const PAGE_FUNCTIONS = [
   pageExtract,
   pageLocateBlocks,
   pageSanitizeSvg,
+  pageStripSecretFields,
   pageVideoState,
   pageVideoReveal,
   pageVideoSeek,
