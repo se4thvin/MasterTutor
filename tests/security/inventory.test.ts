@@ -15,6 +15,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     "tests/security/stack-canary.test.ts",
     "tests/security/stack-canary.ts",
     "apps/agent/src/telemetry.security.test.ts",
+    "apps/agent/src/guardrails/observer/guard.security.test.ts",
   ],
   "2 origin pinning": ["apps/agent/src/vault/security/fill-pinning.security.test.ts"],
   "3 field type": ["apps/agent/src/vault/security/fill-pinning.security.test.ts"],

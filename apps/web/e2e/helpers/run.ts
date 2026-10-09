@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { liveEmbedPath, type RunDetail, type RunEventRecord } from "@mastertutor/contracts";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { MEDIA } from "../../lib/breakpoints.ts";
 import { RECORDED_RUN_ID } from "../../lib/fixtures/run-recording.ts";
 
 export interface RpcCall {
@@ -234,7 +235,17 @@ export async function gotoRun(page: Page, opts: GotoRunOptions = {}): Promise<Rp
   });
   await page.goto(`/runs/${detail?.id ?? RECORDED_RUN_ID}`);
   await expect(frame(page)).toBeVisible();
-  // The thread's content is lazily loaded: a test starts once the pane holds it.
-  await expect(page.locator(".thread-loading")).toHaveCount(0);
+  // During hydration the pane may not exist yet, so an absent loading marker proves nothing.
+  // Start streaming only once the initial history is mounted, before new entries can arrive.
+  if (await page.evaluate((query) => matchMedia(query).matches, MEDIA.sm)) {
+    await expect(page.getByRole("list", { name: "Agent activity" })).toBeVisible();
+    // Let the initial history paint and its mount effects finish before the fixture streams.
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    });
+  } else {
+    await expect(page.getByRole("button", { name: /^Open thread/ })).toBeVisible();
+  }
   return calls;
 }
