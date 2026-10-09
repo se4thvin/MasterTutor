@@ -138,6 +138,13 @@ describe("remote test runner (D45, X4, D48)", () => {
     expect(host).toContain('--network "$runner_network"');
   });
 
+  it("runs unit with fewer workers inside all, never with a longer timeout", () => {
+    expect(client).toMatch(/^all_unit_workers=[1-9]\d?$/m);
+    expect(client).toContain('entries+=("unit --maxWorkers=$all_unit_workers")');
+    expect(host).toContain('[[ "$arg" == --maxWorkers* ]] && workers=()');
+    expect(client + host).not.toMatch(/testTimeout|--timeout/);
+  });
+
   it("keeps the legacy stack lock for qa only; stack suites hold a slot instead", () => {
     expect(host).toContain('stack_lock="$runs_dir/stack.lock"');
     expect(host).not.toContain("behaviour.lock");

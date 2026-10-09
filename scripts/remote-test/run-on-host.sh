@@ -91,7 +91,10 @@ cd "$root"
 suite_args=()
 case "$suite" in
   unit | integration | security | behaviour)
-    suite_args=(--project "$suite" --maxWorkers="$cpus" "$@") ;;
+    # Our worker default unless the caller chose one (all runs unit with fewer).
+    workers=(--maxWorkers="$cpus")
+    for arg in "$@"; do [[ "$arg" == --maxWorkers* ]] && workers=(); done
+    suite_args=(--project "$suite" "${workers[@]}" "$@") ;;
   ui)
     # One next start serves every worker: Playwright's default (half of 88 cores) overloads it and
     # turns timing into failures; 8 runs as fast (measured, D48). A --workers arg overrides it.

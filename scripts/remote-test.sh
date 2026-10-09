@@ -23,6 +23,7 @@ suites="unit integration security web-build agent-image behaviour ui e2e smoke q
 # Every suite but qa, whose stack is meant to outlive the run.
 all_suites="unit integration security web-build agent-image behaviour ui e2e smoke bench-mock"
 behaviour_shards=3
+all_unit_workers=8
 
 suite="${1:-}"
 if [[ -z "$suite" || " $suites all " != *" $suite "* ]]; then
@@ -129,7 +130,11 @@ if [[ "$suite" == all ]]; then
         names+=("behaviour-$i/$behaviour_shards") entries+=("behaviour --shard=$i/$behaviour_shards")
       done
     else
-      names+=("$s") entries+=("$s")
+      # Unit beside every other suite: its default 32 workers starved the heavier unit tests (pdf.js
+      # sandbox, OCR) past Vitest's 5 s timeout in two of three runs; 8 run it in about the same
+      # wall time as the rest, without raising any timeout.
+      if [[ "$s" == unit ]]; then entries+=("unit --maxWorkers=$all_unit_workers"); else entries+=("$s"); fi
+      names+=("$s")
     fi
   done
   for ((n = 0; n < ${#names[@]}; n++)); do
