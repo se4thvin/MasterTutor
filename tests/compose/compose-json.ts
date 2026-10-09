@@ -46,6 +46,7 @@ export interface ComposeNetwork {
   name?: string;
   internal?: boolean;
   external?: boolean;
+  driver_opts?: Record<string, string>;
   labels?: Record<string, string>;
   ipam?: { config?: Array<{ subnet?: string; ip_range?: string }> };
 }

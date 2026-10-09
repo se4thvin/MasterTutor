@@ -28,6 +28,9 @@ const extract: PageExtract = {
   pageText: "Para one.",
   mathTex: [],
   rawTables: ['<table><tr><td rowspan="2">x</td></tr></table>'],
+  activities: [],
+  activityToken: "MTACTIVITYf00dN",
+  excludedText: "",
   frames: [{ index: 0, url: "https://x.test/f", name: null }],
   smallFrames: 0,
   media: [
@@ -121,6 +124,76 @@ describe("assembleBlocks (decision 14: media blocks carry the image in assetId)"
       { kind: "block", block: { type: "image", markdown: "Hero" }, assetId: B, selector: "#h" },
       { kind: "frame", index: 0 },
     ]);
+  });
+});
+
+describe("assembleBlocks: interactive activities", () => {
+  const activity = (url: string | null): PageExtract => ({
+    ...extract,
+    markdown: [
+      "1)",
+      "",
+      "A numbered prose line.",
+      "",
+      "> MTACTIVITYf00dN0",
+      ">",
+      "> participation activity",
+      ">",
+      "> **4.4.2: Overflow.**",
+      ">",
+      "> 1)",
+      ">",
+      "> 0011 + 0010 results in overflow.",
+      ">",
+      "> - True",
+      "> - False",
+    ].join("\n"),
+    media: [],
+    activities: [{ title: "4.4.2: Overflow.", url }],
+  });
+  const markdownOf = (page: PageExtract) =>
+    assembleBlocks(page, new Map()).map((b) => (b.kind === "block" ? b.block : b));
+
+  it("turns the placeholder into a callout header linking to the activity's title on its page", () => {
+    expect(markdownOf(activity("https://book.test/ch/4"))).toEqual([
+      { type: "paragraph", markdown: "1\\) A numbered prose line." },
+      {
+        type: "quote",
+        markdown: [
+          "> [!example] [Interactive activity](https://book.test/ch/4#:~:text=4.4.2%3A%20Overflow.)",
+          ">",
+          "> participation activity",
+          ">",
+          "> **4.4.2: Overflow.**",
+          ">",
+          "> 1\\) 0011 + 0010 results in overflow.",
+          ">",
+          "> - True",
+          "> - False",
+        ].join("\n"),
+      },
+    ]);
+  });
+
+  it("resolves a placeholder nested in a list or quote, and never one without this capture's token", () => {
+    const page: PageExtract = {
+      ...activity("https://book.test/ch/4"),
+      markdown: "- > MTACTIVITYf00dN0\n\n> > MTACTIVITYf00dN0\n\n> MTACTIVITY0",
+    };
+    expect(markdownOf(page).map((b) => ("markdown" in b ? b.markdown : ""))).toEqual([
+      expect.stringMatching(
+        /^- > \[!example\] \[Interactive activity\]\(https:\/\/book\.test\/ch\/4#/,
+      ),
+      expect.stringMatching(/^> > \[!example\] \[Interactive activity\]\(/),
+      "> MTACTIVITY0",
+    ]);
+  });
+
+  it("writes no link when the page has no web address", () => {
+    const [, callout] = markdownOf(activity(null));
+    expect(callout).toMatchObject({
+      markdown: expect.stringMatching(/^> \[!example\] Interactive activity\n/),
+    });
   });
 });
 

@@ -18,4 +18,13 @@ describe("check-prod-bundle server env names", () => {
       expect.arrayContaining(["OPENAI_API_KEY", "VAULT_PRIVATE_KEY", "VAULT_PUBLIC_KEY"]),
     );
   });
+  it("guards the push signing key and the observability secrets (D50)", () => {
+    expect(listed).toEqual(
+      expect.arrayContaining([
+        "VAPID_PRIVATE_KEY",
+        "ALERT_WEBHOOK_SECRET",
+        "OBSERVE_VIEWER_PASSWORD",
+      ]),
+    );
+  });
 });

@@ -3,6 +3,7 @@
   "AutofillCreditCardEnabled": false,
   "BrowserSignin": 0,
   "DefaultNotificationsSetting": 2,
+  "BlockThirdPartyCookies": false,
   "DeveloperToolsAvailability": 1,
   "EditBookmarksEnabled": false,
   "FullscreenAllowed": true,

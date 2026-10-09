@@ -478,23 +478,31 @@ The collector's own metrics (`service.telemetry.metrics`, level `basic`) are pus
 
 ## 12. `/observability` access (owner only)
 
-- **Routing.** Traefik router `mastertutor-observability`: `Host(${DOMAIN}) && PathPrefix(/observability/)`, priority 900 (below `/live`'s 1000), to service `openobserve:5080` over the `mastertutor-obs` network. The router's middlewares are:
-  1. `mastertutor-observability-auth`, a ForwardAuth to `http://${CDP_SUBNET_PREFIX}.11:3000/api/observability/auth`, with `trustForwardHeader: false` and `authResponseHeaders: Authorization, Cookie`;
-  2. `mastertutor-live-headers` (reused: `frame-ancestors 'self'`, nosniff).
+OpenObserve's UI is served on its own host, `obs.${DOMAIN}` (`obs.localhost` locally), never on the app's origin (D50 review ruling I-2). Its scripts are third-party code rendering strings that come from untrusted pages, so they must never share the app's origin, its storage or its session cookie. The MasterTutor session cookie is host-only on `${DOMAIN}` (no `Domain=` attribute, pinned by `auth.int.test.ts`), so the obs host never receives it.
 
-  A bare `/observability` path is redirected to `/observability/` by a `redirectregex` middleware on the same router.
-- **The auth endpoint** (`apps/web/app/api/observability/auth/route.ts`) uses the existing `getViewer()` and the new `memberRoleOf(db, userId)`:
-  - signed out → `302` to `/sign-in?next=/api/observability/enter` (via `signInPathFor`, `apps/web/lib/auth/next-path.ts`);
-  - signed in but not the owner → `403`;
-  - owner → `200` with `Authorization: Basic base64(viewer:OBSERVE_VIEWER_PASSWORD)` and `Cookie: mt_obs=1`.
+- **Routing** (Track B7; names and rules from `packages/contracts/src/observability.ts`). OpenObserve keeps `ZO_BASE_URI=/observability` (B1 pins it), so its UI is at `https://obs.${DOMAIN}/observability/web/` and `ZO_WEB_URL=https://obs.${DOMAIN}/observability`. There are two routers on `obs.${DOMAIN}`:
+  1. `mastertutor-observability`, `observabilityRouterRule(DOMAIN)` = `Host(obs.${DOMAIN})`, to `openobserve:5080` over `mastertutor-obs`. Its middlewares are:
+     - `mastertutor-observability-auth`, a ForwardAuth to `http://${CDP_SUBNET_PREFIX}.11:3000/api/observability/auth` (`observabilityForwardAuthAddress`), with `trustForwardHeader: false` and `authResponseHeaders: Authorization, Cookie`;
+     - `mastertutor-live-headers` (reused).
 
-  Traefik copies both onto the upstream request. The browser's own `Authorization` header and every MasterTutor cookie (session, `live_slot`) are replaced, so OpenObserve never sees them. A fixture build always answers `403`, as `/api/live/auth` does.
-- **OpenObserve's client-side session gate.** OpenObserve's UI router sends the browser to its `/login` page unless its local user-info record exists (`web/src/router/index.ts`, `getDecodedUserInfo`). Task B1 pins the exact mechanism against the digest. The design is:
-  - the auth endpoint's `Authorization` header authenticates every API call;
-  - an owner-only web route, `GET /api/observability/enter`, writes OpenObserve's local user-info record for the viewer identity (identity only, no secret) and redirects to `/observability/web/`;
-  - the Alerts page's "Open dashboards" link points at `/api/observability/enter`.
+     `/` is redirected to `/observability/web/`.
+  2. `mastertutor-observability-session`, `observabilitySessionRouterRule(DOMAIN)` = `Host(obs.${DOMAIN}) && Path(/api/observability/session)`, at a higher priority, to web with no ForwardAuth.
 
-  The owner never sees OpenObserve's login form. If the pinned UI also requires its session cookie, the fallback is Traefik's `addAuthCookiesToResponse: [auth_tokens]`: the auth endpoint mints a `Path=/observability/; HttpOnly; Secure; SameSite=Strict` cookie. That cookie is only useful behind the same ForwardAuth, because OpenObserve has no other ingress. A Playwright test in the `observability` suite (Task F1) signs in as the owner, opens a provisioned dashboard and fails on any `/login` redirect, so a digest bump that breaks this is caught.
+  The app's `/observability` path is now an ordinary app route on `mastertutor-web`.
+- **The way in.** The owner's "Open dashboards" link is `GET /observability` on the app host. Web checks the session: signed out → sign-in with `next=/observability`; anyone who is not the signed-in owner → `403`; no `OBSERVE_VIEWER_PASSWORD` → `503`. For the owner it answers a page that POSTs a one-minute signed ticket to `https://obs.${DOMAIN}/api/observability/session`. The ticket goes in a form body, never in a URL.
+- **The obs session.** `POST /api/observability/session` exists only when the request's Host is the obs host. It verifies the ticket and re-checks the owner. It then sets `mt_obs_session`, which is:
+  - host-only on `obs.${DOMAIN}`;
+  - `HttpOnly; SameSite=Strict; Secure`, with a 12 h lifetime;
+  - HMAC-signed with a key derived by HKDF from `BETTER_AUTH_SECRET`.
+
+  Last, it seeds OpenObserve's client-side identity record (`localStorage.userInfo`, base64 of `{email,name,role}` with no secret; B1 confirmed it) and opens `/observability/web/`. No OpenObserve cookie is needed (B1).
+- **The auth endpoint** (`apps/web/app/api/observability/auth/route.ts`) answers only internal callers. The request's Host must be on `internalWebHosts(CDP_SUBNET_PREFIX)`, which is `web:3000` plus web's cdp address, where Traefik's ForwardAuth sub-request goes. A browser request through Traefik always carries the public Host, so it gets `404`, and the viewer password can never be read from a browser (review I-1). For the sub-request:
+  - no valid `mt_obs_session` → `302` to `https://${DOMAIN}/observability`;
+  - not the owner with a live session any more (role lost or signed out everywhere) → `403`;
+  - no viewer password → `503`;
+  - otherwise → `200` with `Authorization: Basic base64(viewer:OBSERVE_VIEWER_PASSWORD)` and `Cookie: mt_obs=1`.
+
+  Traefik copies both onto the upstream request, so OpenObserve never sees `mt_obs_session`. The OpenObserve OSS build has only the `admin` role, so the viewer user is an admin (B1). Least privilege comes from this gate and the network. A fixture build always answers `404`.
 - **Never public without our auth.** OpenObserve publishes no port, and its only ingress is the ForwardAuth router. A test asserts that the router carries the auth middleware and that `openobserve` has no `ports`.
 - **Host step (needs user approval, D41).** Two steps, both following existing patterns and both deferred with the deploy (D42):
   - `infra/host/create-obs-network.sh` creates the external internal network `mastertutor-obs`, mirroring `create-cdp-network.sh`;
@@ -519,11 +527,12 @@ Each rule has a 30-minute silence after it fires.
 - OpenObserve's alert destination is a webhook: `POST http://web:3000/api/alerts/webhook` over the `observe` network. It sends `Authorization: Bearer ${ALERT_WEBHOOK_SECRET}` and the template body `{"rule":"{alert_name}","firedAt":"{alert_trigger_time}"}`. Task B1 pins the template variable names.
 - The webhook route (`apps/web/app/api/alerts/webhook/route.ts`) runs these checks in order, all fail-closed:
   1. `ALERT_WEBHOOK_SECRET` must be set, else `404`.
-  2. The request must carry no `X-Forwarded-For` or `X-Forwarded-Host`, else `404`. Traefik always adds these, so a public request is refused before auth, and the route behaves as if it does not exist publicly.
+  2. The request's `Host` must be on `internalWebHosts(CDP_SUBNET_PREFIX)` (`web:3000`, the address OpenObserve posts to, or web's cdp address), else `404`. A request through Traefik always carries the public Host, so the route does not exist publicly. Forwarded headers prove nothing: Next adds `X-Forwarded-*` to every request itself (review C-1). `observability-access.spec.ts` pins this against the real server.
   3. Constant-time bearer compare, else `401`.
   4. Body of at most 4 KiB, parsed with `AlertWebhookBody`; the rule must be in `ALERT_RULES`; else `400`.
   5. Insert the alert into `alerts`, deduplicated per rule within 10 minutes.
   6. Answer `202` at once and deliver after the response (Next's `after()`).
+- Replays carry no nonce. They are bounded by the internal-only Host, the bearer and the 10-minute dedupe per rule.
 - Only the rule name and the time are stored. OpenObserve free text, counts and query results never reach the DB or the phone.
 
 ### 13.3 In-app
@@ -567,6 +576,11 @@ Each rule has a 30-minute silence after it fires.
   2. iOS and not standalone (`navigator.standalone !== true`): "On iPhone, add MasterTutor to your Home Screen first (Share → Add to Home Screen), then open it from there to turn on phone alerts."
   3. `pushConfig.available` is false (no VAPID keys): "Phone alerts aren't set up on this server."
   4. Otherwise a toggle. On: register `/sw.js`, `Notification.requestPermission()`, `pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, then `alerts.subscribe`. Off: `subscription.unsubscribe()` and `alerts.unsubscribe`.
+- **Staying true** (review I-3). The switch shows the server's view, not only the browser's:
+  - On open, Settings asks `alerts.pushStatus` for this browser's endpoint.
+  - If the push service removed it (`404`/`410`), the switch shows off with "Phone alerts stopped on this device. Turn them on again to keep getting them." The stale browser subscription is dropped, so turning alerts on again makes a fresh one.
+  - When the browser rotates the subscription, the service worker's `pushsubscriptionchange` handler re-sends it (`alerts.subscribe`), removes the old endpoint and tells open pages.
+  - A failed server save undoes the browser subscription at once.
 - **Degradation.** Without VAPID keys or HTTPS, in-app alerts work unchanged and the push sender is never called. Tests cover both (Task C6, Task C7).
 
 ## 14. Security summary (R9)

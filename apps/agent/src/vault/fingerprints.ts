@@ -65,6 +65,20 @@ export function decodedViews(token: string): string[] {
   return views;
 }
 
+/**
+ * A secret distinctive enough that finding it in page text means the page shows it: 8+
+ * characters, or 6+ mixing two kinds (lower case, upper case, digit, other). A PIN or a plain
+ * word ("parity") reads like ordinary text: it is redacted from text and masked as a whole OCR
+ * token, but never withholds a whole screenshot and never matches inside a longer word.
+ */
+export function isDistinctiveSecret(secret: string): boolean {
+  const value = secret.trim();
+  const kinds = [/\p{Ll}/u, /\p{Lu}/u, /\p{N}/u, /[^\p{L}\p{N}\s]/u].filter((kind) =>
+    kind.test(value),
+  ).length;
+  return value.length >= 8 || (value.length >= 6 && kinds >= 2);
+}
+
 export function isScannableSecret(secret: string): boolean {
   return secret.length > 0 && !(secret.length < 4 && /^\d+$/.test(secret));
 }
@@ -80,6 +94,8 @@ interface RunEntry {
   nodes: FilledNode[];
   /** Keyed digests of registered secrets (joined word runs, or whole tokens). */
   digests: Set<string>;
+  /** The subset of `digests` from distinctive secrets: only these show a secret on a page. */
+  distinctive: Set<string>;
   /** Word count → joined lengths of registered secrets: a cheap filter before hashing. */
   windows: Map<number, Set<number>>;
   /**
@@ -96,7 +112,12 @@ interface RunEntry {
    * no separators and match inside one run of letters and digits; `spaced` ones (with separators
    * of their own) match inside one whitespace-free token, separators dropped.
    */
-  folded: { tight: Map<number, Set<string>>; spaced: Map<number, Set<string>> };
+  folded: {
+    tight: Map<number, Set<string>>;
+    spaced: Map<number, Set<string>>;
+    /** Generic secrets: matched only when a whole OCR run (or token) folds to them. */
+    whole: Set<string>;
+  };
   unwatch: Map<CDPSession, () => void>;
 }
 
@@ -126,11 +147,12 @@ export function createSecretFingerprints(): SecretFingerprints {
       found = {
         nodes: [],
         digests: new Set(),
+        distinctive: new Set(),
         windows: new Map(),
         bareWindows: new Map(),
         codes: new Set(),
         version: 0,
-        folded: { tight: new Map(), spaced: new Map() },
+        folded: { tight: new Map(), spaced: new Map(), whole: new Set() },
         unwatch: new Map(),
       };
       runs.set(runId, found);
@@ -159,9 +181,15 @@ export function createSecretFingerprints(): SecretFingerprints {
   };
 
   /** Records a secret as a run of parts (words, or tokens for symbol-only secrets). */
-  const add = (run: RunEntry, windows: Map<number, Set<number>>, parts: readonly string[]) => {
+  const add = (
+    run: RunEntry,
+    windows: Map<number, Set<number>>,
+    parts: readonly string[],
+    distinctive: boolean,
+  ) => {
     const joined = parts.join(JOIN);
     run.digests.add(digest(joined));
+    if (distinctive) run.distinctive.add(digest(joined));
     const lengths = windows.get(parts.length) ?? new Set<number>();
     lengths.add(joined.length);
     windows.set(parts.length, lengths);
@@ -170,17 +198,19 @@ export function createSecretFingerprints(): SecretFingerprints {
   const foldedDigest = (folded: string) => digest(`ocr${JOIN}${folded}`);
 
   const register = (run: RunEntry, secret: string) => {
+    const distinctive = isDistinctiveSecret(secret);
     const folded = foldConfusables(secret);
-    if (folded.length >= MIN_FOLDED) {
+    if (folded.length >= MIN_FOLDED && !distinctive) run.folded.whole.add(foldedDigest(folded));
+    else if (folded.length >= MIN_FOLDED) {
       const byLength = OCR_RUN.test(secret.trim()) ? run.folded.tight : run.folded.spaced;
       const digests = byLength.get(folded.length) ?? new Set<string>();
       digests.add(foldedDigest(folded));
       byLength.set(folded.length, digests);
     }
     const words = secret.match(WORD) ?? [];
-    if (words.length > 0) return add(run, run.windows, words);
+    if (words.length > 0) return add(run, run.windows, words, distinctive);
     const tokens = secret.match(TOKEN) ?? [];
-    if (tokens.length > 0) add(run, run.bareWindows, tokens);
+    if (tokens.length > 0) add(run, run.bareWindows, tokens, distinctive);
   };
 
   /** Spans of `text` where a registered run of parts occurs, whatever separates the parts. */
@@ -189,12 +219,13 @@ export function createSecretFingerprints(): SecretFingerprints {
     windows: Map<number, Set<number>>,
     parts: readonly RegExpExecArray[],
     spans: Array<[number, number]>,
+    only: Set<string> = run.digests,
   ) => {
     for (const [count, lengths] of windows) {
       for (let i = 0; i + count <= parts.length; i++) {
         const window = parts.slice(i, i + count);
         const joined = window.map((part) => part[0]).join(JOIN);
-        if (!lengths.has(joined.length) || !run.digests.has(digest(joined))) continue;
+        if (!lengths.has(joined.length) || !only.has(digest(joined))) continue;
         const first = window[0]!;
         const last = window[count - 1]!;
         spans.push([first.index, last.index + last[0].length]);
@@ -202,12 +233,12 @@ export function createSecretFingerprints(): SecretFingerprints {
     }
   };
 
-  /** True when `text` holds a registered secret (as is). */
-  const holds = (run: RunEntry, text: string): boolean => {
+  /** True when `text` holds a registered secret (as is); `only` narrows the digests that count. */
+  const holds = (run: RunEntry, text: string, only: Set<string> = run.digests): boolean => {
     const spans: Array<[number, number]> = [];
-    find(run, run.windows, [...text.matchAll(WORD)], spans);
+    find(run, run.windows, [...text.matchAll(WORD)], spans, only);
     if (spans.length === 0 && run.bareWindows.size > 0)
-      find(run, run.bareWindows, [...text.matchAll(TOKEN)], spans);
+      find(run, run.bareWindows, [...text.matchAll(TOKEN)], spans, only);
     return spans.length > 0;
   };
 
@@ -227,9 +258,17 @@ export function createSecretFingerprints(): SecretFingerprints {
       }
       return false;
     };
+    const whole = (pieces: Iterable<string>) => {
+      if (run.folded.whole.size === 0) return false;
+      for (const piece of pieces)
+        if (run.folded.whole.has(foldedDigest(foldConfusables(piece)))) return true;
+      return false;
+    };
     return (
       holds(run.folded.tight, text.match(OCR_RUNS) ?? []) ||
-      holds(run.folded.spaced, text.match(TOKEN) ?? [])
+      holds(run.folded.spaced, text.match(TOKEN) ?? []) ||
+      whole(text.match(OCR_RUNS) ?? []) ||
+      whole(text.match(TOKEN) ?? [])
     );
   };
 
@@ -296,6 +335,10 @@ export function createSecretFingerprints(): SecretFingerprints {
       redact: (text) => {
         const run = runs.get(runId);
         return run && run.digests.size > 0 ? redact(run, text) : text;
+      },
+      showsSecret: (text) => {
+        const run = runs.get(runId);
+        return run !== undefined && run.distinctive.size > 0 && holds(run, text, run.distinctive);
       },
       inOcrText: (text) => {
         const run = runs.get(runId);

@@ -8,6 +8,7 @@ import { sweepObjectDeletions } from "../notes/object-sweep.ts";
 import { listenForAgentNotifications } from "../events/listen.ts";
 import { ModelCaller } from "../llm/caller.ts";
 import type { ModelClient } from "../llm/client.ts";
+import type { RunTitler } from "../llm/run-title.ts";
 import { systemClock, type Clock } from "../runtime/clock.ts";
 import { runtimeConfig, type RuntimeConfig } from "../runtime/config.ts";
 import type { Log } from "../runtime/types.ts";
@@ -34,6 +35,8 @@ export interface SupervisorOptions {
   owner?: string;
   connect?: ConnectBrowser;
   browserControl?: BrowserControl;
+  /** Generates each run's short title (main wires the real one; tests may leave it out). */
+  titler?: RunTitler;
 }
 
 /** LISTENs, sweeps, claims and runs one RunWorker per claimed run (spec §5.2). */
@@ -190,6 +193,7 @@ export class Supervisor {
         config: this.#config,
         log: this.#options.log,
         connect: this.#connect,
+        titler: this.#options.titler,
       },
       claim,
     );

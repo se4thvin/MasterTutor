@@ -1,4 +1,4 @@
-import type { ApprovalMode } from "@mastertutor/contracts";
+import { RUN_TITLE_MAX, untrustedText, type ApprovalMode } from "@mastertutor/contracts";
 import { StatusMark } from "@/components/bits/status-mark.tsx";
 import { RunPip } from "@/components/mascot/run-pip.tsx";
 import { ButtonLink } from "@/components/ui/button.tsx";
@@ -6,7 +6,6 @@ import { Icon } from "@/components/ui/icon.tsx";
 import type { BrowserState } from "./model/browser-state.ts";
 import { STATE_PILL, hostAndPath, markFor, shortRunId, statusLabel } from "./model/copy.ts";
 import { latestStep, type RunModel } from "./model/run-model.ts";
-import { untrustedText } from "./model/untrusted-text.ts";
 
 const MODE: Record<ApprovalMode, string> = {
   ask: "asks first",
@@ -20,8 +19,8 @@ export function RunHeader({ model, state }: { model: RunModel; state: BrowserSta
     hour: "2-digit",
     minute: "2-digit",
   });
-  // The goal is user text, possibly another member's: cleaned like page text (final M11).
-  const title = untrustedText(model.goal.split("\n")[0], 4000);
+  // A model's title or another member's goal: cleaned like page text, shown as text (final M11).
+  const title = untrustedText(model.title, RUN_TITLE_MAX);
   const last = latestStep(model);
   const capturing = last?.phase === "act" && last.action?.tool === "capture";
   return (

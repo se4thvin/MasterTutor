@@ -35,6 +35,26 @@ describe("the single OpenAI factory (openai-data-policy.md)", () => {
     expect(JSON.stringify(sent.body.input)).not.toContain('"system"');
   });
 
+  it("sends max_output_tokens only when a structured request caps it", async () => {
+    mock.setStructured("capped_format", () => ({ answer: 1 }));
+    const ask = (maxOutputTokens?: number) =>
+      client().responses.parse(
+        {
+          model: "gpt-6-luna",
+          instructions: "Answer.",
+          input: [],
+          schema: z.object({ answer: z.number() }),
+          name: "capped_format",
+          maxOutputTokens,
+        },
+        { signal: signal() },
+      );
+    await ask(200);
+    expect(mock.requests.at(-1)!.body).toMatchObject({ max_output_tokens: 200, store: false });
+    await ask();
+    expect(mock.requests.at(-1)!.body).not.toHaveProperty("max_output_tokens");
+  });
+
   it("rejects a structured answer that does not match the schema", async () => {
     mock.setStructured("bad_format", () => ({ answer: "x" }));
     await expect(

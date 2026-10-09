@@ -69,6 +69,7 @@ const PAGES = [
   ["settings", "/settings"],
   ["settings-usage", "/settings/usage"],
   ["settings-audit", "/settings/audit"],
+  ["settings-alerts", "/settings/alerts"],
 ] as const;
 
 test.describe("signed out", () => {

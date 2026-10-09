@@ -9,6 +9,7 @@ import {
 } from "@mastertutor/contracts";
 import type { ControlGuard } from "../browser/guard.ts";
 import type { BlockedNavigation } from "../browser/network-policy.ts";
+import { SignInFlow } from "../browser/sign-in-flow.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import type { CollectedStorage } from "../browser/storage-state.ts";
 import type { LoopBrowser, Observation } from "../loop/loop-browser.ts";
@@ -62,6 +63,7 @@ export class FakeLoopBrowser implements LoopBrowser {
   /** A hand-over a function call asks for (the reason shown), e.g. fill_credential's needs_human. */
   functionHandOver: (name: FunctionToolName) => string | null = () => null;
   readonly navigations: string[] = [];
+  readonly signInFlow = new SignInFlow();
   blocked: BlockedNavigation[] = [];
   /** Runs after each single action, e.g. to change what lies under a later action of the batch. */
   actionHook: ((action: ComputerAction) => void | Promise<void>) | null = null;
@@ -83,8 +85,12 @@ export class FakeLoopBrowser implements LoopBrowser {
     ((actions: readonly ComputerAction[], signal: AbortSignal) => Promise<void>) | null = null;
   functionOutput = (name: string): string => JSON.stringify({ ok: true, tool: name });
 
+  /** Runs as each observation starts, e.g. a navigation the page starts after its act ended. */
+  observeHook: (() => void) | null = null;
+
   async observe(signal: AbortSignal): Promise<Observation> {
     signal.throwIfAborted();
+    this.observeHook?.();
     this.guard?.assertAgent(signal);
     return {
       url: this.url,

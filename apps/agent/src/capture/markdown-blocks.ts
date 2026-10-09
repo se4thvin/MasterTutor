@@ -124,6 +124,73 @@ const ENTITIES: Record<string, string> = {
   "&#39;": "'",
 };
 
+/**
+ * The header of an interactive-activity callout (Obsidian syntax): fixed words that link back to
+ * the activity on its page. Built only here, and the only non-page text a DOM block may carry:
+ * blockPlainText leaves it out, so verification still reads page text alone. Page text can never
+ * produce it: extraction escapes `[` in text, so a page's own "[!example]" reads `\[!example\]`.
+ */
+const ACTIVITY_LABEL = "Interactive activity";
+const ACTIVITY_HEADER =
+  /^> \[!example\] (?:\[Interactive activity\]\([^()\s]*\)|Interactive activity)(?:\n|$)/;
+
+/** The callout's title, placed after the line's own `> ` prefix: `[!example] [Interactive activity](link)`. */
+export function activityCallout(link: string | null): string {
+  const percent = (char: string) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`;
+  const target = link?.replace(/[\s()<>]/g, percent);
+  return `[!example] ${target ? `[${ACTIVITY_LABEL}](${target})` : ACTIVITY_LABEL}`;
+}
+
+const ENUMERATOR = /^\(?\d{1,3}\\?[.)]$/;
+
+/**
+ * Joins a number standing alone on its line ("1)", "2.") to the next text line, as question sets
+ * render: `1)` then the prompt, escaped (`1\\) prompt`) so it stays text rather than a list.
+ * Lines inside fenced code are never touched. Quoted lines join only with quoted lines, prose only with prose;
+ * a number before a heading, list, table, fence or another number stays as it is.
+ */
+export function joinEnumerators(markdown: string): string {
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let fence: string | null = null; // the open fence's marker
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const marker = FENCE.exec(line.replace(/^(?:>\s?)+/, ""))?.[1];
+    if (fence !== null || marker) {
+      // Inside a fence until a marker of the same character, at least as long, closes it.
+      if (fence === null) fence = marker!;
+      else if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      out.push(line);
+      continue;
+    }
+    const quote = line.startsWith(">") ? ">" : "";
+    /** A line's text in this line's context (quoted or prose); null in the other context. */
+    const body = (value: string | undefined) =>
+      value !== undefined && (quote ? value.startsWith(">") : !value.startsWith(">"))
+        ? value.slice(quote.length).trim()
+        : null;
+    if (ENUMERATOR.test(body(line)!)) {
+      let next = i + 1;
+      while (body(lines[next]) === "") next++;
+      const text = body(lines[next]);
+      if (
+        text &&
+        !ENUMERATOR.test(text) &&
+        !startsBlock(text, body(lines[next + 1]) ?? undefined)
+      ) {
+        // The number is page text, not list syntax: escaped, it renders and verifies as written.
+        const number = line.trimEnd().replace(/\\?([.)])$/, "\\$1");
+        out.push(`${number} ${text}`);
+        i = next;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 /** Media captions and math are compared by other means (assets stored, TeX annotations), never as text. */
 const NO_PLAIN_TEXT = new Set(["math", "image", "figure", "keyframe"]);
 
@@ -132,7 +199,9 @@ export function blockPlainText(block: { type: string; markdown: string }): strin
   if (NO_PLAIN_TEXT.has(block.type)) return "";
   if (block.type === "code")
     return normalizeText(block.markdown.replace(/^\s{0,3}(`{3,}|~{3,}).*$/gm, ""));
-  const syntaxFree = block.markdown
+  const markdown =
+    block.type === "quote" ? block.markdown.replace(ACTIVITY_HEADER, "") : block.markdown;
+  const syntaxFree = markdown
     // Real tags only (`<b>`, `</sub>`, `<br/>`): a bare `<` or `>` in prose is visible text.
     .replace(/<\/?[A-Za-z][\w:-]*(?:\s[^<>]*)?\/?>/g, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")

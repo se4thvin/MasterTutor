@@ -57,7 +57,10 @@ docker run -d --name "$SLOT" --network "$NET" --ip "$PREFIX.20" \
 wait_healthy || fail "slot did not become healthy"
 pass "healthy"
 
-from_ip "$PREFIX.10" "http://$PREFIX.20:9223/json/version" | grep -q '"Browser"' || fail "CDP not reachable from the agent IP"
+# Capture, then match: piping into grep -q lets grep exit early and SIGPIPE the producer, which
+# pipefail then reports as a failure even though the match succeeded.
+cdp_version="$(from_ip "$PREFIX.10" "http://$PREFIX.20:9223/json/version")" || fail "CDP not reachable from the agent IP"
+grep -q '"Browser"' <<<"$cdp_version" || fail "CDP not reachable from the agent IP"
 pass "CDP reachable from the agent IP"
 if from_ip "$PREFIX.11" "http://$PREFIX.20:9223/json/version" >/dev/null; then fail "CDP reachable from a non-agent IP"; fi
 pass "CDP blocked for other IPs"
@@ -119,9 +122,10 @@ pass "n.eko legacy, cookie, hosting, upload and chat settings"
 # 400: the endpoint exists and wants a websocket upgrade (404 without NEKO_LEGACY; 000 if unreachable).
 ws_code="$(from_ip "$PREFIX.11" -o /dev/null -w '%{http_code}' "http://$PREFIX.20:8080/ws")"
 [[ "$ws_code" == "400" ]] || fail "legacy client endpoint /ws missing (NEKO_LEGACY): HTTP $ws_code"
-from_ip "$PREFIX.11" -o /dev/null -D - -X POST -H 'Content-Type: application/json' \
+login_headers="$(from_ip "$PREFIX.11" -o /dev/null -D - -X POST -H 'Content-Type: application/json' \
   -d "{\"username\":\"user\",\"password\":\"$(hmac "$MEMBER_SECRET")\"}" \
-  "http://$PREFIX.20:8080/api/login" | grep -qi '^set-cookie: NEKO_SESSION=' \
+  "http://$PREFIX.20:8080/api/login")" || fail "n.eko login request failed"
+grep -qi '^set-cookie: NEKO_SESSION=' <<<"$login_headers" \
   || fail "n.eko login does not set the NEKO_SESSION cookie (cookie auth off)"
 pass "legacy /ws endpoint and cookie auth enabled"
 # S5: the legacy side endpoints never answer without credentials.

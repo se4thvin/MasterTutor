@@ -2,6 +2,8 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { drawMasks, sameBoxes } from "./masking.ts";
 import { PERCEPTUAL_SAME, perceptualDistance, perceptualHash } from "./phash.ts";
+import { captureFrame } from "./screenshot.ts";
+import type { BrowserSession } from "./session.ts";
 
 const white = (width: number, height: number) =>
   sharp({ create: { width, height, channels: 3, background: { r: 255, g: 255, b: 255 } } })
@@ -58,5 +60,40 @@ describe("perceptualHash", () => {
     const a = await perceptualHash(striped);
     expect(perceptualDistance(a, await perceptualHash(striped))).toBe(0);
     expect(perceptualDistance(a, await perceptualHash(base))).toBeGreaterThan(2 * PERCEPTUAL_SAME);
+  });
+});
+
+describe("captureFrame (MH sign-in hang)", () => {
+  const session = (send: () => Promise<unknown>) =>
+    ({ cdp: async () => ({ send }) }) as unknown as Pick<BrowserSession, "cdp">;
+  const signal = new AbortController().signal;
+
+  it("returns the frame when the capture answers", async () => {
+    expect(
+      await captureFrame(
+        session(async () => ({ data: "cG5n" })),
+        signal,
+        1_000,
+      ),
+    ).toBe("cG5n");
+  });
+  it("gives up on a capture the page never answers (a renderer swap), so it is retaken", async () => {
+    const never = () => new Promise<never>(() => undefined);
+    expect(await captureFrame(session(never), signal, 20)).toBeNull();
+  });
+  it("retakes a capture sent to a page that swapped process, and rethrows anything else", async () => {
+    const fail = (message: string) => () => Promise.reject(new Error(message));
+    const swapped = "Protocol error (Page.captureScreenshot): Not attached to an active page";
+    expect(await captureFrame(session(fail(swapped)), signal, 1_000)).toBeNull();
+    await expect(captureFrame(session(fail("boom")), signal, 1_000)).rejects.toThrow("boom");
+  });
+  it("stops at once when the run is interrupted", async () => {
+    const controller = new AbortController();
+    const pending = captureFrame(
+      session(() => new Promise<never>(() => undefined)),
+      controller.signal,
+    );
+    controller.abort(new Error("takeover"));
+    await expect(pending).rejects.toThrow("takeover");
   });
 });

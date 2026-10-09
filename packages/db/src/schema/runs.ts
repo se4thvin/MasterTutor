@@ -70,6 +70,8 @@ export const runs = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     goal: text("goal").notNull(),
+    /** The generated short title, written once by the agent; null shows fallbackRunTitle(goal). */
+    title: text("title"),
     status: runStatusEnum("status").notNull().default("queued"),
     waitReason: waitReasonEnum("wait_reason"),
     controller: controllerEnum("controller").notNull().default("agent"),

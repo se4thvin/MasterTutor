@@ -8,6 +8,8 @@ import {
 } from "../browser/region-capture.ts";
 import type { BrowserSession } from "../browser/session.ts";
 import { sha256Hex } from "../notes/hash.ts";
+import { maskMhtml } from "./mhtml-mask.ts";
+import { pageStripSecretFields, type FilledFieldIds } from "./page/strip-fields.ts";
 import type { StepWriter } from "../tools/types.ts";
 
 export const MAX_FULLPAGE_HEIGHT = 16_384;
@@ -22,7 +24,9 @@ export interface Snapshot {
 
 /**
  * Spec §7.1 provenance: MHTML plus a masked full-page screenshot, each hashed. MHTML serializes form
- * state, so it is skipped when the page has secret fields or the run has vault material (decisions 5, 15).
+ * state: on a run with vault material or a page with secret fields it is masked (snapshot ruling,
+ * superseding decisions 5 and 15: field values removed, secrets redacted), and skipped with the
+ * reason in `skipped` only when a secret would still remain.
  */
 export async function takeSnapshot(
   session: BrowserSession,
@@ -32,13 +36,19 @@ export async function takeSnapshot(
   const cdp = await session.cdp();
   const skipped: string[] = [];
   let mhtml: Uint8Array | null = null;
-  if (mask.hasSecrets())
-    skipped.push("mhtml:secrets_registered"); // B3 seam
-  else if (await hasMaskTargets(session, mask)) skipped.push("mhtml:secret_fields");
-  else
-    mhtml = new TextEncoder().encode(
-      (await cdp.send("Page.captureSnapshot", { format: "mhtml" })).data,
+  const raw = (await cdp.send("Page.captureSnapshot", { format: "mhtml" })).data;
+  if (mask.hasSecrets() || (await hasMaskTargets(session, mask))) {
+    const masked = await maskMhtml(raw, mask, async (html) =>
+      (await session.worlds()).evaluate(pageStripSecretFields, {
+        html: [...html],
+        filled: await filledFieldIds(session, mask),
+      }),
     );
+    if (masked.kind === "masked") mhtml = new TextEncoder().encode(masked.mhtml);
+    else skipped.push(masked.reason);
+  } else {
+    mhtml = new TextEncoder().encode(raw);
+  }
   const metrics = await cdp.send("Page.getLayoutMetrics");
   const fullWidth = Math.ceil(metrics.cssContentSize.width);
   const fullHeight = Math.ceil(metrics.cssContentSize.height);
@@ -64,6 +74,28 @@ export async function takeSnapshot(
     pngSha256: png ? sha256Hex(png) : null,
     skipped,
   };
+}
+
+/** The id and name of each field the vault filled on this page, to find it in the serialized copy. */
+async function filledFieldIds(
+  session: BrowserSession,
+  mask: MaskSources,
+): Promise<FilledFieldIds[]> {
+  const cdp = await session.cdp();
+  const out: FilledFieldIds[] = [];
+  for (const backendNodeId of mask.nodeIds(cdp)) {
+    const node = await cdp
+      .send("DOM.describeNode", { backendNodeId })
+      .then((result) => result.node)
+      .catch(() => null);
+    const attributes = node?.attributes ?? [];
+    const value = (name: string) => {
+      const index = attributes.findIndex((attr, i) => i % 2 === 0 && attr === name);
+      return index >= 0 ? (attributes[index + 1] ?? null) : null;
+    };
+    out.push({ id: value("id"), name: value("name") });
+  }
+  return out;
 }
 
 export interface SnapshotKeys {

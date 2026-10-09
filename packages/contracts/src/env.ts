@@ -5,10 +5,12 @@ import {
   DbPassword,
   GarageKeyId,
   GarageSecret,
+  ObservePassword,
   PostgresUrl,
 } from "./primitives.ts";
 import { SlotList } from "./constants.ts";
-import { OBSERVE_INTERNAL_URL } from "./observability.ts";
+import { DEFAULT_CDP_SUBNET_PREFIX } from "./live.ts";
+import { ALERT_WEBHOOK_INTERNAL_URL, OBSERVE_INTERNAL_URL } from "./observability.ts";
 
 export const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 export const LogLevel = z.enum(LOG_LEVELS);
@@ -84,7 +86,12 @@ export const WebEnv = z
     /** OpenObserve's alert webhook bearer (spec §13.2): unset means the webhook does not exist. */
     ALERT_WEBHOOK_SECRET: Secret.optional(),
     /** The viewer user ForwardAuth injects for /observability (spec §12): unset means unavailable. */
-    OBSERVE_VIEWER_PASSWORD: Secret.optional(),
+    OBSERVE_VIEWER_PASSWORD: ObservePassword.optional(),
+    /** web's cdp address is <prefix>.11: the Host Traefik's ForwardAuth calls carry (D50 I-1). */
+    CDP_SUBNET_PREFIX: z
+      .string()
+      .regex(/^(?:[0-9]{1,3}\.){2}[0-9]{1,3}$/)
+      .default(DEFAULT_CDP_SUBNET_PREFIX),
     /** Test-only: serve the in-memory fixture API (apps/web/lib/fixtures). Never set in compose files. */
     WEB_FIXTURE_API: Flag,
   })
@@ -152,11 +159,13 @@ export type GarageInitEnv = z.infer<typeof GarageInitEnv>;
 export const ObservabilityInitEnv = z.object({
   ...Common,
   OBSERVE_URL: z.url().default(OBSERVE_INTERNAL_URL),
-  OBSERVE_ROOT_PASSWORD: Secret,
-  OBSERVE_INGEST_PASSWORD: Secret,
-  OBSERVE_VIEWER_PASSWORD: Secret,
+  OBSERVE_ROOT_PASSWORD: ObservePassword,
+  /** Set for one deploy to rotate root: the password OpenObserve still has (review I4). */
+  OBSERVE_ROOT_PASSWORD_PREVIOUS: ObservePassword.optional(),
+  OBSERVE_INGEST_PASSWORD: ObservePassword,
+  OBSERVE_VIEWER_PASSWORD: ObservePassword,
   ALERT_WEBHOOK_SECRET: Secret,
-  ALERT_WEBHOOK_URL: z.url().default("http://web:3000/api/alerts/webhook"),
+  ALERT_WEBHOOK_URL: z.url().default(ALERT_WEBHOOK_INTERNAL_URL),
   SPEND_ALERT_USD_PER_HOUR: z.coerce.number().positive().max(1_000).default(25),
 });
 export type ObservabilityInitEnv = z.infer<typeof ObservabilityInitEnv>;

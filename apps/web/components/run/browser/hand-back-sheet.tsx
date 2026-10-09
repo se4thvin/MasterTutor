@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import type { HeldDownload } from "../model/run-model.ts";
-import { untrustedText } from "../model/untrusted-text.ts";
+import { untrustedText } from "@mastertutor/contracts";
 
 type Choice = "keep" | "discard";
 

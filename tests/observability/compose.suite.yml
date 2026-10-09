@@ -1,0 +1,39 @@
+# The observability suite only (scripts/observability-stack.sh), on top of compose.observability.yml:
+# Web Push needs an https origin (spec §13.4), so Traefik serves TLS (its own self-signed default
+# certificate) and BETTER_AUTH_URL is https. A stub push service answers on a host the push SSRF
+# guard accepts, stub.push.services.mozilla.com, on the internal `observe` network only, with a
+# throwaway certificate web trusts through NODE_EXTRA_CA_CERTS (MT_OBS_TLS_DIR, made per run).
+services:
+  traefik:
+    command:
+      - --entrypoints.web.address=:${TEST_HTTP_PORT:-18080}
+      - --entrypoints.web.http.tls=true
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --ping=true
+      - --log.level=WARN
+  web:
+    environment:
+      BETTER_AUTH_URL: https://localhost:${TEST_HTTP_PORT:-18080}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:?set by scripts/observability-stack.sh}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?set by scripts/observability-stack.sh}
+      NODE_EXTRA_CA_CERTS: /obs-tls/cert.pem
+    volumes:
+      - ${MT_OBS_TLS_DIR:?set by scripts/observability-stack.sh}/cert.pem:/obs-tls/cert.pem:ro
+  push-stub:
+    profiles: ["observability"]
+    image: node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+    user: node
+    command: ["node", "/srv/push-stub.ts"]
+    read_only: true
+    cap_drop: [ALL]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    volumes:
+      - ./tests/observability/push-stub.ts:/srv/push-stub.ts:ro
+      - ${MT_OBS_TLS_DIR:?set by scripts/observability-stack.sh}:/tls:ro
+    labels:
+      mastertutor.ci: "1"
+      mastertutor.ci.run: ${MT_CI_RUN_ID:-local}
+    networks:
+      observe:
+        aliases: [stub.push.services.mozilla.com]

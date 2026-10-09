@@ -8,7 +8,7 @@ import {
   redactDeep,
   type MaskSources,
 } from "./masking.ts";
-import { captureModelScreenshot } from "./screenshot.ts";
+import { WITHHELD, captureModelScreenshot } from "./screenshot.ts";
 import type { BrowserSession } from "./session.ts";
 
 type Params = Record<string, unknown> | undefined;
@@ -260,20 +260,59 @@ describe("secret text scan (containsSecretText)", () => {
     expect((await captureModelScreenshot(fake.session, sources([9]), signal)).dropped).toBe(false);
   });
 
+  it("does not withhold a frame for page text that only a generic secret matches (black-screen report)", async () => {
+    // The password is an ordinary word: its text match redacts read_page text, but the page
+    // showing that word is not the page showing the password (MaskSources.showsSecret).
+    const generic: MaskSources = {
+      ...sources([], ["parity"]),
+      showsSecret: () => false,
+    };
+    const fake = fakeSession({
+      ax: { main: [{ name: "2.3.3: Parity checks." }, { name: "parity" }] },
+    });
+    const shot = await captureModelScreenshot(fake.session, generic, signal);
+    expect(shot.withheld).toBeNull();
+    expect(shot.dropped).toBe(false);
+  });
+
+  it("tells the model the real reason a frame is withheld", async () => {
+    const shown: MaskSources = {
+      ...sources([], ["MARMOT4CANARY8VELVET"]),
+      showsSecret: () => true,
+    };
+    const fake = fakeSession({ ax: { main: [{ name: "pw MARMOT4CANARY8VELVET" }] } });
+    expect((await captureModelScreenshot(fake.session, shown, signal)).withheld).toBe(
+      WITHHELD.secretText,
+    );
+    const cross = [
+      { id: "main", securityOrigin: "http://a.test" },
+      { id: "x", securityOrigin: "http://b.test" },
+    ];
+    const border = [10, 10, 60, 10, 60, 30, 10, 30];
+    const filledPage = fakeSession({ frames: cross, boxModel: () => ({ model: { border } }) });
+    expect((await captureModelScreenshot(filledPage.session, sources([9]), signal)).withheld).toBe(
+      WITHHELD.crossOriginFrame,
+    );
+  });
+
   it("drops frames with cross-origin iframes only while filled nodes are registered (R-E5)", async () => {
     const cross = [
       { id: "main", securityOrigin: "http://a.test" },
       { id: "x", securityOrigin: "http://b.test" },
     ];
-    const shoot = (mask: MaskSources) =>
+    const border = [10, 10, 60, 10, 60, 30, 10, 30];
+    const shoot = (mask: MaskSources, nodeState = "visible") =>
       captureModelScreenshot(
-        fakeSession({ frames: cross, nodeState: "hidden" }).session,
+        fakeSession({ frames: cross, nodeState, boxModel: () => ({ model: { border } }) }).session,
         mask,
         signal,
       );
     expect((await shoot(sources())).dropped).toBe(false);
     expect((await shoot(secret)).dropped).toBe(false);
     expect((await shoot(sources([9]))).dropped).toBe(true);
+    // A filled field an in-page sign-in hid or removed is gone from the screen: stay sighted.
+    expect((await shoot(sources([9]), "hidden")).dropped).toBe(false);
+    expect((await shoot(sources([9]), "detached")).dropped).toBe(false);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_UNTRUSTED, untrustedText } from "./untrusted-text.ts";
+import { MAX_UNTRUSTED, untrustedText } from "./untrusted.ts";
 
 describe("untrustedText (S6)", () => {
   it("strips bidi overrides, isolates and zero-width characters", () => {
