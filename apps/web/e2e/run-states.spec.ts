@@ -188,9 +188,10 @@ test.describe("Run view states", () => {
     await expect(page.locator(live).filter({ hasText: "You're in control" })).toHaveCount(1);
   });
 
-  test("the header cleans the goal (final M11)", async ({ page }) => {
+  // The header shows the run title (a model's output, or the goal's fallback): untrusted text.
+  test("the header cleans the title (final M11)", async ({ page }) => {
     test.skip(page.viewportSize()?.width !== 1440, "behaviour check runs once");
-    await gotoRun(page, { detail: recordedDetail({ goal: "Evil\u202Egoal\u200B here" }) });
+    await gotoRun(page, { detail: recordedDetail({ title: "Evil\u202Egoal\u200B here" }) });
     await expect(page.locator("h1")).toHaveText("Evilgoal here");
   });
 

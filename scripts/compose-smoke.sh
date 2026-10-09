@@ -39,7 +39,10 @@ expected_slots="$(grep -E '^BROWSER_SLOTS=' .env.test | cut -d= -f2 | tr ',' '\n
 [[ "$(psql_value "select count(*) from pg_extension where extname = 'vector'")" == "1" ]] || fail "pgvector missing"
 pass "migrations applied"
 
-curl -fsS "$BASE/healthz" | grep -q '"status":"ok"' || fail "web /healthz through Traefik"
+# Capture, then match: piping into grep -q lets grep exit early and SIGPIPE the producer, which
+# pipefail reports as the producer's failure (a false fail, or a false pass under `if`).
+web_health="$(curl -fsS "$BASE/healthz")" || fail "web /healthz through Traefik"
+grep -q '"status":"ok"' <<<"$web_health" || fail "web /healthz through Traefik"
 pass "web healthy through Traefik"
 
 [[ "$(signup owner@example.test)" == "200" ]] || fail "first sign-up"
@@ -53,8 +56,8 @@ pass "Better Auth sign-up and workspace bootstrap"
   || fail "agent /healthz"
 pass "agent healthy (db + storage)"
 
-"${DC[@]}" exec -T agent node apps/agent/src/bin/probe-slot.ts browser-1 | grep -q '"browser":"Chrome/' \
-  || fail "agent cannot reach slot CDP"
+slot_probe="$("${DC[@]}" exec -T agent node apps/agent/src/bin/probe-slot.ts browser-1)" || fail "agent cannot reach slot CDP"
+grep -q '"browser":"Chrome/' <<<"$slot_probe" || fail "agent cannot reach slot CDP"
 pass "slot CDP reachable from agent"
 
 # Negative probes assert the blocked-connection outcome specifically (refused or timed out),
@@ -87,7 +90,8 @@ rc=0
 pass "slot cannot reach web, metadata or backend"
 
 for port in 9223 8080; do
-  if "${DC[@]}" port browser-1 "$port" 2>/dev/null | grep -q ':[1-9]'; then fail "port $port published on the host"; fi
+  published="$("${DC[@]}" port browser-1 "$port" 2>/dev/null || true)"
+  if grep -q ':[1-9]' <<<"$published"; then fail "port $port published on the host"; fi
 done
 pass "CDP and n.eko not published on the host"
 
