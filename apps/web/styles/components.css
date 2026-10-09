@@ -98,8 +98,10 @@
   /* The one glass recipe (sheets, toasts, sidebar, palette). Surfaces tune it with --glass-bg. */
   .glass {
     background: var(--glass-bg, var(--glass));
+    /* Unprefixed only: the build adds -webkit- for Safari. Written both ways, Next's minifier
+       merged them into the prefixed one alone, which Chromium ignores: no blur at all
+       (check-prod-bundle.ts fails the build output if that comes back). */
     backdrop-filter: var(--blur);
-    -webkit-backdrop-filter: var(--blur);
   }
   .design-glass-demo {
     background:
