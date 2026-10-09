@@ -133,3 +133,25 @@ describe("the single OpenAI factory (openai-data-policy.md)", () => {
     ).toEqual({ model: "m", input: [], store: false });
   });
 });
+
+describe("reasoning effort (D52, spike §10)", () => {
+  it("sends a reasoning effort only when a structured request asks for one", async () => {
+    mock.setStructured("effort_format", () => ({ answer: 1 }));
+    const ask = (reasoningEffort?: "none" | "low") =>
+      client().responses.parse(
+        {
+          model: "gpt-6-luna",
+          instructions: "Answer.",
+          input: [{ role: "user", content: "q" }],
+          schema: z.object({ answer: z.number() }),
+          name: "effort_format",
+          reasoningEffort,
+        },
+        { signal: signal() },
+      );
+    await ask("none");
+    expect(mock.requests.at(-1)!.body).toMatchObject({ reasoning: { effort: "none" } });
+    await ask();
+    expect(mock.requests.at(-1)!.body).not.toHaveProperty("reasoning");
+  });
+});

@@ -9,6 +9,15 @@ import { DEFAULT_CDP_SUBNET_PREFIX, webCdpOrigin } from "./live.ts";
 import { Alias, IsoDateTime, Origin, Uuid } from "./primitives.ts";
 import { ToolName } from "./tools.ts";
 
+/* ------------------------------------ spend ------------------------------------ */
+
+/**
+ * Daily caps (USD per UTC day) for the Observer roles (OBSERVER_ROLES in ./telemetry.ts) that spend
+ * outside a run's budget. The Guard and the watcher are charged to the run they review. The
+ * document designer's (layout, D53b) figure is provisional: its spec sets it.
+ */
+export const OBSERVER_DAILY_USD = { copilot: 3, layout: 1 } as const;
+
 /* ----------------------------------- Guard ----------------------------------- */
 
 export const GUARD_VERDICTS = ["allow", "flag", "escalate", "block"] as const;
@@ -176,6 +185,8 @@ export const GUARD_BLOCKED_NOTE =
   "Blocked by the safety observer. Do not retry or work around it; choose a different approach or ask the user.";
 /** Turns after a malicious_instructions check during which every actuation is reviewed. */
 export const POST_INJECTION_STEPS = 5;
+/** The screen's reasoning effort, pinned by the spike (spec §10): luna refuses "minimal". */
+export const GUARD_REASONING: "none" | "low" | null = "none";
 
 /* ------------------------------ trajectory watcher ------------------------------ */
 
@@ -359,7 +370,7 @@ export const COPILOT_LIMITS = {
   codeMatches: 50,
   codeReadLines: 200,
   retentionDays: 30,
-  dailyUsdDefault: 3,
+  dailyUsdDefault: OBSERVER_DAILY_USD.copilot,
 } as const;
 
 /* ---------------------------------- routing ---------------------------------- */

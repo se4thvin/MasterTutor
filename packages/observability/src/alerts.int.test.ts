@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { ALERT_RULES } from "@mastertutor/contracts";
 import { LOG_STREAMS } from "@mastertutor/contracts/telemetry";
 import { TestContainers } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -42,7 +43,7 @@ afterAll(async () => {
 });
 
 describe("upsertAlerts against the pinned image", () => {
-  it("creates the five alerts once, on a fresh image whose metric streams have no data yet", async () => {
+  it("creates every alert rule once, on a fresh image whose metric streams have no data yet", async () => {
     await upsertAlerts(o2.root, { spendUsdPerHour: 25 });
     await upsertAlerts(o2.root, { spendUsdPerHour: 30 });
     const list = await o2.root.call(
@@ -52,13 +53,7 @@ describe("upsertAlerts against the pinned image", () => {
       undefined,
       AlertList,
     );
-    expect(list.list.map((a) => a.name).sort()).toEqual([
-      "error_spike",
-      "model_request_rejected",
-      "run_failed",
-      "slot_crash_loop",
-      "spend_jump",
-    ]);
+    expect(list.list.map((a) => a.name).sort()).toEqual([...ALERT_RULES].sort());
     const spend = list.list.find((a) => a.name === "spend_jump")!;
     const stored = await o2.root.call("getAlert", "GET", o2Paths.alert("default", spend.alert_id));
     expect(JSON.stringify(stored)).toContain('"value":30');

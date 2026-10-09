@@ -1,53 +1,13 @@
-import { EMPTY_USAGE, MODELS, type Usage } from "@mastertutor/contracts";
-
-export interface TokenUsage {
-  input: number;
-  cached: number;
-  /** Input tokens written to the prompt cache (input_tokens_details.cache_write_tokens), part of `input`. */
-  cacheWrite: number;
-  output: number;
-}
-
-interface Price {
-  inputPerM: number;
-  cachedPerM: number;
-  /** Unpublished (run 30): assumed equal to inputPerM so budgets never under-estimate. */
-  cacheWritePerM: number;
-  outputPerM: number;
-  longContextAbove: number;
-}
-
-/** USD per million tokens (run 01). gpt-6.1-sol is unpublished; assumed equal so budgets over-estimate. */
-export const MODEL_PRICES: Record<string, Price> = {
-  [MODELS.agentPrimary]: {
-    inputPerM: 10,
-    cachedPerM: 1,
-    cacheWritePerM: 10,
-    outputPerM: 50,
-    longContextAbove: 272_000,
-  },
-  [MODELS.agentFallback]: {
-    inputPerM: 10,
-    cachedPerM: 1,
-    cacheWritePerM: 10,
-    outputPerM: 50,
-    longContextAbove: 272_000,
-  },
-};
-
-export function costUsd(model: string, tokens: TokenUsage): number {
-  const price = MODEL_PRICES[model] ?? MODEL_PRICES[MODELS.agentPrimary]!;
-  const long = tokens.input > price.longContextAbove;
-  const uncached = Math.max(0, tokens.input - tokens.cached - tokens.cacheWrite);
-  const input =
-    ((uncached * price.inputPerM +
-      tokens.cached * price.cachedPerM +
-      tokens.cacheWrite * price.cacheWritePerM) /
-      1e6) *
-    (long ? 2 : 1);
-  const output = ((tokens.output * price.outputPerM) / 1e6) * (long ? 1.5 : 1);
-  return input + output;
-}
+/** The agent's usage helpers; prices live in @mastertutor/contracts (one table, spec §3). */
+import {
+  EMPTY_USAGE,
+  MODELS,
+  EMBEDDING_USD_PER_M,
+  TRANSCRIPTION_USD_PER_MINUTE,
+  costUsd,
+  type TokenUsage,
+  type Usage,
+} from "@mastertutor/contracts";
 
 export function usageDelta(model: string, tokens: TokenUsage, steps = 1): Usage {
   return {
@@ -70,11 +30,6 @@ export function addUsage(a: Usage, b: Usage): Usage {
     activeMs: a.activeMs + b.activeMs,
   };
 }
-
-/** USD per million input tokens for MODELS.embeddings (text-embedding-3-small list price). */
-export const EMBEDDING_USD_PER_M = 0.02;
-/** USD per audio minute for MODELS.transcription (gpt-4o-transcribe-diarize list price). */
-export const TRANSCRIPTION_USD_PER_MINUTE = 0.006;
 
 /** Embedding spend for one request; counts toward the run budget (preflight F16). */
 export function embeddingUsage(tokens: number): Usage {

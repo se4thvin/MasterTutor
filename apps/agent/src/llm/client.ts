@@ -5,7 +5,7 @@ import {
   type ResponseInputItem,
   type StatelessOpenAI,
 } from "./openai.ts";
-import type { TokenUsage } from "./pricing.ts";
+import type { TokenUsage } from "@mastertutor/contracts";
 import { agentTools } from "./tools.ts";
 
 /** One stateless request: the whole input is rebuilt from run_transcript every time (D37). */

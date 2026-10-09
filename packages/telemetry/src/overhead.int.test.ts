@@ -46,7 +46,7 @@ async function stepEnvelope(): Promise<void> {
       });
       recordRunEvent({ type: "status", status: "running", waitReason: null, reason: null });
       recordRunEvent({ type: "control", holder: "agent" });
-      recordSpend(0.01);
+      recordSpend(0.01, "run");
     });
     log.info({ seq: 1 }, "act done");
     log.debug({ seq: 1 }, "detail");

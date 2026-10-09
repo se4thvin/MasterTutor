@@ -21,6 +21,10 @@ export interface Instruments {
   alertsReceived: Counter;
   pushSends: Counter;
   telemetryDropped: Counter;
+  observerVerdicts: Counter;
+  observerFailures: Counter;
+  observerOverrides: Counter;
+  observerSpend: Counter;
 }
 
 let cache: Instruments | null = null;
@@ -61,6 +65,10 @@ export function instruments(): Instruments {
     alertsReceived: counter(METRIC.alertsReceived),
     pushSends: counter(METRIC.pushSends),
     telemetryDropped: counter(METRIC.telemetryDropped),
+    observerVerdicts: counter(METRIC.observerVerdicts),
+    observerFailures: counter(METRIC.observerFailures),
+    observerOverrides: counter(METRIC.observerOverrides),
+    observerSpend: counter(METRIC.observerSpend),
   };
   return cache;
 }

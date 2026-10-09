@@ -14,6 +14,9 @@ describe("constants", () => {
       agentFallback: "gpt-6.1-sol",
       filing: "gpt-6-luna",
       runTitle: "gpt-6-luna",
+      observerGuardScreen: "gpt-6-luna",
+      observerGuardReview: "gpt-6.1-sol",
+      observerCopilot: "gpt-6.1-sol",
       transcription: "gpt-4o-transcribe-diarize",
       embeddings: "text-embedding-3-small",
     });

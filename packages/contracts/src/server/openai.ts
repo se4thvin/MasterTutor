@@ -66,6 +66,11 @@ export interface StructuredRequest<S extends z.ZodType> {
   name: string;
   /** A hard cap on output tokens (reasoning included); a cut-off answer does not parse. */
   maxOutputTokens?: number;
+  /**
+   * Only where the spike pinned support (spec §10): gpt-6-luna takes "none" or "low",
+   * gpt-6.1-sol "low" at the least; "minimal" is refused by both.
+   */
+  reasoningEffort?: "none" | "low";
 }
 
 export interface StructuredReply<T> {
@@ -160,6 +165,7 @@ export function createOpenAI(options: {
             input: request.input,
             text: { format: zodTextFormat(request.schema, request.name) },
             ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
+            ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
           },
           requestOptions,
         );

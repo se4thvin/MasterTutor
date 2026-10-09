@@ -6,6 +6,8 @@ import {
   recordModelTokens,
   recordRunEvent,
   recordRunFailure,
+  recordObserverFailure,
+  recordObserverSpend,
   recordSpend,
 } from "./record.ts";
 import { installTestTelemetry, type TestTelemetry } from "./testing.ts";
@@ -84,8 +86,8 @@ describe("run event recorders (spec §5.3, seam 6)", () => {
   });
 
   it("records spend, tokens and failures", async () => {
-    recordSpend(0.25);
-    recordSpend(0);
+    recordSpend(0.25, "run");
+    recordSpend(0, "run");
     recordModelTokens("gpt-6-astra", { input: 100, cached: 40, output: 10 });
     recordRunFailure("model_request_rejected");
     expect((await telemetry.metric(METRIC.spendUsd.name))[0]!.value).toBeCloseTo(0.25);
@@ -93,5 +95,44 @@ describe("run event recorders (spec §5.3, seam 6)", () => {
     expect((await telemetry.metric(METRIC.runFailures.name))[0]!.attributes).toEqual({
       "mt.error.code": "model_request_rejected",
     });
+  });
+
+  it("counts guard verdicts by verdict, category and rollout, and spend by purpose", async () => {
+    recordRunEvent({
+      type: "guard",
+      verdict: "block",
+      category: "data_exfiltration",
+      stage: "review",
+      rollout: "enforce",
+      applied: true,
+      items: 1,
+      flows: 1,
+    });
+    expect(await telemetry.metric(METRIC.observerVerdicts.name)).toEqual([
+      {
+        value: 1,
+        attributes: {
+          "mt.observer.verdict": "block",
+          "mt.observer.category": "data_exfiltration",
+          "mt.observer.rollout": "enforce",
+        },
+      },
+    ]);
+    recordSpend(0.5, "copilot");
+    expect(await telemetry.metric(METRIC.spendUsd.name)).toEqual([
+      { value: 0.5, attributes: { "mt.spend.purpose": "copilot" } },
+    ]);
+  });
+
+  it("counts observer spend and failures by role, never more", async () => {
+    recordObserverSpend("layout", 0.01);
+    recordObserverSpend("guard", 0);
+    recordObserverFailure("guard", "timeout");
+    expect(await telemetry.metric(METRIC.observerSpend.name)).toEqual([
+      { value: 0.01, attributes: { "mt.observer.role": "layout" } },
+    ]);
+    expect(await telemetry.metric(METRIC.observerFailures.name)).toEqual([
+      { value: 1, attributes: { "mt.observer.role": "guard", "mt.observer.outcome": "timeout" } },
+    ]);
   });
 });
