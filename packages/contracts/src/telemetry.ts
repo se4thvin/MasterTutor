@@ -49,6 +49,8 @@ export const ATTR = {
   modelName: "mt.model.name",
   modelFallback: "mt.model.fallback",
   modelAttempts: "mt.model.attempts",
+  decideTimeouts: "mt.model.decide_timeouts",
+  decideRetries: "mt.model.decide_retries",
   tokensInput: "mt.model.tokens.input",
   tokensCached: "mt.model.tokens.cached",
   tokensOutput: "mt.model.tokens.output",
@@ -168,6 +170,8 @@ export interface AttributeValues {
   "mt.model.name": string;
   "mt.model.fallback": boolean;
   "mt.model.attempts": number;
+  "mt.model.decide_timeouts": number;
+  "mt.model.decide_retries": number;
   "mt.model.tokens.input": number;
   "mt.model.tokens.cached": number;
   "mt.model.tokens.output": number;

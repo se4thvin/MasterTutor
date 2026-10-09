@@ -770,6 +770,14 @@ export class RunLoop {
           ...(mark ? { mark } : {}),
         });
     };
+    let decideSeq: number | undefined;
+    const progress = async (caption: string) => {
+      await this.#assertAgentControl(signal);
+      decideSeq ??= this.#deps.store.nextSeq();
+      await this.#deps.store.commit({
+        steps: [{ seq: decideSeq, phase: "decide", state: "started", caption }],
+      });
+    };
     // Every model call, compaction included, first re-checks who holds control (spec §10.3).
     const guarded = {
       call: async (request: Parameters<ModelCaller["call"]>[0], callSignal: AbortSignal) => {
@@ -778,7 +786,11 @@ export class RunLoop {
         if (this.#interruptPending) throw new Interrupted("message");
         this.#modelInFlight = true;
         try {
-          return await caller.call(request, callSignal);
+          return await caller.call(
+            request,
+            callSignal,
+            request.format === "agent_turn" ? progress : undefined,
+          );
         } finally {
           this.#modelInFlight = false;
         }
@@ -852,7 +864,21 @@ export class RunLoop {
     } catch (error) {
       // A compaction that succeeded was paid for even if the turn failed afterwards.
       if (deltas.length > 0) await this.#charge(deltas).catch(() => undefined);
-      if (interruptionOf(error) === "message") await this.#markInterrupted("decide", "aborted");
+      if (decideSeq !== undefined)
+        await this.#deps.store
+          .commit({
+            steps: [
+              {
+                seq: decideSeq,
+                phase: "decide",
+                state: "aborted",
+                caption: interruptionOf(error) === "message" ? INTERRUPTED_BY_MESSAGE : null,
+              },
+            ],
+          })
+          .catch(() => undefined);
+      else if (interruptionOf(error) === "message")
+        await this.#markInterrupted("decide", "aborted");
       throw error;
     }
     if (!compacted) record("in", pending, null);
@@ -887,7 +913,7 @@ export class RunLoop {
     const stored = await this.#deps.store.commit({
       steps: [
         {
-          seq: this.#deps.store.nextSeq(),
+          seq: decideSeq ?? this.#deps.store.nextSeq(),
           phase: "decide",
           state: "done",
           caption: shownModelText(parsed.turn?.reason, 300, redact) ?? display?.summary ?? null,
