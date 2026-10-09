@@ -1,0 +1,57 @@
+
+## kernel
+6.8.0-142-generic
+
+## kvm
+crw-rw---- 1 root kvm 10, 232 Oct  1 06:19 /dev/kvm
+kvm:x:994:
+994 660
+
+## tun
+crw-rw-rw- 1 root root 10, 200 Oct  1 06:19 /dev/net/tun
+
+## cpu-vulns
+/sys/devices/system/cpu/vulnerabilities/gather_data_sampling:Not affected
+/sys/devices/system/cpu/vulnerabilities/indirect_target_selection:Not affected
+/sys/devices/system/cpu/vulnerabilities/itlb_multihit:KVM: Mitigation: VMX disabled
+/sys/devices/system/cpu/vulnerabilities/l1tf:Mitigation: PTE Inversion; VMX: conditional cache flushes, SMT vulnerable
+/sys/devices/system/cpu/vulnerabilities/mds:Mitigation: Clear CPU buffers; SMT vulnerable
+/sys/devices/system/cpu/vulnerabilities/meltdown:Mitigation: PTI
+/sys/devices/system/cpu/vulnerabilities/mmio_stale_data:Mitigation: Clear CPU buffers; SMT vulnerable
+/sys/devices/system/cpu/vulnerabilities/reg_file_data_sampling:Not affected
+/sys/devices/system/cpu/vulnerabilities/retbleed:Not affected
+/sys/devices/system/cpu/vulnerabilities/spec_rstack_overflow:Not affected
+/sys/devices/system/cpu/vulnerabilities/spec_store_bypass:Mitigation: Speculative Store Bypass disabled via prctl
+/sys/devices/system/cpu/vulnerabilities/spectre_v1:Mitigation: usercopy/swapgs barriers and __user pointer sanitization
+/sys/devices/system/cpu/vulnerabilities/spectre_v2:Mitigation: Retpolines; IBPB: conditional; IBRS_FW; STIBP: conditional; RSB filling; PBRSB-eIBRS: Not affected; BHI: Not affected
+/sys/devices/system/cpu/vulnerabilities/srbds:Not affected
+/sys/devices/system/cpu/vulnerabilities/tsa:Not affected
+/sys/devices/system/cpu/vulnerabilities/tsx_async_abort:Mitigation: Clear CPU buffers; SMT vulnerable
+/sys/devices/system/cpu/vulnerabilities/vmscape:Mitigation: IBPB before exit to userspace
+
+## smt
+on
+
+## ksm
+0
+
+## swap
+NAME      TYPE SIZE USED PRIO
+/swap.img file   8G   0B   -2
+               total        used        free      shared  buff/cache   available
+Mem:             503          19         148           0         339         484
+Swap:              7           0           7
+
+## cgroup
+cgroup2fs
+cpuset cpu io memory hugetlb pids rdma misc
+
+## docker
+29.2.1 systemd 2 /mnt/raid0dev/docker
+
+## disk
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/md1        1.8T  466G  1.3T  27% /mnt/raid0dev
+
+## nft
+/usr/sbin/nft

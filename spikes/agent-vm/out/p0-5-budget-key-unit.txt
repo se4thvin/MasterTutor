@@ -1,0 +1,10 @@
+✔ select only the explicitly authorized running bench agent (1.551303ms)
+✔ reserve before send; charge failed requests conservatively (1.558636ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 371.916508

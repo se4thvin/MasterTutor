@@ -1,0 +1,59 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from runtime.Dockerfile
+#1 transferring dockerfile: 323B done
+#1 DONE 0.1s
+
+#2 [internal] load metadata for docker.io/library/mt-vm-p0-firecracker:1.17.0
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/5] FROM docker.io/library/mt-vm-p0-firecracker:1.17.0
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 7.45kB done
+#5 DONE 0.1s
+
+#6 [2/5] COPY images/vmlinux /opt/vm/vmlinux
+#6 CACHED
+
+#7 [3/5] COPY images/rootfs.ext4 /opt/vm/rootfs.ext4
+#7 CACHED
+
+#8 [4/5] COPY restore.py /opt/spike/restore.py
+#8 DONE 0.2s
+
+#9 [5/5] COPY restore-entry.sh /opt/spike/restore-entry.sh
+#9 DONE 0.1s
+
+#10 exporting to image
+#10 exporting layers 0.0s done
+#10 writing image sha256:8be7a890c5312315b7554fa4999495687f244a5222355f10bb6ead6071de16c7 done
+#10 naming to docker.io/library/mt-vm-p0-restore:local done
+#10 DONE 0.1s
+ Container mt-vm-p0-restore-fc Creating 
+Attaching to mt-vm-p0-restore-fc
+ Container mt-vm-p0-restore-fc Created 
+ Container mt-vm-p0-restore-fc Starting 
+ Container mt-vm-p0-restore-fc Started 
+mt-vm-p0-restore-fc  | {"bootstrap_failure": ["[    0.398588] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>", "[    0.400885] PTP clock support registered", "[    0.401613] NetLabel: Initializing", "[    0.402688] NetLabel:  domain hash size = 128", "[    0.404035] NetLabel:  protocols = UNLABELED CIPSOv4 CALIPSO", "[    0.405322] NetLabel:  unlabeled traffic allowed by default", "[    0.407049] PCI: Using ACPI for IRQ routing", "[    0.408351] PCI: System does not support PCI", "[    0.409402] vgaarb: loaded", "[    0.410162] clocksource: Switched to clocksource kvm-clock", "[    0.411643] VFS: Disk quotas dquot_6.6.0", "[    0.413069] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)", "[    0.415841] pnp: PnP ACPI init", "[    0.417095] pnp: PnP ACPI: found 2 devices", "[    0.420752] NET: Registered PF_INET protocol family", "[    0.422574] IP idents hash table entries: 65536 (order: 7, 524288 bytes, linear)", "[    0.425441] tcp_listen_portaddr_hash hash table entries: 2048 (order: 3, 32768 bytes, linear)", "[    0.427597] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)", "[    0.429582] TCP established hash table entries: 32768 (order: 6, 262144 bytes, linear)", "[    0.431955] TCP bind hash table entries: 32768 (order: 8, 1048576 bytes, linear)", "[    0.435104] TCP: Hash tables configured (established 32768 bind 32768)", "[    0.437200] MPTCP token hash table entries: 4096 (order: 5, 98304 bytes, linear)", "[    0.439144] UDP hash table entries: 2048 (order: 4, 65536 bytes, linear)", "[    0.440965] UDP-Lite hash table entries: 2048 (order: 4, 65536 bytes, linear)", "[    0.443035] NET: Registered PF_UNIX/PF_LOCAL protocol family", "[    0.444941] RPC: Registered named UNIX socket transport module.", "[    0.448058] RPC: Registered udp transport module.", "[    0.450431] RPC: Registered tcp transport module.", "[    0.452280] RPC: Registered tcp NFSv4.1 backchannel transport module.", "[    0.454774] NET: Registered PF_XDP protocol family", "[    0.456672] PCI: CLS 0 bytes, default 64", "[    0.458218] PCI-DMA: Using software bounce buffering for IO (SWIOTLB)", "[    0.460702] software IO TLB: mapped [mem 0x00000000bc000000-0x00000000c0000000] (64MB)", "[    0.463883] RAPL PMU: API unit is 2^-32 Joules, 0 fixed counters, 10737418240 ms ovfl timer", "[    0.467140] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x1fb623c7bdc, max_idle_ns: 440795310953 ns", "[    0.470851] clocksource: Switched to clocksource tsc", "[    0.472876] platform rtc_cmos: registered platform RTC device (no PNP device found)", "2026-10-09T19:54:43.387192499 [anonymous-instance:fc_vcpu 1] vcpu: IO read @ 0x87:0x1 failed: Failed to find address range.", "[    0.476950] Initialise system trusted keyrings", "[    0.478455] Key type blacklist registered", "[    0.480535] workingset: timestamp_bits=36 max_order=20 bucket_order=0", "[    0.485252] zbud: loaded", "[    0.487048] squashfs: version 4.0 (2009/01/31) Phillip Lougher", "[    0.489797] NFS: Registering the id_resolver key type", "[    0.491662] Key type id_resolver registered", "[    0.493162] Key type id_legacy registered", "[    0.494629] nfs4filelayout_init: NFSv4 File Layout Driver Registering...", "[    0.497117] fuse: init (API version 7.38)", "[    0.498658] SGI XFS with ACLs, security attributes, quota, no debug enabled", "[    0.515009] Key type asymmetric registered", "[    0.516321] Asymmetric key parser 'x509' registered", "[    0.517791] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 248)", "[    0.519835] io scheduler mq-deadline registered", "[    0.520995] io scheduler kyber registered", "[    0.522093] io scheduler bfq registered", "[    0.525933] Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled", "[    0.527764] 00:00: ttyS0 at I/O 0x3f8 (irq = 29, base_baud = 115200) is a 16550A", "[    0.535604] loop: module loaded", "[    0.536802] virtio_blk virtio0: 1/0/0 default/read/poll queues", "[    0.539100] virtio_blk virtio0: [vda] 3534848 512-byte logical blocks (1.81 GB/1.69 GiB)", "2026-10-09T19:54:43.452673273 [anonymous-instance:fc_vcpu 0] [Block:rootfs] notifying queues", "[    0.541945] Loading iSCSI transport class v2.0-870.", "[    0.543638] iscsi: registered transport (tcp)", "[    0.544934] tun: Universal TUN/TAP device driver, 1.6", "2026-10-09T19:54:43.459502070 [anonymous-instance:fc_vcpu 0] [Net:eth0] notifying queues", "[    0.548177] intel_pstate: CPU model not supported", "[    0.549730] hid: raw HID events driver (C) Jiri Kosina", "[    0.553676] Initializing XFRM netlink socket", "[    0.557983] bpfilter: Loaded bpfilter_umh pid 167", "[    0.560204] NET: Registered PF_PACKET protocol family", "[    0.561895] Bridge firewalling registered", "[    0.563326] Key type dns_resolver registered", "[    0.564876] NET: Registered PF_VSOCK protocol family", "2026-10-09T19:54:43.478732866 [anonymous-instance:fc_vcpu 0] [Vsock:vsock] notifying queues", "[    0.568533] IPI shorthand broadcast: enabled", "[    0.569881] sched_clock: Marking stable (416012606, 152369159)->(651335498, -82953733)", "[    0.572627] registered taskstats version 1", "[    0.574228] Loading compiled-in X.509 certificates", "[    0.576143] zswap: loaded using pool lzo/zbud", "[    0.578016] Key type .fscrypt registered", "[    0.579352] Key type fscrypt-provisioning registered", "[    0.582089] Key type encrypted registered", "[    0.721475] clk: Disabling unused clocks", "[    0.734440] EXT4-fs (vda): mounted filesystem with ordered data mode. Quota mode: none.", "[    0.737350] VFS: Mounted root (ext4 filesystem) readonly on device 254:0.", "[    0.740205] devtmpfs: mounted", "[    0.743125] Freeing unused kernel image (initmem) memory: 2476K", "[    0.745347] Write protecting the kernel read-only data: 20480k", "[    0.750654] Freeing unused kernel image (text/rodata gap) memory: 2044K", "[    0.757478] Freeing unused kernel image (rodata/data gap) memory: 1492K", "[    0.760574] Run /sbin/vm-init as init process", "umount: /.oldroot: umount failed: No such file or directory.", "[    0.803027] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00002000", "[    0.805178] CPU: 1 PID: 1 Comm: vm-init Not tainted 6.1.188 #1", "[    0.806837] Call Trace:", "[    0.807533]  <TASK>", "[    0.808149]  show_stack+0x3a/0x40", "[    0.809107]  dump_stack_lvl+0x3d/0x51", "[    0.810114]  dump_stack+0x10/0x16", "[    0.811032]  panic+0x100/0x297", "[    0.811877]  do_exit.cold+0x15/0x15", "[    0.812834]  do_group_exit+0x30/0x90", "[    0.813845]  __x64_sys_exit_group+0x13/0x20", "[    0.814971]  x64_sys_call+0x1756/0x1c40", "[    0.816073]  do_syscall_64+0x35/0x90", "[    0.817052]  entry_SYSCALL_64_after_hwframe+0x6e/0xd8", "[    0.818480] RIP: 0033:0x7f2b64148015", "[    0.819680] Code: 01 7e 10 00 f7 d8 bd ff ff ff ff 64 89 02 eb c6 e8 20 f9 03 00 48 8b 35 e9 7d 10 00 ba e7 00 00 00 eb 03 66 90 f4 89 d0 0f 05 <48> 3d 00 f0 ff ff 76 f3 f7 d8 64 89 06 eb ec 66 2e 0f 1f 84 00 00", "[    0.825265] RSP: 002b:00007ffc429bf6c8 EFLAGS: 00000202 ORIG_RAX: 00000000000000e7", "[    0.826861] RAX: ffffffffffffffda RBX: 0000000000000003 RCX: 00007f2b64148015", "[    0.827964] RDX: 00000000000000e7 RSI: ffffffffffffffa0 RDI: 0000000000000020", "[    0.829062] RBP: 0000000000000004 R08: 00007ffc429bf7b0 R09: 0000000000000003", "[    0.830167] R10: 0000000000000000 R11: 0000000000000202 R12: 0000000000000000", "[    0.831262] R13: 00007ffc429bf938 R14: 00007f2b642a1000 R15: 000055efb1ea3e38", "[    0.832350]  </TASK>", "[    0.832880] Kernel Offset: disabled", "[    0.833442] Rebooting in 1 seconds..", "2026-10-09T19:54:44.739079529 [anonymous-instance:main] Vmm is stopping.", "2026-10-09T19:54:44.739308947 [anonymous-instance:main] Killing vCPU threads", "2026-10-09T19:54:44.787294401 [anonymous-instance:main] Firecracker exiting successfully. exit_code=0"]}
+mt-vm-p0-restore-fc  | Traceback (most recent call last):
+mt-vm-p0-restore-fc  |   File "/opt/spike/restore.py", line 158, in <module>
+mt-vm-p0-restore-fc  |     main()
+mt-vm-p0-restore-fc  |     ~~~~^^
+mt-vm-p0-restore-fc  |   File "/opt/spike/restore.py", line 116, in main
+mt-vm-p0-restore-fc  |     connection, _ = golden.accept()
+mt-vm-p0-restore-fc  |                     ~~~~~~~~~~~~~^^
+mt-vm-p0-restore-fc  |   File "/usr/lib/python3.13/socket.py", line 295, in accept
+mt-vm-p0-restore-fc  |     fd, addr = self._accept()
+mt-vm-p0-restore-fc  |                ~~~~~~~~~~~~^^
+mt-vm-p0-restore-fc  | TimeoutError: timed out
+[Kmt-vm-p0-restore-fc exited with code 1
+ Compose Stopping Aborting on container exit...
+ Container mt-vm-p0-restore-fc Stopping 
+ Container mt-vm-p0-restore-fc Stopped 
+

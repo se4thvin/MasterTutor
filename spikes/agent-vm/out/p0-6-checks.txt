@@ -1,0 +1,549 @@
+Scope: all 10 workspace projects
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+╭ Warning ─────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│   Ignored build scripts: cpu-features@0.0.10, protobufjs@7.6.6,              │
+│   ssh2@1.17.0, tesseract.js@7.0.0.                                           │
+│   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+│   to run scripts.                                                            │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Done in 3.4s using pnpm v10.34.6
+
+> mastertutor@ typecheck /home/coursebite/mt-vm-p0/houndshark-vm-p0
+> tsc -p tsconfig.json && pnpm -r typecheck
+
+Scope: 9 of 10 workspace projects
+packages/contracts typecheck$ tsc -p tsconfig.json
+packages/contracts typecheck: Done
+packages/observability typecheck$ tsc -p tsconfig.json
+packages/observer typecheck$ tsc -p tsconfig.json
+packages/sealing typecheck$ tsc -p tsconfig.json
+packages/storage typecheck$ tsc -p tsconfig.json
+packages/observer typecheck: Done
+packages/telemetry typecheck$ tsc -p tsconfig.json
+packages/sealing typecheck: Done
+packages/storage typecheck: Done
+packages/observability typecheck: Done
+packages/telemetry typecheck: Done
+packages/db typecheck$ tsc -p tsconfig.json
+packages/db typecheck: Done
+apps/agent typecheck$ tsc -p tsconfig.json
+apps/web typecheck$ tsc -p tsconfig.json
+apps/agent typecheck: Done
+apps/web typecheck: Done
+P0_CHECK typecheck=0
+
+> mastertutor@ lint /home/coursebite/mt-vm-p0/houndshark-vm-p0
+> eslint . && stylelint "apps/web/**/*.css" --ignore-path .gitignore
+
+P0_CHECK lint=0
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.001s
+
+OK
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.001s
+
+OK
+✔ select only the explicitly authorized running bench agent (1.555957ms)
+✔ reserve before send; charge failed requests conservatively (1.45235ms)
+✔ settle a pre-send reservation without losing previous spend (0.327732ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 406.65751
+P0_CHECK spike=0
+
+> mastertutor@ test /home/coursebite/mt-vm-p0/houndshark-vm-p0
+> vitest run --project unit --maxWorkers=8 -t '^(?!.*(deployment files|the committed \.env\.test|fixture UI config)).*$'
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.3 [39m[90m/home/coursebite/mt-vm-p0/houndshark-vm-p0[39m
+
+ [31m❯[39m [30m[42m unit [49m[39m tests/security/inventory.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 71[2mms[22m[39m
+   [31m❯[39m §12 security inventory [2m(3)[22m
+     [32m✓[39m names a real file and a runner for every item[32m 20[2mms[22m[39m
+[31m     [31m×[31m lists every *.security.test.ts, so none runs unaccounted for[39m[32m 30[2mms[22m[39m
+     [32m✓[39m selects security tests by file name, in a project that shares the root config (P7-1, P7-31)[32m 16[2mms[22m[39m
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/boundaries.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 2966[2mms[22m[39m
+   [32m✓[39m module dependency map (plan: no cycles, spec §4.3) [2m(9)[22m
+     [33m[2m✓[22m[39m the observer service uses ./copilot and observability/query only, and nothing imports it[33m 2844[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/live/live-hooks.test.ts [2m([22m[2m26 tests[22m[2m)[22m[33m 3121[2mms[22m[39m
+   [32m✓[39m createLiveHooks: the n.eko side of B1's control lock [2m(21)[22m
+     [33m[2m✓[22m[39m keeps trying for the live view when the takeover arrives with a fresh lease[33m 304[2mms[22m[39m
+     [33m[2m✓[22m[39m hand back fails closed when n.eko cannot take the host back[33m 304[2mms[22m[39m
+     [33m[2m✓[22m[39m hand back retries a failing n.eko with a bounded backoff, never a tight loop[33m 302[2mms[22m[39m
+     [33m[2m✓[22m[39m hand back gives up after its attempts, within its time bound, even if n.eko hangs[33m 903[2mms[22m[39m
+     [33m[2m✓[22m[39m paces the give retries while the live view reconnects after a fresh lease[33m 301[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/masking.test.ts [2m([22m[2m27 tests[22m[2m)[22m[33m 6040[2mms[22m[39m
+   [32m✓[39m secret text scan (containsSecretText) [2m(9)[22m
+     [33m[2m✓[22m[39m delivers the frame when no secret appears[33m 572[2mms[22m[39m
+   [32m✓[39m out-of-process frames (R-E5, review I1/I2) [2m(12)[22m
+     [33m[2m✓[22m[39m forgets (detaches) a frame whose read timed out, so hung reads do not pile up (N3)[33m 1502[2mms[22m[39m
+     [33m[2m✓[22m[39m bounds hung frames with a timeout that fails closed, reading frames in parallel (I2b, M8)[33m 1503[2mms[22m[39m
+     [33m[2m✓[22m[39m a hung filled frame cannot stall the screenshot: bounded, and fails closed (M1)[33m 1517[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/imap-hardening.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 3126[2mms[22m[39m
+   [32m✓[39m waitForImapCode connection hygiene [2m(4)[22m
+     [33m[2m✓[22m[39m bounds connecting and greeting by the wait[33m 302[2mms[22m[39m
+     [33m[2m✓[22m[39m parses a message without a code once, not on every recheck[33m 2501[2mms[22m[39m
+     [33m[2m✓[22m[39m uses a message once, whichever run or alias watches that inbox (N3)[33m 301[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/transcribe.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 6610[2mms[22m[39m
+   [32m✓[39m transcribeVideo (spec §8 transcribe) [2m(4)[22m
+     [33m[2m✓[22m[39m offsets every chunk by its place in the recording, minus the lead before play[33m 1011[2mms[22m[39m
+   [32m✓[39m transcribeVideo after a failure (B4 re-review N1) [2m(2)[22m
+     [33m[2m✓[22m[39m bills a chunk that was already sent before the tool returns[33m 2502[2mms[22m[39m
+   [32m✓[39m transcribeVideo bounds (I4) [2m(5)[22m
+     [33m[2m✓[22m[39m stops when the page jumps back (an ad or a loop)[33m 2003[2mms[22m[39m
+     [33m[2m✓[22m[39m stops at the wall-clock deadline[33m 905[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/keyframe-sampling.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 2271[2mms[22m[39m
+   [32m✓[39m sampleKeyframes counts what it could not capture (B4 review I1, I2) [2m(6)[22m
+     [33m[2m✓[22m[39m counts a failed seek mid-range as missed[33m 319[2mms[22m[39m
+     [33m[2m✓[22m[39m never discards a range for a dark opening[33m 304[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps same-layout slides whose text differs, and merges only matching text (final I5)[33m 725[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps a frame whose text cannot be read (fidelity over dedupe)[33m 341[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lint/import-bans.test.ts [2m([22m[2m40 tests[22m[2m)[22m[33m 2451[2mms[22m[39m
+   [32m✓[39m animation and icon import bans [2m(10)[22m
+     [33m[2m✓[22m[39m bans gsap everywhere in apps/web, statically and dynamically[33m 1709[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/pdf/worker/sandbox-child.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 1381[2mms[22m[39m
+   [32m✓[39m runInSandbox's child (QA-106) [2m(4)[22m
+     [33m[2m✓[22m[39m spawns the child with an empty environment under the permission model[33m 689[2mms[22m[39m
+     [33m[2m✓[22m[39m kills a child that writes more than MAX_CHILD_OUTPUT_BYTES[33m 316[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m scripts/eslint-policy.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 2160[2mms[22m[39m
+   [32m✓[39m ESLint OpenAI data policy (D38) [2m(3)[22m
+     [33m[2m✓[22m[39m bans stateful APIs on OpenAI clients[33m 1909[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/vault/key-placement.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 1901[2mms[22m[39m
+   [32m✓[39m vault key placement (W9) [2m(3)[22m
+     [33m[2m✓[22m[39m lint refuses importing @mastertutor/sealing/open from web code, statically or dynamically[33m 1858[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/pdf/pdf-worker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 822[2mms[22m[39m
+   [32m✓[39m createPdfWorkerClient (the agent's side of the pdf-worker contract) [2m(5)[22m
+     [33m[2m✓[22m[39m stops reading an answer over MAX_RESULT_BYTES[33m 419[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a worker that is down or hung, without hanging the agent[33m 305[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m scripts/remote-test.test.ts [2m([22m[2m33 tests[22m[2m | [22m[33m2 skipped[39m[2m)[22m[33m 1211[2mms[22m[39m
+   [32m✓[39m stack slots (scripts/remote-test/slots.sh, D48) [2m(7)[22m
+     [33m[2m✓[22m[39m never overlaps the legacy fixed values, so pre-slot branches keep working beside it[33m 382[2mms[22m[39m
+   [32m✓[39m per-run snapshots of one worktree's sync (remote-test/snapshot.sh) [2m(10)[22m
+     [33m[2m✓[22m[39m waits for a sync in progress, so it never copies a half-synced tree[33m 515[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/audio/recorder.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 988[2mms[22m[39m
+   [32m✓[39m startRecording [2m(3)[22m
+     [33m[2m✓[22m[39m writes full WAV chunks as they complete and the remainder on stop[33m 520[2mms[22m[39m
+     [33m[2m✓[22m[39m surfaces a chunk write error from stop and stops recording, never as an unhandled rejection (I5)[33m 459[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/audio/server.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 933[2mms[22m[39m
+   [32m✓[39m audio-capture service (B4 review I7) [2m(4)[22m
+     [33m[2m✓[22m[39m records a slot, serves each checked chunk once and deletes it, then ends[33m 494[2mms[22m[39m
+     [33m[2m✓[22m[39m deletes what a session left when it is discarded, and everything on start[33m 415[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/screen-cache.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 397[2mms[22m[39m
+Estimating resolution as 194
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/live/idle-watch.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 658[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/testing/ocr.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 743[2mms[22m[39m
+   [32m✓[39m createOcr [2m(1)[22m
+     [33m[2m✓[22m[39m reads a filled field in a Linux headless Chromium frame (the canary's positive control)[33m 741[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/crash.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 363[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/discovery.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 464[2mms[22m[39m
+   [32m✓[39m discoverReadings: only from listings it can prove complete (I1) [2m(6)[22m
+     [33m[2m✓[22m[39m does not trust a listing the 400-element cap truncated, but does once it was paged through[33m 438[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/loop/session-browser.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 772[2mms[22m[39m
+   [32m✓[39m observeOnOnePage (review M7) [2m(5)[22m
+     [33m[2m✓[22m[39m observes again when the page navigates under a read (the MH sign-in post), and only then[33m 755[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/mascot/motion/blender.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 251[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/note/block-markdown.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 467[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/instrument.bench.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 363[2mms[22m[39m
+   [32m✓[39m instrument() micro budget (spec §15) [2m(1)[22m
+     [33m[2m✓[22m[39m adds under 50 µs at p50 per span[33m 351[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/server/embeddings.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 300[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/stream/run-events.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 284[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/pdf/worker/sandbox.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 13638[2mms[22m[39m
+   [32m✓[39m runInSandbox (pdf.js in a permission-restricted child) [2m(10)[22m
+     [33m[2m✓[22m[39m reads text with top-left coordinates, image flags, the title and the renders capture needs[33m 1204[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps renders under the pixel cap[33m 963[2mms[22m[39m
+     [33m[2m✓[22m[39m never decodes an image past MAX_IMAGE_PIXELS (I-2)[33m 997[2mms[22m[39m
+     [33m[2m✓[22m[39m decodes a JPEG 2000 image, as scanned archives use (QA-111)[33m 1035[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses a page with more text items than MAX_PAGE_ITEMS as too large (I-3)[33m 8458[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects bytes that are not a PDF[33m 452[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m scripts/scan-test-code.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 253[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/opaque.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 275[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/pixel-screen.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 263[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/slots/pool.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 286[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/exports.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 243[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/mascot/motion/blink.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 239[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/llm-mock/src/server.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 216[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/note/block-markdown-imports.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 222[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/cli.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 166[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/start.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 15343[2mms[22m[39m
+   [32m✓[39m startTelemetry (spec §6.3, §7) [2m(4)[22m
+     [33m[2m✓[22m[39m exports spans and never sends a traceparent anywhere (D38)[33m 3094[2mms[22m[39m
+     [33m[2m✓[22m[39m spans made while serving a request record: incoming requests are not suppressed (review I1)[33m 3015[2mms[22m[39m
+     [33m[2m✓[22m[39m stdout keeps every line while the bridge drops (collector down, Review Focus 1)[33m 9228[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lint/motion-eslint-plugin.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 184[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/observer/reviewer.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 206[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/live/upload.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 182[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lint/typography-eslint-plugin.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 178[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/llm/llm.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 193[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lint/stylelint.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 137[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/health.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 135[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/architecture.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 113[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/server/openai.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 154[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/phash.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 89[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/pdf/worker/layout.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 154[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/llm/run-title.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 119[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/fixtures/bench-activities/server.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 97[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/media.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 116[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/screenshot.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 77[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/notes/rich-markdown.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 109[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/live/neko-admin.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 102[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/browser/parts.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 90[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/storage/src/garage-admin.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/loop/compaction.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 142[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/instrumentation.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 82[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/server/neko.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 86[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/pdf/docling.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/fixtures/router.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 151[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/record.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 81[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/alerts/webhook.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 74[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/model/thread-items.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 88[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/guard/compose.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 96[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/export/archive.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 86[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m scripts/lib/test-stack.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 62[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/run-suite.test.ts [2m([22m[2m27 tests[22m[2m)[22m[32m 81[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/slots/probe.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 79[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/api/dto.test.ts [2m([22m[2m31 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/live/downloads.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/no-site-hacks.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 63[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/model/run-model.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 79[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/push/send.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 56[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/model/copy.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observability/src/provision.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 70[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/push/service-worker.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/read-capped.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 47[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/scripts/first-load.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observability/src/client.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 48[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/server/logger.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 54[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/new-task/options-grid.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/ledger.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/instrument.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/internal-request.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 69[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/approval.test.ts [2m([22m[2m42 tests[22m[2m)[22m[32m 57[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/keyframes.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/app/api/observability/session/route.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 51[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/page-functions.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/export/note-markdown.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/api/client.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 65[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/mascot/motion/sprout.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/live/neko-live-view.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/mascot/pip-machine.test.ts [2m([22m[2m33 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/push/request.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/app-client.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/rpc/same-origin.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/app/api/observability/auth/route.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/runtime/runtime.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/suites/zybooks.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 55[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/fingerprints.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/app/api/live/auth/route.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/storage/src/s3.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/tools/registry.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/model/browser-state.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/sealing/src/seal.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/app/observability/route.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 41[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/network-policy.test.ts [2m([22m[2m61 tests[22m[2m)[22m[32m 41[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/e2e/stack/qa/findings.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 38[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/cursor/agent-cursor.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/alerts/deliver.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/bits/format.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/llm-mock/src/scenarios/e2e.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/new-task/draft.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/events.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/tools.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/db/src/schema/schema.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/observer/guard.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/env-observability.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/classify.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/model/approval-copy.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 41[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m scripts/env-init.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/policy.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/ui/icons.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/env.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/guard/input.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/observer.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/evidence.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/fetch-resource.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/watch.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/ui/controls.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/live/authorize.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/e2e/motion/catalog.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/library/folder-mark.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/bits/folder-float.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/config.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/styles/tokens.test.ts [2m([22m[2m102 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/criteria.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/bits/rolling-number.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/folders/tree.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 38[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/suites/fixtures.test.ts [2m([22m[2m6 tests[22m[2m | [22m[33m1 skipped[39m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/compose/prod-mode.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/bits/status-mark.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/regrade.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/bits/thought-line.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/markdown-blocks.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/ocr-region.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/provenance.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/stream/query-sync.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/observer/watcher.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/report.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/ui/switch.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/download-gate.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/primitives.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/mhtml-mask.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/slots/downloads.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/notes/embedder.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/testing/strict-schema.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/alerts.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/security/canary-core.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/images.test.ts [2m([22m[2m16 tests[22m[2m | [22m[33m1 skipped[39m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/live.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/smoke/prod-smoke.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/notes/provenance.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/allowlist.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/db/src/queries/keyset.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/step-result.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/notes/cache.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/notes/filing.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/guard/triggers.bench.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/budget.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/live/cookie.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/agent-turn.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/vault/fields.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/telemetry.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/shell/app-mark.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/notify.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/security/stack-canary.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/db/src/zod.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/mascot/motion/look.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/e2e/helpers/trace.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/page-helpers.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/browser/live-video.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/browser/fullscreen.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/e2e/stack/support/events.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/local-ocr.options.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/totp.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/layering.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/captions.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/rpc/live-router.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/new-task/saved-draft.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/styles/raw-values.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/constants.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/run-stream.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/chapters.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/vault.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/notes/move-cache.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/env-fixture.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/runtime.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/note.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/storage/src/keys.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/web-capture.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/rotate.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/styles/layers.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/run-title.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/loop/model-input.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/key-env.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/observability.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/motion-tokens.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/usage/summary.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/grants.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/storage/src/garage-plan.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/text.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/observability/collector-config.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/fixtures/vault-sites/totp.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/library/search.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/observability/authorize.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/guard/trajectory.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/tools.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/dom.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/batcher.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/bench-local.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observability/src/alerts.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/navigation-scope.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/ui/marquee-text.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/telemetry/src/processors.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/runs/pulse.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/settings/cache.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/scripts/check-prod-bundle.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/prod-check.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/untrusted-text.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/folder-rules.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observability/src/dashboards/dashboards.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/bits/bits-licence.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/model/takeover.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/observability/token.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/bits/code-slots-logic.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/transcript-blocks.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/alerts/push-support.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/runtime/read-capped.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/protocol-docs.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/observer/turn.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/json3.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/vault-check.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/e2e/stack/qa/seed.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/loop/transcript.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/pdf/worker/limiter.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/stream/schedule.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/styles/press.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/imap.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/notes/callout-layout.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/untrusted.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/observability/pages.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/guard/triggers.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/sse.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/markdown.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/tools/keys.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/enums.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/loop/hooks.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/styles/delight.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/loop-detector.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/deploy/runbook.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/llm-mock/src/select.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/cursor/cursor-path.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/field-rules.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/mascot/pip-gate.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/loop/step-collector.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/easing.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/logout.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/security/ci-workflow.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/asset-uri.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/budget.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/pricing.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/library/params.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/styles/daylight.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/captcha.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/auth/next-path.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/guardrails/shown-text.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/guard/escalation.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/notes/positions.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/mascot/posters.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/scripts/backdrop-filter-check.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/redaction.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m scripts/lib/vapid.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/auth-client.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/spring.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/appendix.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/fidelity.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/e2e/pins.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/security/canaries.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/folders/drag.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/boot-checks.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/model/callout.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/bench/src/read-page-cap.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/status.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/server/push/config.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/capture/text-fragment.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/transcriber.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/passkeys.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/video/timecode.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/api/contract.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/browser-slot/seccomp/build-profile.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/shell/nav-items.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/browser/live-policy.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/region-capture.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/api/errors.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/lib/app-mark-colors.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observability/src/names.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/components/run/run-page.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/loop/start-url.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m tests/fixtures/vault-sites/server.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/sign-in-flow.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/guard/prompts.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/styles/run.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/contracts/src/timecode.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m packages/observer/src/ports.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/app/(app)/design/mascot/page.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 6[2mms[22m[39m
+ [2m[90m↓[39m[22m [30m[42m unit [49m[39m tests/compose/no-fixture-api.test.ts [2m([22m[2m3 tests[22m[2m | [22m[33m3 skipped[39m[2m)[22m
+ [32m✓[39m [30m[42m unit [49m[39m apps/web/app/(app)/design/page.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [2m[90m↓[39m[22m [30m[42m unit [49m[39m apps/web/e2e/fixture-config.test.ts [2m([22m[2m2 tests[22m[2m | [22m[33m2 skipped[39m[2m)[22m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/response-log.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/vault/otp.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/browser/local-ocr.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 41812[2mms[22m[39m
+   [32m✓[39m pixelsAreClean (self-hosted tesseract, A-M1) [2m(2)[22m
+     [33m[2m✓[22m[39m reads a secret out of pixels and withholds them[33m 834[2mms[22m[39m
+   [32m✓[39m one-time codes in pixels (ruling) [2m(1)[22m
+     [33m[2m✓[22m[39m finds a filled code as a whole token, and nothing inside a longer number[33m 323[2mms[22m[39m
+   [32m✓[39m a long page.png read never holds up a loop screen (QA-092) [2m(2)[22m
+     [33m[2m✓[22m[39m runs the loop's screen between page.png tiles, not after the whole page[33m 40094[2mms[22m[39m
+ [32m✓[39m [30m[42m unit [49m[39m apps/agent/src/pdf/pdf-capture.test.ts [2m([22m[2m24 tests[22m[2m)[22m[33m 42632[2mms[22m[39m
+   [32m✓[39m buildPdfCapture (pdf.js path) [2m(3)[22m
+     [33m[2m✓[22m[39m verifies the fixture against the pdf.js text and flags the scanned page[33m 1615[2mms[22m[39m
+     [33m[2m✓[22m[39m escapes docling captions and keeps them as caption text (Q7)[33m 1443[2mms[22m[39m
+   [32m✓[39m buildPdfCapture docling branches (QA-107) [2m(4)[22m
+     [33m[2m✓[22m[39m falls back to pdf.js when docling fails[33m 1478[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps a docling block the PDF text does not support unverified, and its low coverage[33m 1433[2mms[22m[39m
+     [33m[2m✓[22m[39m renders a page docling crops that the first parse did not render, in a second call[33m 2516[2mms[22m[39m
+     [33m[2m✓[22m[39m checks a docling caption against the PDF text before calling it verified (QA-111)[33m 2985[2mms[22m[39m
+   [32m✓[39m buildPdfCapture past MAX_PDF_RENDERS pages (QA-107) [2m(1)[22m
+     [33m[2m✓[22m[39m counts pages past the render cap missing, and withholds the original on a secret run[33m 8640[2mms[22m[39m
+   [32m✓[39m buildPdfCapture on runs holding vault secrets [2m(4)[22m
+     [33m[2m✓[22m[39m refuses a PDF whose text layer shows a secret before storing anything[33m 1120[2mms[22m[39m
+     [33m[2m✓[22m[39m withholds page images the local screen flags, never sending them to OpenAI[33m 2213[2mms[22m[39m
+     [33m[2m✓[22m[39m screens what OCR read on a scanned page before the image is stored[33m 1342[2mms[22m[39m
+     [33m[2m✓[22m[39m screens docling's text before any crop is stored[33m 1044[2mms[22m[39m
+   [32m✓[39m buildPdfCapture screens every page before storing the original on a secret run (QA-109) [2m(1)[22m
+     [33m[2m✓[22m[39m renders text-only pages too: vector drawings there can show a secret[33m 4980[2mms[22m[39m
+   [32m✓[39m buildPdfCapture never calls a page with missing text verified (I-4) [2m(5)[22m
+     [33m[2m✓[22m[39m reads a page of outlined text like a scanned page and counts it missing when OCR finds nothing[33m 1044[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps OCR text of an outlined page as unverified ocr_model blocks[33m 1041[2mms[22m[39m
+     [33m[2m✓[22m[39m counts a scanned page whose OCR comes back empty as missing[33m 1468[2mms[22m[39m
+     [33m[2m✓[22m[39m counts a scanned page docling gave no text as missing[33m 1339[2mms[22m[39m
+     [33m[2m✓[22m[39m does not count a blank page as missing text[33m 1000[2mms[22m[39m
+   [32m✓[39m buildPdfCapture records why the original PDF is missing [2m(2)[22m
+     [33m[2m✓[22m[39m says too_large when the asset store refuses the original[33m 1342[2mms[22m[39m
+     [33m[2m✓[22m[39m says unscreened when page pixels were withheld on a secret-holding run[33m 1002[2mms[22m[39m
+   [32m✓[39m buildPdfCapture verification cost (I-3) [2m(1)[22m
+     [33m[2m✓[22m[39m scores 3,000 blocks against a 150k-token reference in under 3 seconds[33m 461[2mms[22m[39m
+   [32m✓[39m buildPdfCapture with a huge pdf.js layout (re-review N-1) [2m(1)[22m
+     [33m[2m✓[22m[39m groups 100k blocks on one page in one pass, keeps MAX_PDF_BLOCKS and marks the note partial[33m 373[2mms[22m[39m
+   [32m✓[39m buildPdfCapture keeps to the run's budget (final review I6) [2m(1)[22m
+     [33m[2m✓[22m[39m stops OCR when the budget is spent and counts the scanned page as lost[33m 1483[2mms[22m[39m
+   [32m✓[39m buildPdfCapture with docling down (final review I7) [2m(1)[22m
+     [33m[2m✓[22m[39m falls back to pdf.js when docling cannot be reached[33m 1243[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m [30m[42m unit [49m[39m tests/security/inventory.test.ts[2m > [22m§12 security inventory[2m > [22mlists every *.security.test.ts, so none runs unaccounted for
+[31m[1mAssertionError[22m: apps/agent/src/guardrails/observer/guard.security.test.ts: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m321 passed[39m[22m[2m | [22m[33m2 skipped[39m[90m (324)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m2310 passed[39m[22m[2m | [22m[33m9 skipped[39m[90m (2320)[39m
+[2m   Start at [22m 21:42:26
+[2m   Duration [22m 45.52s[2m (tests 60%, import 35%, transform 4%, worker 1%)[22m
+
+[36m [2m❯[22m tests/security/inventory.test.ts:[2m111:75[22m[39m
+    [90m109|[39m   it("lists every *.security.test.ts, so none runs unaccounted for", (…
+    [90m110|[39m     const listed = new Set(Object.values(INVENTORY).flat());
+    [90m111|[39m     for (const file of allSecurityFiles()) expect(listed.has(file), fi…
+    [90m   |[39m                                                                           [31m^[39m
+    [90m112|[39m   });
+    [90m113|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+ ELIFECYCLE  Test failed. See above for more details.
+P0_CHECK unit=1

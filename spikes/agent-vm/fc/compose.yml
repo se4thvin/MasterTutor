@@ -1,0 +1,23 @@
+name: mt-vm-p0-boot
+services:
+  fc:
+    image: mt-vm-p0-firecracker:1.17.0
+    build:
+      context: .
+      labels: { mt-vm-p0: "1" }
+    container_name: mt-vm-p0-boot-fc
+    labels: { mt-vm-p0: "1", mt-vm-p0.run: boot }
+    environment: { KVM_GID: "994" }
+    devices: [/dev/kvm, /dev/net/tun]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID]
+    group_add: ["994"]
+    read_only: true
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 10g
+    memswap_limit: 10g
+    cpus: 4
+    pids_limit: 256
+    tmpfs: ["/run/vm:size=6g,mode=0700,uid=10001", "/tmp:size=64m"]
+    network_mode: none

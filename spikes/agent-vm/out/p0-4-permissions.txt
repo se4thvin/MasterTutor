@@ -1,0 +1,1 @@
+{"/tmp": [0, "0o1777"], "/var/tmp": [0, "0o1777"], "/home/neko": [1000, "0o700"], "/home/neko/.cache": null, "/home/neko/.config": [1000, "0o755"], "/usr/lib/x86_64-linux-gnu/gstreamer-1.0": [0, "0o755"]}

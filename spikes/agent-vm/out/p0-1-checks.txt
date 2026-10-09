@@ -1,0 +1,14 @@
+P0.1 repository checks on coursebite, existing mt-ci-runner:e5290bdbb58b
+No application package touched; DB integration inapplicable.
+pnpm typecheck: PASS (both runs)
+pnpm lint: PASS (both runs)
+Initial pnpm test --maxWorkers=4: 2310 passed, 8 failed, 2 skipped; 317/324 files passed.
+Retry pnpm test --maxWorkers=8 (16 runner CPUs): 2313 passed, 5 failed, 2 skipped.
+Resolved unchanged on retry: telemetry boundaries, browser/phash lecture, pdf-capture vector-page timeouts.
+Outstanding:
+- tests/security/inventory.test.ts: Observer guard.security.test.ts missing from existing INVENTORY.
+- tests/compose/no-fixture-api.test.ts: .env.example absent.
+- apps/web/e2e/fixture-config.test.ts (2 tests): .env.test absent.
+- tests/bench/src/suites/fixtures.test.ts: .env.test absent.
+No .env* files transferred or read. Three suites reading them will be omitted in later checks.
+CLI --exclude did not override the project's excludes; later checks use a test-name filter.

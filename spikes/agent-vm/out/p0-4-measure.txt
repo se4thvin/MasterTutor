@@ -1,0 +1,17 @@
+{"name":"browser-1","baseUrl":"http://172.26.0.2:9223","browser":"Chrome/154.0.8037.57","protocolVersion":"1.3"}
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:18089/live/00000000-0000-4000-8000-000000000001/
+Call log:
+  - navigating to "http://127.0.0.1:18089/live/00000000-0000-4000-8000-000000000001/", waiting until "load"
+
+    at /home/coursebite/mt-vm-p0/houndshark-vm-p0/spikes/agent-vm/net/viewer.ts:17:14 {
+  log: [
+    '  - navigating to "http://127.0.0.1:18089/live/00000000-0000-4000-8000-000000000001/", waiting until "load"'
+  ],
+  name: 'Error'
+}
+
+Node.js v24.21.0

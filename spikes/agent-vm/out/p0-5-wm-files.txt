@@ -1,0 +1,1 @@
+{"/etc/xdg/openbox/rc.xml": {"exists": true, "directory": false, "symlink": false}, "/usr/sbin/runuser": {"exists": true, "directory": false, "symlink": false}, "/bin/su": {"exists": true, "directory": false, "symlink": false}, "/home/neko/.config/openbox": {"exists": false, "directory": false, "symlink": false}}

@@ -1,0 +1,149 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.71kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/mt-vm-p0-browser-slot:local
+#2 DONE 0.0s
+
+#3 [auth] library/debian:pull token for registry-1.docker.io
+#3 DONE 0.0s
+
+#4 [internal] load metadata for docker.io/library/debian:trixie-slim
+#4 DONE 0.5s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 2B done
+#5 DONE 0.0s
+
+#6 [rootfs 1/4] FROM docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+#6 DONE 0.0s
+
+#7 [guest 1/6] FROM docker.io/library/mt-vm-p0-browser-slot:local
+#7 DONE 0.0s
+
+#8 [internal] load build context
+#8 transferring context: 3.40kB 0.4s done
+#8 DONE 0.5s
+
+#9 [guest 2/6] RUN apt-get update && apt-get install -y --no-install-recommends python3 iproute2 util-linux && rm -rf /var/lib/apt/lists/* &&     mkdir -p /mnt/rw /etc/guest/programs /opt/spike &&     rm -rf /root/.ssh /home/*/.ssh && sed -i 's/^\([^:]*\):[^:]*:/\1:!:/' /etc/shadow
+#9 CACHED
+
+#10 [guest 3/6] COPY --chmod=0755 vm-init /sbin/vm-init
+#10 DONE 0.2s
+
+#11 [guest 4/6] COPY start_line.py /opt/spike/start_line.py
+#11 DONE 0.1s
+
+#12 [guest 5/6] COPY supervisord.conf /etc/guest/supervisord.conf
+#12 DONE 0.1s
+
+#13 [guest 6/6] RUN python3 - <<'PY'
+#13 DONE 0.4s
+
+#14 [rootfs 2/4] RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs && rm -rf /var/lib/apt/lists/*
+#14 CACHED
+
+#15 [rootfs 3/4] COPY --from=guest / /tree
+#15 DONE 4.8s
+
+#16 [rootfs 4/4] RUN size=$(du -sb /tree | cut -f1) && size=$(( (size * 110 / 100 / 1048576 + 128) * 1048576 )) &&     truncate -s "$size" /rootfs.ext4 && mkfs.ext4 -q -F -d /tree -L mtguest /rootfs.ext4 &&     stat -c 'rootfs_bytes=%s' /rootfs.ext4
+#16 8.852 rootfs_bytes=1809842176
+#16 DONE 9.2s
+
+#17 [artifacts 1/1] COPY --from=rootfs /rootfs.ext4 /rootfs.ext4
+#17 DONE 2.6s
+
+#18 exporting to image
+#18 exporting layers
+#18 exporting layers 11.1s done
+#18 writing image sha256:7e5dd39d1b8a04d3a74eb7f6399c901a7f7e103eb9aa2229f8a44751ee860bd3 done
+#18 naming to docker.io/library/mt-vm-p0-rootfs:local done
+#18 DONE 11.1s
+83d341b7c611ca3794ef98cd80acc63a758d3dafd63e5ab801ebc9e36057a77b  images/vmlinux
+images/vmlinux 44169936
+f2c43353bc839dee68554df8872cc361bd47bafb59f45f97f0df9800504a357c  images/rootfs.ext4
+images/rootfs.ext4 1809842176
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from runtime.Dockerfile
+#1 transferring dockerfile: 323B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/mt-vm-p0-firecracker:1.17.0
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/5] FROM docker.io/library/mt-vm-p0-firecracker:1.17.0
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 495.65MB 5.0s
+#5 transferring context: 1.04GB 10.0s
+#5 transferring context: 1.55GB 15.0s
+#5 transferring context: 1.85GB 17.9s done
+#5 DONE 18.0s
+
+#6 [2/5] COPY images/vmlinux /opt/vm/vmlinux
+#6 CACHED
+
+#7 [3/5] COPY images/rootfs.ext4 /opt/vm/rootfs.ext4
+#7 DONE 3.2s
+
+#8 [4/5] COPY restore.py /opt/spike/restore.py
+#8 DONE 0.2s
+
+#9 [5/5] COPY restore-entry.sh /opt/spike/restore-entry.sh
+#9 DONE 0.2s
+
+#10 exporting to image
+#10 exporting layers
+#10 exporting layers 10.5s done
+#10 writing image sha256:74b0f5861a3c6e3ac64cf5522bcb2daf16cff1774fa6fbd3faf4dd10409cd2e2 0.0s done
+#10 naming to docker.io/library/mt-vm-p0-restore:local done
+#10 DONE 10.6s
+ Container mt-vm-p0-restore-fc Creating 
+ Container mt-vm-p0-restore-fc Created 
+Attaching to mt-vm-p0-restore-fc
+ Container mt-vm-p0-restore-fc Starting 
+ Container mt-vm-p0-restore-fc Started 
+mt-vm-p0-restore-fc  | {"golden": true, "mem_bytes": 4294967296}
+mt-vm-p0-restore-fc  | {"run": 1, "load_resumed_ms": 12.820505, "load_cdp_ms": 3108.920702, "cdp_id": "8b33dfed-0419-4642-9bfb-68a6e69f7242", "identity": {"boot_id": "9ce59ed5-525a-44ce-a0b8-0813ea6407af", "urandom": "0ce5f3d3b4b15188991840042935ae91", "clock": 1791575887, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4966080512}
+mt-vm-p0-restore-fc  | {"run": 2, "load_resumed_ms": 4.722854, "load_cdp_ms": 2969.104913, "cdp_id": "0f82b1d3-c60c-4aef-97f4-c654c728406c", "identity": {"boot_id": "8feacbba-9d9e-4365-a73c-9bea2038e0cd", "urandom": "d35288a46c2273a86c635c136aa9efdb", "clock": 1791575890, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4970012672}
+mt-vm-p0-restore-fc  | {"run": 3, "load_resumed_ms": 4.819198, "load_cdp_ms": 3010.383276, "cdp_id": "9b7280f9-4e54-4aae-bdba-ab4c9432a74f", "identity": {"boot_id": "25ea4607-aa10-45c4-8d35-9d1beef2d99e", "urandom": "fed6d99eb8551f648ccb5749b1745b0c", "clock": 1791575893, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4978470912}
+mt-vm-p0-restore-fc  | {"run": 4, "load_resumed_ms": 8.555942, "load_cdp_ms": 2887.519607, "cdp_id": "900b894f-7d62-4d9d-8e34-ef3499179d09", "identity": {"boot_id": "23890cfc-ca45-4740-be37-3b4a45942254", "urandom": "b339a36ced332523ff1f0d9d527a7a7c", "clock": 1791575896, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4949057536}
+mt-vm-p0-restore-fc  | {"run": 5, "load_resumed_ms": 7.226411, "load_cdp_ms": 2944.448553, "cdp_id": "913d8845-b010-4e83-978b-10d32479e57e", "identity": {"boot_id": "9d91d1dc-4f2c-4830-9231-abe1a85df2ee", "urandom": "c5a665d5ad7749c7c262f6bb7880987f", "clock": 1791575899, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4969545728}
+mt-vm-p0-restore-fc  | {"run": 6, "load_resumed_ms": 5.816334, "load_cdp_ms": 3040.169019, "cdp_id": "5b4f6531-6c93-4a14-8428-069d785a4bf4", "identity": {"boot_id": "7bc5bf4f-00aa-4f5b-a4ce-a359e7f4a813", "urandom": "2c4eeefbcb6dba4f1de28131486a265c", "clock": 1791575902, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4973461504}
+mt-vm-p0-restore-fc  | {"run": 7, "load_resumed_ms": 5.131175, "load_cdp_ms": 2925.158417, "cdp_id": "acaa6eca-69db-4873-9709-4b00f06330fe", "identity": {"boot_id": "32f50d2e-c413-4e2e-bbd2-7ae3cfa8cd9c", "urandom": "2db9ab10da62ea06f8243bbeb433dac1", "clock": 1791575905, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4960448512}
+mt-vm-p0-restore-fc  | {"run": 8, "load_resumed_ms": 5.464434, "load_cdp_ms": 2922.806083, "cdp_id": "c2eda76d-eb2c-465d-8705-605b22961883", "identity": {"boot_id": "8ee5a181-d756-4536-be57-f23404d9e8d6", "urandom": "7a6fdc5f2ce84002cbc8f9283d0dbbdb", "clock": 1791575908, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4971438080}
+mt-vm-p0-restore-fc  | {"run": 9, "load_resumed_ms": 4.787976, "load_cdp_ms": 3170.082417, "cdp_id": "0e0f07c2-3b24-4111-83ef-96834334ea72", "identity": {"boot_id": "760e15c6-75fe-45b2-88d8-f4e609737a4d", "urandom": "3f1cee01132413652b880d5608653583", "clock": 1791575911, "leftover": "absent", "clock_delta_s": 1}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4974346240}
+mt-vm-p0-restore-fc  | {"run": 10, "load_resumed_ms": 8.50201, "load_cdp_ms": 2970.794448, "cdp_id": "d728bbaa-7fea-4978-8a87-2c982a46c26e", "identity": {"boot_id": "8791cbe4-298a-498c-94f8-a81d5c41e835", "urandom": "d2976986c08b779ef4f63d91b437b293", "clock": 1791575915, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4971356160}
+mt-vm-p0-restore-fc  | {"run": 11, "load_resumed_ms": 5.012228, "load_cdp_ms": 3092.525067, "cdp_id": "45f623b5-b082-484a-890c-5e0888ba9f18", "identity": {"boot_id": "8adc1841-dbd3-47a8-baee-8898c75ddca6", "urandom": "bf78ac5445dd5a648c98d6d9d61e81dd", "clock": 1791575918, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4985397248}
+mt-vm-p0-restore-fc  | {"run": 12, "load_resumed_ms": 6.405816, "load_cdp_ms": 2905.759032, "cdp_id": "7c06444d-16cc-4308-99fd-6b6c9745a92c", "identity": {"boot_id": "4384a03b-0770-489b-b68b-ab58b7f3126a", "urandom": "b56a7749bc9601d6644a1d3d7f6f9b8f", "clock": 1791575921, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4970311680}
+mt-vm-p0-restore-fc  | {"run": 13, "load_resumed_ms": 10.501809, "load_cdp_ms": 3043.950839, "cdp_id": "318c65d8-71c5-465d-b267-eda18620b816", "identity": {"boot_id": "2d57ed97-b49b-4724-9ce4-3b6bab4d262a", "urandom": "4ad542c2bca0e22fcfa8296e1a1fa389", "clock": 1791575924, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4971155456}
+mt-vm-p0-restore-fc  | {"run": 14, "load_resumed_ms": 6.750586, "load_cdp_ms": 3145.180064, "cdp_id": "3571747d-5e26-49da-8cf4-79286c2bfd0d", "identity": {"boot_id": "335e9d6f-bb3b-486f-9237-fbd1170d43c7", "urandom": "b8a4a4c7f52b5add6a93a31f08eb0952", "clock": 1791575927, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4998500352}
+mt-vm-p0-restore-fc  | {"run": 15, "load_resumed_ms": 28.577776, "load_cdp_ms": 3063.221025, "cdp_id": "e6213f22-f4a8-4653-a420-8fe8420b44d7", "identity": {"boot_id": "29cad6ad-c7af-4aed-ac4b-27159be6cc0b", "urandom": "e00e33e34c64600793b00de2e2100d6a", "clock": 1791575931, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4984016896}
+mt-vm-p0-restore-fc  | {"run": 16, "load_resumed_ms": 8.503811, "load_cdp_ms": 2944.11542, "cdp_id": "7bdd0348-dcfa-40c3-8ad5-fa52a999b063", "identity": {"boot_id": "a26e254d-d5a6-49da-a56d-a29d7a94e49f", "urandom": "435e977d4d98e2522fd9e356bd3ef9d9", "clock": 1791575934, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4985364480}
+mt-vm-p0-restore-fc  | {"run": 17, "load_resumed_ms": 7.900398, "load_cdp_ms": 3179.42337, "cdp_id": "d60199a8-33bb-42d5-a55d-93b0ecf1cdc3", "identity": {"boot_id": "e3bac866-5451-4a56-acce-eb5ed1520c1f", "urandom": "42b6027f93593a686b277d112fe99c0b", "clock": 1791575937, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4984905728}
+mt-vm-p0-restore-fc  | {"run": 18, "load_resumed_ms": 8.244078, "load_cdp_ms": 3111.405703, "cdp_id": "f3847b5a-b96a-4ae6-ba5c-744d56173b19", "identity": {"boot_id": "64f692d5-530a-4a1f-94f4-0136b3d02025", "urandom": "033353d9e46e50d3bea608ac741dd06b", "clock": 1791575940, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4985479168}
+mt-vm-p0-restore-fc  | {"run": 19, "load_resumed_ms": 6.606472, "load_cdp_ms": 3022.743673, "cdp_id": "5eab54f5-b086-418e-ba53-4d502d5faf14", "identity": {"boot_id": "f5439e82-e0b1-426e-be7f-7408451ce0c7", "urandom": "7a982c8d94a5ea4825f4c5281629e619", "clock": 1791575944, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4982820864}
+mt-vm-p0-restore-fc  | {"run": 20, "load_resumed_ms": 5.738433, "load_cdp_ms": 2798.086651, "cdp_id": "eca65ecf-5302-4ab4-beb5-ab8007c9a954", "identity": {"boot_id": "9a29134b-1627-4a99-97c8-7cf693c2369c", "urandom": "c7ba8eace1368eea22bf00ce4f3c2b96", "clock": 1791575947, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4976504832}
+mt-vm-p0-restore-fc  | {"run": 21, "load_resumed_ms": 4.866537, "load_cdp_ms": 2832.63313, "cdp_id": "c212c195-c850-4135-9eef-22e4f96f39d9", "identity": {"boot_id": "12b11e6c-e638-4527-80af-8ce891b90225", "urandom": "6a9bcb2e0c968fcd052baf243089dd20", "clock": 1791575950, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4979064832}
+mt-vm-p0-restore-fc  | {"run": 22, "load_resumed_ms": 5.56023, "load_cdp_ms": 3008.29246, "cdp_id": "90ac78b0-1788-4774-a9d4-2265508459d4", "identity": {"boot_id": "69dd884a-b9a8-45c6-9037-9eff2135a0bb", "urandom": "b061cb992b622501cb07f4eafdb8da1f", "clock": 1791575953, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4975173632}
+mt-vm-p0-restore-fc  | {"run": 23, "load_resumed_ms": 5.376939, "load_cdp_ms": 3001.143156, "cdp_id": "c5fd52ff-9a3f-449f-a8e9-e032c575054f", "identity": {"boot_id": "ab921844-050f-4a9f-86d1-632c90538aec", "urandom": "a8c18c47c0deb6a6d1af2c144dfb29dd", "clock": 1791575956, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4981805056}
+mt-vm-p0-restore-fc  | {"run": 24, "load_resumed_ms": 6.897427, "load_cdp_ms": 2851.694952, "cdp_id": "c57d1260-624f-4bda-936b-1459949c3850", "identity": {"boot_id": "2a529c55-001e-4db9-9b09-c56621bd7d3e", "urandom": "654c412ca5b01240553b14c1c5cb631e", "clock": 1791575959, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4980215808}
+mt-vm-p0-restore-fc  | {"run": 25, "load_resumed_ms": 4.835312, "load_cdp_ms": 2845.572158, "cdp_id": "abf469cb-fc22-4e29-a259-2504a6fb39d3", "identity": {"boot_id": "1b46934d-9244-4df7-849d-dc3993a268b5", "urandom": "89fd595e482e0dcac580cef520d48982", "clock": 1791575962, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4994953216}
+mt-vm-p0-restore-fc  | {"run": 26, "load_resumed_ms": 5.930069, "load_cdp_ms": 2834.531633, "cdp_id": "1bb30923-a9ca-4acb-8e28-c7fa7f66841e", "identity": {"boot_id": "4938944c-8f0a-49e4-bca6-940d287555fe", "urandom": "141b9e0191ec9ccd1e560faab7623a80", "clock": 1791575965, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4974825472}
+mt-vm-p0-restore-fc  | {"run": 27, "load_resumed_ms": 6.810755, "load_cdp_ms": 3219.26903, "cdp_id": "d8bde5ea-237f-4099-a4c9-44513c496685", "identity": {"boot_id": "788f8a5b-c0ab-4005-be28-7717b6342384", "urandom": "9f5ce046215bea1ac9cdc4af3df9d68a", "clock": 1791575968, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 5009731584}
+mt-vm-p0-restore-fc  | {"run": 28, "load_resumed_ms": 15.651914, "load_cdp_ms": 3112.742788, "cdp_id": "c27c9fa3-543d-4aea-a414-7b15afdae46a", "identity": {"boot_id": "06ebd92f-71e2-439c-8cf6-fc150cba24e1", "urandom": "8ff8d1b1951b2a4454d0954ed95a7bd7", "clock": 1791575971, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 5004009472}
+mt-vm-p0-restore-fc  | {"run": 29, "load_resumed_ms": 7.681347, "load_cdp_ms": 3102.777124, "cdp_id": "6782ca53-25f3-4436-a707-c1503e441e5b", "identity": {"boot_id": "ab132aa4-f4d7-4501-afc3-d420fe0211eb", "urandom": "6a03efdf1c20d75979d2578f2e5a47a8", "clock": 1791575974, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4989906944}
+mt-vm-p0-restore-fc  | {"run": 30, "load_resumed_ms": 7.009287, "load_cdp_ms": 2934.989639, "cdp_id": "28488454-3474-4376-b484-e84c5734bbdf", "identity": {"boot_id": "f5a91366-0029-44c2-ba30-2a1f0b0a97dc", "urandom": "dd1c9dcf8faf63cfb2deca35398f9be1", "clock": 1791575978, "leftover": "absent", "clock_delta_s": 0}, "vmm_status": {"CapEff": "0000000000000000", "Seccomp": "2"}, "memory_current": 4980088832}
+mt-vm-p0-restore-fc  | {"n": 30, "resumed_p50_ms": 6.606472, "resumed_p95_ms": 15.651914, "cdp_p50_ms": 3001.143156, "cdp_p95_ms": 3179.42337, "memory_peak": 5009731584, "boot_id_unique": 30, "urandom_unique": 30, "leftover_absent": true, "clock_max_delta_s": 1, "vsock_start": "listen51"}
+[Kmt-vm-p0-restore-fc exited with code 0
+ Compose Stopping Aborting on container exit...
+ Container mt-vm-p0-restore-fc Stopping 
+ Container mt-vm-p0-restore-fc Stopped 
