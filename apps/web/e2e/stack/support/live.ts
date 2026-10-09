@@ -1,9 +1,6 @@
-import type { Locator, Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 export type Rgb = readonly [number, number, number];
-
-/** The live iframe as Task 3's locator table names it. */
-const liveFrame = (page: Page): Locator => page.locator("iframe[title^='Remote browser']");
 
 /** n.eko's video inside the run page's live iframe. */
 export const liveVideo = (page: Page): Locator =>
@@ -35,7 +32,11 @@ export const isGreen = ([r, g]: Rgb): boolean => g > 120 && r < 90;
 
 /** Clicks the middle of the live view; n.eko forwards it to the slot as the person's input. */
 export async function clickLiveCentre(page: Page): Promise<void> {
-  const box = await liveFrame(page).boundingBox();
-  if (!box) throw new Error("live iframe is not laid out");
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const input = page.frameLocator("iframe[title^='Remote browser']").locator("textarea.overlay");
+  // The run's optimistic control state precedes n.eko's actual grant of input.
+  await expect(input).toHaveCSS("pointer-events", "auto");
+  await input.click();
+  // The slot's video includes its cursor. Leave the sampled centre pixel unobscured; callers
+  // still wait for the decoded frame to show the effect of this single click.
+  await input.hover({ position: { x: 1, y: 1 } });
 }
