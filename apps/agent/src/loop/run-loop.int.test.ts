@@ -5,6 +5,7 @@ import {
   type ApprovalMode,
   type Budget,
   type ToolProfile,
+  PersonDecider,
 } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import {
@@ -194,7 +195,7 @@ const decideApproval = (
 ) =>
   owner.db
     .update(approvals)
-    .set({ status: outcome, decidedBy: "user-1", edit: edit as never })
+    .set({ status: outcome, decidedBy: PersonDecider.parse("user-1"), edit: edit as never })
     .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")));
 
 describe("RunLoop (spec §5.3)", () => {
@@ -1450,7 +1451,7 @@ describe("RunLoop (spec §5.3)", () => {
       expect(browser.functionApprovals).toEqual([
         {
           kind: "credential_first_use",
-          decidedBy: "user-1",
+          decidedBy: PersonDecider.parse("user-1"),
           label: null,
           decidedAt: expect.any(Number),
         },

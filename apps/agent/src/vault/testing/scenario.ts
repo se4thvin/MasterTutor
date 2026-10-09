@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { encodeNotify, type RunStatus, type WaitReason } from "@mastertutor/contracts";
+import {
+  encodeNotify,
+  type RunStatus,
+  type WaitReason,
+  PersonDecider,
+} from "@mastertutor/contracts";
 import {
   approvals,
   browserSlots,
@@ -35,7 +40,7 @@ export interface VaultScenario {
   storage: ReturnType<typeof createMemoryStorage>;
   mock: LlmMock;
   workspaceId: string;
-  userId: string;
+  userId: PersonDecider;
   keys: VaultKeyPair;
   logs(): string;
   /**
@@ -88,7 +93,7 @@ export async function startVaultScenario(options: {
   const owner = createDb(testDb.ownerUrl, { max: 2 });
   const web = createDb(testDb.webUrl, { max: 2 });
   const agentDb = createDb(testDb.agentUrl, { max: 6 });
-  const userId = "scenario-user";
+  const userId = PersonDecider.parse("scenario-user");
   await owner.sql`insert into "user" (id, name, email) values (${userId}, 'Scenario', 'scenario@example.test')`;
   const { workspaceId } = await ensureWorkspaceMember(web.db, userId);
   const keys = await vaultKeyPairFromPrivate((await generateVaultKeyPair()).privateKeyBase64);

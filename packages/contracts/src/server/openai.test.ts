@@ -3,7 +3,7 @@ import { z } from "zod";
 import { policyProblems } from "../../../../tests/llm-mock/src/policy.ts";
 import { startLlmMock, type LlmMock } from "../../../../tests/llm-mock/src/server.ts";
 import { hashEmbedding } from "../testing/embedding.ts";
-import { createOpenAI, statelessParams } from "./openai.ts";
+import { StructuredParseError, createOpenAI, statelessParams } from "./openai.ts";
 
 let mock: LlmMock;
 beforeAll(async () => {
@@ -131,5 +131,52 @@ describe("the single OpenAI factory (openai-data-policy.md)", () => {
         metadata: { a: "b" },
       } as never),
     ).toEqual({ model: "m", input: [], store: false });
+  });
+});
+
+describe("reasoning effort (D52, spike §10)", () => {
+  it("sends a reasoning effort only when a structured request asks for one", async () => {
+    mock.setStructured("effort_format", () => ({ answer: 1 }));
+    const ask = (reasoningEffort?: "none" | "low") =>
+      client().responses.parse(
+        {
+          model: "gpt-6-luna",
+          instructions: "Answer.",
+          input: [{ role: "user", content: "q" }],
+          schema: z.object({ answer: z.number() }),
+          name: "effort_format",
+          reasoningEffort,
+        },
+        { signal: signal() },
+      );
+    await ask("none");
+    expect(mock.requests.at(-1)!.body).toMatchObject({ reasoning: { effort: "none" } });
+    await ask();
+    expect(mock.requests.at(-1)!.body).not.toHaveProperty("reasoning");
+  });
+});
+
+describe("an unparseable structured reply (review: billed, so counted)", () => {
+  it("throws StructuredParseError carrying the billed usage, never the text", async () => {
+    mock.setStructured("prose_format", () => ({ answer: "We need classify only metadata" }));
+    const error = await client()
+      .responses.parse(
+        {
+          model: "gpt-6-luna",
+          instructions: "Answer.",
+          input: [{ role: "user", content: "q" }],
+          schema: z.object({ answer: z.number() }),
+          name: "prose_format",
+        },
+        { signal: signal() },
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(StructuredParseError);
+    expect((error as StructuredParseError).tokens).toEqual({
+      input: 1_000,
+      cached: 0,
+      output: 100,
+    });
+    expect(String((error as Error).message)).not.toContain("We need");
   });
 });

@@ -159,7 +159,7 @@ export class StepStore {
       const entries = await this.#commitOnce(commit);
       const usd = commit.run?.usage?.usd;
       if (usd !== undefined) {
-        recordSpend(usd - this.#usd);
+        recordSpend(usd - this.#usd, "run");
         this.#usd = usd;
       }
       if (commit.transition?.to === "failed")

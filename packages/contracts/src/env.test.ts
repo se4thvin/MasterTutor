@@ -4,6 +4,7 @@ import {
   EnvError,
   GarageInitEnv,
   MigrateEnv,
+  ObserverEnv,
   VaultRotateEnv,
   WebEnv,
   parseEnv,
@@ -136,6 +137,7 @@ describe("least privilege per service (spec §13)", () => {
         "DATABASE_URL",
         "LOG_LEVEL",
         "NODE_ENV",
+        "OBSERVER_DB_PASSWORD",
         "WEB_DB_PASSWORD",
       ].sort(),
     );
@@ -163,5 +165,21 @@ describe("VaultRotateEnv", () => {
       expect(String((error as EnvError).problems)).not.toContain(source.VAULT_PRIVATE_KEY);
       expect((error as EnvError).problems.join(" ")).toContain("VAULT_NEXT_PRIVATE_KEY");
     }
+  });
+});
+
+describe("ObserverEnv (spec §5.1)", () => {
+  const base = {
+    DATABASE_URL: "postgres://observer_role:p@postgres:5432/mastertutor",
+    OPENAI_API_KEY: "k",
+    PUBLIC_URL: "https://mt.example.com",
+    OBSERVER_INTERNAL_TOKEN: "t".repeat(32),
+    OBSERVE_COPILOT_PASSWORD: "Copilot-password-0123456789abcdef",
+  };
+  it("defaults the daily cap to $3 and holds no S3, vault or auth secret", () => {
+    const env = parseEnv(ObserverEnv, base);
+    expect(env.OBSERVER_DAILY_USD).toBe(3);
+    for (const key of Object.keys(ObserverEnv.shape))
+      expect(key).not.toMatch(/^(S3_|VAULT_|BETTER_AUTH|NEKO_|LIVE_COOKIE|SEALING)/);
   });
 });

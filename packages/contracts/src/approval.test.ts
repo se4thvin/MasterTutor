@@ -1,17 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_DECIDER,
   ApprovalDecisionInput,
   ApprovalRequest,
   AUTO_MODE_DECISIONS,
+  MACHINE_DECIDERS,
+  OBSERVER_DECIDER,
+  PERSON_ID_SOURCE,
+  PersonDecider,
+  RESERVED_DECIDERS,
   decideByPolicy,
   decideOnModeChange,
   decideSafetyChecks,
+  deciderClass,
+  deciderShapeSql,
+  isMachineDecider,
   isPersonDecider,
+  personDeciderSql,
   policyDecider,
   isRiskyLabel,
 } from "./approval.ts";
 import { APPROVAL_KINDS, APPROVAL_MODES, type ApprovalKind } from "./enums.ts";
 import { DEFAULT_BUDGET, EMPTY_USAGE } from "./budget.ts";
+import { OBSERVER_ROLES } from "./telemetry.ts";
 
 describe("isRiskyLabel", () => {
   it.each([
@@ -57,6 +68,24 @@ describe("ApprovalRequest", () => {
       },
       new_origin: { kind: "new_origin", origin: "https://b.com", url: "https://b.com/page" },
       budget: { kind: "budget", exceeded: "usd", usage: EMPTY_USAGE, budget: DEFAULT_BUDGET },
+      data_egress: {
+        kind: "data_egress",
+        action: { type: "type", text: "notes" },
+        url: "https://b.com/form",
+        fromOrigin: "https://a.com",
+        toOrigin: "https://b.com",
+        chars: 5,
+        screenshotKey: null,
+      },
+      observer: {
+        kind: "observer",
+        verdict: "escalate",
+        category: "guard_unavailable",
+        rationale: "",
+        subject: null,
+        url: "https://a.com/",
+        screenshotKey: null,
+      },
     };
     for (const kind of APPROVAL_KINDS) {
       expect(ApprovalRequest.parse(samples[kind]).kind).toBe(kind);
@@ -82,7 +111,9 @@ describe("decideByPolicy", () => {
 describe("bypass mode (D44)", () => {
   it("approves every action approval, records it as bypass, and still asks at a budget hit", () => {
     for (const kind of APPROVAL_KINDS)
-      expect(decideByPolicy("bypass", kind)).toBe(kind === "budget" ? "ask" : "approved");
+      expect(decideByPolicy("bypass", kind)).toBe(
+        kind === "budget" || kind === "observer" ? "ask" : "approved",
+      );
     expect(policyDecider("bypass")).toBe("bypass");
     expect(policyDecider("auto_within_allowlist")).toBe("policy");
   });
@@ -268,5 +299,89 @@ describe("approval request display fields (run view A2, A3a)", () => {
       }),
     ).toMatchObject({ action: { type: "keypress" }, context: null });
     expect(ApprovalRequest.safeParse(form).success).toBe(true);
+  });
+});
+
+describe("deciders are allow-checked (D52 prerequisite, spec §4)", () => {
+  it("never reads a superseded approval (decided_by agent) as a person's", () => {
+    expect(isPersonDecider("agent")).toBe(false);
+  });
+
+  it("reserves every Observer role: none is ever a person's decision", () => {
+    for (const role of OBSERVER_ROLES) {
+      expect(isPersonDecider(role), role).toBe(false);
+      expect(isPersonDecider(role.toUpperCase()), role).toBe(false);
+      expect(RESERVED_DECIDERS, role).toContain(role);
+    }
+  });
+
+  it("accepts user ids only", () => {
+    for (const id of ["user-1", "fixture-user", "user_7f3a9c", "Qw3rTy0123456789AbCdEfGhIjKlMnOp"])
+      expect(isPersonDecider(id), id).toBe(true);
+    for (const value of [
+      ...MACHINE_DECIDERS,
+      "",
+      " user-1",
+      "user 1",
+      "user:1",
+      "-leading-dash",
+      "x".repeat(65),
+      "Observer",
+      undefined,
+    ])
+      expect(isPersonDecider(value as string | undefined), String(value)).toBe(false);
+  });
+
+  it("names every machine decider and classifies everything else as unknown", () => {
+    expect(MACHINE_DECIDERS).toEqual(["policy", "bypass", "observer", "agent"]);
+    expect(deciderClass("observer")).toBe("observer");
+    expect(deciderClass("agent")).toBe("agent");
+    expect(deciderClass("user-1")).toBe("person");
+    expect(deciderClass("user:1")).toBe("unknown");
+    expect(deciderClass(null)).toBe("unknown");
+    for (const decider of MACHINE_DECIDERS) expect(isMachineDecider(decider)).toBe(true);
+    expect(isMachineDecider("user-1")).toBe(false);
+  });
+
+  it("parses a person decider as a branded value and refuses a machine one", () => {
+    expect(PersonDecider.parse("user-1")).toBe("user-1");
+    expect(PersonDecider.safeParse(OBSERVER_DECIDER).success).toBe(false);
+    expect(PersonDecider.safeParse(AGENT_DECIDER).success).toBe(false);
+  });
+
+  it("builds the SQL person rule from the same constants", () => {
+    expect(personDeciderSql('"t"."c"')).toBe(
+      `"t"."c" ~ '${PERSON_ID_SOURCE}' AND lower("t"."c") NOT IN ('policy', 'bypass', 'observer', 'agent', 'guard', 'watcher', 'copilot')`,
+    );
+    expect(deciderShapeSql('"t"."c"')).toBe(`"t"."c" IS NULL OR "t"."c" ~ '${PERSON_ID_SOURCE}'`);
+  });
+});
+
+describe("data_egress and observer kinds (spec §6.3, §8)", () => {
+  it("asks for data_egress in auto mode and approves it in bypass (D52, user decision)", () => {
+    expect(decideByPolicy("auto_within_allowlist", "data_egress")).toBe("ask");
+    expect(decideByPolicy("ask", "data_egress")).toBe("ask");
+    expect(decideByPolicy("bypass", "data_egress")).toBe("approved");
+  });
+  it("always asks for an observer request", () => {
+    for (const mode of APPROVAL_MODES) expect(decideByPolicy(mode, "observer")).toBe("ask");
+  });
+  it("wraps a subject request but never another observer request", () => {
+    const subject = {
+      kind: "new_origin",
+      origin: "https://b.test",
+      url: "https://b.test/",
+    } as const;
+    const observer = {
+      kind: "observer",
+      verdict: "block",
+      category: "unexpected_origin",
+      rationale: "Not related to the goal.",
+      subject,
+      url: "https://a.test/",
+      screenshotKey: null,
+    } as const;
+    expect(ApprovalRequest.parse(observer)).toEqual(observer);
+    expect(ApprovalRequest.safeParse({ ...observer, subject: observer }).success).toBe(false);
   });
 });

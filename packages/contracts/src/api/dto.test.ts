@@ -256,6 +256,7 @@ describe("tool profiles and takeovers (Phase 10, P10a-3/5)", () => {
     waitReason: null,
     controller: "agent",
     approvalMode: "ask",
+    observerMode: "enforce",
     toolProfile: "browser_use",
     model: "m",
     noteId: null,
@@ -386,5 +387,16 @@ describe("RunStepView.reasoning (fe-run-chat)", () => {
     expect(RunStepView.parse({ ...view, reasoning: "Sign in first." }).reasoning).toBe(
       "Sign in first.",
     );
+  });
+});
+
+describe("observer mode (spec §6.8)", () => {
+  it("defaults to enforce and needs an acknowledgement for shadow", () => {
+    expect(CreateRunInput.parse({ goal: "g" }).observerMode).toBe("enforce");
+    expect(CreateRunInput.safeParse({ goal: "g", observerMode: "shadow" }).success).toBe(false);
+    expect(
+      CreateRunInput.parse({ goal: "g", observerMode: "shadow", observerShadowAcknowledged: true })
+        .observerMode,
+    ).toBe("shadow");
   });
 });

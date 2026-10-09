@@ -79,6 +79,16 @@ describe("RunEvent", () => {
       },
       model_fallback: { type: "model_fallback", from: "gpt-6-astra", to: "gpt-6.1-sol" },
       title: { type: "title", title: "Notes on two's complement (zyBooks 4.4)" },
+      guard: {
+        type: "guard",
+        verdict: "block",
+        category: "data_exfiltration",
+        stage: "review",
+        rollout: "enforce",
+        applied: true,
+        items: 1,
+        flows: 1,
+      },
     };
     expect(Object.keys(samples).sort()).toEqual([...RUN_EVENT_TYPES].sort());
     for (const type of RUN_EVENT_TYPES) expect(RunEvent.parse(samples[type]).type).toBe(type);
@@ -102,6 +112,12 @@ describe("RunEvent", () => {
       RunEvent.safeParse({ type: "approval_mode_changed", from: "ask", to: "yolo", by: "u" })
         .success,
     ).toBe(false);
+    // Only a person changes the mode: a machine decider is never recorded as `by` (D52).
+    for (const by of ["policy", "bypass", "observer", "agent", "Policy"])
+      expect(
+        RunEvent.safeParse({ type: "approval_mode_changed", from: "ask", to: "bypass", by })
+          .success,
+      ).toBe(false);
   });
 
   it("rejects unknown event types", () => {

@@ -4,6 +4,7 @@ import {
   BENCHMARK_OUTCOMES,
   BLOCK_TYPES,
   CONTROLLERS,
+  OBSERVER_MODES,
   RUN_STATUSES,
   SLOT_STATES,
   STEP_STATES,
@@ -19,38 +20,45 @@ const config = (table: PgTable) => getTableConfig(table);
 const columns = (table: PgTable) => config(table).columns.map((column) => column.name);
 
 describe("schema", () => {
-  it("defines exactly the spec tables plus benchmarks, the object-deletion queue and alerts", () => {
-    expect(tables.map((table) => config(table).name).sort()).toEqual([
-      "account",
-      "alerts",
-      "approvals",
-      "assets",
-      "benchmark_runs",
-      "benchmarks",
-      "browser_sessions",
-      "browser_slots",
-      "downloads",
-      "folders",
-      "note_blocks",
-      "notes",
-      "object_deletions",
-      "otp_codes",
-      "push_subscriptions",
-      "run_events",
-      "run_steps",
-      "run_transcript",
-      "runs",
-      "session",
-      "settings",
-      "sources",
-      "user",
-      "vault_audit",
-      "vault_grants",
-      "vault_items",
-      "vault_secrets",
-      "verification",
-      "workspace_members",
-      "workspaces",
+  it("defines exactly the spec tables plus benchmarks, the object-deletion queue, alerts and the Observer's", () => {
+    expect(
+      tables.map((table) => `${config(table).schema ?? "public"}.${config(table).name}`).sort(),
+    ).toEqual([
+      "observer.copilot_items",
+      "observer.copilot_results",
+      "observer.copilot_spend",
+      "observer.copilot_threads",
+      "public.account",
+      "public.alerts",
+      "public.approvals",
+      "public.assets",
+      "public.benchmark_runs",
+      "public.benchmarks",
+      "public.browser_sessions",
+      "public.browser_slots",
+      "public.downloads",
+      "public.folders",
+      "public.guard_reviews",
+      "public.note_blocks",
+      "public.notes",
+      "public.object_deletions",
+      "public.otp_codes",
+      "public.push_subscriptions",
+      "public.run_events",
+      "public.run_steps",
+      "public.run_transcript",
+      "public.runs",
+      "public.session",
+      "public.settings",
+      "public.sources",
+      "public.user",
+      "public.vault_audit",
+      "public.vault_grants",
+      "public.vault_items",
+      "public.vault_secrets",
+      "public.verification",
+      "public.workspace_members",
+      "public.workspaces",
     ]);
   });
 
@@ -59,6 +67,7 @@ describe("schema", () => {
     expect(schema.toolProfileEnum.enumValues).toEqual([...TOOL_PROFILES]);
     expect(schema.controllerEnum.enumValues).toEqual([...CONTROLLERS]);
     expect(schema.approvalModeEnum.enumValues).toEqual([...APPROVAL_MODES]);
+    expect(schema.observerModeEnum.enumValues).toEqual([...OBSERVER_MODES]);
     expect(schema.approvalKindEnum.enumValues).toEqual([...APPROVAL_KINDS]);
     expect(schema.stepStateEnum.enumValues).toEqual([...STEP_STATES]);
     expect(schema.blockTypeEnum.enumValues).toEqual([...BLOCK_TYPES]);

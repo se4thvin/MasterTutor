@@ -8,6 +8,8 @@ export const ALERT_RULES = [
   "run_failed",
   "slot_crash_loop",
   "spend_jump",
+  "observer_escalation",
+  "observer_failure",
 ] as const;
 export const AlertRule = z.enum(ALERT_RULES);
 export type AlertRule = z.infer<typeof AlertRule>;
@@ -19,6 +21,8 @@ export const ALERT_LABELS: Record<AlertRule, string> = {
   run_failed: "A run failed",
   slot_crash_loop: "A browser slot keeps crashing",
   spend_jump: "Spend jumped",
+  observer_escalation: "The safety observer stopped an action",
+  observer_failure: "The safety observer is failing",
 };
 
 /** OpenObserve's webhook body (its template is in packages/observability). Extra keys are refused. */

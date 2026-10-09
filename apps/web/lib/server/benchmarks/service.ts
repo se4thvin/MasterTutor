@@ -15,7 +15,7 @@ import {
 import { createLogger } from "@mastertutor/contracts/server";
 import { benchmarkRuns, benchmarks, runEvents, runs, type Database } from "@mastertutor/db";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { createRun } from "../runs/create-run.ts";
+import { createRun, type RunScope as BenchmarkScope } from "../runs/create-run.ts";
 
 const log = createLogger({ service: "web" });
 
@@ -38,10 +38,7 @@ export class BenchmarkRunNotFinished extends Error {
   }
 }
 
-export interface BenchmarkScope {
-  workspaceId: string;
-  actor: string;
-}
+export type { RunScope as BenchmarkScope } from "../runs/create-run.ts";
 export type CreateRunFn = (
   db: Database,
   scope: BenchmarkScope,

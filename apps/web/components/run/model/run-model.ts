@@ -398,6 +398,9 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
       return { ...m, model: e.to };
     case "title":
       return { ...m, title: e.title };
+    // Guard rows and cards are Track U's (U1); until then the event only advances the cursor.
+    case "guard":
+      return m;
   }
 }
 

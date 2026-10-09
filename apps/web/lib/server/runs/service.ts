@@ -1,6 +1,5 @@
 import {
   TERMINAL_RUN_STATUSES,
-  UserId,
   autoModeNeedsOrigins,
   decideOnModeChange,
   isPersonDecider,
@@ -273,7 +272,7 @@ export async function setRunApprovalMode(
   scope: RunScope,
   input: SetApprovalModeInput,
 ): Promise<void> {
-  if (!UserId.safeParse(scope.actor).success || !isPersonDecider(scope.actor))
+  if (!isPersonDecider(scope.actor))
     throw new ServiceError("forbidden", "Only a person can change the approval mode.");
   await db.transaction(async (tx) => {
     const [run] = await tx
@@ -347,7 +346,7 @@ export async function decideRunApproval(
   scope: RunScope,
   input: ApprovalDecisionInput,
 ): Promise<void> {
-  if (!UserId.safeParse(scope.actor).success || !isPersonDecider(scope.actor))
+  if (!isPersonDecider(scope.actor))
     throw new ServiceError("forbidden", "Only a person can decide an approval.");
   await db.transaction(async (tx) => {
     const [target] = await tx

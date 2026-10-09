@@ -3,6 +3,7 @@ import {
   type ApprovalMode,
   type Budget,
   type Controller,
+  type ObserverMode,
   type Plan,
   type RunStatus,
   type ToolProfile,
@@ -21,6 +22,8 @@ export interface RunSnapshot {
   title: string | null;
   model: string;
   approvalMode: ApprovalMode;
+  /** Guard rollout (D52, spec §6.8). */
+  observerMode: ObserverMode;
   toolProfile: ToolProfile;
   budget: Budget;
   usage: Usage;
@@ -37,6 +40,7 @@ export function snapshotOf(row: RunRecord): RunSnapshot {
     title: row.title ?? null,
     model: row.model,
     approvalMode: row.approvalMode,
+    observerMode: row.observerMode,
     toolProfile: row.toolProfile,
     budget: row.budget,
     usage: row.usage,

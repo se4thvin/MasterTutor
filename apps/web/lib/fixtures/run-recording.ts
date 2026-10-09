@@ -35,6 +35,7 @@ const DETAIL = {
   waitReason: null,
   controller: "agent",
   approvalMode: "ask",
+  observerMode: "enforce",
   toolProfile: "browser_use",
   model: MODELS.agentPrimary,
   noteId: null,

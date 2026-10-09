@@ -1,8 +1,7 @@
 import { metrics } from "@opentelemetry/api";
 import {
-  BYPASS_DECIDER,
-  POLICY_DECIDER,
   SLOT_STATES,
+  deciderClass,
   TERMINAL_RUN_STATUSES,
   type AlertRule,
   type RunEvent,
@@ -13,7 +12,10 @@ import {
   METER_NAME,
   METRIC,
   type ApprovalDecider,
+  type ObserverOutcome,
+  type ObserverRole,
   type PushOutcome,
+  type SpendPurpose,
 } from "@mastertutor/contracts/telemetry";
 import { normalizeCode } from "./instrument.ts";
 import { instruments } from "./instruments.ts";
@@ -22,9 +24,7 @@ const TERMINAL: ReadonlySet<string> = new Set(TERMINAL_RUN_STATUSES);
 
 /** Who decided an approval, as a class (spec §5.2): a user id never becomes telemetry. */
 export function deciderOf(decidedBy: string): ApprovalDecider {
-  if (decidedBy === POLICY_DECIDER) return "policy";
-  if (decidedBy === BYPASS_DECIDER) return "bypass";
-  return "person";
+  return deciderClass(decidedBy);
 }
 
 function safely(record: () => void): void {
@@ -93,6 +93,13 @@ export function recordRunEvent(event: RunEvent): void {
       case "filed":
         m.notesFiled.add(1, { [ATTR.filedBy]: event.filedBy });
         return;
+      case "guard":
+        m.observerVerdicts.add(1, {
+          [ATTR.observerVerdict]: event.verdict,
+          [ATTR.observerCategory]: event.category,
+          [ATTR.observerRollout]: event.rollout,
+        });
+        return;
       default:
         return;
     }
@@ -103,9 +110,28 @@ export function recordRunFailure(code: string): void {
   safely(() => instruments().runFailures.add(1, { [ATTR.errorCode]: normalizeCode(code) }));
 }
 
-export function recordSpend(usd: number): void {
+export function recordSpend(usd: number, purpose: SpendPurpose): void {
   if (!(usd > 0)) return;
-  safely(() => instruments().spendUsd.add(usd));
+  safely(() => instruments().spendUsd.add(usd, { [ATTR.spendPurpose]: purpose }));
+}
+
+/** The Observer's own spend by role: a breakdown of mt.spend.usd, never added to it. */
+export function recordObserverSpend(role: ObserverRole, usd: number): void {
+  if (!(usd > 0)) return;
+  safely(() => instruments().observerSpend.add(usd, { [ATTR.observerRole]: role }));
+}
+
+export function recordObserverFailure(role: ObserverRole, outcome: ObserverOutcome): void {
+  safely(() =>
+    instruments().observerFailures.add(1, {
+      [ATTR.observerRole]: role,
+      [ATTR.observerOutcome]: outcome,
+    }),
+  );
+}
+
+export function recordObserverOverride(): void {
+  safely(() => instruments().observerOverrides.add(1));
 }
 
 export function recordModelTokens(

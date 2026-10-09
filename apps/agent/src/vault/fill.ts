@@ -4,6 +4,7 @@ import {
   isPersonDecider,
   toOrigin,
   type ApprovalRequest,
+  type Decider,
   type CredentialErrorCode,
   type CredentialField,
   type FillCredentialArgs,
@@ -234,7 +235,7 @@ export async function fillCredential(
   args: FillCredentialArgs,
 ): Promise<FillCredentialResult> {
   const item = await findVaultItemByAlias(deps.db, ctx.workspaceId, args.alias);
-  const record = (action: "fill" | "denied", outcome: string, approver: string | null) =>
+  const record = (action: "fill" | "denied", outcome: string, approver: Decider | null) =>
     appendVaultAudit(deps.db, {
       workspaceId: ctx.workspaceId,
       itemId: item?.id ?? null,

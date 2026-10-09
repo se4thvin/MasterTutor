@@ -6,6 +6,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./query": "./src/query.ts",
     "./testing": "./src/testing.ts"
   },
   "scripts": {

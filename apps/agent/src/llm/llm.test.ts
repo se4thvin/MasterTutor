@@ -22,7 +22,8 @@ import {
 } from "./client.ts";
 import { agentInstructions, goalText } from "./instructions.ts";
 import { callSignature, describeCall, parseModelOutput } from "./items.ts";
-import { MODEL_PRICES, addUsage, costUsd, usageDelta } from "./pricing.ts";
+import { MODEL_PRICES, costUsd } from "@mastertutor/contracts";
+import { addUsage, usageDelta } from "./pricing.ts";
 import { agentTools } from "./tools.ts";
 
 const request: ModelRequest = {

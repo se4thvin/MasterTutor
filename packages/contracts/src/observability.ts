@@ -34,6 +34,25 @@ export function observabilityOrigin(appUrl: string): string {
 }
 /** Where OpenObserve's UI starts once its identity record is seeded (B1). */
 export const OBSERVABILITY_UI_PATH = `${OBSERVE_BASE_PATH}/web/`;
+/**
+ * Deep links into OpenObserve's UI, relative to the obs origin (observabilityOrigin). Pinned by
+ * o2-api.int.test.ts in a browser against the image digest (Observer spike §10): the trace list
+ * takes a base64 WHERE filter (not full SQL: sql_mode=true wraps it in a second WHERE), times in
+ * epoch microseconds. The Copilot's o2TraceLink builds on these.
+ */
+const base64 = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+const uiQuery = (params: Record<string, string | number>) =>
+  new URLSearchParams(
+    Object.entries(params).map(([k, v]) => [k, String(v)] as [string, string]),
+  ).toString();
+export const observabilityUiPaths = {
+  traceList: (stream: string, view: { filter: string; from: number; to: number }) =>
+    `${OBSERVABILITY_UI_PATH}traces?${uiQuery({ stream, from: view.from, to: view.to, query: base64(view.filter), org_identifier: OBSERVE_ORG })}`,
+  traceDetail: (stream: string, view: { traceId: string; from: number; to: number }) =>
+    `${OBSERVABILITY_UI_PATH}traces/trace-details?${uiQuery({ stream, trace_id: view.traceId, from: view.from, to: view.to, org_identifier: OBSERVE_ORG })}`,
+  logList: (stream: string, view: { filter: string; from: number; to: number }) =>
+    `${OBSERVABILITY_UI_PATH}logs?${uiQuery({ stream_type: "logs", stream, from: view.from, to: view.to, query: base64(view.filter), org_identifier: OBSERVE_ORG })}`,
+} as const;
 /** On the app host: the owner's way in ("Open dashboards"); hands off to the obs host. */
 export const OBSERVABILITY_APP_PATH = "/observability";
 /** On the obs host, served by web: trades a hand-off ticket for the obs session cookie. */

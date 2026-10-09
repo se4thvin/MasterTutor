@@ -3,6 +3,7 @@ import type { FolderNode } from "@mastertutor/db";
 import { describe, expect, it } from "vitest";
 import { createFilingModel, filingPrompt, MAX_FILING_PATHS, planFiling } from "./filing.ts";
 import { StepCollector } from "../loop/step-collector.ts";
+import { StructuredParseError } from "../llm/openai.ts";
 
 const rows: FolderNode[] = [
   { id: "a", parentId: null, name: "Biology", sort: 0 },
@@ -144,6 +145,22 @@ describe("createFilingModel (QA-084)", () => {
     expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
     expect(step.usage.inputTokens).toBe(1_000);
     expect(step.usage.outputTokens).toBe(10);
+    expect(step.usage.usd).toBeGreaterThan(0);
+  });
+
+  it("books the usage of an answer that did not parse, then fails (it is billed)", async () => {
+    const model = createFilingModel({
+      responses: {
+        parse: (async () => {
+          throw new StructuredParseError(MODELS.filing, { input: 1_000, cached: 0, output: 10 });
+        }) as never,
+      } as never,
+    });
+    const step = new StepCollector();
+    await expect(
+      model.decide({ folders: [["Biology"]], title: "Leaves", lede: null }, { step }),
+    ).rejects.toBeInstanceOf(StructuredParseError);
+    expect(step.usage.inputTokens).toBe(1_000);
     expect(step.usage.usd).toBeGreaterThan(0);
   });
 });

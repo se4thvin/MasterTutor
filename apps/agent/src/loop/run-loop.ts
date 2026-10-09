@@ -3,7 +3,7 @@ import {
   type ApprovalMode,
   decideByPolicy,
   decideSafetyChecks,
-  BYPASS_DECIDER,
+  AGENT_DECIDER,
   POLICY_DECIDER,
   REASONING_SUMMARY_MAX,
   isPersonDecider,
@@ -1187,13 +1187,13 @@ export class RunLoop {
     // The decision for exactly this call (same call id and arguments), so a tool can tell a human
     // approval (a lasting vault grant) from a policy one (this call only).
     const decision = this.#decided.get(functionItem(call.callId));
-    // A bypass decision reaches tools as a policy one: never a person's (no lasting vault grant,
-    // an off-origin sign-in form still needs a person), D44.
+    // A machine decision (policy, bypass, observer) reaches tools as a policy one: never a
+    // person's (no lasting vault grant, an off-origin sign-in form still needs a person), D44, D52.
     const approval: CallApproval | null =
       decision?.approved && decision.kind !== null && decision.decidedBy !== null
         ? {
             kind: decision.kind,
-            decidedBy: decision.decidedBy === BYPASS_DECIDER ? POLICY_DECIDER : decision.decidedBy,
+            decidedBy: isPersonDecider(decision.decidedBy) ? decision.decidedBy : POLICY_DECIDER,
             label: decision.label,
             decidedAt: decision.decidedAt,
           }
@@ -1593,7 +1593,7 @@ export class RunLoop {
             type: "approval_resolved",
             approvalId: pending.approvalId,
             status: "superseded",
-            decidedBy: "agent",
+            decidedBy: AGENT_DECIDER,
           },
         ],
         extra: (tx) => markApprovalSuperseded(tx, pending.approvalId),
@@ -1648,7 +1648,7 @@ export class RunLoop {
         type: "approval_resolved",
         approvalId: pending.approvalId,
         status: "superseded",
-        decidedBy: "agent",
+        decidedBy: AGENT_DECIDER,
       });
     }
     events.push({ type: "control", holder: "user" });

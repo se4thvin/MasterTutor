@@ -10,6 +10,7 @@ import {
   Controller,
   Fidelity,
   FiledBy,
+  ObserverMode,
   RunStatus,
   SourceKind,
   StepPhase,
@@ -89,8 +90,15 @@ export const CreateRunInput = z
     approvalMode: ApprovalMode.default("ask"),
     toolProfile: ToolProfile.default("browser_use"),
     bypassAcknowledged: BypassAcknowledged,
+    /** Guard rollout (spec §6.8): shadow records only and must be acknowledged, like bypass. */
+    observerMode: ObserverMode.default("enforce"),
+    observerShadowAcknowledged: z.literal(true).optional(),
   })
   .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED)
+  .refine((input) => input.observerMode !== "shadow" || input.observerShadowAcknowledged === true, {
+    message: "Shadow mode needs observerShadowAcknowledged: true (the user saw the warning)",
+    path: ["observerShadowAcknowledged"],
+  })
   .refine(autoModeNeedsOrigins, {
     message: "Auto mode needs at least one allowed origin",
     path: ["allowedOrigins"],
@@ -129,6 +137,7 @@ export const RunSummary = z.object({
   waitReason: WaitReason.nullable(),
   controller: Controller,
   approvalMode: ApprovalMode,
+  observerMode: ObserverMode,
   toolProfile: ToolProfile,
   model: z.string(),
   noteId: Uuid.nullable(),

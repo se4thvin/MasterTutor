@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApprovalRequest } from "./approval.ts";
+import { ApprovalRequest, PersonDecider } from "./approval.ts";
 import { Budget, Usage } from "./budget.ts";
 import {
   ApprovalMode,
@@ -8,11 +8,13 @@ import {
   BlockType,
   Controller,
   FiledBy,
+  ObserverMode,
   RunStatus,
   StepPhase,
   StepState,
   WaitReason,
 } from "./enums.ts";
+import { GuardCategory, GuardStage, GuardVerdictName } from "./observer.ts";
 import { IsoDateTime, SlotName, Uuid } from "./primitives.ts";
 import { RUN_TITLE_MAX } from "./run-title.ts";
 import { ReasoningSummary } from "./step-result.ts";
@@ -54,6 +56,7 @@ export const RUN_EVENT_TYPES = [
   "filed",
   "model_fallback",
   "title",
+  "guard",
 ] as const;
 export type RunEventType = (typeof RUN_EVENT_TYPES)[number];
 
@@ -105,12 +108,15 @@ export const RunEvent = z.discriminatedUnion("type", [
   }),
   /** The agent read every user_message up to and including this event id (into a decide). */
   z.object({ type: z.literal("user_messages_read"), through: z.string().regex(/^[0-9]+$/) }),
-  /** A person changed the run's approval mode mid-run (run-mode); `by` is their user id. */
+  /**
+   * A person changed the run's approval mode mid-run (run-mode); `by` is their user id, never a
+   * machine decider (D52: only a person changes the mode).
+   */
   z.object({
     type: z.literal("approval_mode_changed"),
     from: ApprovalMode,
     to: ApprovalMode,
-    by: z.string().min(1).max(64),
+    by: PersonDecider,
   }),
   /**
    * A download made while a person held control, waiting for them to keep or discard it at
@@ -148,6 +154,19 @@ export const RunEvent = z.discriminatedUnion("type", [
   }),
   /** The run's generated title, stored once (runs.title); model output, so shown as text only. */
   z.object({ type: z.literal("title"), title: z.string().min(1).max(RUN_TITLE_MAX) }),
+  /** A Guard review's outcome (spec §6.10): codes and counts only, never the rationale. */
+  z.object({
+    type: z.literal("guard"),
+    verdict: GuardVerdictName,
+    category: GuardCategory,
+    stage: GuardStage,
+    rollout: ObserverMode,
+    /** False in shadow (recorded only) and for allow or flag. */
+    applied: z.boolean(),
+    items: z.number().int().min(0).max(20),
+    /** Reviewed items whose typed text came from another origin (the watcher's egress signal). */
+    flows: z.number().int().min(0).max(20),
+  }),
 ]);
 export type RunEvent = z.infer<typeof RunEvent>;
 

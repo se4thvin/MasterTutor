@@ -1,4 +1,9 @@
-import { decodeNotify, type ApprovalRequest, type RunEvent } from "@mastertutor/contracts";
+import {
+  PersonDecider,
+  decodeNotify,
+  type ApprovalRequest,
+  type RunEvent,
+} from "@mastertutor/contracts";
 import {
   approvals,
   assets,
@@ -410,7 +415,7 @@ describe("runs.* on the live router (Task 0A)", () => {
       client: web.sql,
       logger: { logQuery: (query) => queries.push(query) },
     }) as unknown as Database;
-    await getRun(logged, { workspaceId, actor: viewer.id }, runId);
+    await getRun(logged, { workspaceId, actor: PersonDecider.parse(viewer.id) }, runId);
     // max(event id), the run, approvals and stored downloads: no held-downloads read.
     expect(queries).toHaveLength(4);
     expect(queries.filter((query) => query.includes('"downloads"."kept_at" is null'))).toEqual([]);
@@ -419,7 +424,7 @@ describe("runs.* on the live router (Task 0A)", () => {
       .set({ controller: "user", controlUserId: viewer.id })
       .where(eq(runs.id, runId));
     queries.length = 0;
-    await getRun(logged, { workspaceId, actor: viewer.id }, runId);
+    await getRun(logged, { workspaceId, actor: PersonDecider.parse(viewer.id) }, runId);
     expect(queries).toHaveLength(5);
   });
 

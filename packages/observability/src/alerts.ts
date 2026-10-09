@@ -23,7 +23,7 @@ export interface AlertSpec {
 const SILENCE_MINUTES = 30;
 const ERROR_SPIKE_LINES = 20;
 
-/** The five alert rules (spec §13.1). Their names are AlertRule, which web validates. */
+/** The alert rules (spec §13.1; the two observer rules are D52's, owned by Track G7). Their names are AlertRule, which web validates. */
 export function alertSpecs(options: { spendUsdPerHour: number }): Record<AlertRule, AlertSpec> {
   return {
     error_spike: {
@@ -82,6 +82,32 @@ export function alertSpecs(options: { spendUsdPerHour: number }): Record<AlertRu
       },
       threshold: options.spendUsdPerHour,
       periodMinutes: 60,
+    },
+    observer_escalation: {
+      description: "The Guard escalated or blocked an action in an enforced run.",
+      query: {
+        type: "promql",
+        stream: o2StreamName(METRIC.observerVerdicts.name),
+        expr: eventsWithin(
+          metricSelector(
+            METRIC.observerVerdicts,
+            `${o2Label(ATTR.observerVerdict)}=~"escalate|block", ${o2Label(ATTR.observerRollout)}="enforce"`,
+          ),
+          5,
+        ),
+      },
+      threshold: 1,
+      periodMinutes: 5,
+    },
+    observer_failure: {
+      description: "Three or more Observer reviews or turns failed within 10 minutes.",
+      query: {
+        type: "promql",
+        stream: o2StreamName(METRIC.observerFailures.name),
+        expr: eventsWithin(metricSelector(METRIC.observerFailures), 10),
+      },
+      threshold: 3,
+      periodMinutes: 10,
     },
   };
 }

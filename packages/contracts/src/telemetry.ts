@@ -14,10 +14,12 @@ import type {
   Controller,
   Fidelity,
   FiledBy,
+  ObserverMode,
   RunStatus,
   SlotState,
   StepPhase,
 } from "./enums.ts";
+import type { CopilotToolName, GuardCategory, GuardStage, GuardVerdictName } from "./observer.ts";
 import type { ToolName } from "./tools.ts";
 
 export const TRACER_NAME = "mastertutor";
@@ -31,6 +33,9 @@ export const SPAN = {
   slotReset: "mt.slot.reset",
   takeover: "mt.takeover",
   alertDelivery: "mt.alert.delivery",
+  observerReview: "mt.observer.review",
+  observerTurn: "mt.observer.turn",
+  observerTool: "mt.observer.tool",
 } as const;
 export type SpanName = (typeof SPAN)[keyof typeof SPAN];
 
@@ -77,6 +82,14 @@ export const ATTR = {
   dependency: "mt.dependency",
   /** Set by the collector on container log lines (browser-N, pdf-worker, audio-capture, docling). */
   service: "mt.service",
+  observerRole: "mt.observer.role",
+  observerStage: "mt.observer.stage",
+  observerVerdict: "mt.observer.verdict",
+  observerCategory: "mt.observer.category",
+  observerRollout: "mt.observer.rollout",
+  observerOutcome: "mt.observer.outcome",
+  observerTool: "mt.observer.tool",
+  spendPurpose: "mt.spend.purpose",
 } as const;
 export type AttributeName = (typeof ATTR)[keyof typeof ATTR];
 
@@ -91,7 +104,14 @@ export const TOOL_OUTCOMES = [
   "refused",
 ] as const;
 export type ToolOutcome = (typeof TOOL_OUTCOMES)[number];
-export const APPROVAL_DECIDERS = ["person", "policy", "bypass"] as const;
+export const APPROVAL_DECIDERS = [
+  "person",
+  "policy",
+  "bypass",
+  "observer",
+  "agent",
+  "unknown",
+] as const;
 export type ApprovalDecider = (typeof APPROVAL_DECIDERS)[number];
 export const SEND_MODES = ["queue", "interrupt"] as const;
 export type SendMode = (typeof SEND_MODES)[number];
@@ -119,6 +139,25 @@ export const DEPENDENCIES = [
   "push",
 ] as const;
 export type Dependency = (typeof DEPENDENCIES)[number];
+/**
+ * The Observer's roles (D52). Track D adds the document designer (D53b). Each is also a reserved
+ * name that can never be a person's decider (RESERVED_DECIDERS in ./approval.ts).
+ */
+export const OBSERVER_ROLES = ["guard", "watcher", "copilot"] as const;
+export type ObserverRole = (typeof OBSERVER_ROLES)[number];
+export const OBSERVER_OUTCOMES = [
+  "ok",
+  "timeout",
+  "error",
+  "redacted",
+  "invalid",
+  "limit",
+  "capped",
+] as const;
+export type ObserverOutcome = (typeof OBSERVER_OUTCOMES)[number];
+/** run: everything a run pays (agent, title, Guard, designer); copilot: the owner's chat (spec §6.11). */
+export const SPEND_PURPOSES = ["run", "copilot"] as const;
+export type SpendPurpose = (typeof SPEND_PURPOSES)[number];
 
 /** A product error code: what instrument() records instead of a message (spec §7.1). */
 export const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -165,6 +204,14 @@ export interface AttributeValues {
   "mt.telemetry.drop_reason": DropReason;
   "mt.dependency": Dependency;
   "mt.service": string;
+  "mt.observer.role": ObserverRole;
+  "mt.observer.stage": GuardStage;
+  "mt.observer.verdict": GuardVerdictName;
+  "mt.observer.category": GuardCategory;
+  "mt.observer.rollout": ObserverMode;
+  "mt.observer.outcome": ObserverOutcome;
+  "mt.observer.tool": CopilotToolName;
+  "mt.spend.purpose": SpendPurpose;
 }
 export type ProductAttributes = Partial<AttributeValues>;
 
@@ -227,6 +274,9 @@ export const LOG_FIELDS: ReadonlySet<string> = new Set([
   "modelErrorType",
   "modelErrorCode",
   "modelErrorParam",
+  "verdict",
+  "category",
+  "stage",
 ]);
 
 export interface MetricSpec {
@@ -355,8 +405,8 @@ export const METRIC = {
     name: "mt.spend.usd",
     kind: "counter",
     unit: "USD",
-    description: "Committed run spend",
-    dimensions: [],
+    description: "Committed spend, by purpose",
+    dimensions: [ATTR.spendPurpose],
   }),
   slots: metric({
     name: "mt.slots",
@@ -400,6 +450,34 @@ export const METRIC = {
     description: "Telemetry items or attributes dropped",
     dimensions: [ATTR.telemetrySignal, ATTR.dropReason],
   }),
+  observerVerdicts: metric({
+    name: "mt.observer.verdicts",
+    kind: "counter",
+    unit: "{verdict}",
+    description: "Guard and watcher verdicts",
+    dimensions: [ATTR.observerVerdict, ATTR.observerCategory, ATTR.observerRollout],
+  }),
+  observerFailures: metric({
+    name: "mt.observer.failures",
+    kind: "counter",
+    unit: "{failure}",
+    description: "Observer reviews or turns that could not complete",
+    dimensions: [ATTR.observerRole, ATTR.observerOutcome],
+  }),
+  observerOverrides: metric({
+    name: "mt.observer.overrides",
+    kind: "counter",
+    unit: "{override}",
+    description: "A person approved what the Guard stopped",
+    dimensions: [],
+  }),
+  observerSpend: metric({
+    name: "mt.observer.spend.usd",
+    kind: "counter",
+    unit: "USD",
+    description: "The Observer's own model spend (a breakdown, not additive with mt.spend.usd)",
+    dimensions: [ATTR.observerRole],
+  }),
 } as const;
 
 /** The collector's spanmetrics connector (spec §5.3, §10). */
@@ -419,6 +497,10 @@ export const SPANMETRIC_DIMENSIONS = [
   ATTR.slotName,
   ATTR.takeoverOutcome,
   ATTR.dependency,
+  ATTR.observerRole,
+  ATTR.observerStage,
+  ATTR.observerOutcome,
+  ATTR.observerTool,
 ] as const satisfies readonly AttributeName[];
 
 export const LOG_STREAMS = { app: "mastertutor", containers: "containers" } as const;

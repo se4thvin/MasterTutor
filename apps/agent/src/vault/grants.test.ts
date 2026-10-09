@@ -1,3 +1,4 @@
+import { PersonDecider, POLICY_DECIDER } from "@mastertutor/contracts";
 import type { Database, VaultItemRecord } from "@mastertutor/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,7 +29,7 @@ describe("approvedBy never writes a grant the policy decided (review 8, R-E7)", 
     db.getVaultGrantApprover.mockResolvedValueOnce("user-2");
     const approval = {
       kind: "credential_first_use",
-      decidedBy: "user-1",
+      decidedBy: PersonDecider.parse("user-1"),
       label: null,
       decidedAt: null,
     };
@@ -41,7 +42,7 @@ describe("approvedBy never writes a grant the policy decided (review 8, R-E7)", 
   it("lets a policy approval authorize this call only", async () => {
     const approval = {
       kind: "credential_first_use",
-      decidedBy: "policy",
+      decidedBy: POLICY_DECIDER as typeof POLICY_DECIDER,
       label: null,
       decidedAt: null,
     };
@@ -52,7 +53,9 @@ describe("approvedBy never writes a grant the policy decided (review 8, R-E7)", 
   it("never turns a bypass-mode approval into a lasting grant (D44, m7)", async () => {
     const approval = {
       kind: "credential_first_use",
-      decidedBy: "bypass",
+      // The loop maps bypass to policy before tools see it; the type refuses it, this checks the
+      // tool would still not grant if one slipped through.
+      decidedBy: "bypass" as typeof POLICY_DECIDER,
       label: null,
       decidedAt: null,
     };
@@ -63,7 +66,7 @@ describe("approvedBy never writes a grant the policy decided (review 8, R-E7)", 
   it("turns a person's approval into a lasting grant", async () => {
     const approval = {
       kind: "credential_first_use",
-      decidedBy: "user-1",
+      decidedBy: PersonDecider.parse("user-1"),
       label: null,
       decidedAt: null,
     };
