@@ -79,13 +79,8 @@ describe("revocation reaches open live views (sign-out, removal from the workspa
     await owner.db.delete(session).where(eq(session.userId, person.userId));
 
     await waitFor(() => closed, { label: "live view closed", timeoutMs: 10_000 });
-    // ForwardAuth only checks at the upgrade: the n.eko session itself must be gone too.
-    const whoami = await fetch(`${base}/api/whoami`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(whoami.status).toBe(401);
-    // The agent records the view as closed only after n.eko confirmed it (so a failed close keeps
-    // it for a retry): the socket can close and whoami turn 401 a moment before that write lands.
+    // The agent disconnects the session (the socket closes), then deletes it, then records the
+    // view as closed (a failed close keeps it recorded for a retry). Once recorded, all of it is done.
     const row = await waitFor(
       async () => {
         const [current] = await owner.db.select().from(runs).where(eq(runs.id, runId));
@@ -93,6 +88,11 @@ describe("revocation reaches open live views (sign-out, removal from the workspa
       },
       { label: "live view recorded as closed", timeoutMs: 10_000 },
     );
+    // ForwardAuth only checks at the upgrade: the n.eko session itself must be gone too.
+    const whoami = await fetch(`${base}/api/whoami`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(whoami.status).toBe(401);
     expect(row).toMatchObject({ controller: "agent", controlUserId: null, liveViewerId: null });
     const events = (await owner.db.select().from(runEvents).where(eq(runEvents.runId, runId))).map(
       (e) => e.payload,
