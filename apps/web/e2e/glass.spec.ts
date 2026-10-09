@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { ids } from "../lib/fixtures/ids.ts";
 import { gotoReady } from "./helpers/folders.ts";
+import { gotoRun } from "./helpers/run.ts";
 import { expect, test } from "./helpers/test.ts";
 
 /**
@@ -47,6 +48,26 @@ test("at rest a screen has two glass layers at most: the sidebar (or tab bar) an
       `${path}: ${layers.join(", ")}`,
     ).toBe(true);
   }
+});
+
+test("the run view, with the live browser under its overlays, keeps the same two", async ({
+  page,
+}) => {
+  await gotoRun(page);
+  const layers = await glassLayers(page);
+  expect(layers.length, layers.join(", ")).toBeLessThanOrEqual(2);
+});
+
+test("while a modal glass panel is up it is the only blur: the chrome beneath stops blurring", async ({
+  page,
+}) => {
+  await gotoReady(page, "/library");
+  await page.getByRole("button", { name: "Folder actions" }).click();
+  await page.getByRole("menuitem", { name: "New folder" }).click();
+  await expect(page.locator(".sheet")).toBeVisible();
+  const layers = await glassLayers(page);
+  expect(layers.length, layers.join(", ")).toBe(1);
+  expect(layers[0]).toMatch(/^sheet/);
 });
 
 test("menus, sheets, the palette and dialogs are Liquid Glass; a menu adds one layer", async ({
