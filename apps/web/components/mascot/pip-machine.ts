@@ -6,9 +6,10 @@ import type { PipState } from "./pip-types.ts";
  * Pip's one state machine: what the person (New task) or the run (run view) is doing becomes a
  * PipState. Framework-free; use-pip-machine.ts binds it to React and the page's input events.
  *
- * The shown state is `moment ?? (dozing ? "dozing" : base)`:
- * - base: the steady state (idle, attentive, thinking, working, or the run's mirror);
+ * The shown state is `moment ?? (typing ? "thinking" : dozing ? "dozing" : base)`:
+ * - base: the steady state (idle, working, or the run's mirror);
  * - moment: a short one-shot over it (waving, celebrating, oops) that ends on its own timer;
+ * - typing: the person typed a task or message within typingMs: Pip thinks along with them;
  * - dozing: no input for dozeAfterMs (only with `doze`); any input wakes Pip.
  * Every change is debounced: a state shows for at least minDwellMs, so a flapping input shows
  * only where it settled, never a flicker.
@@ -19,11 +20,8 @@ export const PIP_TIMING = {
   waveMs: 1_200,
   /** A poke's wave. */
   pokeMs: 1_200,
-  /** Typing pause before Pip "thinks" about the goal. */
-  thinkAfterMs: 900,
-  thinkMs: durations.pulse,
-  /** Start's celebration before Pip settles into working (and the floor before navigating). */
-  celebrateMs: 600,
+  /** Pip thinks while the person types, until this long after their last keystroke. */
+  typingMs: 30_000,
   /** A run that completes while watched. */
   runCelebrateMs: durations.flash,
   /** A failed Start. */
@@ -73,6 +71,7 @@ export function createPipMachine({ onChange, doze = false }: PipMachineOptions):
   let base: PipState = "idle";
   let moment: PipState | null = null;
   let dozing = false;
+  let typing = false;
   /** After Start: Pip works until the page navigates (or the start fails). */
   let started = false;
   let runStatus: RunStatus | null = null;
@@ -83,7 +82,7 @@ export function createPipMachine({ onChange, doze = false }: PipMachineOptions):
   let lastInput = performance.now();
   const timers = {
     moment: undefined as Timer,
-    pause: undefined as Timer,
+    typing: undefined as Timer,
     settle: undefined as Timer,
     doze: undefined as Timer,
   };
@@ -93,7 +92,7 @@ export function createPipMachine({ onChange, doze = false }: PipMachineOptions):
   };
 
   const commit = () => {
-    const next = moment ?? (dozing ? "dozing" : base);
+    const next = moment ?? (typing ? "thinking" : dozing ? "dozing" : base);
     if (next === shown || dwelling) return;
     shown = next;
     onChange(next);
@@ -151,25 +150,23 @@ export function createPipMachine({ onChange, doze = false }: PipMachineOptions):
         input();
         if (started) return;
         if (moment === "waving") endMoment();
-        base = "attentive";
-        clear("pause");
-        timers.pause = setTimeout(() => {
-          base = "thinking";
+        // One debounced timer: each keystroke restarts it, so a pause shorter than typingMs
+        // never interrupts the thought. Submit and blur leave it running.
+        typing = true;
+        clear("typing");
+        timers.typing = setTimeout(() => {
+          timers.typing = undefined;
+          typing = false;
           commit();
-          timers.pause = setTimeout(() => {
-            timers.pause = undefined;
-            base = "idle";
-            commit();
-          }, PIP_TIMING.thinkMs);
-        }, PIP_TIMING.thinkAfterMs);
+        }, PIP_TIMING.typingMs);
         return;
       case "start":
         started = true;
-        clear("pause");
+        clear("typing");
+        typing = false;
         clear("doze");
         dozing = false;
         base = "working";
-        showMoment("celebrating", PIP_TIMING.celebrateMs);
         return;
       case "startFailed":
         started = false;

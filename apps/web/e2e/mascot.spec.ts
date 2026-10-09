@@ -285,19 +285,24 @@ test.describe("New task (runs once, at 1440)", () => {
     await expect(goal).toBeFocused();
   });
 
-  test("typing → attentive, a pause → thinking → idle", async ({ page }) => {
+  test("typing → thinking, through pauses and blur, until 30 s after the last keystroke", async ({
+    page,
+  }) => {
     await page.goto("/new");
     await arrived(page);
     const goal = page.getByLabel("Describe the task");
     await goal.click();
     await goal.pressSequentially("Lecture notes");
-    await expect(heroPip(page)).toHaveAttribute(STATE, "attentive");
-    // The pause after typing, then the thought: the clock is the page's, not the test's.
-    await page.clock.runFor(900);
     await expect(heroPip(page)).toHaveAttribute(STATE, "thinking");
-    await page.clock.runFor(1_600);
+    // The clock is the page's, not the test's. A keystroke at 20 s restarts the 30 s timer.
+    await page.clock.runFor(20_000);
+    await goal.press("s");
+    await goal.blur();
+    await page.clock.runFor(29_000);
+    await expect(heroPip(page)).toHaveAttribute(STATE, "thinking");
+    await page.clock.runFor(1_000);
     await expect(heroPip(page)).toHaveAttribute(STATE, "idle");
-    expect((await pipLog(page)).slice(-3)).toEqual(["attentive", "thinking", "idle"]);
+    expect((await pipLog(page)).slice(-2)).toEqual(["thinking", "idle"]);
   });
 
   test("dozes after a minute without input, and input wakes it", async ({ page }) => {
@@ -310,7 +315,7 @@ test.describe("New task (runs once, at 1440)", () => {
     await expect(heroPip(page)).toHaveAttribute(STATE, "idle");
   });
 
-  test("Start → celebrating, then working, then the run opens", async ({ page }) => {
+  test("Start → working, without a celebration, then the run opens", async ({ page }) => {
     // Slow the create a little so the working pose is on screen before the navigation.
     await page.route("**/api/rpc/runs/create", async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -320,11 +325,10 @@ test.describe("New task (runs once, at 1440)", () => {
     await arrived(page);
     await page.getByLabel("Describe the task").fill("Find a good intro to Rust lifetimes");
     await page.getByRole("button", { name: /^Start/ }).click();
-    await expect(heroPip(page)).toHaveAttribute(STATE, "celebrating");
-    await page.clock.runFor(600);
     await expect(heroPip(page)).toHaveAttribute(STATE, "working");
     await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
-    expect(await pipLog(page)).toEqual(expect.arrayContaining(["celebrating", "working"]));
+    expect(await pipLog(page)).toContain("working");
+    expect(await pipLog(page)).not.toContain("celebrating");
   });
 
   test("a poke gets a wave", async ({ page }) => {
@@ -402,6 +406,21 @@ test.describe("run view: Pip mirrors the run status (runs once, at 1440)", () =>
       rec({ type: "status", status: "waiting", waitReason: "approval", reason: null }),
     ]);
     await expect(runPip(page)).toHaveAttribute(STATE, "waiting");
+  });
+
+  test("typing a message → thinking, until 30 s after the last keystroke", async ({ page }) => {
+    await page.clock.install();
+    await gotoRun(page);
+    await expect(runPip(page)).toHaveAttribute(STATE, "working");
+    const message = page.getByLabel("Message the agent");
+    await message.pressSequentially("Skip the quiz");
+    await expect(runPip(page)).toHaveAttribute(STATE, "thinking");
+    await page.clock.runFor(10_000);
+    await message.press("!");
+    await page.clock.runFor(29_000);
+    await expect(runPip(page)).toHaveAttribute(STATE, "thinking");
+    await page.clock.runFor(1_000);
+    await expect(runPip(page)).toHaveAttribute(STATE, "working");
   });
 
   test("a sign-in code wait → waiting", async ({ page }) => {
