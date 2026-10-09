@@ -22,7 +22,7 @@ obs_env_file() {
 import { generateSecrets } from "./scripts/env-init.ts";
 const s = generateSecrets();
 for (const [k, v] of Object.entries(s))
-  if (/^(OBSERVE_|S3_OBSERVE_|ALERT_WEBHOOK_SECRET$|VAPID_)/.test(k)) console.log(`${k}=${v}`);
+  if (/^(OBSERVE_|OBSERVER_|S3_OBSERVE_|ALERT_WEBHOOK_SECRET$|VAPID_)/.test(k)) console.log(`${k}=${v}`);
 ' >"$file"
   echo "$file"
 }

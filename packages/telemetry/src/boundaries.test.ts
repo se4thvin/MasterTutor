@@ -3,12 +3,16 @@ import { describe, expect, it } from "vitest";
 
 const root = new URL("../../../", import.meta.url);
 /** Source files under a repo directory (a walk, not git: the remote test host has no .git). */
-const files = (dir: string) =>
-  existsSync(new URL(dir, root))
-    ? readdirSync(new URL(dir, root), { recursive: true, encoding: "utf8" })
-        .map((file) => `${dir}/${file}`)
-        .filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f))
-    : [];
+const files = (dir: string): string[] => {
+  if (!existsSync(new URL(dir, root))) return [];
+  return readdirSync(new URL(dir, root), { withFileTypes: true }).flatMap((entry) => {
+    // Prune before walking: generated trees are outside the source dependency map.
+    if (["node_modules", ".next", "dist", "coverage"].includes(entry.name)) return [];
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return files(path);
+    return entry.isFile() && /\.(ts|tsx)$/.test(path) && !/\.test\.tsx?$/.test(path) ? [path] : [];
+  });
+};
 const imports = (file: string) =>
   [...readFileSync(new URL(file, root), "utf8").matchAll(/from "([^"]+)"/g)].map((m) => m[1]!);
 

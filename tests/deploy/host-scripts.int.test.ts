@@ -175,3 +175,14 @@ describe("no host-wide changes (D41, D45, D42)", () => {
     expect(tracked).not.toMatch(/sysctl|99-mastertutor|firewall|ufw|turn/i);
   });
 });
+
+it("prepares the separate observer ingress network without connecting it to OpenObserve", () => {
+  const dry = run("create-obs-network.sh", ["--network", "observer"], {});
+  expect(dry.status).toBe(0);
+  expect(dry.stdout).toContain("--internal mastertutor-observer");
+  expect(dry.calls).not.toContain("network create");
+  const create = run("create-obs-network.sh", ["--network", "observer", "--yes"], {});
+  expect(create.calls).toContain("network create --driver bridge --internal mastertutor-observer");
+  const attach = run("attach-traefik.sh", ["--network", "observer", "--yes"], {});
+  expect(attach.calls).toContain("network connect mastertutor-observer dokploy-traefik");
+});

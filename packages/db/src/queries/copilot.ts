@@ -175,3 +175,41 @@ export async function addSpend(db: DbLike, usd: number): Promise<void> {
 export async function purgeThreadsBefore(db: DbLike, cutoff: Date): Promise<void> {
   await db.delete(copilotThreads).where(lt(copilotThreads.updatedAt, cutoff));
 }
+
+export interface CopilotSpendReservation {
+  day: string;
+  usd: number;
+}
+/** Reserve before calling the provider: atomic across connections and durable through restarts. */
+export async function reserveCopilotSpend(
+  db: DbLike,
+  usd: number,
+  cap: number,
+): Promise<CopilotSpendReservation | null> {
+  if (!Number.isFinite(usd) || usd <= 0 || !Number.isFinite(cap) || cap <= 0 || usd > cap)
+    return null;
+  const day = today();
+  const rows = await db
+    .insert(copilotSpend)
+    .values({ day, usd })
+    .onConflictDoUpdate({
+      target: copilotSpend.day,
+      set: { usd: sql`${copilotSpend.usd} + ${usd}` },
+      setWhere: sql`${copilotSpend.usd} + ${usd} <= ${cap}`,
+    })
+    .returning({ day: copilotSpend.day });
+  return rows.length ? { day, usd } : null;
+}
+
+/** Known usage replaces this call's reservation. Missing usage conservatively keeps it. */
+export async function settleCopilotSpend(
+  db: DbLike,
+  reserved: CopilotSpendReservation,
+  actualUsd: number,
+): Promise<void> {
+  if (!Number.isFinite(actualUsd) || actualUsd < 0) throw new Error("invalid_copilot_cost");
+  await db
+    .update(copilotSpend)
+    .set({ usd: sql`greatest(0, ${copilotSpend.usd} - ${reserved.usd} + ${actualUsd})` })
+    .where(eq(copilotSpend.day, reserved.day));
+}

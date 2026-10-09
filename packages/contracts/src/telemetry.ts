@@ -507,3 +507,20 @@ export const SPANMETRIC_DIMENSIONS = [
 export const LOG_STREAMS = { app: "mastertutor", containers: "containers" } as const;
 export const TRACE_STREAM = "default";
 export const RETENTION_DAYS = { logs: 30, traces: 15, metrics: 90 } as const;
+
+/** OpenObserve's names replace dots with underscores. */
+export function o2StreamName(name: string): string {
+  return name.replaceAll(".", "_");
+}
+
+/**
+ * The second scrub pass's value patterns (spec D50 §10), for TypeScript consumers (the code index).
+ * infra/otel/collector.yaml writes the same patterns in YAML; telemetry.test.ts pins both.
+ */
+export const SECRET_SCRUB_PATTERNS: readonly RegExp[] = [
+  /bearer\s+[a-z0-9._~+/-]+=*/gi,
+  /sk-[A-Za-z0-9_-]{16,}/g,
+  /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+  /basic\s+[a-z0-9+/]{8,}=*/gi,
+  /(NEKO_SESSION|live_slot|better-auth\.[a-z_]+)=[^;\s]+/g,
+];

@@ -27,6 +27,8 @@ export const PRODUCTION_SERVICES = [
   "otel-collector",
   "openobserve",
   "observability-init",
+  "observer",
+  "observer-query",
 ] as const;
 
 /**
@@ -251,7 +253,7 @@ export function prodModeProblems(config: ComposeConfig, options: ProdModeOptions
   if (envOf("agent").AGENT_TEST_MODE !== "0") {
     problems.push("agent.AGENT_TEST_MODE: must be 0 (D47)");
   }
-  for (const name of ["web", "agent"]) {
+  for (const name of ["web", "agent", "observer"]) {
     if ((envOf(name).OPENAI_BASE_URL ?? "") !== "") {
       problems.push(`${name}.OPENAI_BASE_URL: must be empty (real OpenAI only, D38/D47)`);
     }
@@ -278,6 +280,78 @@ export function prodModeProblems(config: ComposeConfig, options: ProdModeOptions
       problems.push(`${name}.PULSE_ALLOWED_IP: must be audio-capture's pulse address only (B4 I7)`);
     }
   }
+  problems.push(...observerProblems(config));
   problems.push(...observabilityProblems(config));
+  return problems;
+}
+
+/** D52: the Copilot gets its view role and its own telemetry reader, never agent credentials. */
+function observerProblems(config: ComposeConfig): string[] {
+  const observer = config.services.observer;
+  if (!observer) return [];
+  const problems: string[] = [];
+  const secrets =
+    /^(S3_|VAULT_|BETTER_AUTH|NEKO_|LIVE_COOKIE|SEALING|VAPID_|ALERT_WEBHOOK|OBSERVE_)/;
+  for (const key of Object.keys(observer.environment ?? {}))
+    if (secrets.test(key))
+      problems.push(
+        `observer.environment.${key}: the observer holds no S3, vault, sealing, auth or n.eko secret (D52)`,
+      );
+  if ((observer.ports ?? []).length > 0)
+    problems.push("observer.ports: the observer publishes no port (D52)");
+  const expected = [
+    "observer-db",
+    "observer-edge",
+    "observer-egress",
+    "observer-query",
+    "telemetry",
+  ];
+  if (
+    Object.keys(observer.networks ?? {})
+      .sort()
+      .join() !== expected.join()
+  )
+    problems.push(`observer.networks: exactly ${expected.join(", ")} (D52)`);
+  if (!config.networks["observer-db"]?.internal)
+    problems.push("networks.observer-db: must be internal (D52)");
+  try {
+    const url = new URL(observer.environment?.DATABASE_URL ?? "");
+    if (url.username !== "observer_role" || url.hostname !== "postgres") throw new Error("role");
+  } catch {
+    problems.push("observer.DATABASE_URL: must use observer_role at postgres (D52)");
+  }
+  if (observer.environment?.OBSERVER_QUERY_URL !== "http://observer-query:4001")
+    problems.push("observer.OBSERVER_QUERY_URL: must use the internal query proxy (D52)");
+  const proxy = config.services["observer-query"];
+  if (!proxy) problems.push("observer-query: the isolated query proxy is required (D52)");
+  else {
+    if (
+      proxy.image !== observer.image ||
+      proxy.command?.join(" ") !== "node apps/observer/src/query-proxy-main.ts"
+    )
+      problems.push("observer-query: must use the observer image and proxy entrypoint (D52)");
+    if ((proxy.ports ?? []).length) problems.push("observer-query.ports: publishes no port (D52)");
+    if (
+      Object.keys(proxy.networks ?? {})
+        .sort()
+        .join() !== "observe,observer-query"
+    )
+      problems.push("observer-query.networks: exactly observe, observer-query (D52)");
+    for (const key of Object.keys(proxy.environment ?? {}))
+      if (!["OBSERVE_URL", "OBSERVE_COPILOT_PASSWORD", "OBSERVER_QUERY_TOKEN"].includes(key))
+        problems.push(
+          `observer-query.environment.${key}: only the O2 query credential, URL and proxy bearer (D52)`,
+        );
+    problems.push(...hardeningProblems("observer-query", proxy, "D52"));
+  }
+  if (!config.networks["observer-query"]?.internal)
+    problems.push("networks.observer-query: must be internal (D52)");
+  for (const [name, service] of Object.entries(config.services))
+    if (
+      !["observer", "observer-query"].includes(name) &&
+      "observer-query" in (service.networks ?? {})
+    )
+      problems.push(`${name}.networks.observer-query: only observer and its query proxy (D52)`);
+  problems.push(...hardeningProblems("observer", observer, "D52"));
   return problems;
 }

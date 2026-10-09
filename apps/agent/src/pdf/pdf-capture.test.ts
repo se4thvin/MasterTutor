@@ -517,6 +517,9 @@ describe("buildPdfCapture keeps to the run's budget (final review I6)", () => {
     let calls = 0;
     const ocr = createOcrModel({
       responses: {
+        stream: () => {
+          throw new Error("unused");
+        },
         create: async () => {
           throw new Error("unused");
         },

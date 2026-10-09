@@ -86,6 +86,9 @@ describe("readRegion (one OCR pipeline for web canvas tiles and textless PDF pag
     let calls = 0;
     const ocr = createOcrModel({
       responses: {
+        stream: () => {
+          throw new Error("unused");
+        },
         create: async () => {
           throw new Error("unused");
         },

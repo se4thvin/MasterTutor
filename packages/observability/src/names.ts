@@ -1,6 +1,3 @@
-/** OpenObserve stores metric streams and labels with dots as underscores (spec §5.3, pinned in o2-api.ts). */
-export function o2StreamName(name: string): string {
-  return name.replaceAll(".", "_");
-}
-
+export { o2StreamName } from "@mastertutor/contracts/telemetry";
+import { o2StreamName } from "@mastertutor/contracts/telemetry";
 export const o2Label = o2StreamName;

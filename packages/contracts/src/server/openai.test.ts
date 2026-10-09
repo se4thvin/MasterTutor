@@ -180,3 +180,47 @@ describe("an unparseable structured reply (review: billed, so counted)", () => {
     expect(String((error as Error).message)).not.toContain("We need");
   });
 });
+
+describe("responses.stream", () => {
+  it("streams text, complete items and usage without retention or identifiers", async () => {
+    mock.setScenarios([
+      {
+        name: "stream_probe",
+        turns: [{ outputs: [{ type: "turn", status: "done", reason: "Hello there, owner." }] }],
+      },
+    ]);
+    const events = [];
+    for await (const event of client().responses.stream(
+      { model: "gpt-6.1-sol", input: [{ role: "user", content: "[scenario:stream_probe] hi" }] },
+      { signal: signal() },
+    ))
+      events.push(event);
+    expect(events.at(-1)).toMatchObject({
+      type: "completed",
+      tokens: { input: 1000, output: 100 },
+    });
+    expect(events.some((e) => e.type === "item")).toBe(true);
+    expect(events.filter((e) => e.type === "text").length).toBeGreaterThan(0);
+    const sent = mock.requests.at(-1)!.body;
+    expect(sent).toMatchObject({ store: false, stream: true });
+    expect(sent).not.toHaveProperty("prompt_cache_retention");
+    expect(policyProblems(mock.requests)).toEqual([]);
+  });
+  it("stops when the signal aborts", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(async () => {
+      for await (const event of client().responses.stream(
+        { model: "m", input: "x" },
+        { signal: controller.signal },
+      ))
+        void event;
+    }).rejects.toThrow();
+  });
+});
+
+it("omits prompt_cache_retention even when supplied at runtime (amended D52)", () => {
+  expect(
+    statelessParams({ model: "m", input: "x", prompt_cache_retention: "24h" }),
+  ).not.toHaveProperty("prompt_cache_retention");
+});
