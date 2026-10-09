@@ -3,6 +3,9 @@
 # tests/compose/live-routes.int.test.ts asserts all three. ForwardAuth runs BEFORE the strip so it
 # sees /live/<runId>/, and before the upload body limit so nobody unauthenticated is buffered.
 # Phase 9's compose.prod.yml carries the same routers as labels.
+# D50: OpenObserve on obs.localhost through the owner ForwardAuth, and its one web path, mirror
+# compose.prod.yml. Without the observability profile there is no openobserve: only obs.localhost
+# requests fail (502), and the e2e stack never makes one.
 http:
   routers:
     web:
@@ -33,7 +36,29 @@ http:
       entryPoints: [web]
       middlewares: [live-auth, live-upload-limit, live-strip, live-headers]
       service: live-browser-2
+    observability:
+      rule: Host(`obs.localhost`)
+      priority: 900
+      entryPoints: [web]
+      middlewares: [observability-root, observability-auth, live-headers]
+      service: observability
+    observability-session:
+      rule: Host(`obs.localhost`) && Path(`/api/observability/session`)
+      priority: 950
+      entryPoints: [web]
+      service: web
   middlewares:
+    observability-auth:
+      forwardAuth:
+        address: http://172.30.231.11:3000/api/observability/auth
+        trustForwardHeader: false
+        authResponseHeaders:
+          - Authorization
+          - Cookie
+    observability-root:
+      redirectRegex:
+        regex: "^(https?://[^/]+)/?$"
+        replacement: "${1}/observability/web/"
     live-auth:
       forwardAuth:
         address: http://172.30.231.11:3000/api/live/auth
@@ -53,6 +78,10 @@ http:
         contentSecurityPolicy: "frame-ancestors 'self'"
         contentTypeNosniff: true
   services:
+    observability:
+      loadBalancer:
+        servers:
+          - url: http://openobserve:5080
     web:
       loadBalancer:
         servers:

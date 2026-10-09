@@ -57,6 +57,14 @@ services:
   audio-capture:
     image: mastertutor/audio-capture:${MT_CI_RUN_ID}
     labels: *ci-labels
+  # D50 telemetry (profile observability: the observability suite, or MT_CI_TELEMETRY=1).
+  otel-collector:
+    labels: *ci-labels
+  openobserve:
+    labels: *ci-labels
+  observability-init:
+    image: mastertutor/node-runtime:${MT_CI_RUN_ID}
+    labels: *ci-labels
   browser-1:
     image: mastertutor/browser-slot:${MT_CI_RUN_ID}
     security_opt: [apparmor=mastertutor-slot]
@@ -103,6 +111,10 @@ networks:
     labels: *ci-labels
   observe-store:
     labels: *ci-labels
+  observe-edge:
+    labels: *ci-labels
+  obs-ingest:
+    labels: *ci-labels
 
 volumes:
   pgdata:
@@ -112,4 +124,6 @@ volumes:
   garage-data:
     labels: *ci-labels
   downloads:
+    labels: *ci-labels
+  openobserve-data:
     labels: *ci-labels
