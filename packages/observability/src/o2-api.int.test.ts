@@ -1,4 +1,6 @@
-import { OBSERVE_USERS, OBSERVE_UI_SESSION } from "@mastertutor/contracts";
+import { OBSERVE_USERS, OBSERVE_UI_SESSION, observabilityUiPaths } from "@mastertutor/contracts";
+import { METRIC, TRACE_STREAM } from "@mastertutor/contracts/telemetry";
+import { chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { O2Error, createO2Client } from "./client.ts";
@@ -16,7 +18,12 @@ import {
   o2StreamCreateBody,
 } from "./o2-api.ts";
 import { o2Label, o2StreamName } from "./names.ts";
-import { startTestOpenObserve, type TestOpenObserve } from "./testing.ts";
+import { O2RangeResponse, O2SearchBody, O2SearchResponse, o2QueryPaths } from "./query.ts";
+import {
+  TEST_OBSERVE_ROOT_PASSWORD,
+  startTestOpenObserve,
+  type TestOpenObserve,
+} from "./testing.ts";
 
 let o2: TestOpenObserve;
 beforeAll(async () => {
@@ -377,5 +384,139 @@ describe("OpenObserve API contract (pinned digest, spec §11)", () => {
     // The router reads this key from this storage, base64-decodes and JSON-parses it (spec §12).
     expect(bundle).toContain(`${OBSERVE_UI_SESSION.storage}.getItem(e)`);
     expect(bundle).toContain(`"${OBSERVE_UI_SESSION.key}"`);
+  });
+  // The Copilot's read-only query shapes (Observer spec §7.4, spike §10). Runs after the OTLP case
+  // above, so the "default" log and trace streams hold data.
+  const searchBody = (sql: string, size: number) =>
+    O2SearchBody.parse({
+      query: { sql, start_time: nowMicros() - 3_600_000_000, end_time: nowMicros(), from: 0, size },
+      timeout: 10,
+    });
+
+  it("answers _search with took, total, scan_size and at most size hits, within the server-set time range", async () => {
+    const reply = await o2.root.call(
+      "search",
+      "POST",
+      o2QueryPaths.search(ORG, "logs"),
+      searchBody(`SELECT ${O2_FIELDS.timestamp} FROM "default"`, 1),
+    );
+    const parsed = O2SearchResponse.parse(reply);
+    expect(parsed.hits).toHaveLength(1);
+    expect(typeof parsed.took).toBe("number");
+    expect(parsed.total).toBeGreaterThanOrEqual(1);
+    expect(typeof parsed.scan_size).toBe("number");
+  });
+
+  it("refuses an unknown stream, invalid SQL and anything but a read with 400", async () => {
+    for (const sql of [`SELECT * FROM "no_such_stream"`, "SELEC nonsense", `DELETE FROM "default"`])
+      expect(
+        await status(
+          o2.root.call("search", "POST", o2QueryPaths.search(ORG, "logs"), searchBody(sql, 5)),
+        ),
+        sql,
+      ).toBe(400);
+  });
+
+  it("answers prometheus query_range with a matrix, empty for an unknown metric, 400 for bad PromQL", async () => {
+    const end = Math.floor(Date.now() / 1_000);
+    const range = (query: string) =>
+      o2.root.call(
+        "query_range",
+        "GET",
+        o2QueryPaths.queryRange(ORG, { query, start: end - 3_600, end, step: 60 }),
+      );
+    const parsed = O2RangeResponse.parse(
+      await range(`sum(${o2StreamName(METRIC.runsEnded.name)})`),
+    );
+    expect(parsed.status).toBe("success");
+    expect(parsed.data.resultType).toBe("matrix");
+    expect(O2RangeResponse.parse(await range("sum(mt_no_such_metric)")).data.result).toEqual([]);
+    expect(await status(range("sum("))).toBe(400);
+  });
+
+  it("opens a run's trace list, a trace and a run's logs from the pinned deep links (spike §10)", async () => {
+    const runId = "0f1e2d3c-4b5a-4968-8776-655443322110";
+    const traceId = "6c9f0a8e1d2b3c4d5e6f708192a3b4c5";
+    const now = BigInt(Date.now()) * 1_000_000n;
+    const resource = { attributes: [{ key: "service.name", value: { stringValue: "agent" } }] };
+    const runAttr = [{ key: "mt.run.id", value: { stringValue: runId } }];
+    await o2.root.call("otlpTraces", "POST", o2Paths.otlp(ORG, "traces"), {
+      resourceSpans: [
+        {
+          resource,
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId,
+                  spanId: "aa19b7ec3c1b1741",
+                  name: "mt.run.link",
+                  kind: 1,
+                  startTimeUnixNano: String(now - 1_000_000n),
+                  endTimeUnixNano: String(now),
+                  attributes: runAttr,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await o2.root.call("otlpLogs", "POST", o2Paths.otlp(ORG, "logs"), {
+      resourceLogs: [
+        {
+          resource,
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: String(now),
+                  severityNumber: 9,
+                  body: { stringValue: "deep-link-log" },
+                  attributes: runAttr,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const filter = `${o2Label("mt.run.id")} = '${runId}'`;
+    await searchUntilHit(`SELECT * FROM "${TRACE_STREAM}" WHERE ${filter}`, "traces");
+    await searchUntilHit(`SELECT * FROM "default" WHERE ${filter}`, "logs");
+    const view = { from: nowMicros() - 3_600_000_000, to: nowMicros() + 60_000_000 };
+    const origin = new URL(o2.baseUrl).origin;
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext({
+        extraHTTPHeaders: {
+          authorization: `Basic ${Buffer.from(`${OBSERVE_USERS.root}:${TEST_OBSERVE_ROOT_PASSWORD}`).toString("base64")}`,
+        },
+      });
+      const identity = { ...OBSERVE_UI_SESSION.identity, email: OBSERVE_USERS.root };
+      const record = Buffer.from(JSON.stringify(identity)).toString("base64");
+      await context.addInitScript(
+        `${OBSERVE_UI_SESSION.storage}.setItem(${JSON.stringify(OBSERVE_UI_SESSION.key)}, ${JSON.stringify(record)})`,
+      );
+      const shows = async (path: string, text: string) => {
+        const page = await context.newPage();
+        await page.goto(`${origin}${path}`, { waitUntil: "networkidle" });
+        await expect
+          .poll(() => page.locator("body").innerText(), { timeout: 30_000 })
+          .toContain(text);
+        await page.close();
+      };
+      await shows(observabilityUiPaths.traceList(TRACE_STREAM, { ...view, filter }), "1 Spans");
+      await shows(
+        observabilityUiPaths.traceDetail(TRACE_STREAM, { ...view, traceId }),
+        `Trace ID: ${traceId}`,
+      );
+      await shows(
+        observabilityUiPaths.logList("default", { ...view, filter }),
+        "1 to 1 out of 1 events",
+      );
+    } finally {
+      await browser.close();
+    }
   });
 });
