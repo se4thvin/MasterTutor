@@ -22,7 +22,9 @@ server.listen(env.OBSERVER_PORT, "0.0.0.0");
 async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, "shutting down");
   stopPurge();
-  await new Promise((resolve) => server.close(resolve));
+  const closed = new Promise((resolve) => server.close(resolve));
+  server.closeAllConnections();
+  await closed;
   await database.close();
   await getTelemetry().shutdown(3_000);
   process.exit(0);

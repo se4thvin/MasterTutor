@@ -280,6 +280,7 @@ export const COPILOT_LIMITS = {
   columnChars: 64,
   cellChars: 2_000,
   summaryChars: 200,
+  textDeltaChars: 4_000,
   modelRows: 50,
   series: 20,
   points: 300,
@@ -319,7 +320,7 @@ export type CopilotAsk = z.infer<typeof CopilotAsk>;
 
 export const CopilotEvent = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("thread"), threadId: Uuid }),
-  z.strictObject({ type: z.literal("text"), delta: z.string().max(4_000) }),
+  z.strictObject({ type: z.literal("text"), delta: z.string().max(COPILOT_LIMITS.textDeltaChars) }),
   z.strictObject({
     type: z.literal("tool_started"),
     resultId: ResultId,

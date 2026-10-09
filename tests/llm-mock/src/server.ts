@@ -207,6 +207,14 @@ export async function startLlmMock(
             arguments: JSON.stringify(output.args),
             status: "completed",
           };
+        case "message":
+          return {
+            type: "message",
+            id: nextId("msg"),
+            role: "assistant",
+            status: "completed",
+            content: [{ type: "output_text", annotations: [], text: output.text }],
+          };
         case "turn":
           return {
             type: "message",
