@@ -95,13 +95,13 @@ export function compareFirstLoad(
 }
 
 /** Spec §11.2: raw three, tree-shaken, at most 150 kB gz, and only ever loaded lazily. */
-export const HERO_BUDGET_KB = 150;
+export const MASCOT_BUDGET_KB = 150;
 
-interface HeroBundle {
+interface MascotBundle {
   /** Static chunks that contain three (relative to nextDir), sorted. */
   files: string[];
   kb: number;
-  /** Hero chunks that some route loads on first load: three leaked out of the lazy import. */
+  /** Mascot chunks that some route loads on first load: three leaked out of the lazy import. */
   leaked: string[];
 }
 
@@ -116,7 +116,7 @@ function* staticJs(dir: string, base: string): Generator<string> {
 /** Turbopack's async loader lists a lazy import's whole chunk group: Promise.all(["static/…js", …]). */
 const CHUNK_GROUP = /Promise\.all\(\[((?:"static\/[^"]+\.js",?)+)\]/g;
 
-export function measureHeroBundle(nextDir: string, marker = "isWebGLRenderer"): HeroBundle {
+export function measureMascotBundle(nextDir: string, marker = "isWebGLRenderer"): MascotBundle {
   const firstLoad = new Set(Object.values(routeFiles(nextDir)).flat());
   const sources = new Map(
     [...staticJs(join(nextDir, "static"), nextDir)].map((file) => [
@@ -126,14 +126,14 @@ export function measureHeroBundle(nextDir: string, marker = "isWebGLRenderer"): 
   );
   const three = new Set([...sources].filter(([, body]) => body.includes(marker)).map(([f]) => f));
   // Every chunk loaded together with three counts: the scene modules may be split from it (M4).
-  const hero = new Set(three);
+  const mascot = new Set(three);
   for (const body of sources.values()) {
     for (const match of body.matchAll(CHUNK_GROUP)) {
       const group = (JSON.parse(`[${match[1]}]`) as string[]).filter((f) => sources.has(f));
-      if (group.some((file) => three.has(file))) for (const file of group) hero.add(file);
+      if (group.some((file) => three.has(file))) for (const file of group) mascot.add(file);
     }
   }
-  const files = [...hero].sort();
+  const files = [...mascot].sort();
   const bytes = files.reduce(
     (sum, file) => sum + gzipSync(readFileSync(join(nextDir, file))).length,
     0,
@@ -141,10 +141,11 @@ export function measureHeroBundle(nextDir: string, marker = "isWebGLRenderer"): 
   return { files, kb: toKb(bytes), leaked: files.filter((file) => firstLoad.has(file)) };
 }
 
-export function compareHeroBundle(hero: HeroBundle, budgetKb: number): string[] {
-  if (hero.files.length === 0)
-    return ["hero: no chunk contains three (is the lazy hero import wired?)"];
-  const findings = hero.leaked.map((file) => `hero: three is in first-load JS (${file})`);
-  if (hero.kb > budgetKb) findings.push(`hero: ${hero.kb} kB gz exceeds the ${budgetKb} kB budget`);
+export function compareMascotBundle(mascot: MascotBundle, budgetKb: number): string[] {
+  if (mascot.files.length === 0)
+    return ["mascot: no chunk contains three (is Pip's lazy scene import wired?)"];
+  const findings = mascot.leaked.map((file) => `mascot: three is in first-load JS (${file})`);
+  if (mascot.kb > budgetKb)
+    findings.push(`mascot: ${mascot.kb} kB gz exceeds the ${budgetKb} kB budget`);
   return findings;
 }

@@ -15,7 +15,6 @@
   --motion-dur-click-pulse: 400ms;
   --motion-dur-drift: 2600ms;
   --motion-dur-spin: 1000ms;
-  --motion-dur-hero-reveal: 700ms;
   --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
   --motion-ease-cursor: cubic-bezier(0.2, 0.8, 0.2, 1);
