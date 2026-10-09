@@ -403,3 +403,51 @@ describe("observer mode (spec §6.8)", () => {
     ).toBe("shadow");
   });
 });
+
+describe("goal URLs are source hints (D56)", () => {
+  it.each(["ask", "auto_within_allowlist", "bypass"] as const)(
+    "allows goal URL origins from creation (%s)",
+    (approvalMode) => {
+      const goal =
+        "https://learn.zybooks.com/zybook/course/chapter/4/section/4 \n\nTake notes on this page";
+      const parsed = CreateRunInput.parse({ goal, approvalMode, bypassAcknowledged: true });
+      expect(parsed.goal).toBe(goal);
+      expect(parsed.allowedOrigins).toEqual(["https://learn.zybooks.com"]);
+    },
+  );
+  it("normalizes and deduplicates goal sources, retaining explicit allowed origins", () => {
+    const parsed = CreateRunInput.parse({
+      goal: "Read <HTTPS://A.EXAMPLE/x>, then https://a.example/y and (http://b.example/a.pdf).",
+      allowedOrigins: ["https://extra.example"],
+    });
+    expect(parsed.allowedOrigins).toEqual([
+      "https://extra.example",
+      "https://a.example",
+      "http://b.example",
+    ]);
+  });
+  it.each([
+    "http://127.0.0.1/x",
+    "http://2130706433/x",
+    "http://0x7f000001/x",
+    "http://10.0.0.1/x",
+    "http://169.254.169.254/x",
+    "http://localhost/x",
+    "http://localhost./x",
+    "http://a.localhost./x",
+    "http://a.localhost/x",
+    "http://[::1]/x",
+    "http://[::ffff:7f00:1]/x",
+    "https://user:password@example.com/x",
+  ])("refuses unsafe goal sources: %s", (url) => {
+    expect(CreateRunInput.safeParse({ goal: `Take notes on ${url}` }).success).toBe(false);
+  });
+  it("applies the origin count limit after inferring sources", () => {
+    expect(
+      CreateRunInput.safeParse({
+        goal: "Read https://additional.example/page",
+        allowedOrigins: Array.from({ length: 50 }, (_, i) => `https://site${i}.example`),
+      }).success,
+    ).toBe(false);
+  });
+});

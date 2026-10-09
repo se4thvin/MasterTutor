@@ -30,6 +30,7 @@ import { RunLoop, type StepOutcome } from "./run-loop.ts";
 import { isTerminal, readRunControl, snapshotOf } from "./run-state.ts";
 import { startUrl } from "./start-url.ts";
 import { StepStore, type Transition } from "./step-store.ts";
+import { waitRetentionMs } from "./turn-context.ts";
 
 /** How long a release waits for the slot's browser to go before it disconnects anyway. */
 const CLOSE_WAIT_MS = 2_000;
@@ -287,7 +288,7 @@ export class RunWorker {
     if (!run || isTerminal(run.status)) return { kind: "cancelled" };
     if (run.controller === "user") return this.#holdForUser();
     // A person may change the mode mid-run (run-mode): it governs this step's decisions.
-    this.#loop!.useApprovalMode(run.approvalMode);
+    this.#loop!.useRunControl(run);
     return this.#loop!.step(this.#abort.signal);
   }
 
@@ -299,10 +300,15 @@ export class RunWorker {
     const timer = new AbortController();
     try {
       const entry = await readRunControl(this.#deps.db, this.runId);
-      const idle = this.#deps.clock.sleep(this.#deps.config.idleSleepMs, timer.signal).then(
-        () => false,
-        () => false,
-      );
+      const idle = this.#deps.clock
+        .sleep(
+          waitRetentionMs(entry?.waitReason ?? null, this.#deps.config.idleSleepMs),
+          timer.signal,
+        )
+        .then(
+          () => false,
+          () => false,
+        );
       let woke = false;
       for (;;) {
         woke = await Promise.race([this.#latch.wait().then(() => true), idle]);
