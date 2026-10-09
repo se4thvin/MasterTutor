@@ -14,6 +14,7 @@ import { createNekoLiveView } from "./live/neko-live-view.ts";
 import { startLiveRevocation } from "./live/revocation.ts";
 import { createOpenAIModelClient } from "./llm/client.ts";
 import { createOpenAI } from "./llm/openai.ts";
+import { createRunTitler } from "./llm/run-title.ts";
 import { composeRunHooks } from "./loop/hooks.ts";
 import { Supervisor } from "./loop/supervisor.ts";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime/config.ts";
@@ -82,6 +83,7 @@ const supervisor = new Supervisor({
   db: database,
   storage,
   model: createOpenAIModelClient(openai),
+  titler: createRunTitler(openai),
   slots: env.BROWSER_SLOTS,
   cdpBaseUrl: (name) => slotCdpBaseUrl(name),
   log,

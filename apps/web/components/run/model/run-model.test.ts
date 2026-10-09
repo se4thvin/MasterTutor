@@ -32,6 +32,7 @@ describe("initRunModel", () => {
   it("parses the recording and derives captures and the secure-fill origin", () => {
     const model = base();
     expect(model.runId).toBe(RECORDED_RUN_ID);
+    expect(model.title).toBe("Week 2 lectures, figures and tables");
     expect(model.steps.map((s) => s.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(captureCount(model)).toBe(2);
     expect(model.secureFillOrigin).toBe("https://learn.example.edu");
@@ -151,7 +152,9 @@ describe("applyRunEvent", () => {
         filedBy: "agent",
       }),
       rec({ type: "model_fallback", from: "gpt-6-astra", to: "gpt-6.1-sol" }),
+      rec({ type: "title", title: "Notes on two's complement (zyBooks 4.4)" }),
     ]);
+    expect(model.title).toBe("Notes on two's complement (zyBooks 4.4)");
     expect(model.controller).toBe("user");
     expect(model.lastControl).toEqual({ eventId: control.id, holder: "user" });
     expect(model.slotName).toBeNull();
@@ -285,9 +288,11 @@ describe("syncRunModel (A6 hand-back resync)", () => {
         status: "waiting",
         waitReason: "takeover",
         slotName: "browser-2",
+        title: "Week 2 notes",
       }),
     );
     expect(synced).toMatchObject({
+      title: "Week 2 notes",
       controller: "user",
       status: "waiting",
       waitReason: "takeover",

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  fallbackRunTitle,
   CAPTURED_ORIGINS,
   EMPTY_USAGE,
   MODELS,
@@ -132,6 +133,7 @@ export const fixtureRouter = os.router({
       const run: RunSummary = {
         id: ids.run(100 + state.runs.length),
         goal: input.goal,
+        title: fallbackRunTitle(input.goal),
         status: "queued",
         waitReason: null,
         controller: "agent",

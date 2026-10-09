@@ -599,6 +599,7 @@ function runs(): RunSummary[] {
   const run = (
     n: number,
     goal: string,
+    title: string,
     status: RunStatus,
     usd: number,
     steps: number,
@@ -608,6 +609,7 @@ function runs(): RunSummary[] {
   ): RunSummary => ({
     id: ids.run(n),
     goal,
+    title,
     status,
     waitReason: null,
     controller: "agent",
@@ -625,6 +627,7 @@ function runs(): RunSummary[] {
     run(
       2,
       "Capture the learning-rate warmup article verbatim",
+      "Learning-rate warmup, verbatim",
       "completed",
       1.12,
       41,
