@@ -500,11 +500,21 @@ describe("OpenObserve API contract (pinned digest, spec §11)", () => {
       );
       const shows = async (path: string, text: string) => {
         const page = await context.newPage();
-        await page.goto(`${origin}${path}`, { waitUntil: "networkidle" });
-        await expect
-          .poll(() => page.locator("body").innerText(), { timeout: 30_000 })
-          .toContain(text);
-        await page.close();
+        // Concurrent stacks change the host-network runner's interfaces, aborting Chromium's
+        // loads with ERR_NETWORK_CHANGED. Node fetches the real server; Chromium renders its UI.
+        await page.route(`${origin}/**`, async (route) => {
+          await route.fulfill({ response: await route.fetch() });
+        });
+        try {
+          await page.goto(`${origin}${path}`, { waitUntil: "networkidle" });
+          await expect
+            .poll(() => page.locator("body").innerText(), { timeout: 30_000 })
+            .toContain(text);
+        } finally {
+          // The UI starts lazy worker requests even after its results appear.
+          await page.unrouteAll({ behavior: "wait" });
+          await page.close();
+        }
       };
       await shows(observabilityUiPaths.traceList(TRACE_STREAM, { ...view, filter }), "1 Spans");
       await shows(
