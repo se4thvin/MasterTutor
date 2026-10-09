@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
-import { O2_REQUIRED_ENV } from "@mastertutor/observability";
+import {
+  O2_REQUIRED_ENV,
+  OPENOBSERVE_IMAGE,
+  OTEL_COLLECTOR_IMAGE,
+} from "@mastertutor/observability";
 import { describe, expect, it } from "vitest";
 import type { ComposeConfig } from "./compose-json.ts";
 import { LOCAL_INGRESS_SERVICE, prodModeProblems, WORKERS } from "./prod-mode.ts";
@@ -237,15 +241,11 @@ describe("production gates (review I2)", () => {
 });
 
 describe("observability rules (D50)", () => {
-  const O2_IMAGE =
-    "openobserve/openobserve:v1.0.4@sha256:d4a878fac1f6c56003764f7f2a1625668917388f167e222c8c810de3f54c56ba";
-  const COLLECTOR_IMAGE =
-    "otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6";
   const withObservability = (): ComposeConfig => {
     const config = prodLike();
     config.services.openobserve = {
       ...hardened,
-      image: O2_IMAGE,
+      image: OPENOBSERVE_IMAGE,
       environment: { ...O2_REQUIRED_ENV },
       networks: { observe: {}, "observe-store": {}, "observe-edge": {} },
       labels: {
@@ -255,7 +255,7 @@ describe("observability rules (D50)", () => {
     };
     config.services["otel-collector"] = {
       ...hardened,
-      image: COLLECTOR_IMAGE,
+      image: OTEL_COLLECTOR_IMAGE,
       ports: [{ target: 24224, published: "24224", host_ip: "127.0.0.1", protocol: "tcp" }],
       networks: { telemetry: {}, observe: {}, "obs-ingest": {} },
     };
@@ -279,7 +279,8 @@ describe("observability rules (D50)", () => {
     const o2 = config.services.openobserve!;
     o2.ports = [{ target: 5080, published: "5080" }];
     o2.labels = {};
-    o2.image = "openobserve/openobserve:latest";
+    // A pinned digest that is not the one the contract test runs against (review I3).
+    o2.image = `openobserve/openobserve:v1.0.4@sha256:${"0".repeat(64)}`;
     o2.environment = { ZO_TELEMETRY: "true" };
     o2.user = "0:0";
     const collector = config.services["otel-collector"]!;
@@ -290,7 +291,7 @@ describe("observability rules (D50)", () => {
     config.networks["obs-ingest"] = {};
     expect(prodModeProblems(config)).toEqual([
       "openobserve.ports: must publish nothing (D50)",
-      "openobserve.image: must be pinned by digest (D50)",
+      "openobserve.image: must be OPENOBSERVE_IMAGE, the digest the API contract test pins (D50)",
       "openobserve.ZO_BASE_URI: must be /observability (D50)",
       "openobserve.ZO_TELEMETRY: must be false (D50)",
       "openobserve.ZO_USAGE_REPORTING_ENABLED: must be false (D50)",
@@ -299,7 +300,7 @@ describe("observability rules (D50)", () => {
       "openobserve.user: must be a numeric non-root uid (D50)",
       "openobserve: its router must run mastertutor-observability-auth (D50)",
       "otel-collector.ports: only 127.0.0.1:24224 (D45, D50)",
-      "otel-collector.image: must be pinned by digest (D50)",
+      "otel-collector.image: must be OTEL_COLLECTOR_IMAGE, the digest the collector test pins (D50)",
       "otel-collector.read_only: must be true (D50)",
       "networks.observe: must be internal (D50)",
       "networks.obs-ingest: must disable IP masquerade, so the collector has no egress (D50)",

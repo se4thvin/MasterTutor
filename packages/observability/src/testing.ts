@@ -1,10 +1,8 @@
 import { OBSERVE_BASE_PATH, OBSERVE_USERS } from "@mastertutor/contracts";
 import { GenericContainer, Wait } from "testcontainers";
 import { createO2Client, type O2Client } from "./client.ts";
-import { O2_REQUIRED_ENV } from "./o2-api.ts";
+import { O2_REQUIRED_ENV, OPENOBSERVE_IMAGE } from "./o2-api.ts";
 
-export const OPENOBSERVE_IMAGE =
-  "openobserve/openobserve:v1.0.4@sha256:d4a878fac1f6c56003764f7f2a1625668917388f167e222c8c810de3f54c56ba";
 /** Meets OpenObserve's password policy (lower, upper, digit, special), which the root user must pass at boot. */
 export const TEST_OBSERVE_ROOT_PASSWORD = "Test-root-password-0123456789abcdef";
 

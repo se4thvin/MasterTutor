@@ -5,10 +5,9 @@ import { connect, type AddressInfo } from "node:net";
 import { gunzipSync } from "node:zlib";
 import { GenericContainer, TestContainers, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { OTEL_COLLECTOR_IMAGE } from "@mastertutor/observability";
 import { composeConfig } from "../compose/compose-json.ts";
 
-const IMAGE =
-  "otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6";
 const CONFIG = new URL("../../infra/otel/collector.yaml", import.meta.url).pathname;
 const received: Array<{ path: string; stream: string | undefined; body: string }> = [];
 let sink: ReturnType<typeof createServer>;
@@ -34,7 +33,7 @@ beforeAll(async () => {
   await new Promise<void>((r) => sink.listen(0, "0.0.0.0", r));
   const port = (sink.address() as AddressInfo).port;
   await TestContainers.exposeHostPorts(port);
-  collector = await new GenericContainer(IMAGE)
+  collector = await new GenericContainer(OTEL_COLLECTOR_IMAGE)
     .withCopyFilesToContainer([{ source: CONFIG, target: "/etc/otelcol/config.yaml" }])
     .withCommand(["--config=/etc/otelcol/config.yaml"])
     .withEnvironment({

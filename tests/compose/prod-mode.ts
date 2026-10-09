@@ -1,7 +1,11 @@
 // The single definition of "production mode" for a resolved compose config (D47). Used by the
 // compose overlay tests (Task 12), the production env check (Task 14), the real-model smoke
 // (Task 15) and the bench harness preflight (Phase 10). Problems name keys and services only.
-import { O2_REQUIRED_ENV } from "@mastertutor/observability";
+import {
+  O2_REQUIRED_ENV,
+  OPENOBSERVE_IMAGE,
+  OTEL_COLLECTOR_IMAGE,
+} from "@mastertutor/observability";
 import { composeConfig, type ComposeConfig, type ComposeService } from "./compose-json.ts";
 
 /**
@@ -172,7 +176,6 @@ function workerProblems(config: ComposeConfig, name: string, rule: WorkerRule): 
   return problems;
 }
 
-const DIGEST = /@sha256:[0-9a-f]{64}$/;
 const OBSERVE_NETWORKS = ["telemetry", "observe", "observe-store", "observe-edge"] as const;
 /** The collector's one non-internal network (it publishes the fluent-forward port): no outbound NAT. */
 export const NO_MASQUERADE = { "com.docker.network.bridge.enable_ip_masquerade": "false" } as const;
@@ -188,8 +191,10 @@ function observabilityProblems(config: ComposeConfig): string[] {
   const problems: string[] = [];
   if (o2) {
     if ((o2.ports ?? []).length > 0) problems.push("openobserve.ports: must publish nothing (D50)");
-    if (!DIGEST.test(o2.image ?? ""))
-      problems.push("openobserve.image: must be pinned by digest (D50)");
+    if (o2.image !== OPENOBSERVE_IMAGE)
+      problems.push(
+        "openobserve.image: must be OPENOBSERVE_IMAGE, the digest the API contract test pins (D50)",
+      );
     for (const [key, value] of Object.entries(O2_REQUIRED_ENV))
       if (o2.environment?.[key] !== value)
         problems.push(`openobserve.${key}: must be ${value} (D50)`);
@@ -203,8 +208,10 @@ function observabilityProblems(config: ComposeConfig): string[] {
     const ports = collector.ports ?? [];
     if (ports.some((p) => p.host_ip !== "127.0.0.1" || p.target !== 24224))
       problems.push("otel-collector.ports: only 127.0.0.1:24224 (D45, D50)");
-    if (!DIGEST.test(collector.image ?? ""))
-      problems.push("otel-collector.image: must be pinned by digest (D50)");
+    if (collector.image !== OTEL_COLLECTOR_IMAGE)
+      problems.push(
+        "otel-collector.image: must be OTEL_COLLECTOR_IMAGE, the digest the collector test pins (D50)",
+      );
     problems.push(...hardeningProblems("otel-collector", collector, "D50"));
   }
   for (const name of OBSERVE_NETWORKS) {

@@ -7,6 +7,16 @@
 import { OBSERVE_BASE_PATH } from "@mastertutor/contracts";
 import { z } from "zod";
 
+/**
+ * The two pinned images (D50), defined once. compose.yml repeats them as literals (YAML cannot import);
+ * tests/compose/prod-mode.ts refuses any other value, so a bump here and there must agree, and the
+ * contract and collector tests always run against what production runs.
+ */
+export const OPENOBSERVE_IMAGE =
+  "openobserve/openobserve:v1.0.4@sha256:d4a878fac1f6c56003764f7f2a1625668917388f167e222c8c810de3f54c56ba";
+export const OTEL_COLLECTOR_IMAGE =
+  "otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6";
+
 const e = encodeURIComponent;
 export type StreamType = "logs" | "metrics" | "traces";
 
