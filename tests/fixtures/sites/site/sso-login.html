@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SSO sign-in fixture</title>
+  </head>
+  <body>
+    <!--
+      The McGraw-Hill sign-in pattern: the button checks the form with script, then (after a pause,
+      like an XHR) posts to another host on the same site, which redirects again. ?next= picks the
+      last hop (sso-redirect.html below and tests/fixtures/nginx.conf).
+    -->
+    <form id="login" style="margin: 40px">
+      <label>Email <input id="user" name="user" autocomplete="username" /></label><br />
+      <label>Password <input id="pass" name="pass" type="password" /></label><br />
+      <button id="signin" type="submit" style="width: 160px; height: 40px">Sign in</button>
+    </form>
+    <script>
+      document.getElementById("login").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const next = new URLSearchParams(location.search).get("next") || "other";
+        setTimeout(() => {
+          const post = document.createElement("form");
+          post.method = "POST";
+          post.action = `http://sso.fixtures.test/sso-redirect-${next}`;
+          document.body.append(post);
+          post.submit();
+        }, 500);
+      });
+    </script>
+  </body>
+</html>

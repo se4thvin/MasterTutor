@@ -66,7 +66,7 @@ export function goalText(
         : "Approval mode: risky actions wait for the user's approval.";
   const origins =
     run.allowedOrigins.length > 0
-      ? `Allowed origins: ${run.allowedOrigins.join(", ")}`
+      ? `Allowed origins: ${run.allowedOrigins.join(", ")} (other hosts of the same sites are allowed too)`
       : FINDING_SOURCES;
   return [`Task from the user:\n${run.goal}`, origins, mode, ...extra].join("\n\n");
 }

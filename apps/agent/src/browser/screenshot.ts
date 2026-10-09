@@ -1,5 +1,7 @@
 import { VIEWPORT } from "@mastertutor/contracts";
+import { setTimeout as delay } from "node:timers/promises";
 import sharp from "sharp";
+import { abortable, pause } from "../runtime/abortable.ts";
 import {
   collectMaskBoxes,
   containsSecretText,
@@ -34,7 +36,47 @@ export const WITHHELD = {
   navigating: "the page kept navigating while it was taken",
 } as const;
 
+/**
+ * Page.captureScreenshot answers when the compositor draws. A capture sent while the page swaps
+ * renderer process mid-navigation can stay unanswered forever, or fail with "Not attached to an
+ * active page"; a fresh capture answers at once (reproduced on a real slot: the MH sign-in hang).
+ * Either way the frame is retaken, never awaited without bound.
+ */
+export const CAPTURE_TIMEOUT_MS = 5_000;
+const SWAPPING = /Not attached to an active page|Target closed|Session closed/i;
+
+/** The PNG as base64, or null when the page was swapping and the capture should be retaken. */
+export async function captureFrame(
+  session: Pick<BrowserSession, "cdp">,
+  signal: AbortSignal,
+  timeoutMs = CAPTURE_TIMEOUT_MS,
+): Promise<string | null> {
+  const cdp = await session.cdp();
+  const timer = new AbortController();
+  try {
+    const sent = cdp
+      .send("Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: false,
+      })
+      .then(
+        ({ data }) => data,
+        (error: unknown) => {
+          if (error instanceof Error && SWAPPING.test(error.message)) return null;
+          throw error;
+        },
+      );
+    const late = delay(timeoutMs, null, { signal: timer.signal }).catch(() => null);
+    return await abortable(Promise.race([sent, late]), signal);
+  } finally {
+    timer.abort();
+  }
+}
+
 const MAX_ATTEMPTS = 3;
+/** Lets a renderer swap finish before a capture is retaken. */
+const RETAKE_PAUSE_MS = 100;
 /** How long an observation waits for a main-frame navigation before stopping it. */
 const STUCK_NAVIGATION_WAIT_MS = 5_000;
 
@@ -176,6 +218,8 @@ export async function captureModelScreenshot(
     session.lastScale = dropped.scale;
     return dropped;
   };
+  // Why the last attempt was retaken: the reason a dropped frame gives the model.
+  let retake: string = WITHHELD.moved;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     session.guard.assertAgent(signal);
     await session.page.bringToFront();
@@ -190,16 +234,18 @@ export async function captureModelScreenshot(
     const before = await collectMaskBoxes(session, sources);
     if (before.unverifiable > 0) return drop();
     session.guard.assertAgent(signal);
-    const { data } = await (
-      await session.cdp()
-    ).send("Page.captureScreenshot", {
-      format: "png",
-      fromSurface: true,
-      captureBeyondViewport: false,
-    });
+    const data = await captureFrame(session, signal);
+    if (data === null) {
+      retake = WITHHELD.navigating;
+      await pause(RETAKE_PAUSE_MS, signal);
+      continue;
+    }
     const after = await collectMaskBoxes(session, sources);
     if (after.unverifiable > 0) return drop();
-    if (!sameBoxes(before.boxes, after.boxes)) continue;
+    if (!sameBoxes(before.boxes, after.boxes)) {
+      retake = WITHHELD.moved;
+      continue;
+    }
     // A resize between reading the layout and capturing would misalign every mask: retake.
     const raw = Buffer.from(data, "base64");
     const meta = await sharp(raw).metadata();
@@ -224,5 +270,5 @@ export async function captureModelScreenshot(
     session.lastScale = shot.scale;
     return shot;
   }
-  return drop();
+  return drop(retake);
 }
