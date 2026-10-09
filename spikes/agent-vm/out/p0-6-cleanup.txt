@@ -1,0 +1,24 @@
+a7f30ac7725b
+d9e8606d77a5
+f85d65d1b0da
+95bf8aa0633a
+9f70c19bf808
+620ff5f63734
+Untagged: mt-vm-p0-net:local
+Deleted: sha256:390c4cee22fabbd374a5b31aae2ab74177a6bd2085d1af93e4b2456268b8a648
+Untagged: mt-vm-p0-firecracker:1.17.0
+Deleted: sha256:43baddac43fb10ba222d5bdfc17ccade6923e58b4095ce391b712f4ff80fa644
+Untagged: mt-vm-p0-restore:local
+Deleted: sha256:44bf5ddab22fb851a5c187ec1068c3c2580bbfb08ecb45cf554072c19cfe489e
+Untagged: mt-vm-p0-traefik:3.7.13
+Deleted: sha256:56c48c87af573b3afc46cd0765280dbf1cb183f3aaadec6bebc6ff52311dfca2
+Untagged: mt-vm-p0-kernel:6.1.188
+Deleted: sha256:615fc0a661299be2805ca6246ba28efac431b945bc911db5d7d28be256ae6709
+Untagged: mt-vm-p0-rootfs:local
+Deleted: sha256:8708f69323f2e1b671cd29bb9abc984952993f5747baa828e6303745cea5d2a8
+Untagged: mt-vm-p0-owner-test:local
+Deleted: sha256:98fd293f588c51b444c740577b58e22722d805defe951bbca300f34fce9e23c9
+Untagged: mt-vm-p0-trial:local
+Deleted: sha256:ecc9a6f0b3ea9b3304794e407eda4ad9aa63ef5973dd6bdf9fe6b0ec73d63020
+Untagged: mt-vm-p0-browser-slot:local
+Deleted: sha256:fb25202fec2aaa67e22aa6e0b5ab7ed2c50ea9732ca7e115675d93f073e30d0a

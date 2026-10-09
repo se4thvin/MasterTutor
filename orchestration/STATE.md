@@ -1,12 +1,14 @@
 # Orchestrator State
 
-_Last updated: 2026-10-05_
+_Last updated: 2026-10-09_
 
 ## Project
 
 Agentic note-taking web app. An AI agent drives its own browser (computer use: sees screenshots, clicks, types) to take notes from websites, PDFs and YouTube/videos. Extracted content must be 1:1 or extremely faithful to the source, including images and diagrams. It handles login/logout through a secure credential layer, so the model never sees passwords. Notes/"artifacts" and agent activity live in a deployable web app with its own database, a delightful clean UI, and Docker end-to-end testing.
 
 ## Current phase
+
+**Agent VM P0 complete (2026-10-09):** [GO report](runs/2026-10-09-09-spike-agent-vm/report.md), scoped to the measured Openbox golden. All twelve criteria pass; Xfce wins the desktop trial, $3.880328 total. Changing the pre-golden WM requires snapshot/identity/stream revalidation (Linux boot_id is lazy). No P1 task starts until the user accepts this report. No host settings changed.
 
 **Build (goal D32).** COMPLETE and merged on `agentic-notes-browser-agent`: Phase 0, B1 (agent runtime, click guard closed), F1/F2/F4, delight pass, B3 (vault), F3/F5 (run view + hero, 549063d). In progress: B6 live view (A1–A8 merged; A9–A12 gate switch + Keep/Discard on `b6-a9-a12`; A13–A15 next), B2/B4/B5 capture (Task 0 done on `b245-t0`, Tasks 1–4 running), Phase 7–10 reconciliation amendment (D46/D47: one prod-like zyBooks run, bypass, $500 cap, Mac).
 
