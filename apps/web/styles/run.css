@@ -1449,6 +1449,15 @@
   .thread-peek-summary {
     font: var(--weight-regular) var(--text-12)/1.3 var(--font-ui);
   }
+  /* The thread's content is lazily loaded (run-mode budget): until it arrives the solid surface
+     already holds its place, so the pane never changes shape. */
+  .thread-loading {
+    flex: 1;
+    min-height: 0;
+    border-radius: var(--r-lg);
+    background: var(--elevated);
+    box-shadow: 0 0 0 0.03125rem var(--hairline);
+  }
   /* AnimatedList (React Bits, CSS-only): the scroller and its scroll-edge fades. */
   /* The conversation is content: a solid surface inside the glass pane or sheet (HIG). */
   .alist {

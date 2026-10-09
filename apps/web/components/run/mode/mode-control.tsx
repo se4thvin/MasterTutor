@@ -5,7 +5,6 @@ import { useId, useState } from "react";
 import { BypassConsent } from "@/components/approval-mode/bypass-consent.tsx";
 import {
   APPROVAL_MODE_ITEMS,
-  APPROVAL_MODE_LABEL,
   APPROVAL_MODE_SHORT,
   APPROVAL_MODE_TEXT,
 } from "@/components/approval-mode/modes.ts";
@@ -14,6 +13,7 @@ import { Icon } from "@/components/ui/icon.tsx";
 import { LiquidGlass } from "@/components/ui/liquid-glass.tsx";
 import { Menu } from "@/components/ui/menu.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
+import { modeTriggerProps } from "./mode-trigger.tsx";
 
 /**
  * The run's approval mode, changeable while it runs (run-mode): a toolbar menu of the three modes.
@@ -42,16 +42,7 @@ export function ModeControl({
   return (
     <>
       <Menu.Root>
-        <Menu.Trigger
-          className="btn btn-plain run-mode-btn"
-          data-mode={mode}
-          disabled={disabled}
-          aria-label={`Approvals: ${APPROVAL_MODE_LABEL[mode]}`}
-        >
-          <Icon name={mode === "bypass" ? "needsReview" : "approvals"} size="sm" />
-          <span className="run-mode-label">{APPROVAL_MODE_SHORT[mode]}</span>
-          <Icon name="chevronDown" size="sm" />
-        </Menu.Trigger>
+        <Menu.Trigger {...modeTriggerProps(mode, disabled)} />
         <Menu.Portal>
           <Menu.Positioner
             align="end"

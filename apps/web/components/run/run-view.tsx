@@ -15,11 +15,9 @@ import { MEDIA } from "@/lib/breakpoints.ts";
 import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
 import { useHotkey } from "@/lib/hooks/use-hotkey.ts";
 import { useMediaQuery } from "@/lib/hooks/use-media-query.ts";
-import { APPROVAL_SHEET_ID, ApprovalSheet } from "./approval/approval-sheet.tsx";
+import { APPROVAL_SHEET_ID } from "./approval/sheet-id.ts";
 import { BrowserFrame } from "./browser/browser-frame.tsx";
-import { HandBackSheet } from "./browser/hand-back-sheet.tsx";
 import type { LiveStatus } from "./browser/live-frame.tsx";
-import { REPLAY_INTERVAL_MS, ReplayScrubber } from "./browser/replay-scrubber.tsx";
 import { approvalCopy } from "./model/approval-copy.ts";
 import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
 import { INFO_ERROR_COPY, hostAndPath, modeErrorCopy, shortRunId } from "./model/copy.ts";
@@ -38,7 +36,7 @@ import {
   type PendingMessage,
 } from "./model/thread-items.ts";
 import { forgetWatchedRun, rememberWatchedRun } from "./pip/watching.ts";
-import { ModeControl } from "./mode/mode-control.tsx";
+import { ModeControl } from "./mode/mode-trigger.tsx";
 import { RunHeader } from "./run-header.tsx";
 import { STORED_TOGGLES, useStoredToggle } from "./stored-toggle.ts";
 import { useRun } from "./stream/use-run.ts";
@@ -47,6 +45,23 @@ import { BudgetMeters } from "./timeline/budget-meters.tsx";
 import { useTakeover } from "./use-takeover.ts";
 
 /** The OTP card is rare (a site asked for a code): off the run page's first load. */
+/**
+ * The approval sheet is off the first load (budget) and prefetched when the browser is idle; the
+ * thread's approval card and the frame's spotlight speak for the approval until it arrives.
+ */
+const { Component: ApprovalSheet, usePrefetch: usePrefetchApprovalSheet } = lazyComponent(() =>
+  import("./approval/approval-sheet.tsx").then((mod) => mod.ApprovalSheet),
+);
+/** One replay frame per second. */
+const REPLAY_INTERVAL_MS = 1_000;
+/** The scrubber shows only during replay: off the first load. */
+const { Component: ReplayScrubber } = lazyComponent(() =>
+  import("./browser/replay-scrubber.tsx").then((mod) => mod.ReplayScrubber),
+);
+/** Hand back opens only while a person holds control: its sheet is off the first load too. */
+const { Component: HandBackSheet } = lazyComponent(() =>
+  import("./browser/hand-back-sheet.tsx").then((mod) => mod.HandBackSheet),
+);
 const { Component: OtpCard, usePrefetch: usePrefetchOtpCard } = lazyComponent(() =>
   import("./timeline/otp-card.tsx").then((mod) => mod.OtpCard),
 );
@@ -60,6 +75,7 @@ const reviewApproval = () => document.getElementById(APPROVAL_SHEET_ID)?.focus()
 export function RunView({ runId, viewerId }: { runId: string; viewerId: string | null }) {
   const toast = useToast();
   usePrefetchOtpCard();
+  usePrefetchApprovalSheet();
   const { model, connection, loadError, resync } = useRun(runId);
   const { takeover, takeControl, handBack } = useTakeover(runId, model, resync);
   const status = model?.status ?? null;
@@ -388,26 +404,32 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
               // At phone width the thread sheet, while open, stands in front: the approval sheet
               // waits behind it and takes focus again when it closes (its Review button closes it).
               approval && copy && !(sheetOpen && !paneWidth) ? (
-                <ApprovalSheet
-                  key={approval.id}
-                  runId={runId}
-                  approval={approval}
-                  copy={copy}
-                  count={view.approvals.length}
-                  onDecide={decide}
-                  onTakeOver={startTakeover}
-                />
+                <ChunkBoundary what="the approval card" onFailed={ignoreFailure}>
+                  <Suspense fallback={null}>
+                    <ApprovalSheet
+                      key={approval.id}
+                      runId={runId}
+                      approval={approval}
+                      copy={copy}
+                      count={view.approvals.length}
+                      onDecide={decide}
+                      onTakeOver={startTakeover}
+                    />
+                  </Suspense>
+                </ChunkBoundary>
               ) : null
             }
             spotlight={copy?.spotlight ?? null}
             scrubber={
-              <ReplayScrubber
-                steps={shotSteps}
-                seq={replaySeq}
-                playing={playing}
-                onSeq={setReplaySeq}
-                onTogglePlay={() => setPlaying((p) => !p)}
-              />
+              <Suspense fallback={null}>
+                <ReplayScrubber
+                  steps={shotSteps}
+                  seq={replaySeq}
+                  playing={playing}
+                  onSeq={setReplaySeq}
+                  onTogglePlay={() => setPlaying((p) => !p)}
+                />
+              </Suspense>
             }
             showCallouts={callouts}
             announceCaption={!pane || thinking === null || state !== "live"}
@@ -429,15 +451,19 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
         ) : null}
         <BudgetMeters usage={view.usage} budget={view.budget} />
       </div>
-      <HandBackSheet
-        open={handBackOpen && userHasControl}
-        onOpenChange={setHandBackOpen}
-        held={view.heldDownloads}
-        onHandBack={(note, keep) => {
-          setHandBackOpen(false);
-          handBack(note, keep);
-        }}
-      />
+      <ChunkBoundary what="the hand-back sheet" onFailed={() => setHandBackOpen(false)}>
+        <Suspense fallback={null}>
+          <HandBackSheet
+            open={handBackOpen && userHasControl}
+            onOpenChange={setHandBackOpen}
+            held={view.heldDownloads}
+            onHandBack={(note, keep) => {
+              setHandBackOpen(false);
+              handBack(note, keep);
+            }}
+          />
+        </Suspense>
+      </ChunkBoundary>
       <ConfirmDialog
         open={stopOpen}
         onOpenChange={setStopOpen}
