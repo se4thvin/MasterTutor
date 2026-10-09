@@ -1,0 +1,3 @@
+{"golden": true, "mem_bytes": 4294967296}
+{"trial_ready": true}
+{"screenshot_bytes":35222,"width":1280,"height":800,"source":"guest-xwd"}

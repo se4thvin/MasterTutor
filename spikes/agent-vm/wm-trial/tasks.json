@@ -1,0 +1,76 @@
+{
+  "apps": {
+    "files": {
+      "label": "File Manager",
+      "command": [
+        "thunar"
+      ]
+    },
+    "terminal": {
+      "label": "Terminal",
+      "command": [
+        "xfce4-terminal"
+      ]
+    },
+    "writer": {
+      "label": "LibreOffice Writer",
+      "command": [
+        "libreoffice",
+        "--writer"
+      ]
+    },
+    "chromium": {
+      "label": "Chromium",
+      "command": [
+        "chromium"
+      ]
+    },
+    "impress": {
+      "label": "LibreOffice Impress",
+      "command": [
+        "libreoffice",
+        "--impress"
+      ]
+    },
+    "editor": {
+      "label": "Text Editor",
+      "command": [
+        "mousepad"
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "id": "pdf",
+      "prompt": "Open the file manager and open ~/Documents/sample.pdf in the PDF viewer."
+    },
+    {
+      "id": "terminal",
+      "prompt": "Open a terminal window. Do not type or run anything in it."
+    },
+    {
+      "id": "writer",
+      "prompt": "Open LibreOffice Writer from the applications menu. Use the menu, not a command or launcher."
+    },
+    {
+      "id": "chromium",
+      "prompt": "Switch to the existing Chromium window."
+    },
+    {
+      "id": "maximize",
+      "prompt": "Maximise the existing PDF viewer window."
+    },
+    {
+      "id": "dialog",
+      "prompt": "Close the visible information dialog."
+    },
+    {
+      "id": "impress",
+      "prompt": "Open ~/Documents/slides.pptx in LibreOffice Impress."
+    },
+    {
+      "id": "editor",
+      "prompt": "Find and open the text editor."
+    }
+  ]
+}

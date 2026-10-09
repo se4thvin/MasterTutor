@@ -1,11 +1,11 @@
 FROM mt-vm-p0-browser-slot:local AS guest
 LABEL mt-vm-p0="1"
-RUN apt-get update && apt-get install -y --no-install-recommends python3 iproute2 util-linux strace && rm -rf /var/lib/apt/lists/* && \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 iproute2 util-linux strace tint2 xfce4 xfce4-terminal thunar evince libreoffice-writer libreoffice-impress mousepad zenity x11-apps xdotool wmctrl imagemagick dbus-x11 fonts-dejavu && rm -rf /var/lib/apt/lists/* && \
     mkdir -p /mnt/rw /etc/guest/programs /opt/spike && \
     rm -rf /root/.ssh /home/*/.ssh && sed -i 's/^\([^:]*\):[^:]*:/\1:!:/' /etc/shadow
 COPY --chmod=0755 vm-init /sbin/vm-init
 COPY fixture /opt/spike/fixture
-COPY start_line.py diagnostic.py /opt/spike/
+COPY start_line.py diagnostic.py desktop.py tasks.json /opt/spike/
 COPY supervisord.conf /etc/guest/supervisord.conf
 # Preserve the actual lineage command/flags; only replace environment interpolation.
 RUN python3 - <<'PY'
@@ -30,6 +30,13 @@ for path in [Path('/etc/neko/supervisord.conf'), *Path('/etc/neko/supervisord').
             Path('/etc/guest/programs/' + name + '.conf').write_text(block.replace('%(ENV_USER)s', 'neko').replace('%(ENV_DISPLAY)s', ':99.0'))
 assert Path('/etc/guest/programs/neko.conf').exists()
 assert Path('/etc/guest/programs/pulseaudio.conf').exists()
+Path('/home/neko/Documents').mkdir(exist_ok=True)
+import shutil
+for name in ['sample.pdf', 'slides.pptx']:
+    shutil.copyfile('/opt/spike/fixture/' + name, '/home/neko/Documents/' + name)
+os.chown('/home/neko/Documents', 1000, 1000)
+for name in ['sample.pdf', 'slides.pptx']:
+    os.chown('/home/neko/Documents/' + name, 1000, 1000)
 PY
 
 FROM debian:trixie-slim AS rootfs

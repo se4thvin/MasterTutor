@@ -1,0 +1,27 @@
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.001s
+
+OK
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.001s
+
+OK
+✔ select only the explicitly authorized running bench agent (1.486053ms)
+✔ reserve before send; charge failed requests conservatively (1.540081ms)
+✔ settle a pre-send reservation without losing previous spend (0.331823ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 385.263516
+error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.

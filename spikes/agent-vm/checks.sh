@@ -6,9 +6,10 @@ task="${1:?P0 task required}"
 root="$(git rev-parse --show-toplevel)"
 remote_dir=mt-vm-p0/houndshark-vm-p0
 ssh coursebite-build "mkdir -p $remote_dir"
-rsync -az --delete --exclude='.env*' --filter=':- .gitignore' --exclude=.git --exclude=node_modules \
+rsync -az --delete --exclude='.env*' --exclude='spikes/agent-vm/out/p0-5-budget.json' --filter=':- .gitignore' --exclude=.git --exclude=node_modules \
   --exclude=.superpowers --exclude=.next --exclude='*.tsbuildinfo' \
   --exclude=__pycache__ --exclude=fc/images --exclude='out/*.log' \
+  --exclude='spikes/agent-vm/guest/images' --exclude='spikes/agent-vm/guest/desktop.py' --exclude='spikes/agent-vm/guest/tasks.json' \
   "$root/" "coursebite-build:$remote_dir/"
 ssh coursebite-build bash -s -- "$remote_dir" "$task" <<'REMOTE'
 set -euo pipefail
@@ -25,6 +26,9 @@ docker run -i --rm --name "$name" --label mt-vm-p0=1 --label "mt-vm-p0.run=$name
     status=0
     pnpm typecheck; result=$?; echo "P0_CHECK typecheck=$result"; [[ "$result" == 0 ]] || status=1
     pnpm lint; result=$?; echo "P0_CHECK lint=$result"; [[ "$result" == 0 ]] || status=1
+    if [[ -f spikes/agent-vm/verify-spike.sh ]]; then
+      bash spikes/agent-vm/verify-spike.sh; result=$?; [[ "$result" == 0 ]] || status=1
+    fi
     # P0 touches no application package: repository units are an extra regression check.
     # These optional regression files read .env* directly or through Playwright config.
     # CLI --exclude is overridden by this repo's project config. Filter these test names.

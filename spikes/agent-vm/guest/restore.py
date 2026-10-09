@@ -96,7 +96,8 @@ def fresh_cdp(previous):
     raise TimeoutError("no fresh CDP id within 30 seconds")
 
 
-def main():
+def create_golden():
+    """One source of the spike guest configuration and golden snapshot point."""
     host_path = Path("/run/vm/vsock.sock_1025")
     host_path.unlink(missing_ok=True)
     process = None
@@ -127,6 +128,15 @@ def main():
             stop(process, serial)
             process = None
         host_path.unlink(missing_ok=True)
+    finally:
+        if process is not None:
+            stop(process, serial)
+
+
+def main():
+    process = None
+    try:
+        create_golden()
         resumed, ready, identities = [], [], []
         previous = None
         for run in range(30):

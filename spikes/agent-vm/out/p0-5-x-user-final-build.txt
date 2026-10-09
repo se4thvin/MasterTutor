@@ -1,0 +1,140 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from runtime.Dockerfile
+#1 transferring dockerfile: 323B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/mt-vm-p0-firecracker:1.17.0
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/5] FROM docker.io/library/mt-vm-p0-firecracker:1.17.0
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 389.58MB 5.0s
+#5 transferring context: 973.09MB 10.1s
+#5 transferring context: 1.64GB 15.1s
+#5 transferring context: 2.30GB 20.2s
+#5 transferring context: 2.39GB 20.8s done
+#5 DONE 20.9s
+
+#6 [2/5] COPY images/vmlinux /opt/vm/vmlinux
+#6 CACHED
+
+#7 [3/5] COPY images/rootfs.ext4 /opt/vm/rootfs.ext4
+#7 DONE 5.1s
+
+#8 [4/5] COPY restore.py /opt/spike/restore.py
+#8 DONE 0.1s
+
+#9 [5/5] COPY restore-entry.sh /opt/spike/restore-entry.sh
+#9 DONE 0.1s
+
+#10 exporting to image
+#10 exporting layers
+#10 exporting layers 17.0s done
+#10 writing image sha256:44bf5ddab22fb851a5c187ec1068c3c2580bbfb08ecb45cf554072c19cfe489e done
+#10 naming to docker.io/library/mt-vm-p0-restore:local done
+#10 DONE 17.0s
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 293B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/mt-vm-p0-restore:local
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [internal] load build context
+#4 transferring context: 88B done
+#4 DONE 0.0s
+
+#5 [1/3] FROM docker.io/library/mt-vm-p0-restore:local
+#5 DONE 0.2s
+
+#6 [2/3] RUN apt-get update && apt-get install -y --no-install-recommends nftables && rm -rf /var/lib/apt/lists/*
+#6 0.428 Get:1 http://deb.debian.org/debian trixie InRelease [140 kB]
+#6 0.496 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#6 0.533 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#6 0.575 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9678 kB]
+#6 1.170 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]
+#6 1.190 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [265 kB]
+#6 2.275 Fetched 10.2 MB in 2s (5310 kB/s)
+#6 2.275 Reading package lists...
+#6 3.201 Reading package lists...
+#6 4.083 Building dependency tree...
+#6 4.308 Reading state information...
+#6 4.628 The following additional packages will be installed:
+#6 4.629   libedit2 libjansson4 libnftables1 libnftnl11
+#6 4.632 Suggested packages:
+#6 4.632   firewalld
+#6 4.710 The following NEW packages will be installed:
+#6 4.713   libedit2 libjansson4 libnftables1 libnftnl11 nftables
+#6 4.838 0 upgraded, 5 newly installed, 0 to remove and 1 not upgraded.
+#6 4.838 Need to get 607 kB of archives.
+#6 4.838 After this operation, 1889 kB of additional disk space will be used.
+#6 4.838 Get:1 http://deb.debian.org/debian trixie/main amd64 libjansson4 amd64 2.14-2+b3 [39.8 kB]
+#6 4.862 Get:2 http://deb.debian.org/debian trixie/main amd64 libnftnl11 amd64 1.2.9-1 [65.0 kB]
+#6 4.868 Get:3 http://deb.debian.org/debian trixie/main amd64 libnftables1 amd64 1.1.3-1 [332 kB]
+#6 4.906 Get:4 http://deb.debian.org/debian trixie/main amd64 libedit2 amd64 3.1-20250104-1 [93.8 kB]
+#6 4.910 Get:5 http://deb.debian.org/debian trixie/main amd64 nftables amd64 1.1.3-1 [75.9 kB]
+#6 5.115 debconf: unable to initialize frontend: Dialog
+#6 5.115 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#6 5.115 debconf: falling back to frontend: Readline
+#6 5.116 debconf: unable to initialize frontend: Readline
+#6 5.116 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 5.)
+#6 5.116 debconf: falling back to frontend: Teletype
+#6 5.124 debconf: unable to initialize frontend: Teletype
+#6 5.124 debconf: (This frontend requires a controlling tty.)
+#6 5.124 debconf: falling back to frontend: Noninteractive
+#6 5.989 Fetched 607 kB in 0s (3803 kB/s)
+#6 6.017 Selecting previously unselected package libjansson4:amd64.
+#6 6.017 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6910 files and directories currently installed.)
+#6 6.023 Preparing to unpack .../libjansson4_2.14-2+b3_amd64.deb ...
+#6 6.035 Unpacking libjansson4:amd64 (2.14-2+b3) ...
+#6 6.074 Selecting previously unselected package libnftnl11:amd64.
+#6 6.075 Preparing to unpack .../libnftnl11_1.2.9-1_amd64.deb ...
+#6 6.079 Unpacking libnftnl11:amd64 (1.2.9-1) ...
+#6 6.129 Selecting previously unselected package libnftables1:amd64.
+#6 6.131 Preparing to unpack .../libnftables1_1.1.3-1_amd64.deb ...
+#6 6.138 Unpacking libnftables1:amd64 (1.1.3-1) ...
+#6 6.209 Selecting previously unselected package libedit2:amd64.
+#6 6.211 Preparing to unpack .../libedit2_3.1-20250104-1_amd64.deb ...
+#6 6.215 Unpacking libedit2:amd64 (3.1-20250104-1) ...
+#6 6.257 Selecting previously unselected package nftables.
+#6 6.259 Preparing to unpack .../nftables_1.1.3-1_amd64.deb ...
+#6 6.262 Unpacking nftables (1.1.3-1) ...
+#6 6.300 Setting up libedit2:amd64 (3.1-20250104-1) ...
+#6 6.310 Setting up libnftnl11:amd64 (1.2.9-1) ...
+#6 6.319 Setting up libjansson4:amd64 (2.14-2+b3) ...
+#6 6.328 Setting up libnftables1:amd64 (1.1.3-1) ...
+#6 6.337 Setting up nftables (1.1.3-1) ...
+#6 6.466 Processing triggers for libc-bin (2.41-12+deb13u4) ...
+#6 DONE 6.7s
+
+#7 [3/3] COPY desktop.nft entry.sh live.py /opt/spike/net/
+#7 DONE 0.1s
+
+#8 exporting to image
+#8 exporting layers 0.1s done
+#8 writing image sha256:390c4cee22fabbd374a5b31aae2ab74177a6bd2085d1af93e4b2456268b8a648 done
+#8 naming to docker.io/library/mt-vm-p0-net:local done
+#8 DONE 0.1s
+91b7e213a1cb
+212a814a5501
+ Container mt-vm-p0-net-fc Creating 
+ Container mt-vm-p0-net-traefik Creating 
+ Container mt-vm-p0-net-fc Created 
+ Container mt-vm-p0-net-traefik Created 
+ Container mt-vm-p0-net-traefik Starting 
+ Container mt-vm-p0-net-fc Starting 
+ Container mt-vm-p0-net-traefik Started 
+ Container mt-vm-p0-net-fc Started 

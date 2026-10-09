@@ -2,8 +2,6 @@
 import base64
 import http.server
 import json
-import os
-from pathlib import Path
 import re
 import secrets
 import socket
@@ -11,7 +9,7 @@ import sys
 import time
 import urllib.request
 sys.path.insert(0, '/opt/spike')
-from restore import spawn, stop, fresh_cdp
+from restore import spawn, stop, fresh_cdp, create_golden
 from boot import api
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -22,24 +20,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def main():
     process = None
     try:
-        path = Path('/run/vm/vsock.sock_1025')
-        path.unlink(missing_ok=True)
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as golden:
-            golden.bind(str(path)); golden.listen(1); golden.settimeout(30)
-            process, serial = spawn()
-            api('/machine-config', {'vcpu_count': 2, 'mem_size_mib': 4096})
-            api('/boot-source', {'kernel_image_path': '/opt/vm/vmlinux', 'boot_args': 'console=ttyS0 reboot=k panic=1 pci=off ro init=/sbin/vm-init'})
-            api('/drives/rootfs', {'drive_id': 'rootfs', 'path_on_host': '/opt/vm/rootfs.ext4', 'is_root_device': True, 'is_read_only': True})
-            api('/network-interfaces/eth0', {'iface_id': 'eth0', 'host_dev_name': 'tap0', 'guest_mac': '06:00:ac:10:00:02'})
-            api('/vsock', {'guest_cid': 3, 'uds_path': '/run/vm/vsock.sock'})
-            api('/actions', {'action_type': 'InstanceStart'})
-            connection, _ = golden.accept()
-            with connection:
-                if connection.recv(64) != b'golden\n': raise RuntimeError('invalid golden notification')
-            api('/vm', {'state': 'Paused'}, 'PATCH')
-            api('/snapshot/create', {'snapshot_type': 'Full', 'snapshot_path': '/run/vm/golden.vmstate', 'mem_file_path': '/run/vm/golden.mem'})
-            stop(process, serial); process = None
-        path.unlink(missing_ok=True)
+        create_golden()
         process, serial = spawn()
         api('/snapshot/load', {'snapshot_path': '/run/vm/golden.vmstate', 'mem_backend': {'backend_type': 'File', 'backend_path': '/run/vm/golden.mem'}, 'resume_vm': True})
         password = secrets.token_hex(24)
@@ -71,12 +52,6 @@ def main():
                 last_status = getattr(error, "code", type(error).__name__)
                 if time.monotonic() > deadline:
                     print(json.dumps({"neko_login_failure_kind": last_status}), flush=True)
-                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as diagnostic:
-                        diagnostic.settimeout(2); diagnostic.connect('/run/vm/vsock.sock'); diagnostic.sendall(b'CONNECT 52\n')
-                        reply = b''
-                        while not reply.endswith(b'\n') and len(reply) < 64: reply += diagnostic.recv(1)
-                        diagnostic.sendall(b'status\n')
-                        print(diagnostic.recv(8192).decode(), flush=True)
                     raise RuntimeError('Neko login did not become ready') from None
                 time.sleep(.1)
         del password, data, request, cookies, body, payload

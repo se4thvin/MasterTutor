@@ -1,0 +1,4 @@
+{"golden": true, "mem_bytes": 4294967296}
+{"live_ready": true, "credential_storage": "memory-only"}
+sha256:44bf5ddab22fb851a5c187ec1068c3c2580bbfb08ecb45cf554072c19cfe489e running
+sha256:44bf5ddab22fb851a5c187ec1068c3c2580bbfb08ecb45cf554072c19cfe489e
