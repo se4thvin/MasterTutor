@@ -174,7 +174,10 @@
     --glass-liquid: rgb(28 28 30 / 0.94);
     --glass-specular: rgb(255 255 255 / 0.16);
     --glass-rim: rgb(255 255 255 / 0.09);
-    --glass-sheen: rgb(255 255 255 / 0.04);
+    --glass-sheen: rgb(255 255 255 / 0);
+    /* Dark glass also dims what is behind it, as Apple's dark materials do: a white page under a
+       menu still leaves its red and blue text at AA (tokens.test.ts). */
+    --blur: saturate(180%) blur(24px) brightness(0.5);
     --shimmer: rgb(255 255 255 / 0.06);
     --art-shadow: drop-shadow(0 8px 16px rgb(0 0 0 / 0.45));
     --art-shadow-lift: drop-shadow(0 8px 16px rgb(0 0 0 / 0.55));

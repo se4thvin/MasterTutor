@@ -402,9 +402,8 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     border-radius: var(--r-xl);
-    /* Near-opaque: result text must stay legible over busy pages even if the blur is unavailable. */
-    --glass-bg: color-mix(in srgb, var(--elevated) 94%, transparent);
-    box-shadow: var(--e3);
+    /* Liquid Glass: its tint keeps result text legible over any page (tokens.test.ts). */
+    --glass-lift: var(--e3);
     transition-property: transform, opacity;
     transition-duration: var(--motion-spring-dur);
     transition-timing-function: var(--motion-spring);

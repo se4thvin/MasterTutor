@@ -1,6 +1,9 @@
 import type { HTMLAttributes, ReactNode } from "react";
 import { cx } from "@/lib/cx.ts";
 
+/** The material's classes, for elements another library renders (Base UI popups). */
+export const LIQUID_GLASS = "glass lglass";
+
 type GlassTag = "div" | "aside" | "header" | "nav" | "section";
 
 /**
@@ -19,7 +22,7 @@ export function LiquidGlass({
   ...rest
 }: { as?: GlassTag; className?: string; children: ReactNode } & HTMLAttributes<HTMLElement>) {
   return (
-    <Tag className={cx("glass lglass", className)} {...rest}>
+    <Tag className={cx(LIQUID_GLASS, className)} {...rest}>
       {children}
     </Tag>
   );

@@ -185,16 +185,14 @@ export const MOTIONS: readonly Motion[] = [
     durationMs: 1500,
   },
   {
-    // The Liquid Glass sidebar while a name glides inside it on keyboard focus: the glass is
-    // static, so it must not repaint (a D49 allowance is for glass that appears or resizes).
+    // The Liquid Glass sidebar while its content scrolls under the rim and sheen: the material
+    // is static (inset shadows and background stay put), so the glass must not repaint.
     id: "sidebar-glass",
     files: ["apps/web/components/ui/liquid-glass.tsx", "apps/web/components/shell/sidebar.tsx"],
     scope: ".sidebar",
-    open: async (page) => {
-      await openLongFolder(page);
-      await page.locator(".sidebar").getByRole("treeitem", { name: "All notes" }).focus();
-    },
-    trigger: async (page) => page.keyboard.press("End"),
+    open: openLongFolder,
+    trigger: async (page) =>
+      page.locator(".sidebar").evaluate((el) => el.scrollBy({ top: 200, behavior: "smooth" })),
     durationMs: 1500,
   },
   {

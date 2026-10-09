@@ -70,10 +70,10 @@
     --row-gap: 0.5rem;
     --row-pad: 0.6rem;
     --row-space: 0.625rem;
-    @variant max-md {
-      --glass-bg: var(--glass-side);
-      background-image: none;
-      box-shadow: none;
+    /* Compact: the tab bar, a full-width bar, so no drop shadow. */
+    --glass-lift: 0 0 transparent;
+    @variant md {
+      --glass-lift: var(--e2);
     }
     @variant md {
       order: 0;
@@ -342,10 +342,6 @@
     @variant lg {
       padding-inline: var(--row-pad);
     }
-  }
-  /* Secondary text never sits on a fill over glass (tokens.test.ts): the email lifts on hover. */
-  .me:hover .me-text small {
-    color: var(--label);
   }
   .avatar {
     display: grid;

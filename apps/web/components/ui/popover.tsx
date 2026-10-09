@@ -3,6 +3,7 @@
 import { Popover } from "@base-ui/react/popover";
 import type { ReactNode } from "react";
 import { cx } from "@/lib/cx.ts";
+import { LIQUID_GLASS } from "./liquid-glass.tsx";
 
 export { Popover };
 
@@ -30,7 +31,7 @@ export function PopoverPanel({
         collisionPadding={12}
         className="popover-positioner"
       >
-        <Popover.Popup className={cx("popover", className)} aria-label={label}>
+        <Popover.Popup className={cx("popover", LIQUID_GLASS, className)} aria-label={label}>
           {children}
         </Popover.Popup>
       </Popover.Positioner>

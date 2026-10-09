@@ -4,6 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Suspense } from "react";
 import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
+import { LIQUID_GLASS } from "@/components/ui/liquid-glass.tsx";
 
 // The body (search, results, LayoutMotion) is fetched when the browser is idle, not on first load.
 const { Component: PaletteBody, usePrefetch: usePrefetchPaletteBody } = lazyComponent(() =>
@@ -23,7 +24,7 @@ export function SearchPalette({
       <Dialog.Portal>
         <Dialog.Backdrop className="scrim" />
         <Dialog.Viewport className="palette-viewport">
-          <Dialog.Popup className="palette glass">
+          <Dialog.Popup className={`palette ${LIQUID_GLASS}`}>
             {open ? (
               <ChunkBoundary what="search" onFailed={() => onOpenChange(false)}>
                 <Suspense fallback={null}>

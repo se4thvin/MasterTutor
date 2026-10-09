@@ -1,14 +1,15 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Icon } from "./icon.tsx";
+import { LiquidGlass } from "./liquid-glass.tsx";
 
 /** Sticky glass header for each screen; content scrolls beneath it. */
 export function Toolbar({ children }: { children: ReactNode }) {
   // Its hairline fades in on scroll (a scroll-linked animation), so it keeps its own delay.
   return (
-    <header className="toolbar glass" data-motion-keep-delay="">
+    <LiquidGlass as="header" className="toolbar" data-motion-keep-delay="">
       {children}
-    </header>
+    </LiquidGlass>
   );
 }
 
