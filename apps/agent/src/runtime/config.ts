@@ -26,7 +26,7 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
   idleSleepMs: 60_000,
   slotPollMs: 500,
   slotRestartTimeoutMs: 90_000,
-  compactionInputTokens: 200_000,
+  compactionInputTokens: 64_000,
   fallbackAfter5xx: 3,
   waitActionMs: 1_000,
   downloadsDir: "/downloads",
