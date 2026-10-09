@@ -23,10 +23,31 @@ export function pageLocateBlocks(snippets: BlockSnippet[]): LocatedBlock[] {
     },
   );
   const none: LocatedBlock = { selector: null, xpath: null, start: null, end: null };
+  const location = (
+    target: Element | null,
+    start: number | null,
+    end: number | null,
+  ): LocatedBlock => {
+    if (!target) return none;
+    const domOrder: number[] = [];
+    let current: Node = target;
+    while (current.parentNode) {
+      const parent = current.parentNode;
+      domOrder.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+      current = parent;
+      if (current instanceof ShadowRoot) {
+        domOrder.unshift(0);
+        current = current.host;
+      }
+    }
+    return { selector: lib.cssPath(target), xpath: lib.xpathOf(target), start, end, domOrder };
+  };
   let cursor = 0;
   return snippets.map((snippet) => {
     const head = norm(snippet.head).trim();
-    if (!head) return none;
+    const fallback = () =>
+      location(snippet.selector ? document.querySelector(snippet.selector) : null, null, null);
+    if (!head) return fallback();
     const find = (needle: string) => {
       const forward = text.indexOf(needle, cursor);
       return forward >= 0 ? forward : text.indexOf(needle);
@@ -38,7 +59,7 @@ export function pageLocateBlocks(snippets: BlockSnippet[]): LocatedBlock[] {
       start = short.length >= 8 ? find(short) : -1;
       headLength = short.length;
     }
-    if (start < 0) return none;
+    if (start < 0) return fallback();
     let end = start + headLength;
     const tail = norm(snippet.tail).trim();
     if (tail) {
@@ -50,11 +71,8 @@ export function pageLocateBlocks(snippets: BlockSnippet[]): LocatedBlock[] {
     const owner = span?.node.parentElement ?? null;
     const block = owner?.closest(lib.BLOCK_SELECTOR);
     const target = block && state.root.contains(block) ? block : owner;
-    return {
-      selector: target ? lib.cssPath(target) : null,
-      xpath: target ? lib.xpathOf(target) : null,
-      start,
-      end,
-    };
+    // Element-relative offsets are stable whether the same block is captured alone or in a page.
+    const base = target ? (spans.find((s) => target.contains(s.node))?.from ?? start) : start;
+    return location(target, start - base, end - base);
   });
 }

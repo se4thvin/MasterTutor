@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Section 1.1</title>
+    <!-- All sections share this canonical URL, as some SPA textbooks do. -->
+    <link rel="canonical" href="https://fixture.example/book" />
+    <style>
+      body {
+        max-width: 720px;
+        margin: 24px auto;
+        font: 18px/1.6 system-ui;
+      }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Sections" id="navigation"></nav>
+    <article id="content"></article>
+    <script>
+      const article = document.getElementById("content");
+      const navigation = document.getElementById("navigation");
+      const repeated = "The same verbatim sentence appears at two distinct source locations.";
+      function render(section) {
+        document.title = `Section 1.${section}`;
+        article.innerHTML = `
+          <h1>Section 1.${section}</h1>
+          <p id="opening">Section 1.${section} opens with the first source paragraph, which must precede its figure even when the figure is captured first.</p>
+          <p id="repeat-first">${repeated}</p>
+          <section id="figure">
+            <h2>Figure 1.${section}.1</h2>
+            <p id="caption">Figure 1.${section}.1 describes the source diagram in its own words, which the captured note must retain exactly as written.</p>
+          </section>
+          <p id="repeat-second">${repeated}</p>
+          <p id="details" hidden>Section 1.${section} reveals this additional source paragraph after its first page capture.</p>`;
+      }
+      for (let n = 1; n <= 9; n++) {
+        const button = document.createElement("button");
+        button.textContent = `Section 1.${n}`;
+        button.dataset.section = n;
+        button.onclick = () => {
+          history.pushState({ section: n }, "", `?section=${n}`);
+          render(n);
+        };
+        navigation.append(button);
+      }
+      const reveal = document.createElement("button");
+      reveal.id = "reveal";
+      reveal.textContent = "Reveal remaining source text";
+      reveal.onclick = () => {
+        document.getElementById("details").hidden = false;
+      };
+      navigation.append(reveal);
+      addEventListener("popstate", () =>
+        render(Number(new URL(location.href).searchParams.get("section")) || 1),
+      );
+      render(Number(new URL(location.href).searchParams.get("section")) || 1);
+    </script>
+  </body>
+</html>

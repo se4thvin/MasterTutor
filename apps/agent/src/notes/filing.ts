@@ -194,8 +194,27 @@ export async function fileRunNote(
     .select({ noteId: runs.noteId, targetFolderId: runs.targetFolderId })
     .from(runs)
     .where(and(eq(runs.id, run.runId), eq(runs.workspaceId, run.workspaceId)));
-  if (!row?.noteId) return null;
-  const noteId = row.noteId;
+  if (!row) return null;
+  const documents = await services.db
+    .select({ id: notes.id })
+    .from(notes)
+    .where(and(eq(notes.runId, run.runId), eq(notes.workspaceId, run.workspaceId)));
+  let result: FilingPlan | null = null;
+  for (const document of documents) {
+    const plan = await fileNote(services, run, step, document.id, row.targetFolderId, signal);
+    if (plan) result = plan;
+  }
+  return result;
+}
+
+async function fileNote(
+  services: FilingServices,
+  run: RunScope,
+  step: StepWriter,
+  noteId: string,
+  targetFolderId: string | null,
+  signal?: AbortSignal,
+): Promise<FilingPlan | null> {
   await services.writer.backfillEmbeddings(run, noteId, { signal, step });
   const [note] = await services.db
     .select({ title: notes.title, lede: notes.lede, filedBy: notes.filedBy })
@@ -204,7 +223,7 @@ export async function fileRunNote(
   if (!note || note.filedBy === "user") return null;
   const rows = await listFolders(services.db, run.workspaceId);
   let plan: FilingPlan;
-  const target = row.targetFolderId ? rows.find((f) => f.id === row.targetFolderId) : undefined;
+  const target = targetFolderId ? rows.find((f) => f.id === targetFolderId) : undefined;
   if (target) {
     plan = {
       kind: "existing",
