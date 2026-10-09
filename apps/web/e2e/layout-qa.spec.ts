@@ -290,3 +290,17 @@ test.describe("run frame chrome at 390: nothing overlaps in any status (coordina
     expect((await chromeCollisions(page)).join("\n")).toMatch(/overlaps|leaves the chrome/);
   });
 });
+
+test.describe("run frame chrome beside the thread pane: nothing overlaps (fe-run-chat)", () => {
+  test.skip(
+    ({ viewport }) => ![1440, 1180, 1024].includes(viewport?.width ?? 0),
+    "the pane widths, where the frame is narrowest",
+  );
+  for (const s of RUN_SCENARIOS) {
+    test(`${s.name}`, async ({ page }) => {
+      await s.setup(page);
+      await expect(frame(page)).toHaveAttribute("data-state", s.state, { timeout: 5_000 });
+      expect(await chromeCollisions(page)).toEqual([]);
+    });
+  }
+});

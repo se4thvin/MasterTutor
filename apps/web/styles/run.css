@@ -295,7 +295,9 @@
     justify-self: center;
     gap: 0.45rem;
     min-width: 0;
-    max-width: 34rem;
+    /* Never wider than its column: beside the thread pane the frame is narrow, and the path (not
+       the host) gives way before the pill reaches the status group. */
+    max-width: min(34rem, 100%);
     height: 1.875rem;
     padding: 0 0.4rem 0 0.75rem;
     border-radius: var(--r-pill);
