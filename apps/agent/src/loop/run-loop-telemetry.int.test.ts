@@ -1,5 +1,5 @@
 import { createLogger } from "@mastertutor/contracts/server";
-import { METRIC } from "@mastertutor/contracts/telemetry";
+import { ATTR, METRIC } from "@mastertutor/contracts/telemetry";
 import { createDb, runs, type DbHandle } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
@@ -46,11 +46,15 @@ describe("a real loop emits the product telemetry (spec §7.3, §15)", () => {
         name: "t1",
         turns: [
           {
+            usage: { input: 1_000, cached: 600 },
             outputs: [
               { type: "computer", actions: [{ type: "click", x: 10, y: 20, button: "left" }] },
             ],
           },
-          { outputs: [{ type: "turn", status: "done", reason: "ok" }] },
+          {
+            usage: { input: 0, cached: 0 },
+            outputs: [{ type: "turn", status: "done", reason: "ok" }],
+          },
         ],
       },
     ]);
@@ -100,6 +104,26 @@ describe("a real loop emits the product telemetry (spec §7.3, §15)", () => {
         (s) => s.name === "mt.model.request" && Number(s.attributes["mt.model.tokens.input"]) > 0,
       ),
     ).toBe(true);
+    const modelSpans = spans.filter((s) => s.name === "mt.model.request");
+    expect(
+      modelSpans.map((s) => ({
+        input: s.attributes[ATTR.tokensInput],
+        cached: s.attributes[ATTR.tokensCached],
+        ratio: s.attributes[ATTR.tokensCachedRatio],
+      })),
+    ).toEqual([
+      { input: 1_000, cached: 600, ratio: 0.6 },
+      { input: 0, cached: 0, ratio: 0 },
+    ]);
+    for (const modelSpan of modelSpans)
+      expect(
+        spans.some(
+          (s) =>
+            s.name === "mt.step" &&
+            s.attributes[ATTR.stepPhase] === "decide" &&
+            s.spanContext().spanId === modelSpan.parentSpanContext?.spanId,
+        ),
+      ).toBe(true);
     expect(
       spans.some((s) => s.name === "mt.tool" && s.attributes["mt.tool.name"] === "computer"),
     ).toBe(true);
