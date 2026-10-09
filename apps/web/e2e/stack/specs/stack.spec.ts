@@ -13,11 +13,17 @@ test("a tagged run reaches a fixture page in a slot, is driven by the mock model
   const run = RunSummary.parse(
     await rpcOk(request, "runs/create", { goal, allowedOrigins: [SITE], approvalMode: "ask" }),
   );
+  // The run starts at once under the fallback title: the goal's first line, links cut to the host.
+  expect(run.title).not.toContain("/index.html");
+  expect(run.title).not.toBe("Mock run title");
   await expect
     .poll(async () => RunDetail.parse(await rpcOk(request, "runs/get", { runId: run.id })).status, {
       timeout: 90_000,
     })
     .toBe("completed");
+  // The agent's title model (llm-mock) answered off the step path; the title is stored once.
+  const done = RunDetail.parse(await rpcOk(request, "runs/get", { runId: run.id }));
+  expect(done.title).toBe("Mock run title");
   // The slot loaded the fixture over the fixtures network (egress allow + AGENT_TEST_MODE).
   const steps = (
     await rpcOk<{ items: unknown[] }>(request, "runs/steps", { runId: run.id })
