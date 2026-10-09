@@ -4,10 +4,13 @@ import { SERVICE_WORKER_SOURCE } from "./service-worker.ts";
 type Handler = (event: Record<string, unknown>) => void;
 
 /** Runs the worker source against a fake ServiceWorkerGlobalScope and returns its handlers. */
-function boot(windows: Array<{ navigate(url: string): Promise<unknown> }> = []) {
+function boot(
+  windows: Array<{ navigate?(url: string): Promise<unknown>; postMessage?(m: unknown): void }> = [],
+) {
   const handlers: Record<string, Handler> = {};
   const shown: unknown[] = [];
   const opened: string[] = [];
+  const posted: Array<{ url: string; init: RequestInit }> = [];
   const self = {
     location: { origin: "https://notes.example.org" },
     addEventListener: (type: string, handler: Handler) => (handlers[type] = handler),
@@ -15,6 +18,17 @@ function boot(windows: Array<{ navigate(url: string): Promise<unknown> }> = []) 
     registration: {
       showNotification: async (title: string, options: unknown) =>
         void shown.push({ title, options }),
+      pushManager: {
+        subscribe: async (options: unknown) => ({
+          endpoint: "https://web.push.apple.com/new",
+          options,
+          toJSON: () => ({
+            endpoint: "https://web.push.apple.com/new",
+            expirationTime: null,
+            keys: { p256dh: "P", auth: "A" },
+          }),
+        }),
+      },
     },
     clients: {
       claim: async () => undefined,
@@ -22,13 +36,17 @@ function boot(windows: Array<{ navigate(url: string): Promise<unknown> }> = []) 
       openWindow: async (url: string) => void opened.push(url),
     },
   };
-  new Function("self", SERVICE_WORKER_SOURCE)(self);
+  const fakeFetch = async (url: string, init: RequestInit) => {
+    posted.push({ url, init });
+    return new Response(null);
+  };
+  new Function("self", "fetch", SERVICE_WORKER_SOURCE)(self, fakeFetch);
   const dispatch = async (type: string, event: Record<string, unknown>) => {
     let work: Promise<unknown> = Promise.resolve();
     handlers[type]!({ ...event, waitUntil: (p: Promise<unknown>) => (work = p) });
     await work;
   };
-  return { dispatch, shown, opened };
+  return { dispatch, shown, opened, posted, handlers };
 }
 
 const click = (url: unknown) => ({
@@ -36,8 +54,36 @@ const click = (url: unknown) => ({
 });
 
 describe("service worker (spec §13.4)", () => {
-  it("caches nothing and fetches nothing", () => {
-    expect(SERVICE_WORKER_SOURCE).not.toMatch(/fetch|importScripts|caches/);
+  it("never intercepts requests or caches anything", () => {
+    expect(SERVICE_WORKER_SOURCE).not.toMatch(/addEventListener\("fetch"|importScripts|caches/);
+  });
+
+  it("re-sends a rotated subscription and drops the old one (review I-3)", async () => {
+    const told: unknown[] = [];
+    const sw = boot([{ postMessage: (message) => void told.push(message) }]);
+    await sw.dispatch("pushsubscriptionchange", {
+      oldSubscription: {
+        endpoint: "https://web.push.apple.com/old",
+        options: { userVisibleOnly: true },
+      },
+      newSubscription: null,
+    });
+    expect(
+      sw.posted.map(({ url, init }) => [url, init.method, JSON.parse(String(init.body))]),
+    ).toEqual([
+      [
+        "/api/rpc/alerts/subscribe",
+        "POST",
+        { json: { endpoint: "https://web.push.apple.com/new", keys: { p256dh: "P", auth: "A" } } },
+      ],
+      [
+        "/api/rpc/alerts/unsubscribe",
+        "POST",
+        { json: { endpoint: "https://web.push.apple.com/old" } },
+      ],
+    ]);
+    expect(sw.posted[0]!.init.credentials).toBe("same-origin");
+    expect(told).toEqual([{ type: "mt-push-changed" }]);
   });
 
   it("shows the payload's title, body and link", async () => {

@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { FIXTURE_NS_COOKIE } from "../lib/fixtures/cookies.ts";
 import { expect, expectCleanScreen, test } from "./helpers/test.ts";
@@ -40,7 +41,7 @@ test("the Alerts page lists past alerts and links to the dashboards", async ({ p
   await expect(page.getByText("Acknowledged")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open dashboards" })).toHaveAttribute(
     "href",
-    "/api/observability/enter",
+    "/observability",
   );
   await expectCleanScreen(page);
 });
@@ -135,4 +136,51 @@ test("the app is installable: manifest, icons and service worker are served", as
   const sw = await request.get("/sw.js");
   expect(sw.headers()["content-type"]).toContain("javascript");
   expect(await sw.text()).toContain("notificationclick");
+});
+
+/** Push is set up here, and this browser holds a subscription (stubbed: no real push service). */
+async function withBrowserSubscription(page: Page) {
+  await page.route("**/api/rpc/alerts/pushConfig", (route) =>
+    route.fulfill({ json: { json: { available: true, publicKey: `B${"A".repeat(86)}` } } }),
+  );
+  await page.addInitScript(() => {
+    const subscription = {
+      endpoint: "https://web.push.apple.com/e2e",
+      unsubscribe: async () => {
+        (window as { unsubscribed?: boolean }).unsubscribed = true;
+        return true;
+      },
+    };
+    navigator.serviceWorker.getRegistration = async () =>
+      ({ pushManager: { getSubscription: async () => subscription } }) as never;
+  });
+}
+
+test("a subscription the server still holds shows phone alerts on", async ({ page }) => {
+  await withBrowserSubscription(page);
+  await page.route("**/api/rpc/alerts/pushStatus", (route) =>
+    route.fulfill({ json: { json: { registered: true } } }),
+  );
+  await page.goto("/settings");
+  await expect(page.getByRole("switch", { name: "Phone alerts" })).toBeChecked();
+  await expectCleanScreen(page);
+});
+
+test("a subscription its push service removed (404/410) shows stopped, not on (review I-3)", async ({
+  page,
+}) => {
+  await withBrowserSubscription(page);
+  // The fixture server holds no subscriptions: pushStatus answers registered: false.
+  const asked = page.waitForRequest("**/api/rpc/alerts/pushStatus");
+  await page.goto("/settings");
+  expect((await asked).postDataJSON()).toEqual({
+    json: { endpoint: "https://web.push.apple.com/e2e" },
+  });
+  await expect(
+    page.getByText("Phone alerts stopped on this device. Turn them on again to keep getting them."),
+  ).toBeVisible();
+  await expect(page.getByRole("switch", { name: "Phone alerts" })).not.toBeChecked();
+  await expect
+    .poll(() => page.evaluate(() => (window as { unsubscribed?: boolean }).unsubscribed))
+    .toBe(true);
 });
