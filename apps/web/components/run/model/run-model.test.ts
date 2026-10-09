@@ -328,3 +328,27 @@ describe("a finished run's failure, opened later (D35, review M4)", () => {
     ).toMatchObject(error);
   });
 });
+
+describe("run-mode: mode changes and message delivery", () => {
+  it("takes the mode from approval_mode_changed and keeps each change for the thread", () => {
+    const change = rec({ type: "approval_mode_changed", from: "ask", to: "bypass", by: "u-1" });
+    const model = applyRunEvents(base(), [change]);
+    expect(model.approvalMode).toBe("bypass");
+    expect(model.modeChanges).toEqual([
+      { eventId: change.id, from: "ask", to: "bypass", by: "u-1", at: change.at },
+    ]);
+  });
+
+  it("marks each message queued or interrupting, and picked up when a decide read it", () => {
+    const queued = rec({ type: "user_message", text: "Then 3" });
+    const now = rec({ type: "user_message", text: "Stop", interrupt: true });
+    const read = rec({ type: "user_messages_read", through: now.id });
+    const later = rec({ type: "user_message", text: "Later" });
+    const model = applyRunEvents(base(), [queued, now, read, later]);
+    expect(model.messages.map((m) => [m.text, m.interrupt, m.pickedUpAt])).toEqual([
+      ["Then 3", false, read.at],
+      ["Stop", true, read.at],
+      ["Later", false, null],
+    ]);
+  });
+});

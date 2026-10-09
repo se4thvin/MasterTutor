@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApprovalDecisionInput } from "@mastertutor/contracts";
+import type { ApprovalDecisionInput, ApprovalMode } from "@mastertutor/contracts";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -21,7 +21,7 @@ import type { LiveStatus } from "./browser/live-frame.tsx";
 import { REPLAY_INTERVAL_MS, ReplayScrubber } from "./browser/replay-scrubber.tsx";
 import { approvalCopy } from "./model/approval-copy.ts";
 import { canTakeOver, deriveBrowserState } from "./model/browser-state.ts";
-import { INFO_ERROR_COPY, hostAndPath, shortRunId } from "./model/copy.ts";
+import { INFO_ERROR_COPY, hostAndPath, modeErrorCopy, shortRunId } from "./model/copy.ts";
 import { isInformational, isTerminal, latestError, type RunModel } from "./model/run-model.ts";
 import { inControl } from "./model/takeover.ts";
 import {
@@ -31,6 +31,7 @@ import {
   type PendingMessage,
 } from "./model/thread-items.ts";
 import { forgetWatchedRun, rememberWatchedRun } from "./pip/watching.ts";
+import { ModeControl } from "./mode/mode-control.tsx";
 import { RunHeader } from "./run-header.tsx";
 import { STORED_TOGGLES, useStoredToggle } from "./stored-toggle.ts";
 import { useRun } from "./stream/use-run.ts";
@@ -99,11 +100,35 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
     toast({ title: INFO_ERROR_COPY[infoCode] ?? "The agent reported a problem." });
   }, [infoKey, infoCode, toast]);
 
+  // A mode change shows at once; the stream's approval_mode_changed confirms it (run-mode).
+  const [modeShown, setModeShown] = useState<ApprovalMode | null>(null);
+  const streamedMode = model?.approvalMode ?? null;
+  useEffect(() => {
+    if (streamedMode !== null && streamedMode === modeShown) setModeShown(null);
+  }, [streamedMode, modeShown]);
   // Optimistic decisions: a decided approval leaves at once and comes back if the RPC fails.
   const view: RunModel | null = useMemo(
     () =>
-      model ? { ...model, approvals: model.approvals.filter((a) => !deciding.has(a.id)) } : null,
-    [model, deciding],
+      model
+        ? {
+            ...model,
+            approvalMode: modeShown ?? model.approvalMode,
+            approvals: model.approvals.filter((a) => !deciding.has(a.id)),
+          }
+        : null,
+    [model, deciding, modeShown],
+  );
+  const changeMode = useCallback(
+    (mode: ApprovalMode) => {
+      setModeShown(mode);
+      const input =
+        mode === "bypass" ? { runId, mode, bypassAcknowledged: true as const } : { runId, mode };
+      api.runs.setApprovalMode(input).catch((failure: unknown) => {
+        setModeShown(null);
+        toast({ title: modeErrorCopy(failure), tone: "danger" });
+      });
+    },
+    [runId, toast],
   );
   const shotSteps = useMemo(
     () => (view ? view.steps.filter((s) => s.screenshotKey !== null) : []),
@@ -145,17 +170,18 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   useHotkey({ key: "t" }, toggleThread);
   const lastEventId = view?.lastEventId ?? null;
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, interrupt: boolean) => {
       // sentAt keeps the pending row's time stable across renders (group B fix).
       const entry: PendingMessage = {
         key: crypto.randomUUID(),
         text,
+        interrupt,
         afterEventId: lastEventId,
         sentAt: new Date().toISOString(),
       };
       setPending((p) => [...p, entry]);
       try {
-        await api.runs.sendMessage({ runId, text });
+        await api.runs.sendMessage({ runId, text, interrupt });
         return true;
       } catch {
         setPending((p) => p.filter((m) => m.key !== entry.key));
@@ -295,6 +321,11 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
             ) : null}
           </Button>
         ) : null}
+        <ModeControl
+          mode={view.approvalMode}
+          disabled={isTerminal(view.status)}
+          onChange={changeMode}
+        />
         {userHasControl ? (
           <Button
             variant="primary"

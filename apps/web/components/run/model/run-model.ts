@@ -46,6 +46,18 @@ interface UserMessage {
   eventId: string;
   text: string;
   at: string;
+  /** Sent with Send now: it interrupted the agent (run-mode). */
+  interrupt: boolean;
+  /** When a decide read it (user_messages_read); null while it waits. */
+  pickedUpAt: string | null;
+}
+/** A person changed the run's approval mode mid-run (run-mode). */
+export interface ModeChange {
+  eventId: string;
+  from: ApprovalMode;
+  to: ApprovalMode;
+  by: string;
+  at: string;
 }
 interface DownloadItem {
   id: string;
@@ -93,6 +105,7 @@ export interface RunModel {
   approvals: PendingApproval[];
   outcomes: ApprovalOutcome[];
   messages: UserMessage[];
+  modeChanges: ModeChange[];
   downloads: DownloadItem[];
   /** Offered for Keep or Discard at hand-back (runs.handBack's keep); cleared once control is back. */
   heldDownloads: HeldDownload[];
@@ -218,6 +231,7 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
     approvals: pendingFrom(detail),
     outcomes: [],
     messages: [],
+    modeChanges: [],
     // From the snapshot: a reload resumes the stream past their download_ready events.
     downloads: detail.downloads.map(({ id, assetId, filename, bytes, at }) => ({
       id,
@@ -312,7 +326,34 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
     case "user_message":
       return {
         ...m,
-        messages: [...m.messages, { eventId: record.id, text: e.text, at: record.at }],
+        messages: [
+          ...m.messages,
+          {
+            eventId: record.id,
+            text: e.text,
+            at: record.at,
+            interrupt: e.interrupt === true,
+            pickedUpAt: null,
+          },
+        ],
+      };
+    case "user_messages_read":
+      return {
+        ...m,
+        messages: m.messages.map((message) =>
+          message.pickedUpAt === null && compareEventIds(message.eventId, e.through) <= 0
+            ? { ...message, pickedUpAt: record.at }
+            : message,
+        ),
+      };
+    case "approval_mode_changed":
+      return {
+        ...m,
+        approvalMode: e.to,
+        modeChanges: [
+          ...m.modeChanges,
+          { eventId: record.id, from: e.from, to: e.to, by: e.by, at: record.at },
+        ],
       };
     case "download_pending":
       return m.heldDownloads.some((d) => d.id === e.downloadId)
@@ -370,6 +411,7 @@ export function syncRunModel(model: RunModel, detail: RunDetail): RunModel {
     status: detail.status,
     waitReason: detail.waitReason,
     controller: detail.controller,
+    approvalMode: detail.approvalMode,
     slotName: heldSlot(detail.status, detail.slotName),
     currentUrl: detail.currentUrl ?? model.currentUrl,
     usage: detail.usage,

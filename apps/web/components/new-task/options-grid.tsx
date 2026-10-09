@@ -2,6 +2,8 @@
 
 import { toOrigin, type ApprovalMode, type Budget, type FolderView } from "@mastertutor/contracts";
 import { useId, useState, type Ref } from "react";
+import { BypassConsent } from "@/components/approval-mode/bypass-consent.tsx";
+import { APPROVAL_MODE_ITEMS, APPROVAL_MODE_TEXT } from "@/components/approval-mode/modes.ts";
 import { formatCount } from "@/components/bits/format.ts";
 import { RollingNumber } from "@/components/bits/rolling-number.tsx";
 import { RubberSegment } from "@/components/bits/rubber-segment.tsx";
@@ -17,20 +19,6 @@ const PRESETS = [
   { value: "standard", label: "Standard" },
   { value: "deep", label: "Deep" },
 ] as const satisfies readonly { value: BudgetPreset; label: string }[];
-
-const MODES = [
-  { value: "ask", label: "Ask me" },
-  { value: "auto_within_allowlist", label: "Auto in allowed domains" },
-  { value: "bypass", label: "Bypass approvals" },
-] as const satisfies readonly { value: ApprovalMode; label: string }[];
-
-const MODE_TEXT: Record<ApprovalMode, string> = {
-  ask: "Risky clicks, form submits, downloads, first sign-ins and new domains always ask you first.",
-  auto_within_allowlist:
-    "Risky clicks, forms and first sign-ins in your allowed domains go ahead and are logged.",
-  bypass:
-    "Steps go ahead without asking, except budget limits and prompt-injection warnings; each one is logged.",
-};
 
 interface OptionsGridProps {
   sources: SourceChip[];
@@ -188,13 +176,13 @@ export function OptionsGrid(p: OptionsGridProps) {
           Approvals
         </h2>
         <RubberSegment
-          items={MODES}
+          items={APPROVAL_MODE_ITEMS}
           value={p.approvalMode}
           onChange={p.onApprovalMode}
           aria-label="Approvals"
           fit="content"
         />
-        <p className="nt-opt-text">{MODE_TEXT[p.approvalMode]}</p>
+        <p className="nt-opt-text">{APPROVAL_MODE_TEXT[p.approvalMode]}</p>
         {p.approvalMode === "auto_within_allowlist" ? (
           <p className="nt-risk">
             <Icon name="needsReview" size="sm" />
@@ -205,38 +193,12 @@ export function OptionsGrid(p: OptionsGridProps) {
           </p>
         ) : null}
         {p.approvalMode === "bypass" ? (
-          <>
-            {/* D44: informed consent. Everything bypass lifts, and everything it never lifts. */}
-            <div className="nt-risk" id={`${id}-bypass`} data-testid="bypass-warning">
-              <Icon name="needsReview" size="sm" />
-              <div>
-                <p>
-                  Bypass approves every step on its own: purchases, deletions, posts, form submits,
-                  downloads, new domains, first use of a saved sign-in, frames it can&apos;t
-                  inspect, and irrelevant- or sensitive-site warnings.
-                </p>
-                <p>
-                  It never lifts these: prompt-injection warnings still stop for you. Budget limits
-                  still pause. Secrets never reach the agent, logs or screenshots. Sign-ins never go
-                  to another site without you. No access to private networks. The kill switch and
-                  Take over always work.
-                </p>
-                <p>
-                  It still pauses for a person on a sign-in form that posts to another site, and on
-                  safety warnings it doesn&apos;t recognise.
-                </p>
-              </div>
-            </div>
-            <label className="nt-check">
-              <input
-                type="checkbox"
-                checked={p.bypassAcknowledged}
-                aria-describedby={`${id}-bypass`}
-                onChange={(e) => p.onBypassAcknowledged(e.target.checked)}
-              />
-              <span>I understand. Start this run in bypass mode.</span>
-            </label>
-          </>
+          <BypassConsent
+            id={`${id}-bypass`}
+            checked={p.bypassAcknowledged}
+            onChange={p.onBypassAcknowledged}
+            label="I understand. Start this run in bypass mode."
+          />
         ) : null}
         <label className="nt-select" htmlFor={`${id}-folder`}>
           <span>Save to</span>

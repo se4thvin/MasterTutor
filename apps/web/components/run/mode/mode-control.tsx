@@ -1,0 +1,124 @@
+"use client";
+
+import type { ApprovalMode } from "@mastertutor/contracts";
+import { useId, useState } from "react";
+import { BypassConsent } from "@/components/approval-mode/bypass-consent.tsx";
+import {
+  APPROVAL_MODE_ITEMS,
+  APPROVAL_MODE_LABEL,
+  APPROVAL_MODE_SHORT,
+  APPROVAL_MODE_TEXT,
+} from "@/components/approval-mode/modes.ts";
+import { Button } from "@/components/ui/button.tsx";
+import { Icon } from "@/components/ui/icon.tsx";
+import { LiquidGlass } from "@/components/ui/liquid-glass.tsx";
+import { Menu } from "@/components/ui/menu.tsx";
+import { Sheet } from "@/components/ui/sheet.tsx";
+
+/**
+ * The run's approval mode, changeable while it runs (run-mode): a toolbar menu of the three modes.
+ * Bypass first shows New task's warning and needs the same acknowledgement (D44). Disabled once
+ * the run has finished.
+ */
+export function ModeControl({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: ApprovalMode;
+  disabled: boolean;
+  onChange(mode: ApprovalMode): void;
+}) {
+  const id = useId();
+  const [confirming, setConfirming] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const choose = (next: ApprovalMode) => {
+    if (next === mode) return;
+    if (next !== "bypass") return onChange(next);
+    // A fresh acknowledgement every time, never remembered (as on New task).
+    setAcknowledged(false);
+    setConfirming(true);
+  };
+  return (
+    <>
+      <Menu.Root>
+        <Menu.Trigger
+          className="btn btn-plain run-mode-btn"
+          data-mode={mode}
+          disabled={disabled}
+          aria-label={`Approvals: ${APPROVAL_MODE_LABEL[mode]}`}
+        >
+          <Icon name={mode === "bypass" ? "needsReview" : "approvals"} size="sm" />
+          <span className="run-mode-label">{APPROVAL_MODE_SHORT[mode]}</span>
+          <Icon name="chevronDown" size="sm" />
+        </Menu.Trigger>
+        <Menu.Portal>
+          <Menu.Positioner
+            align="end"
+            sideOffset={6}
+            collisionPadding={12}
+            className="popover-positioner"
+          >
+            <Menu.Popup className="menu run-mode-menu">
+              <LiquidGlass className="menu-glass">
+                <Menu.Group>
+                  <Menu.GroupLabel className="eyebrow run-mode-heading">Approvals</Menu.GroupLabel>
+                  <Menu.RadioGroup
+                    value={mode}
+                    onValueChange={(next) => choose(next as ApprovalMode)}
+                  >
+                    {APPROVAL_MODE_ITEMS.map((item) => (
+                      <Menu.RadioItem
+                        key={item.value}
+                        value={item.value}
+                        closeOnClick
+                        className="menu-item run-mode-item"
+                      >
+                        <span className="run-mode-check" aria-hidden="true">
+                          <Menu.RadioItemIndicator>
+                            <Icon name="check" size="sm" />
+                          </Menu.RadioItemIndicator>
+                        </span>
+                        <span className="run-mode-text">
+                          <span>{item.label}</span>
+                          <span className="run-mode-desc">{APPROVAL_MODE_TEXT[item.value]}</span>
+                        </span>
+                      </Menu.RadioItem>
+                    ))}
+                  </Menu.RadioGroup>
+                </Menu.Group>
+              </LiquidGlass>
+            </Menu.Popup>
+          </Menu.Positioner>
+        </Menu.Portal>
+      </Menu.Root>
+      <Sheet
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="Switch this run to Bypass?"
+        footer={
+          <>
+            <Button onClick={() => setConfirming(false)}>Keep {APPROVAL_MODE_SHORT[mode]}</Button>
+            <Button
+              variant="danger"
+              disabled={!acknowledged}
+              onClick={() => {
+                setConfirming(false);
+                onChange("bypass");
+              }}
+            >
+              Switch to Bypass
+            </Button>
+          </>
+        }
+      >
+        <BypassConsent
+          id={`${id}-bypass`}
+          checked={acknowledged}
+          onChange={setAcknowledged}
+          label="I understand. Switch this run to bypass mode."
+        />
+      </Sheet>
+    </>
+  );
+}

@@ -8,6 +8,7 @@ import {
 import { BROWSER_STATES } from "./browser-state.ts";
 import {
   INFO_ERROR_COPY,
+  modeErrorCopy,
   STATE_PILL,
   TAKEOVER_NOTICE,
   actNumber,
@@ -188,5 +189,17 @@ describe("hostile URL lengths (S6)", () => {
     const parts = hostAndPath(`https://learn.example.edu/${"p".repeat(2_000)}`);
     expect(parts?.host).toBe("learn.example.edu");
     expect([...(parts?.path ?? "")].length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe("modeErrorCopy (run-mode)", () => {
+  it("says why a mode change was refused, never echoing the server's message", () => {
+    expect(modeErrorCopy({ code: "BAD_REQUEST", message: "x" })).toBe(
+      "Auto needs at least one allowed domain on this run.",
+    );
+    expect(modeErrorCopy({ code: "CONFLICT" })).toBe(
+      "This run has finished, so its mode is fixed.",
+    );
+    expect(modeErrorCopy(new Error("boom"))).toBe("Couldn't change the approval mode. Try again.");
   });
 });

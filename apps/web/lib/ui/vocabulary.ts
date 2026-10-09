@@ -85,7 +85,8 @@ export type IconName =
   | "read"
   | "capture"
   | "thread"
-  | "panelHide";
+  | "panelHide"
+  | "approvals";
 
 export const SOURCE_KIND_ICON: Record<SourceKind, IconName> = {
   web: "web",

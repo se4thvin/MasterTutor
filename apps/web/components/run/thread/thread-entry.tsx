@@ -22,6 +22,7 @@ const SIDE: Record<ThreadItem["kind"], Side> = {
   decision: "system",
   download: "system",
   notice: "system",
+  mode: "system",
 };
 
 function Time({ item }: { item: ThreadItem }) {
@@ -191,12 +192,31 @@ export function ThreadEntry({
       );
     case "message":
       return row(
-        <div className="th-msg" data-pending={item.pending || undefined}>
-          <span className="th-verb">{item.pending ? "You · sending" : "You"}</span>
+        <div
+          className="th-msg"
+          data-pending={item.pending || undefined}
+          data-delivery={item.delivery}
+        >
+          <span className="th-verb">
+            {item.pending
+              ? `You · ${item.delivery === "interrupted" ? "sending now" : "sending"}`
+              : `You · ${item.delivery}`}
+          </span>
           <p>
             <bdi>{item.text}</bdi>
           </p>
+          {item.pickedUp !== null ? (
+            <span className="th-msg-read">Picked up at {item.pickedUp}</span>
+          ) : null}
         </div>,
+      );
+    case "mode":
+      return row(
+        <p className="th-system" data-tone={item.bypass ? "warn" : undefined}>
+          <Icon name="approvals" size="sm" />
+          <bdi>{item.line}</bdi>
+          <Time item={item} />
+        </p>,
       );
     case "decision":
       return row(

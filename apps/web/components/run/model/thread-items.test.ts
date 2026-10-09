@@ -414,3 +414,58 @@ describe("thread conversation (fe-run-chat)", () => {
     expect(peekLine([], null)).toBe("No activity yet");
   });
 });
+
+describe("run-mode thread entries", () => {
+  it("shows a mode change as a system line with the wall-clock time: You, or Someone else", () => {
+    const mine = rec({ type: "approval_mode_changed", from: "ask", to: "bypass", by: VIEWER });
+    const theirs = rec({
+      type: "approval_mode_changed",
+      from: "bypass",
+      to: "auto_within_allowlist",
+      by: "someone-else",
+    });
+    const items = threadItems(applyRunEvents(base(), [mine, theirs]), [], VIEWER).filter(
+      (i) => i.kind === "mode",
+    );
+    const time = (at: string) =>
+      new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    expect(items).toMatchObject([
+      { line: "You switched to Bypass", ts: time(mine.at), bypass: true },
+      { line: "Someone else switched to Auto", ts: time(theirs.at), bypass: false },
+    ]);
+  });
+
+  it("says how a message was sent and when the agent picked it up", () => {
+    const queued = rec({ type: "user_message", text: "Then 3" });
+    const now = rec({ type: "user_message", text: "Stop", interrupt: true });
+    const read = rec({ type: "user_messages_read", through: queued.id });
+    const model = applyRunEvents(base(), [queued, now, read]);
+    const messages = threadItems(model, [], VIEWER).filter((i) => i.kind === "message");
+    expect(messages).toMatchObject([
+      { text: "Then 3", delivery: "queued", pickedUp: elapsedClock(model.createdAt, read.at) },
+      { text: "Stop", delivery: "interrupted", pickedUp: null },
+    ]);
+  });
+
+  it("a pending Send now is shown as interrupting until its echo arrives", () => {
+    const model = base();
+    const pending = [
+      {
+        key: "k1",
+        text: "Stop",
+        interrupt: true,
+        afterEventId: model.lastEventId,
+        sentAt: "2026-10-05T17:20:00.000Z",
+      },
+    ];
+    expect(threadItems(model, pending, VIEWER).filter((i) => i.kind === "message")).toMatchObject([
+      { pending: true, delivery: "interrupted" },
+    ]);
+  });
+
+  it("names bypass decisions as bypass, never as another person", () => {
+    const model = applyRunEvents(base(), [...recordedEvents(), resolved("approved", "bypass")]);
+    const d = threadItems(model, [], VIEWER).find((i) => i.kind === "decision");
+    expect(d?.kind === "decision" && d.line).toBe("Approved in Bypass: click “Start quiz”");
+  });
+});

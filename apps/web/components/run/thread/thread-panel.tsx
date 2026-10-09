@@ -32,7 +32,8 @@ interface ThreadProps {
   /** Moves focus to the approval sheet (the thread's approval card never decides itself). */
   onReview(): void;
   canMessage: boolean;
-  onSend(text: string): Promise<boolean>;
+  /** `interrupt`: Send now (run-mode). */
+  onSend(text: string, interrupt: boolean): Promise<boolean>;
 }
 
 /**

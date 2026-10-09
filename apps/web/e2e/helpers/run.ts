@@ -76,6 +76,7 @@ export function controlHandlers(): Record<string, RpcHandler> {
     "runs/decideApproval": () => OK,
     "runs/submitOtp": () => OK,
     "runs/sendMessage": () => OK,
+    "runs/setApprovalMode": () => OK,
     "runs/cancel": () => OK,
     "runs/resume": () => OK,
   };

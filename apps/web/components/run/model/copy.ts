@@ -1,3 +1,4 @@
+import { errorCode } from "@/lib/api/errors.ts";
 import { safePageUrl } from "@/lib/notes/provenance.ts";
 import { markStatus, type StatusMarkStatus } from "@/lib/status.ts";
 import type { BrowserState } from "./browser-state.ts";
@@ -60,6 +61,14 @@ function actCount(model: RunModel): number {
 
 export function actNumber(model: RunModel, seq: number): number {
   return model.steps.filter((s) => s.phase === "act" && s.seq <= seq).length;
+}
+
+/** Why runs.setApprovalMode was refused (run-mode); the server's own message is never shown. */
+export function modeErrorCopy(error: unknown): string {
+  const code = errorCode(error);
+  if (code === "BAD_REQUEST") return "Auto needs at least one allowed domain on this run.";
+  if (code === "CONFLICT") return "This run has finished, so its mode is fixed.";
+  return "Couldn't change the approval mode. Try again.";
 }
 
 /** Informational run errors (B6 §8): shown as toasts and timeline notices, never as the failure. */

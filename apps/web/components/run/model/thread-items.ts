@@ -1,4 +1,5 @@
-import { POLICY_DECIDER, compareEventIds } from "@mastertutor/contracts";
+import { BYPASS_DECIDER, POLICY_DECIDER, compareEventIds } from "@mastertutor/contracts";
+import { APPROVAL_MODE_SHORT } from "@/components/approval-mode/modes.ts";
 import type { StatusMarkStatus } from "@/lib/status.ts";
 import type { IconName } from "@/lib/ui/vocabulary.ts";
 import { requestSummary } from "./approval-copy.ts";
@@ -22,6 +23,8 @@ export interface PendingMessage {
   /** The client id: one entry per sent message, however often it is listed. */
   key: string;
   text: string;
+  /** Send now (run-mode). */
+  interrupt?: boolean;
   afterEventId: string | null;
   /** When the user sent it (stable across renders). */
   sentAt: string;
@@ -73,7 +76,27 @@ export type ThreadItem =
       at: string;
     }
   | { kind: "approval"; key: string; approvalId: string; line: string; ts: string; at: string }
-  | { kind: "message"; key: string; text: string; ts: string; at: string; pending: boolean }
+  | {
+      kind: "message";
+      key: string;
+      text: string;
+      ts: string;
+      at: string;
+      pending: boolean;
+      /** Queued for the next step, or Send now (run-mode). */
+      delivery: "queued" | "interrupted";
+      /** When the agent read it (run clock); null until then. */
+      pickedUp: string | null;
+    }
+  | {
+      /** A person switched the approval mode mid-run (run-mode); `ts` is the wall-clock time. */
+      kind: "mode";
+      key: string;
+      line: string;
+      bypass: boolean;
+      ts: string;
+      at: string;
+    }
   | {
       kind: "decision";
       key: string;
@@ -148,12 +171,15 @@ function decisionLine(outcome: ApprovalOutcome, viewerId: string | null): string
     lead = "No longer needed";
   } else {
     const policy = outcome.decidedBy === POLICY_DECIDER;
+    const bypass = outcome.decidedBy === BYPASS_DECIDER;
     const who = viewerId !== null && outcome.decidedBy === viewerId ? "You" : "Someone else";
     lead =
       outcome.status === "approved"
         ? policy
           ? "Approved by policy"
-          : `${who} approved`
+          : bypass
+            ? "Approved in Bypass"
+            : `${who} approved`
         : outcome.status === "denied"
           ? policy
             ? "Blocked by policy"
@@ -193,6 +219,11 @@ export function thoughtParts(summary: string): { title: string | null; paragraph
   const title = heading ? clean(heading[1]!) || null : null;
   const paragraphs = (heading ? raw.slice(1) : raw).map(clean).filter((text) => text !== "");
   return { title, paragraphs };
+}
+
+/** The time of day, as the viewer reads it ("2:31 PM"). */
+export function wallClock(at: string): string {
+  return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 export function elapsedClock(from: string, at: string): string {
@@ -285,6 +316,19 @@ export function threadItems(
       ts: clock(m.at),
       at: m.at,
       pending: false,
+      delivery: m.interrupt ? "interrupted" : "queued",
+      pickedUp: m.pickedUpAt === null ? null : clock(m.pickedUpAt),
+    });
+  }
+  for (const c of model.modeChanges) {
+    const who = viewerId !== null && c.by === viewerId ? "You" : "Someone else";
+    items.push({
+      kind: "mode",
+      key: `mode-${c.eventId}`,
+      line: `${who} switched to ${APPROVAL_MODE_SHORT[c.to]}`,
+      bypass: c.to === "bypass",
+      ts: wallClock(c.at),
+      at: c.at,
     });
   }
   // Each echo clears at most one pending copy; a client id is listed once.
@@ -310,6 +354,8 @@ export function threadItems(
       ts: clock(p.sentAt),
       at: p.sentAt,
       pending: true,
+      delivery: p.interrupt ? "interrupted" : "queued",
+      pickedUp: null,
     });
   }
   for (const o of model.outcomes) {

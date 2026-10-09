@@ -171,4 +171,5 @@ export const icons = {
   capture: ScanText,
   thread: MessagesSquare,
   panelHide: PanelRightClose,
+  approvals: ShieldCheck,
 } as const satisfies Record<IconName, LucideIcon>;
