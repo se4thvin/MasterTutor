@@ -7,6 +7,5 @@ export const REVIEW_REASON: Record<BlockOrigin, string> = {
   dom: "Not yet matched to the page text.",
   pdf: "Not yet matched to the PDF's text.",
   captions: "From the uploader's captions, not yet checked against the audio.",
-  model: "Written by the agent.",
   user: "Written by you and not yet checked.",
 };

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ANNOTATE_KINDS, CredentialField, Fidelity, VideoOp, type ToolProfile } from "./enums.ts";
+import { CredentialField, Fidelity, VideoOp, type ToolProfile } from "./enums.ts";
 import { Alias, ElementRef, Sha256Hex, Uuid } from "./primitives.ts";
 import { TOOL_NAMES, type ToolName } from "./tool-call.ts";
 
@@ -9,7 +9,6 @@ export const FUNCTION_TOOL_NAMES = [
   "fill_credential",
   "use_passkey",
   "video",
-  "annotate",
 ] as const satisfies readonly ToolName[];
 export type FunctionToolName = (typeof FUNCTION_TOOL_NAMES)[number];
 
@@ -183,16 +182,6 @@ export const VideoResult = z.discriminatedUnion("op", [
 ]);
 export type VideoResult = z.infer<typeof VideoResult>;
 
-export const AnnotateArgs = z.object({
-  noteId: Uuid,
-  afterBlockId: Uuid.nullable(),
-  markdown: z.string().min(1).max(20_000),
-  kind: z.enum(ANNOTATE_KINDS),
-});
-export type AnnotateArgs = z.infer<typeof AnnotateArgs>;
-export const AnnotateResult = z.object({ blockId: Uuid });
-export type AnnotateResult = z.infer<typeof AnnotateResult>;
-
 /** Function tools sent with zodResponsesFunction; `computer` is OpenAI's native tool. */
 export const FUNCTION_TOOLS = {
   read_page: { args: ReadPageArgs, result: ReadPageResult },
@@ -200,5 +189,4 @@ export const FUNCTION_TOOLS = {
   fill_credential: { args: FillCredentialArgs, result: FillCredentialResult },
   use_passkey: { args: UsePasskeyArgs, result: UsePasskeyResult },
   video: { args: VideoArgs, result: VideoResult },
-  annotate: { args: AnnotateArgs, result: AnnotateResult },
 } as const satisfies Record<FunctionToolName, { args: z.ZodType; result: z.ZodType }>;

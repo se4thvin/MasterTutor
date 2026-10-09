@@ -56,7 +56,6 @@ describe("fixture notes", () => {
       "math",
       "image",
       "figure",
-      "commentary",
     ]) {
       expect(types.has(type as never), type).toBe(true);
     }

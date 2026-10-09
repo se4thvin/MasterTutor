@@ -12,10 +12,22 @@ import {
   TOOL_PROFILE_TOOLS,
   VideoArgs,
 } from "./tools.ts";
-import { ComputerAction, TOOL_NAMES } from "./tool-call.ts";
+import { BLOCK_ORIGINS, BlockOrigin } from "./enums.ts";
+import { ComputerAction, TOOL_NAMES, ToolName } from "./tool-call.ts";
 
 describe("tool list", () => {
-  it("is exactly the 7 spec tools", () => {
+  it("rejects model-authored note blocks and the annotate tool (D55.1)", () => {
+    expect(BLOCK_ORIGINS).not.toContain("model");
+    expect(BlockOrigin.safeParse("model").success).toBe(false);
+    expect(BlockOrigin.safeParse("ocr_model").success).toBe(true);
+    expect(TOOL_NAMES).not.toContain("annotate");
+    expect(ToolName.safeParse("annotate").success).toBe(false);
+    expect(FUNCTION_TOOLS).not.toHaveProperty("annotate");
+    for (const tools of Object.values(TOOL_PROFILE_TOOLS)) {
+      expect(tools).not.toContain("annotate");
+    }
+  });
+  it("is exactly the 6 agent tools", () => {
     expect(TOOL_NAMES).toEqual([
       "computer",
       "read_page",
@@ -23,7 +35,6 @@ describe("tool list", () => {
       "fill_credential",
       "use_passkey",
       "video",
-      "annotate",
     ]);
     expect(TOOL_NAMES.some((name) => name.startsWith("exec"))).toBe(false);
     expect(["computer", ...Object.keys(FUNCTION_TOOLS)].sort()).toEqual([...TOOL_NAMES].sort());

@@ -21,7 +21,7 @@ describe("Obsidian export", () => {
     expect(md).toContain("# Learning-rate warmup, explained");
     expect(md).toContain(`![Training log screenshot](assets/${ids.asset(2)})`);
     expect(md).toContain("> [!warning] Needs review");
-    expect(md).toContain("> [!note] Agent's note");
+    expect(md).not.toContain("origin=model");
     expect(md).toMatch(/<!-- mt:block id=\S+ origin=dom sha256=[0-9a-f]{64} -->/);
     expect(md.indexOf("The update rule")).toBeLessThan(md.indexOf("Common schedules"));
   });

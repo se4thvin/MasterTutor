@@ -61,9 +61,9 @@ function blocks(
       type: seed.type,
       markdown: seed.markdown,
       assetId: seed.assetId ?? null,
-      sourceId: origin === "model" ? null : sourceId,
+      sourceId: origin === "user" ? null : sourceId,
       origin,
-      anchor: origin === "model" ? null : (seed.anchor ?? anchor()),
+      anchor: origin === "user" ? null : (seed.anchor ?? anchor()),
       contentSha256: sha(seed.edited?.original ?? seed.markdown),
       verified: seed.verified ?? origin !== "ocr_model",
       edited: Boolean(seed.edited),
@@ -210,11 +210,6 @@ const WARMUP: BlockSeed[] = [
     type: "table",
     markdown:
       '<table><thead><tr><th>Run</th><th>Warmup</th><th>Result</th></tr></thead><tbody><tr><td rowspan="2">A</td><td>0</td><td>diverged at 1.4k</td></tr><tr><td>2k</td><td>converged</td></tr></tbody></table>',
-  },
-  {
-    type: "commentary",
-    markdown: "The talk in *Why warmup works* shows the same NaN at step 1,401, live.",
-    origin: "model",
   },
 ];
 

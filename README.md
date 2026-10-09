@@ -100,7 +100,7 @@ flowchart LR
 **The agent loop: observe → decide → approve → act.** Each phase is a row in `run_steps`, and each step commits in one transaction.
 
 1. **Observe:** take a masked CDP screenshot and/or run `read_page`. If nothing changed, return `{unchanged: true}`.
-2. **Decide:** call the OpenAI Responses API with seven typed tools: `computer`, `read_page`, `capture`, `fill_credential`, `use_passkey`, `video` and `annotate`.
+2. **Decide:** call the OpenAI Responses API with six typed tools: `computer`, `read_page`, `capture`, `fill_credential`, `use_passkey` and `video`.
 3. **Approve:** the policy classifies the action. A risky action waits for you, depending on the run's approval mode.
 4. **Act:** execute under the run's abort signal. A step interrupted by a crash is never replayed. The loop observes and decides again.
 

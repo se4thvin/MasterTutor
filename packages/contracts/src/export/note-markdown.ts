@@ -32,12 +32,6 @@ function blockBody(block: NoteBlock, assetPath: AssetPath): string {
     return `${image}\n\n${time}${markdown}`;
   }
   if (block.type === "transcript") return `${time}${markdown}`;
-  if (block.origin === "model") {
-    return `> [!note] Agent's note\n${markdown
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n")}`;
-  }
   if (!block.verified)
     return `> [!warning] Needs review\n> ${REVIEW_REASON[block.origin]}\n\n${markdown}`;
   return markdown;

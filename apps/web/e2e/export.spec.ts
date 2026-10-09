@@ -28,9 +28,9 @@ test("exports the note as a zip of faithful Obsidian Markdown and its assets", a
     md.match(/<!-- mt:block id=[0-9a-f-]+ origin=\w+ sha256=([0-9a-f]{64}|none) -->/g),
   ).toHaveLength(blocks);
   expect(md.indexOf("The update rule")).toBeLessThan(md.indexOf("Common schedules"));
-  // Review and agent notes as Obsidian callouts; assets referenced, never inlined.
+  // Review warnings as Obsidian callouts; assets referenced, never inlined.
   expect(md).toContain("> [!warning] Needs review");
-  expect(md).toContain("> [!note] Agent's note");
+  expect(md).not.toContain("origin=model");
   expect(md).toMatch(/\(assets\/[0-9a-f]{64}\.svg\)/);
   expect(md).not.toMatch(/data:image|<script/i);
   expect(md.endsWith("\n")).toBe(true);

@@ -305,13 +305,6 @@
     padding-top: 0.25rem;
     color: var(--tint-text);
   }
-  .blk-commentary {
-    display: grid;
-    gap: 0.35rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--r-md);
-    background: var(--fill-2);
-  }
   .blk-scroll {
     overflow-x: auto;
   }

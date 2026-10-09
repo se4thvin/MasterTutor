@@ -17,8 +17,6 @@ export const TOOL_DESCRIPTIONS: Record<FunctionToolName, string> = {
   use_passkey: "Sign in with the passkey stored under this vault alias for the current site.",
   video:
     "Work with the video on the page: 'captions', 'chapters', 'keyframes', or 'transcribe' when there are no captions.",
-  annotate:
-    "Add your own summary, commentary or heading to the note. It is shown as yours and never edits captured blocks.",
 };
 
 /** computer_use has no read_page, so a credential field is clicked first and named "focused". */
