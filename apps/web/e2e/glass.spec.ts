@@ -36,26 +36,23 @@ const SCREENS = [
   "/settings",
 ] as const;
 
-test("at rest a screen has two glass layers at most: the sidebar (or tab bar) and its toolbar", async ({
+test("at rest a screen has one blurred layer at most: its toolbar (the docked sidebar does not blur)", async ({
   page,
 }) => {
   for (const path of SCREENS) {
     await gotoReady(page, path);
     const layers = await glassLayers(page);
-    expect(layers.length, `${path}: ${layers.join(", ")}`).toBeLessThanOrEqual(2);
-    expect(
-      layers.some((l) => l.startsWith("sidebar")),
-      `${path}: ${layers.join(", ")}`,
-    ).toBe(true);
+    expect(layers.length, `${path}: ${layers.join(", ")}`).toBeLessThanOrEqual(1);
+    await expect(page.locator(".sidebar")).toHaveClass(/lglass/);
   }
 });
 
-test("the run view, with the live browser under its overlays, keeps the same two", async ({
+test("the run view, with the live browser under its overlays, keeps the same one", async ({
   page,
 }) => {
   await gotoRun(page);
   const layers = await glassLayers(page);
-  expect(layers.length, layers.join(", ")).toBeLessThanOrEqual(2);
+  expect(layers.length, layers.join(", ")).toBeLessThanOrEqual(1);
 });
 
 test("while a modal glass panel is up it is the only blur: the chrome beneath stops blurring", async ({
@@ -95,11 +92,11 @@ test("never glass on glass: popups over an open glass sheet, and glass inside gl
   await page.getByRole("menuitem", { name: "New folder" }).click();
   await expect(page.locator(".sheet")).toBeVisible();
   const solid = await page.evaluate(() => {
-    // A popup shown over the sheet, and a glass element nested in the sidebar's glass.
+    // A popup shown over the sheet, and a glass element nested in the sheet's glass.
     const menu = Object.assign(document.createElement("div"), { className: "menu glass lglass" });
     const nested = Object.assign(document.createElement("div"), { className: "glass lglass" });
     document.body.append(menu);
-    document.querySelector(".sidebar")!.append(nested);
+    document.querySelector(".sheet")!.append(nested);
     const read = (el: Element) => getComputedStyle(el).backdropFilter;
     const result = [read(menu), read(nested), read(document.querySelector(".sheet")!)];
     menu.remove();

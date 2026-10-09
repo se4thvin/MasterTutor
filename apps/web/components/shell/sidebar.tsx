@@ -30,7 +30,7 @@ export function Sidebar({
   const pathname = usePathname();
   const pulse = useRunPulse();
   return (
-    <LiquidGlass as="aside" className="sidebar" aria-label="Sidebar">
+    <LiquidGlass as="aside" blur={false} className="sidebar" aria-label="Sidebar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true">
           <Icon name="agentNote" size="sm" />

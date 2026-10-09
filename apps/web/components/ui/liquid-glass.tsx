@@ -17,12 +17,19 @@ type GlassTag = "div" | "aside" | "header" | "nav" | "section";
  */
 export function LiquidGlass({
   as: Tag = "div",
+  blur = true,
   className,
   children,
   ...rest
-}: { as?: GlassTag; className?: string; children: ReactNode } & HTMLAttributes<HTMLElement>) {
+}: {
+  as?: GlassTag;
+  /** false where nothing ever passes beneath (a docked sidebar): the look, without a blur pass. */
+  blur?: boolean;
+  className?: string;
+  children: ReactNode;
+} & HTMLAttributes<HTMLElement>) {
   return (
-    <Tag className={cx(LIQUID_GLASS, className)} {...rest}>
+    <Tag className={cx(LIQUID_GLASS, !blur && "lglass-still", className)} {...rest}>
       {children}
     </Tag>
   );
