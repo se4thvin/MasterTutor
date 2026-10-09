@@ -1,0 +1,33 @@
+name: mt-vm-p0-net
+services:
+  fc:
+    image: mt-vm-p0-net:local
+    container_name: mt-vm-p0-net-fc
+    labels: { mt-vm-p0: "1", mt-vm-p0.run: net }
+    devices: [/dev/kvm, /dev/net/tun]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID]
+    group_add: ["994"]
+    read_only: true
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 10g
+    memswap_limit: 10g
+    cpus: 4
+    pids_limit: 256
+    tmpfs: ["/run/vm:size=6g,mode=0700,uid=10001", "/tmp:size=64m"]
+    sysctls: { net.ipv4.ip_forward: "1" }
+    ports: ["127.0.0.1:59101:59101/tcp", "127.0.0.1:59101:59101/udp"]
+    networks: [cdp]
+  traefik:
+    image: mt-vm-p0-traefik:3.7.13
+    container_name: mt-vm-p0-net-traefik
+    labels: { mt-vm-p0: "1", mt-vm-p0.run: net }
+    command: ["--entrypoints.web.address=:8080", "--providers.file.filename=/etc/traefik/dynamic.yml", "--log.level=ERROR"]
+    volumes: ["./dynamic.yml:/etc/traefik/dynamic.yml:ro"]
+    ports: ["127.0.0.1:18089:8080"]
+    networks: [cdp]
+networks:
+  cdp:
+    name: mt-vm-p0-cdp
+    labels: { mt-vm-p0: "1", mt-vm-p0.run: net }

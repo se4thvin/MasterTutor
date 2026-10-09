@@ -41,3 +41,15 @@ P0.3 measured (30/30): resumed p50 6.606472 ms / p95 15.651914 ms; fresh CDP p50
 Ruling: boot_id is different in this snapshot because its first read is after restore; do not infer that VMGenID changes an already-initialized Linux boot_id. Cost if wrong: later pre-golden services could change this observed property; repeat the measurement when the snapshot point changes.
 
 Migrations checked by filename only: 0015 Observer, 0016 remove_model_blocks, 0017 guard_shadow_default, 0018 guard_checkpoint are occupied. No P0 migration is needed; P1 must determine the next free number again (currently 0019) after its gate is accepted.
+
+P0.3 commit: 609455ba.
+
+P0.4: DNAT rules and isolated spike Traefik installed inside labelled containers only; guest egress is default-DROP. Actual probeSlot imported unchanged from a separate cdp-network container: Chrome/154.0.8037.57, protocol 1.3. G7 passes. Neko never reached HTTP readiness: startup pipeline permission error; five retries on the final diagnostic image, with Chromium/Pulse alive. G8 fails; G9 has no valid stream measurement. Fixed diagnostics expose counts/categories only; a file-access trace found zero EACCES file paths. Public-source CDP diagnostic unavailable. Do not infer a host change is necessary from this unresolved failure.
+
+Ruling: preserve NEKO_SERVER_BIND and PULSE_SERVER in the static, nonsecret ENV allowlist. Filesystem export loses image ENV; the previous allowlist omitted both. Pulse's actual Unix endpoint is /tmp/pulseaudio.socket (anonymous guest-local protocol). Cost if wrong: settings drift; source values are copied from the actual lineage, not duplicated production constants. Rootfs ownership was separately checked and is correct (home uid/gid 1000, mode 0700); no ownership change made.
+
+Ruling: Docker internal bridges on this host produce null published ports. A regular, separately named bridge with namespace nft default-DROP retains loopback publications and denies new guest egress. Cost if wrong: bridge peers could send traffic; only the dedicated spike services and probes attach. Full production allowlists/Better Auth are not validated by P0; the focused fixture uses memory-only Neko login and ForwardAuth.
+
+P0.4 initial parser RED was run locally (deviation from D48); final five helper checks and repository checks run on coursebite. No env files were read or transferred. All Docker mutations/removals are scoped to the mt-vm-p0 labels. The WM trial remains required even with G8/G9 currently unmet; the final gate cannot be go without passing measurements.
+
+P0.4 final verification: typecheck/lint pass; extra repository units 2310 pass / 1 existing security-inventory failure / 9 skipped. Guest helper units 5/5 pass remotely. No DB package touched; DB integration inapplicable. Network containers/network removed by mt-vm-p0 + run labels. Diagnostic tracing is opt-in via public P0_TRACE=1; ordinary startup has no tracer.

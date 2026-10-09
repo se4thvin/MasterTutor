@@ -1,0 +1,6 @@
+{
+  "name": "browser-1",
+  "baseUrl": "http://172.26.0.2:9223",
+  "browser": "Chrome/154.0.8037.57",
+  "protocolVersion": "1.3"
+}

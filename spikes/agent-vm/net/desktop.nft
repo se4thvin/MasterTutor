@@ -1,0 +1,23 @@
+table ip mt {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname != "tap0" tcp dport { 9223, 9224, 8080, 4713, 59101 } dnat to 192.168.127.2
+    iifname != "tap0" udp dport 59101 dnat to 192.168.127.2
+  }
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+    iifname "eth0" tcp dport 9226 accept
+  }
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+    ct status dnat accept
+  }
+  chain output {
+    type filter hook output priority filter; policy drop;
+    oifname "lo" accept
+    ct state established,related accept
+    oifname "tap0" accept
+  }
+}

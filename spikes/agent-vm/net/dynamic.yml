@@ -1,0 +1,19 @@
+http:
+  routers:
+    live:
+      rule: PathPrefix(`/live/00000000-0000-4000-8000-000000000001/`)
+      entryPoints: [web]
+      middlewares: [auth, strip]
+      service: guest
+  middlewares:
+    auth:
+      forwardAuth:
+        address: http://fc:9226/auth
+        authResponseHeaders: [Cookie]
+    strip:
+      stripPrefixRegex:
+        regex: ["^/live/[0-9a-f-]{36}"]
+  services:
+    guest:
+      loadBalancer:
+        servers: [{ url: "http://fc:8080" }]

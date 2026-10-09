@@ -39,15 +39,20 @@ while [ ! -S /tmp/.X11-unix/X99 ]; do
 done
 su neko -s /bin/sh -c 'openbox --config-file /etc/neko/openbox.xml' >/var/log/neko/openbox.log 2>&1 &
 # The vsock listener is bound BEFORE golden, so restore measures listener survival.
-epoch="$(python3 /opt/spike/start_line.py)"
+eval "$(python3 /opt/spike/start_line.py)"
 date -s "@$((epoch / 1000))" >/dev/null
 . /opt/spike/static-neko.sh
-export NEKO_MEMBER_PROVIDER=object NEKO_MEMBER_OBJECT_USERS='[]'
+export NEKO_MEMBER_PROVIDER=object
 export NEKO_WEBRTC_NAT1TO1=127.0.0.1 NEKO_WEBRTC_UDPMUX=59101 NEKO_WEBRTC_TCPMUX=59101
 # Public measurements only: this guest has no credentials and accepts no model commands.
 printf 'P0_ID boot_id=%s urandom=%s clock=%s leftover=%s\n' \
   "$(cat /proc/sys/kernel/random/boot_id)" "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" \
   "$(date +%s)" "$(test -e /home/neko/leftover && echo present || echo absent)"
 touch /home/neko/leftover
+python3 /opt/spike/diagnostic.py >/dev/null 2>&1 &
+python3 -m http.server 8000 --bind 127.0.0.1 --directory /opt/spike/fixture >/dev/null 2>&1 &
+if [ "${P0_TRACE:-0}" = 1 ]; then
+  sed -i 's@command=/usr/bin/neko@command=/usr/bin/strace -f -e trace=%%file,%%network,%%ipc -e status=failed -o /var/log/neko/neko-files.trace /usr/bin/neko@' /etc/guest/programs/neko.conf
+fi
 /usr/bin/supervisord -c /etc/guest/supervisord.conf &
 while true; do wait || true; sleep 1; done
