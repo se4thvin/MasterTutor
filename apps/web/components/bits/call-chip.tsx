@@ -6,7 +6,7 @@
  * Licence: Copyright (c) 2026 David Haz, MIT + Commons Clause; see ./LICENSE-react-bits
  *          (https://raw.githubusercontent.com/DavidHDev/react-bits/main/LICENSE.md).
  *          Not for redistribution as a component kit.
- * Adaptations: the run thread's action card. The fill still wipes on transform (scaleX) while the
+ * Adaptations: the run thread's action card. The fill wipes on transform (translateX) while the
  * step runs and holds at 90%, then completes and fades its wash on opacity (the clip-path reveal
  * is gone); the rolling glyph swap with its blur becomes a fixed tool glyph (our Icon) with a
  * StatusMark badge, so a finished card still says what it did; the per-frame millisecond timer,
