@@ -3,6 +3,7 @@ import { assertSelfContained } from "../testing/self-contained.ts";
 import { pageExtract } from "./page/extract.ts";
 import { pageInstallLib } from "./page/lib.ts";
 import { pageLocateBlocks } from "./page/locate.ts";
+import { pageInstallStructure } from "./page/structure.ts";
 import { pageSanitizeSvg } from "./page/svg.ts";
 import {
   pageContentType,
@@ -25,6 +26,7 @@ import { captureLibrarySource } from "./worlds.ts";
 /** Every function sent to the page as source text; later tasks extend this list. */
 const PAGE_FUNCTIONS = [
   pageInstallLib,
+  pageInstallStructure,
   pageForceEager,
   pageScrollMetrics,
   pageScrollTo,
@@ -55,10 +57,11 @@ describe("page functions", () => {
 });
 
 describe("captureLibrarySource", () => {
-  it("bundles Defuddle, Readability and installs our page lib", async () => {
+  it("bundles Defuddle, Readability and installs our page lib and structure finder", async () => {
     const source = await captureLibrarySource();
     expect(source).toContain("Defuddle");
     expect(source).toContain("function Readability(");
     expect(source).toContain("__mtLib");
+    expect(source).toContain("__mtStructure");
   });
 });

@@ -16,7 +16,9 @@ import { NoteWriteError, screenValue, type BlockDraft } from "../notes/note-writ
 import { ToolError, type ToolContext } from "../tools/types.ts";
 import { fetchInBrowser } from "./fetch-resource.ts";
 import {
+  activityCallout,
   blockPlainText,
+  joinEnumerators,
   limitBlockSize,
   splitMarkdown,
   texOf,
@@ -75,14 +77,21 @@ const OPAQUE_TILES = 3;
 /**
  * Resolves the extraction placeholders into blocks (pure). A block made only of images becomes one
  * image or figure block per stored image, with the image in `assetId` and only the caption in the
- * Markdown (decision 14). Images inside text stay inline as `![alt](asset:<id>)`.
+ * Markdown (decision 14). Images inside text stay inline as `![alt](asset:<id>)`. An activity's
+ * placeholder becomes its callout header, linking to the activity's title on its page.
  */
 export function assembleBlocks(
   extract: PageExtract,
   stored: ReadonlyMap<number, StoredMedia>,
 ): AssembledBlock[] {
   const out: AssembledBlock[] = [];
-  for (const block of splitMarkdown(extract.markdown)) {
+  // The placeholder carries this capture's random token, so page text cannot forge it; it is
+  // matched anywhere in a line (an activity inside a list item or a quote keeps its prefixes).
+  // An empty token would match every number: no token, no placeholders.
+  const placeholder = extract.activityToken
+    ? new RegExp(`${extract.activityToken}(\\d+)`, "g")
+    : /(?!)/g;
+  for (const block of splitMarkdown(joinEnumerators(extract.markdown))) {
     const trimmed = block.markdown.trim();
     const table = /^MTRAWTABLE(\d+)$/.exec(trimmed);
     if (table) {
@@ -123,6 +132,11 @@ export function assembleBlocks(
       continue;
     }
     const markdown = block.markdown
+      .replace(placeholder, (_match, index: string) => {
+        const activity = extract.activities[Number(index)];
+        const fragment = activity ? textFragment(activity.title) : null;
+        return activityCallout(activity?.url ? `${activity.url}${fragment ?? ""}` : null);
+      })
       .replace(MEDIA_TOKEN, (_match, alt: string, index: string) => {
         const media = stored.get(Number(index));
         const id = media?.assetId ?? media?.screenshotAssetId;
@@ -642,6 +656,8 @@ async function readWebPage(
       pageTokens: page.sourceTokens,
       mediaLost,
       figuresWithheld,
+      /** App UI left out of the note; its text still counts against coverage. */
+      excludedTokens: tokens(extract.excludedText).length,
       framesMissing: main.framesMissing,
       framesSkipped: main.framesSkipped,
     },
