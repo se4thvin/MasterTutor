@@ -1519,13 +1519,20 @@
     }
   }
   .alist-item[data-enter] {
+    /* Retain the entrance's containing block and compositor layer when its spring finishes. */
+    will-change: transform, opacity;
     transition-property: opacity, transform;
     transition-duration: var(--motion-spring-dur);
     transition-timing-function: var(--motion-spring);
     @starting-style {
       opacity: 0;
-      transform: translateY(0.5rem) scale(0.98);
+      /* Scaling the row re-rasters the nested CallChip wipe; slide the text at its final scale. */
+      transform: translateY(0.5rem);
     }
+  }
+  .alist :is(.tline-work, .tline-done) {
+    /* Keep the thread's crossfade context when a label reaches full opacity. */
+    will-change: opacity;
   }
   /* Thread entries. Agent entries hug the leading edge, the person's the trailing one. */
   .th-item {
@@ -1686,30 +1693,34 @@
     border-radius: var(--r-md);
   }
   .cchip-fill {
+    --cchip-off: -100%;
+    --cchip-running: -10%;
     position: absolute;
     inset: 0;
     background: var(--tint-wash);
     opacity: 0;
-    transform: scaleX(0);
-    transform-origin: left;
+    /* A fixed-size wash slides behind the card's clip without re-rastering as it grows. */
+    transform: translateX(var(--cchip-off));
+    will-change: transform, opacity;
     pointer-events: none;
     :dir(rtl) & {
-      transform-origin: right;
+      --cchip-off: 100%;
+      --cchip-running: 10%;
     }
   }
   .cchip[data-status="running"] .cchip-fill {
     opacity: 1;
-    transform: scaleX(0.9);
+    transform: translateX(var(--cchip-running));
     transition-property: transform;
     transition-duration: var(--motion-dur-call-wipe);
     transition-timing-function: var(--motion-ease-linear);
     @starting-style {
-      transform: scaleX(0);
+      transform: translateX(var(--cchip-off));
     }
   }
   .cchip[data-status="done"] .cchip-fill {
     background: var(--ok-wash);
-    transform: scaleX(1);
+    transform: translateX(0);
     /* The wipe completes, then its wash fades. */
     transition-property: transform, opacity;
     transition-duration: var(--motion-dur-base), var(--motion-dur-panel);
