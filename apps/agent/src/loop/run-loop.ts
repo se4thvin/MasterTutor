@@ -1,3 +1,5 @@
+import { ProvenanceStore } from "../guardrails/provenance.ts";
+import type { EgressContext } from "../guardrails/policy.ts";
 import { randomUUID } from "node:crypto";
 import {
   type ApprovalMode,
@@ -199,10 +201,15 @@ function riskOf(request: ApprovalRequest): { kind: string | null; label: string 
   if (request.kind === "credential_first_use")
     return { kind: request.kind, label: request.postsTo ?? null };
   if (request.kind === "download") return { kind: request.kind, label: request.url };
+  if (request.kind === "data_egress")
+    return { kind: request.kind, label: `${request.fromOrigin} → ${request.toOrigin}` };
+  if (request.kind === "observer")
+    return request.subject ? riskOf(request.subject) : { kind: request.kind, label: null };
   return { kind: request.kind, label: null };
 }
 
 function needLabel(need: ApprovalNeed): string {
+  if (need.kind === "data_egress") return `${need.fromOrigin} → ${need.toOrigin}`;
   if (need.kind === "download") return downloadUrlForCard(need.url);
   return need.kind === "risky_click" ? need.label.slice(0, 500) : need.formSummary.slice(0, 1_000);
 }
@@ -258,6 +265,7 @@ export class RunLoop {
   #cutByMessage = false;
   /** A generated title that arrived and waits for the next step boundary to be committed. */
   #title: RunTitle | null = null;
+  readonly #provenance: ProvenanceStore;
 
   private constructor(
     deps: RunLoopDeps,
@@ -267,6 +275,7 @@ export class RunLoop {
   ) {
     this.#deps = deps;
     this.#run = run;
+    this.#provenance = new ProvenanceStore(run.goal);
     this.#firstTurn = firstTurn;
     this.#userCursor = userCursor;
   }
@@ -275,6 +284,10 @@ export class RunLoop {
     const transcript = await loadTranscript(deps.db, run.id);
     const loop = new RunLoop(deps, run, transcript.length === 0, lastUserEventId(transcript));
     loop.#history = transcript;
+    for (const entry of transcript)
+      if (entry.item.type === "function_call_output" && typeof entry.item.output === "string")
+        loop.#provenance.ingestToolOutput(entry.item.output);
+
     loop.#calls = unansweredCalls(transcript);
     loop.#pending = await loadPendingApproval(deps.db, run.id);
     loop.#lastInputTokens = await lastInputTokens(deps.db, run.id);
@@ -284,8 +297,11 @@ export class RunLoop {
     const awaitingItem = loop.#pending !== null && loop.#pending.item !== null;
     for (const call of loop.#calls) {
       const done = await loadActResult(deps.db, run.id, call.callId);
-      if (done) loop.#results.set(call.callId, done);
-      else if (!awaitingItem) loop.#results.set(call.callId, notRun(call, RESTARTED));
+      if (done) {
+        loop.#results.set(call.callId, done);
+        // The last act output enters the transcript at the next decide; restore it too.
+        if (done.kind === "function") loop.#provenance.ingestToolOutput(done.output);
+      } else if (!awaitingItem) loop.#results.set(call.callId, notRun(call, RESTARTED));
     }
     for (const decision of loop.#pending?.decided ?? []) loop.#applyDecision(decision);
     if (run.title === null) loop.#requestTitle();
@@ -424,6 +440,14 @@ export class RunLoop {
       usage: { ...this.#run.usage, activeMs: this.#run.usage.activeMs + elapsed },
     };
     return this.#run.usage;
+  }
+
+  #egress(): EgressContext {
+    return {
+      pageOrigin: this.#obs().origin,
+      allowedOrigins: this.#run.allowedOrigins,
+      label: (text, pageOrigin) => this.#provenance.label(text, pageOrigin),
+    };
   }
 
   #obs(): Observation {
@@ -894,7 +918,7 @@ export class RunLoop {
       for (const [index, action] of call.actions.entries()) {
         const target = await this.#deps.browser.targetFor(action, previous, signal);
         if (action.type === "click" || action.type === "double_click") previous = target;
-        const need = needsApproval(action, target);
+        const need = needsApproval(action, target, this.#egress());
         if (need)
           items.push({
             item: actionItem(call.callId, index),
@@ -1106,7 +1130,7 @@ export class RunLoop {
           return false;
         }
         const target = await this.#deps.browser.targetFor(action, null, signal);
-        const need = needsApproval(action, target);
+        const need = needsApproval(action, target, this.#egress());
         // An approval covers what was approved, not the batch index: the same kind and label on
         // the same element (M10), and on the same record: an approval for Alice's row never
         // deletes Bobby (R29-3).
@@ -1287,6 +1311,9 @@ export class RunLoop {
       wait ??= executed.wait;
       handOver ??= executed.handOver;
       this.#results.set(call.callId, executed.result);
+      if (executed.result.kind === "function")
+        this.#provenance.ingestToolOutput(executed.result.output);
+
       const storage = await browser.collectStorage().catch(() => null);
       // Spend already happened (OCR, embeddings…), so it is charged even for a failed tool.
       this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };

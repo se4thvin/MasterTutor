@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  wrapUntrusted,
   EMPTY_USAGE,
   MODELS,
   type ApprovalMode,
@@ -2365,5 +2366,80 @@ describe("the run title (generated off the step path)", () => {
     } finally {
       mock.setStructured("run_title", () => ({ title: "Mock run title" }));
     }
+  });
+});
+
+describe("data_egress through the loop (spec §6.3)", () => {
+  const PAGE = "The quarterly revenue of Contoso rose by forty two percent in the third quarter.";
+  const readThenType = (text: string): MockTurn[] => [
+    {
+      outputs: [
+        {
+          type: "function",
+          name: "read_page",
+          args: { mode: "text", sinceHash: null, offset: null },
+        },
+      ],
+    },
+    { outputs: [{ type: "computer", actions: [{ type: "type", text }] }] },
+    done(),
+  ];
+
+  it("asks in auto mode when text read on one site is typed into a site outside the allowlist", async () => {
+    const s = await setup(readThenType("Contoso rose by forty two percent"), {
+      approvalMode: "auto_within_allowlist",
+      allowedOrigins: ["http://site.fixtures.test"],
+    });
+    s.browser.functionOutput = () => wrapUntrusted("http://site.fixtures.test", PAGE);
+    s.browser.functionHook = async () => {
+      s.browser.url = "http://outside.other.test/";
+    };
+    expect(await drive(s.loop)).toEqual({ kind: "waiting", reason: "approval" });
+    const [pending] = (await approvalRows(s.run.id)).filter((row) => row.status === "pending");
+    expect(pending?.kind).toBe("data_egress");
+  });
+
+  it("approves it in bypass mode (D52) and records the decision as bypass", async () => {
+    const s = await setup(readThenType("Contoso rose by forty two percent"), {
+      approvalMode: "bypass",
+      allowedOrigins: ["http://site.fixtures.test"],
+    });
+    s.browser.functionOutput = () => wrapUntrusted("http://site.fixtures.test", PAGE);
+    s.browser.functionHook = async () => {
+      s.browser.url = "http://outside.other.test/";
+    };
+    expect((await drive(s.loop)).kind).toBe("completed");
+    const rows = await approvalRows(s.run.id);
+    expect(rows.find((row) => row.kind === "data_egress")).toMatchObject({
+      status: "approved",
+      decidedBy: "bypass",
+    });
+    expect(s.browser.executed.some((action) => action.type === "type")).toBe(true);
+  });
+
+  it("same-origin typing is never data_egress", async () => {
+    const s = await setup(readThenType("Contoso rose by forty two percent"), {
+      approvalMode: "auto_within_allowlist",
+      allowedOrigins: ["http://site.fixtures.test"],
+    });
+    s.browser.functionOutput = () => wrapUntrusted("http://site.fixtures.test", PAGE);
+    expect((await drive(s.loop)).kind).toBe("completed");
+    expect((await approvalRows(s.run.id)).filter((row) => row.kind === "data_egress")).toEqual([]);
+  });
+
+  it("rebuilds provenance from the transcript after a restore", async () => {
+    const s = await setup(readThenType("Contoso rose by forty two percent"), {
+      approvalMode: "auto_within_allowlist",
+      allowedOrigins: ["http://site.fixtures.test"],
+    });
+    s.browser.functionOutput = () => wrapUntrusted("http://site.fixtures.test", PAGE);
+    s.browser.functionHook = async () => {
+      s.browser.url = "http://outside.other.test/";
+    };
+    // observe, decide, approve, act (read_page): then a restart before the next decide.
+    for (let i = 0; i < 4; i++) await s.loop.step(new AbortController().signal);
+    const restored = await s.reload();
+    expect(await drive(restored)).toEqual({ kind: "waiting", reason: "approval" });
+    expect((await approvalRows(s.run.id)).some((row) => row.kind === "data_egress")).toBe(true);
   });
 });
