@@ -193,6 +193,63 @@ describe("parseModelOutput", () => {
   });
 });
 
+describe("parseModelOutput reasoning summaries (fe-run-chat)", () => {
+  it("joins every summary_text part of every reasoning item, and is null without one", () => {
+    const parsed = parseModelOutput([
+      {
+        type: "reasoning",
+        id: "rs_1",
+        encrypted_content: "enc",
+        summary: [
+          { type: "summary_text", text: "**Finding the sign-in**\n\nThe course needs a login." },
+          { type: "summary_text", text: "  " },
+        ],
+      },
+      { type: "reasoning", id: "rs_2", summary: [{ type: "summary_text", text: "Click Log in." }] },
+      { type: "message", content: [{ type: "output_text", text: "not json" }] },
+    ]);
+    expect(parsed.reasoning).toBe(
+      "**Finding the sign-in**\n\nThe course needs a login.\n\nClick Log in.",
+    );
+    expect(parseModelOutput([{ type: "reasoning", id: "rs_3", summary: [] }]).reasoning).toBeNull();
+    expect(
+      parseModelOutput([{ type: "reasoning", id: "rs_4", summary: "x" }]).reasoning,
+    ).toBeNull();
+  });
+  it("returns summaries through the client when llm-mock is asked for them", async () => {
+    const mock = await startLlmMock({
+      scenarios: [
+        {
+          name: "summary",
+          turns: [
+            {
+              outputs: [
+                { type: "reasoning", text: "Open the course first." },
+                { type: "turn", status: "done", reason: "ok" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    try {
+      const client = createOpenAIModelClient({ apiKey: "test-key", baseURL: `${mock.url}/v1` });
+      const result = await client.create(
+        {
+          ...request,
+          input: [
+            { role: "user", content: [{ type: "input_text", text: "[scenario:summary] go" }] },
+          ],
+        },
+        signal(),
+      );
+      expect(parseModelOutput(result.output).reasoning).toBe("Open the course first.");
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 describe("goalText", () => {
   it("states the goal, the allowlist and the approval mode", () => {
     const text = goalText(
@@ -350,7 +407,7 @@ describe("OpenAI client against llm-mock", () => {
     await mock?.close();
     mock = undefined;
   });
-  it("sends exactly the 7 tools, store:false with no identifiers, encrypted reasoning, medium effort and the agent_turn format", async () => {
+  it("sends exactly the 7 tools, store:false with no identifiers, encrypted reasoning, medium effort, auto summaries and the agent_turn format", async () => {
     mock = await startLlmMock({
       scenarios: [
         { name: "wire", turns: [{ outputs: [{ type: "turn", status: "done", reason: "ok" }] }] },
@@ -377,7 +434,7 @@ describe("OpenAI client against llm-mock", () => {
     expect(body).toMatchObject({
       store: false,
       include: ["reasoning.encrypted_content"],
-      reasoning: { effort: "medium" },
+      reasoning: { effort: "medium", summary: "auto" },
       text: { format: { name: "agent_turn" } },
     });
     for (const field of ["previous_response_id", "metadata", "user", "safety_identifier"])

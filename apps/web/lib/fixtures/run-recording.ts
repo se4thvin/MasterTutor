@@ -90,6 +90,8 @@ const STEPS = [
     url: null,
     screenshotKey: null,
     action: null,
+    reasoning:
+      "**Planning the sign-in**\n\nThe course home wants a login before any lecture opens. The vault has a saved sign-in for this site, so I'll open Log in and let it fill the password.",
     createdAt: t("17:04:05"),
   },
   {
@@ -165,6 +167,8 @@ const STEPS = [
     url: null,
     screenshotKey: null,
     action: null,
+    reasoning:
+      "**Choosing what to capture next**\n\nThe transcript and the convergence figure are in the draft. Below them, an Honor Code box gates the week 2 quiz. Ticking it changes nothing on its own, so I'll tick it and look at what the quiz needs.",
     createdAt: t("17:09:47"),
   },
 ];
@@ -229,6 +233,8 @@ const EVENTS = [
     url: null,
     screenshotKey: null,
     action: null,
+    reasoning:
+      "**Asking before the quiz**\n\nStarting the quiz uses the only attempt, and the goal says to skip quizzes. I'll ask before clicking Start quiz.",
   }),
   ev(18, "17:10:07", {
     type: "step",

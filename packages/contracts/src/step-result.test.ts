@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { CallResult, summarizeComputerActions, summaryMayReachPage } from "./step-result.ts";
+import {
+  CallResult,
+  DecideResult,
+  REASONING_SUMMARY_MAX,
+  summarizeComputerActions,
+  summaryMayReachPage,
+} from "./step-result.ts";
 
 describe("stored computer step results (one shape for the agent and the grader)", () => {
   it("summarizes a batch by its first action and flags it as possibly reaching the page", () => {
@@ -18,5 +24,25 @@ describe("stored computer step results (one shape for the agent and the grader)"
     });
     expect(CallResult.parse(base)).not.toHaveProperty("effects");
     expect(() => CallResult.parse({ ...base, effects: ["teleport"] })).toThrow();
+  });
+});
+
+describe("DecideResult (a decide step's stored result)", () => {
+  it("keeps the reasoning summary, and rows from before it was recorded", () => {
+    expect(DecideResult.parse({ status: "continue", calls: 1, reasoning: "Open week 2." })).toEqual(
+      {
+        status: "continue",
+        calls: 1,
+        reasoning: "Open week 2.",
+      },
+    );
+    expect(DecideResult.parse({ status: null, calls: 0 })).not.toHaveProperty("reasoning");
+    expect(
+      DecideResult.safeParse({
+        status: null,
+        calls: 0,
+        reasoning: "y".repeat(REASONING_SUMMARY_MAX + 1),
+      }).success,
+    ).toBe(false);
   });
 });

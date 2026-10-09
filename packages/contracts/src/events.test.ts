@@ -9,6 +9,7 @@ import {
   pointerOf,
   type RunEventType,
 } from "./events.ts";
+import { REASONING_SUMMARY_MAX } from "./step-result.ts";
 
 const id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
@@ -110,5 +111,28 @@ describe("StepAction.pointer (run view A1)", () => {
     expect(pointerOf({ type: "keypress", keys: ["ENTER"] })).toBeUndefined();
     expect(pointerOf({ type: "type", text: "x" })).toBeUndefined();
     expect(pointerOf({ type: "wait" })).toBeUndefined();
+  });
+});
+
+describe("step reasoning summaries (fe-run-chat)", () => {
+  const step = {
+    type: "step",
+    seq: 4,
+    phase: "decide",
+    state: "done",
+    caption: "Planning the sign-in",
+    url: null,
+    screenshotKey: null,
+    action: null,
+  } as const;
+  it("is optional, so events stored before it still parse", () => {
+    expect(RunEvent.parse(step)).not.toHaveProperty("reasoning");
+    expect(RunEvent.parse({ ...step, reasoning: "Find the sign-in link first." })).toMatchObject({
+      reasoning: "Find the sign-in link first.",
+    });
+  });
+  it("is capped at REASONING_SUMMARY_MAX", () => {
+    const long = "x".repeat(REASONING_SUMMARY_MAX + 1);
+    expect(RunEvent.safeParse({ ...step, reasoning: long }).success).toBe(false);
   });
 });

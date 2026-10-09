@@ -1,5 +1,16 @@
 import { z } from "zod";
+import { AgentTurnStatus } from "./enums.ts";
 import type { ComputerAction } from "./tools.ts";
+
+/** The longest reasoning summary a decide step keeps (characters, after redaction). */
+export const REASONING_SUMMARY_MAX = 4_000;
+
+/**
+ * The model's reasoning summary for one turn (Responses `reasoning.summary: "auto"`), never its
+ * hidden reasoning. Model text that can quote the page: cleaned and vault-redacted by the agent,
+ * shown as plain text only (run view thread).
+ */
+export const ReasoningSummary = z.string().min(1).max(REASONING_SUMMARY_MAX);
 
 /**
  * What one executed computer action did, recorded per action (a batch can hide a click behind a
@@ -48,6 +59,15 @@ export const CallResult = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("function"), output: z.string() }),
 ]);
 export type CallResult = z.infer<typeof CallResult>;
+
+/** What one model call decided: stored as a decide step's `run_steps.result`. */
+export const DecideResult = z.object({
+  status: AgentTurnStatus.nullable(),
+  calls: z.number().int().nonnegative(),
+  /** Absent on rows from before summaries were requested, and when the model gave none. */
+  reasoning: ReasoningSummary.optional(),
+});
+export type DecideResult = z.infer<typeof DecideResult>;
 
 function summarizeAction(action: ComputerAction): string {
   switch (action.type) {

@@ -4,10 +4,12 @@ import {
   decideSafetyChecks,
   BYPASS_DECIDER,
   POLICY_DECIDER,
+  REASONING_SUMMARY_MAX,
   isPersonDecider,
   policyDecider,
   type ApprovalRequest,
   type ComputerAction,
+  type DecideResult,
   type RunError,
   type RunEvent,
   type Usage,
@@ -24,6 +26,7 @@ import type { ResponseInputItem } from "../llm/openai.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
+import { shownModelText } from "../guardrails/shown-text.ts";
 import {
   approvalExcerpt,
   approvalRequestFor,
@@ -641,6 +644,15 @@ export class RunLoop {
     };
     const usage = this.#tick();
     const display = parsed.calls[0] ? describeCall(parsed.calls[0], obs.screenshot.scale) : null;
+    // What a person sees of this turn: its stated reason and the model's reasoning summary, each
+    // through the same screen (cleaned, vault-redacted, capped) before it is stored or streamed.
+    const redact = (text: string) => hooks.maskSources(runId).redact(text);
+    const reasoning = shownModelText(parsed.reasoning, REASONING_SUMMARY_MAX, redact);
+    const decided: DecideResult = {
+      status: parsed.turn?.status ?? null,
+      calls: parsed.calls.length,
+      ...(reasoning ? { reasoning } : {}),
+    };
     const events: RunEvent[] = [{ type: "budget", usage, budget: this.#run.budget }];
     if (call.fallback)
       events.unshift({ type: "model_fallback", from: call.fallback.from, to: call.fallback.to });
@@ -650,9 +662,10 @@ export class RunLoop {
           seq: this.#deps.store.nextSeq(),
           phase: "decide",
           state: "done",
-          caption: parsed.turn?.reason.slice(0, 300) ?? display?.summary ?? null,
+          caption: shownModelText(parsed.turn?.reason, 300, redact) ?? display?.summary ?? null,
           action: display,
-          result: { status: parsed.turn?.status ?? null, calls: parsed.calls.length },
+          reasoning,
+          result: decided,
           usage: delta,
         },
       ],

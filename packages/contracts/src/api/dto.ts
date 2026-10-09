@@ -192,6 +192,8 @@ export const RunStepView = z.object({
   url: z.string().nullable(),
   screenshotKey: z.string().nullable(),
   action: StepAction.nullable(),
+  /** A decide step's reasoning summary (DecideResult.reasoning); null elsewhere. */
+  reasoning: z.string().nullable().default(null),
   createdAt: IsoDateTime,
 });
 export type RunStepView = z.infer<typeof RunStepView>;

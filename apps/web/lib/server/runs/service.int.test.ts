@@ -406,6 +406,29 @@ describe("runs.* on the live router (Task 0A)", () => {
     });
   });
 
+  it("returns a decide step's reasoning summary from its result, and null on every other step (fe-run-chat)", async () => {
+    const runId = await seedRun(owner.db, { workspaceId });
+    await owner.db.insert(runSteps).values([
+      {
+        runId,
+        seq: 0,
+        phase: "decide" as const,
+        state: "done" as const,
+        result: { status: null, calls: 1, reasoning: "Open the course first." },
+      },
+      { runId, seq: 1, phase: "decide" as const, state: "done" as const, result: { calls: 0 } },
+      {
+        runId,
+        seq: 2,
+        phase: "act" as const,
+        state: "done" as const,
+        result: { kind: "function", output: "{}", reasoning: "not a decide step" },
+      },
+    ]);
+    const { items } = await client().runs.steps({ runId });
+    expect(items.map((s) => s.reasoning)).toEqual(["Open the course first.", null, null]);
+  });
+
   it("cancels: status event, superseded approvals, NOTIFY run_control; idempotent; refuses a finished run", async () => {
     const runId = await seedRun(owner.db, {
       workspaceId,

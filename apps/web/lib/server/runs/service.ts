@@ -150,6 +150,10 @@ export async function listRunSteps(
       url: runSteps.url,
       screenshotKey: runSteps.screenshotKey,
       action: runSteps.action,
+      // DecideResult.reasoning; only a decide step's result is read for it.
+      reasoning: sql<
+        string | null
+      >`case when ${runSteps.phase} = 'decide' then ${runSteps.result} ->> 'reasoning' end`,
       createdAt: runSteps.createdAt,
     })
     .from(runSteps)

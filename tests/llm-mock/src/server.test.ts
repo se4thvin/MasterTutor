@@ -331,6 +331,30 @@ describe("llm-mock", () => {
     expect(output[1]).not.toHaveProperty("actions");
   });
 
+  it("returns reasoning summaries only when the request asks for them, like the real API", async () => {
+    mock = await startLlmMock({
+      scenarios: [
+        {
+          name: "summaries",
+          turns: [
+            { outputs: [{ type: "reasoning", text: "Open the course." }] },
+            { outputs: [{ type: "reasoning", text: "Read week 2." }] },
+          ],
+        },
+      ],
+    });
+    const asked = await post({
+      input: userInput("[scenario:summaries]"),
+      reasoning: { effort: "medium", summary: "auto" },
+    });
+    expect((asked.body.output as unknown[])[0]).toMatchObject({
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: "Open the course." }],
+    });
+    const silent = await post({ input: userInput("[scenario:summaries]") });
+    expect((silent.body.output as unknown[])[0]).toMatchObject({ type: "reasoning", summary: [] });
+  });
+
   it("rejects a replayed reasoning item without encrypted_content like the real store:false API", async () => {
     mock = await startLlmMock({ scenarios: SCENARIOS.filter((s) => s.name === "wire-shapes") });
     const input = userInput("[scenario:wire-shapes]");

@@ -32,6 +32,7 @@ import { runtimeConfig } from "../runtime/config.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
 import { insertRun, seedWorkspace } from "../testing/db.ts";
 import { FakeLoopBrowser, PLAIN_TARGET } from "../testing/fake-loop-browser.ts";
+import { NO_MASK_SOURCES } from "../browser/masking.ts";
 import { UNGUARDED_CLICK_REFUSAL } from "../tools/computer.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
 import { withHooks, type RunHooks } from "./hooks.ts";
@@ -207,6 +208,55 @@ describe("RunLoop (spec §5.3)", () => {
     ]);
     expect(await status(run.id)).toMatchObject({ status: "completed", usage: { steps: 2 } });
     expect(JSON.stringify(mock.requests.at(-1)?.body.input)).toContain("computer_call_output");
+  });
+
+  it("asks for reasoning summaries and stores each turn's, screened, on its decide step and event (fe-run-chat)", async () => {
+    const secret = "hunter2-canary";
+    const redact = (text: string) => text.replaceAll(secret, "[secret]");
+    const { name, run, loop } = await setup(
+      [
+        {
+          outputs: [
+            { type: "reasoning", text: `**Signing in**\n\nThe box shows ${secret}.\u202e` },
+            ...click().outputs!,
+          ],
+        },
+        done(`Typed ${secret}`),
+      ],
+      { hooks: { maskSources: () => ({ ...NO_MASK_SOURCES, hasSecrets: () => true, redact }) } },
+    );
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    for (const request of mock.requestsFor(name))
+      expect(request.body.reasoning).toEqual({ effort: "medium", summary: "auto" });
+    const decides = (
+      await owner.db
+        .select()
+        .from(runSteps)
+        .where(and(eq(runSteps.runId, run.id), eq(runSteps.phase, "decide")))
+        .orderBy(asc(runSteps.seq))
+    ).map((step) => ({ caption: step.caption, result: step.result }));
+    expect(decides).toEqual([
+      {
+        caption: "click (10, 20)",
+        result: {
+          status: null,
+          calls: 1,
+          reasoning: "**Signing in**\n\nThe box shows [secret].",
+        },
+      },
+      { caption: "Typed [secret]", result: { status: "done", calls: 0 } },
+    ]);
+    const stepEvents = (await owner.db.select().from(runEvents).where(eq(runEvents.runId, run.id)))
+      .map((row) => row.payload)
+      .filter((event) => event.type === "step" && event.phase === "decide");
+    expect(stepEvents.map((event) => ("reasoning" in event ? event.reasoning : null))).toEqual([
+      "**Signing in**\n\nThe box shows [secret].",
+      null,
+    ]);
+    const stored = JSON.stringify(
+      await owner.db.select().from(runSteps).where(eq(runSteps.runId, run.id)),
+    );
+    expect(stored).not.toContain(secret);
   });
 
   it("tells the model when a step's screenshot was withheld (I-1)", async () => {

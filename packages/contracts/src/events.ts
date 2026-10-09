@@ -13,6 +13,7 @@ import {
   WaitReason,
 } from "./enums.ts";
 import { IsoDateTime, SlotName, Uuid } from "./primitives.ts";
+import { ReasoningSummary } from "./step-result.ts";
 import { ToolName, type ComputerAction } from "./tools.ts";
 
 /** Pointer kinds the run view animates; the agent sets `pointer` for computer steps that start with one. */
@@ -68,6 +69,8 @@ export const RunEvent = z.discriminatedUnion("type", [
     url: z.string().max(4_096).nullable(),
     screenshotKey: z.string().max(1_024).nullable(),
     action: StepAction.nullable(),
+    /** A decide step's reasoning summary; absent on other steps and on events stored before it. */
+    reasoning: ReasoningSummary.optional(),
   }),
   z.object({ type: z.literal("control"), holder: Controller }),
   z.object({ type: z.literal("slot"), slotName: SlotName.nullable() }),

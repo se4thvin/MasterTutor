@@ -47,9 +47,10 @@ export function createOpenAIModelClient(
           model: request.model,
           instructions: request.instructions,
           input: request.input,
-          // Reasoning carries across turns only as encrypted items we replay ourselves.
+          // Reasoning carries across turns only as encrypted items we replay ourselves. The run
+          // view shows the model's own summaries of it, never the hidden reasoning (fe-run-chat).
           include: ["reasoning.encrypted_content"],
-          reasoning: { effort: "medium" },
+          reasoning: { effort: "medium", summary: "auto" },
           // Tools are always declared so replayed calls stay valid; a summary must not call them.
           tools: agentTools(request.toolProfile),
           ...(request.format === "compaction_summary" ? { tool_choice: "none" as const } : {}),

@@ -12,6 +12,7 @@ import {
   HeldDownloadView,
   ListNotesInput,
   RunDetail,
+  RunStepView,
   StoredDownloadView,
   RunSummary,
   SetSecretInput,
@@ -334,5 +335,24 @@ describe("RunDetail.downloads (reload of a finished run)", () => {
     expect(StoredDownloadView.safeParse({ ...ok, filename: "x".repeat(256) }).success).toBe(false);
     expect(StoredDownloadView.safeParse({ ...ok, bytes: -1 }).success).toBe(false);
     expect(StoredDownloadView.safeParse({ ...ok, assetId: null }).success).toBe(false);
+  });
+});
+
+describe("RunStepView.reasoning (fe-run-chat)", () => {
+  const view = {
+    seq: 2,
+    phase: "decide",
+    state: "done",
+    caption: null,
+    url: null,
+    screenshotKey: null,
+    action: null,
+    createdAt: "2026-10-05T17:04:05.000Z",
+  };
+  it("defaults to null and keeps a summary", () => {
+    expect(RunStepView.parse(view).reasoning).toBeNull();
+    expect(RunStepView.parse({ ...view, reasoning: "Sign in first." }).reasoning).toBe(
+      "Sign in first.",
+    );
   });
 });
