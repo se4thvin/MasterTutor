@@ -103,6 +103,58 @@
        (check-prod-bundle.ts fails the build output if that comes back). */
     backdrop-filter: var(--blur);
   }
+  /* Liquid Glass (LiquidGlass, HIG regular variant): .glass under a thicker tint, a specular top
+     edge, a hairline rim and a sheen from the leading corner. Static: painted once, never animated.
+     The inset shadows and background stay put while a glass scroll container scrolls. */
+  .lglass {
+    --glass-bg: var(--glass-liquid);
+    background-image: radial-gradient(120% 50% at 0% 0%, var(--glass-sheen), transparent 70%);
+    box-shadow:
+      inset 0 1px 0 var(--glass-specular),
+      inset 0 0 0 0.5px var(--glass-rim),
+      var(--e2);
+    @supports not (backdrop-filter: blur(1px)) {
+      --glass-bg: var(--bg-2);
+    }
+  }
+  /* MarqueeText: one line, cut with a trailing fade when it does not fit; the text glides (WAAPI
+     transform) on hover or keyboard focus of its host. */
+  .marquee {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    &[data-overflow] {
+      mask-image: linear-gradient(to right, black calc(100% - var(--marquee-fade)), transparent);
+    }
+  }
+  .marquee-text {
+    display: inline-block;
+  }
+  /* A marquee host's focus ring is an inset shadow, not an outline: Chromium repaints an outline
+     whose element holds moving content on every frame of the glide (D28: zero paint). Forced
+     colours drop shadows, so there the outline comes back. */
+  [data-marquee-host]:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--tint-text);
+    @media (forced-colors: active) {
+      outline: 2px solid;
+    }
+  }
+  /* The reduced-motion stand-in: the full name laid over the cut label (a top-layer popover). */
+  .marquee-tip {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0.25rem 0.5rem;
+    border: 0;
+    border-radius: var(--r-xs);
+    background: var(--elevated);
+    color: var(--label);
+    box-shadow: var(--e2);
+    overflow-wrap: anywhere;
+    pointer-events: none;
+  }
   .design-glass-demo {
     background:
       radial-gradient(circle at 20% 30%, var(--ambient), transparent 60%),

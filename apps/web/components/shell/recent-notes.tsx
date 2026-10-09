@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Icon } from "@/components/ui/icon.tsx";
+import { MarqueeText } from "@/components/ui/marquee-text.tsx";
 import { orpc } from "@/lib/api/client.ts";
 import { noteKindIcon } from "@/lib/notes/format.ts";
 
@@ -15,9 +16,14 @@ export function RecentNotes() {
       <ul className="recent">
         {data.items.map((note) => (
           <li key={note.id}>
-            <Link href={`/notes/${note.id}`} className="recent-item">
-              <Icon name={noteKindIcon(note)} size="sm" />
-              <span className="recent-title">{note.title}</span>
+            <Link
+              href={`/notes/${note.id}`}
+              className="recent-item"
+              aria-label={note.title}
+              data-marquee-host=""
+            >
+              <Icon name={noteKindIcon(note)} />
+              <MarqueeText text={note.title} className="recent-title" />
             </Link>
           </li>
         ))}

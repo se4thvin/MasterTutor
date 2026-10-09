@@ -40,6 +40,12 @@
   --glass: rgb(255 255 255 / 0.72);
   --glass-side: rgb(246 246 248 / 0.78);
   --glass-line: rgb(0 0 0 / 0.07);
+  /* Liquid Glass (LiquidGlass): thick enough that --label-2 keeps 4.5:1 over any backdrop, even
+     pure black or white (tokens.test.ts), as the HIG makes large glass like sidebars more opaque. */
+  --glass-liquid: rgb(246 246 248 / 0.92);
+  --glass-specular: rgb(255 255 255 / 0.85);
+  --glass-rim: rgb(0 0 0 / 0.08);
+  --glass-sheen: rgb(255 255 255 / 0.6);
   --blur: saturate(180%) blur(24px);
   --switch-thumb: #ffffff;
   --kbd-on-tint: rgb(255 255 255 / 0.2);
@@ -165,6 +171,10 @@
     --glass: rgb(22 22 23 / 0.72);
     --glass-side: rgb(28 28 30 / 0.74);
     --glass-line: rgb(255 255 255 / 0.08);
+    --glass-liquid: rgb(28 28 30 / 0.94);
+    --glass-specular: rgb(255 255 255 / 0.16);
+    --glass-rim: rgb(255 255 255 / 0.09);
+    --glass-sheen: rgb(255 255 255 / 0.04);
     --shimmer: rgb(255 255 255 / 0.06);
     --art-shadow: drop-shadow(0 8px 16px rgb(0 0 0 / 0.45));
     --art-shadow-lift: drop-shadow(0 8px 16px rgb(0 0 0 / 0.55));
@@ -188,6 +198,9 @@
   :root {
     --glass: var(--bg);
     --glass-side: var(--bg-2);
+    --glass-liquid: var(--bg-2);
+    --glass-sheen: transparent;
+    --glass-specular: transparent;
     --blur: none;
   }
 }

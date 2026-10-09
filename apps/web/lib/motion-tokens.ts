@@ -50,6 +50,21 @@ export const easings = {
 
 export const press = { scale: 0.96, iconScale: 0.92, rowScale: 0.98 } as const;
 
+/**
+ * MarqueeText: a truncated label glides to its end and back on hover or keyboard focus. It moves
+ * at a reading pace, so the time follows the distance (clamped), and rests at each end.
+ */
+export const marquee = {
+  pxPerSecond: 45,
+  minTravelMs: 600,
+  maxTravelMs: 6000,
+  /** Rest before it sets off, and again at the end, so the eye can catch up. */
+  holdMs: 700,
+  /** Back to the start on the way out (pointer left, focus moved): quick, not a snap. */
+  settleMs: durations.base,
+  easing: easings.standard,
+} as const;
+
 const seconds = (ms: number) => ms / 1000;
 
 export const transitions = {
