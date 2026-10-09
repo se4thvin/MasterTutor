@@ -47,7 +47,13 @@ describe("alerts.* (spec §13.3, Review Focus 4)", () => {
     expect(listed.items[0]).toMatchObject({ id: alert.id, label: "A run failed" });
     expect(listed.items[0]!.acknowledgedAt).not.toBeNull();
     expect(await client.alerts.pushConfig({})).toEqual({ available: true, publicKey: PUBLIC_KEY });
+    expect(await client.alerts.pushStatus({ endpoint: subscription.endpoint })).toEqual({
+      registered: false,
+    });
     expect(await client.alerts.subscribe(subscription)).toEqual({ ok: true });
+    expect(await client.alerts.pushStatus({ endpoint: subscription.endpoint })).toEqual({
+      registered: true,
+    });
     expect((await ownerPushTargets(web.db, workspaceId)).map((t) => t.endpoint)).toEqual([
       subscription.endpoint,
     ]);
@@ -80,6 +86,7 @@ describe("alerts.* (spec §13.3, Review Focus 4)", () => {
         () => client.alerts.pushConfig({}),
         () => client.alerts.subscribe(subscription),
         () => client.alerts.unsubscribe({ endpoint: subscription.endpoint }),
+        () => client.alerts.pushStatus({ endpoint: subscription.endpoint }),
       ])
         await expect(call()).rejects.toMatchObject({ code });
     }

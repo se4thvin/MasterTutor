@@ -155,6 +155,8 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:-}
       OBSERVE_VIEWER_PASSWORD: ${OBSERVE_VIEWER_PASSWORD:-}
+      # Its cdp address (<prefix>.11) is the Host Traefik's ForwardAuth calls carry (D50 I-1).
+      CDP_SUBNET_PREFIX: ${CDP_SUBNET_PREFIX:-172.30.231}
     healthcheck:
       <<: *node-health
       test:

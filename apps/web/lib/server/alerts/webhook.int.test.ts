@@ -1,4 +1,4 @@
-import { ALERT_DEDUPE_MINUTES, type AlertRule } from "@mastertutor/contracts";
+import { ALERT_DEDUPE_MINUTES, internalWebHosts, type AlertRule } from "@mastertutor/contracts";
 import { alerts, createDb, onlyWorkspaceId, recordAlert, type DbHandle } from "@mastertutor/db";
 import { seedMember, startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +23,7 @@ describe("webhook against the database", () => {
     const delivered: string[] = [];
     const deps: WebhookDeps = {
       secret: "s".repeat(40),
+      internalHosts: internalWebHosts(),
       record: async (rule: AlertRule) => {
         const workspaceId = (await onlyWorkspaceId(web.db))!;
         const alert = await recordAlert(web.db, {
@@ -37,7 +38,7 @@ describe("webhook against the database", () => {
     const post = () =>
       new Request("http://web:3000/api/alerts/webhook", {
         method: "POST",
-        headers: { authorization: `Bearer ${"s".repeat(40)}` },
+        headers: { host: "web:3000", authorization: `Bearer ${"s".repeat(40)}` },
         body: '{"rule":"run_failed"}',
       });
     const statuses = await Promise.all(

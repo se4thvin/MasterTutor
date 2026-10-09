@@ -1,10 +1,13 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { AlertWebhookBody, MAX_ALERT_WEBHOOK_BYTES, type AlertRule } from "@mastertutor/contracts";
 import { recordAlertReceived } from "@mastertutor/telemetry/record";
-import { readCapped } from "./read-capped.ts";
+import { isInternalRequest } from "../internal-request.ts";
+import { readCapped } from "../read-capped.ts";
 
 export interface WebhookDeps {
   secret: string | undefined;
+  /** contracts' internalWebHosts for this deployment's cdp prefix. */
+  internalHosts: readonly string[];
   /** Stores the alert (deduped); null when there is no workspace yet. */
   record(rule: AlertRule): Promise<{ id: string; workspaceId: string; created: boolean } | null>;
   /** Runs for a new alert only; the route defers delivery until after the response. */
@@ -22,14 +25,14 @@ function bearerMatches(header: string | null, secret: string): boolean {
 }
 
 /**
- * OpenObserve → web (spec §13.2). Fail closed, in order: no secret → 404; arrived through Traefik
- * (forwarded headers) → 404, so it does not exist publicly; bearer → 401; size → 413; schema → 400.
- * Only the rule name is kept.
+ * OpenObserve → web (spec §13.2). Fail closed, in order: no secret → 404; any Host outside the internal
+ * allowlist (every request through Traefik carries the public one) → 404, so it does not
+ * exist publicly; bearer → 401; size → 413; schema → 400. Only the rule name is kept.
+ * (X-Forwarded-* prove nothing: Next adds them to every request itself.)
  */
 export async function handleAlertWebhook(deps: WebhookDeps, request: Request): Promise<Response> {
   if (!deps.secret) return status(404);
-  if (request.headers.has("x-forwarded-for") || request.headers.has("x-forwarded-host"))
-    return status(404);
+  if (!isInternalRequest(request, deps.internalHosts)) return status(404);
   if (!bearerMatches(request.headers.get("authorization"), deps.secret)) return status(401);
   const text = await readCapped(request, MAX_ALERT_WEBHOOK_BYTES);
   if (text === null) return status(413);

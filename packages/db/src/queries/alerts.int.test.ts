@@ -6,13 +6,14 @@ import {
   activeAlerts,
   deletePushSubscription,
   deletePushSubscriptionByEndpoint,
+  isPushSubscribed,
   listAlerts,
   onlyWorkspaceId,
   ownerPushTargets,
   recordAlert,
   savePushSubscription,
 } from "./alerts.ts";
-import { memberRoleOf } from "./workspace.ts";
+import { isSignedInOwner, memberRoleOf } from "./workspace.ts";
 
 let database: TestDatabase;
 let owner: DbHandle;
@@ -109,6 +110,42 @@ describe("alerts (spec §13.3)", () => {
     await savePushSubscription(web.db, { userId: own.userId, ...target(3) });
     await deletePushSubscriptionByEndpoint(web.db, target(3).endpoint);
     expect(await ownerPushTargets(web.db, own.workspaceId)).toEqual([]);
+  });
+
+  it("tells a browser whether its own subscription is still held", async () => {
+    const own = await seedMember(owner.db, { role: "owner" });
+    const other = await seedMember(owner.db, { workspaceId: own.workspaceId, role: "member" });
+    const sub = { userId: own.userId, ...target(7) };
+    expect(await isPushSubscribed(web.db, { userId: own.userId, endpoint: sub.endpoint })).toBe(
+      false,
+    );
+    await savePushSubscription(web.db, sub);
+    expect(await isPushSubscribed(web.db, { userId: own.userId, endpoint: sub.endpoint })).toBe(
+      true,
+    );
+    expect(await isPushSubscribed(web.db, { userId: other.userId, endpoint: sub.endpoint })).toBe(
+      false,
+    );
+    await deletePushSubscriptionByEndpoint(web.db, sub.endpoint);
+    expect(await isPushSubscribed(web.db, { userId: own.userId, endpoint: sub.endpoint })).toBe(
+      false,
+    );
+  });
+
+  it("an owner with a live session is a signed-in owner; sign-out or a member is not", async () => {
+    const own = await seedMember(owner.db, { role: "owner" });
+    const member = await seedMember(owner.db, { workspaceId: own.workspaceId, role: "member" });
+    const session = async (userId: string, minutes: number) =>
+      owner.sql`insert into "session" (id, token, user_id, expires_at, created_at, updated_at)
+        values (${crypto.randomUUID()}, ${crypto.randomUUID()}, ${userId},
+                now() + make_interval(mins => ${minutes}), now(), now())`;
+    expect(await isSignedInOwner(web.db, own.userId)).toBe(false);
+    await session(own.userId, -5);
+    expect(await isSignedInOwner(web.db, own.userId)).toBe(false);
+    await session(own.userId, 60);
+    await session(member.userId, 60);
+    expect(await isSignedInOwner(web.db, own.userId)).toBe(true);
+    expect(await isSignedInOwner(web.db, member.userId)).toBe(false);
   });
 
   it("knows the member's role and the single workspace", async () => {

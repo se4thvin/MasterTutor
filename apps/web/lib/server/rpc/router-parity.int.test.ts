@@ -89,6 +89,7 @@ const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
   ["alerts/pushConfig", {}, "ok"],
   // Idempotent: turning off a subscription that is not there is ok.
   ["alerts/unsubscribe", { endpoint: "https://web.push.apple.com/probe" }, "ok"],
+  ["alerts/pushStatus", { endpoint: "https://web.push.apple.com/probe" }, "ok"],
 ];
 /** Procedures that create or change state, with inputs each call may repeat. */
 const CREATE_INPUTS: Record<string, () => unknown> = {

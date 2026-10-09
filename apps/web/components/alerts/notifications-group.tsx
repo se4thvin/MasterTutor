@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
 import { Switch } from "@/components/ui/switch.tsx";
 import { api, orpc } from "@/lib/api/client.ts";
@@ -9,7 +9,9 @@ import {
   PUSH_HINTS,
   base64UrlToBytes,
   browserPushInput,
+  phoneAlertState,
   pushSupport,
+  type PhoneAlertState,
   type PushSupport,
 } from "./push-support.ts";
 
@@ -35,7 +37,23 @@ async function setPhoneAlerts(on: boolean, publicKey: string): Promise<void> {
     endpoint: string;
     keys: { p256dh: string; auth: string };
   };
-  await api.alerts.subscribe({ endpoint: json.endpoint, keys: json.keys });
+  try {
+    await api.alerts.subscribe({ endpoint: json.endpoint, keys: json.keys });
+  } catch (error) {
+    // The server never got it: undo the browser side, so the switch can't come back "on" later.
+    await subscription.unsubscribe().catch(() => false);
+    throw error;
+  }
+}
+
+/** The switch's state, from this browser's subscription and the server's word on it. */
+async function currentState(): Promise<PhoneAlertState> {
+  const registration = await navigator.serviceWorker.getRegistration(SW.scope);
+  const subscription = (await registration?.pushManager.getSubscription()) ?? null;
+  return phoneAlertState({
+    subscription,
+    registered: async (endpoint) => (await api.alerts.pushStatus({ endpoint })).registered,
+  });
 }
 
 /**
@@ -49,20 +67,29 @@ export function NotificationsGroup() {
     retry: false,
   });
   const [support, setSupport] = useState<PushSupport | null>(null);
-  const [on, setOn] = useState(false);
+  const [state, setState] = useState<PhoneAlertState>("off");
   const [busy, setBusy] = useState(false);
 
+  // On open, and whenever the service worker re-sent a rotated subscription (review I-3).
+  const refresh = useCallback(
+    () =>
+      void currentState()
+        .then(setState)
+        .catch(() => undefined),
+    [],
+  );
   useEffect(() => {
     if (!config) return;
-    const state = pushSupport(browserPushInput(config));
-    setSupport(state);
-    if (state !== "ready") return;
-    void navigator.serviceWorker
-      .getRegistration(SW.scope)
-      .then((registration) => registration?.pushManager.getSubscription())
-      .then((subscription) => setOn(Boolean(subscription)))
-      .catch(() => undefined);
-  }, [config]);
+    const next = pushSupport(browserPushInput(config));
+    setSupport(next);
+    if (next !== "ready") return;
+    refresh();
+    const onMessage = (event: MessageEvent) => {
+      if ((event.data as { type?: unknown } | null)?.type === "mt-push-changed") refresh();
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [config, refresh]);
 
   if (!config || !support) return null;
 
@@ -71,7 +98,7 @@ export function NotificationsGroup() {
     setBusy(true);
     try {
       await setPhoneAlerts(next, config.publicKey);
-      setOn(next);
+      setState(next ? "on" : "off");
       toast({ title: next ? "Phone alerts on" : "Phone alerts off", icon: "ok" });
     } catch {
       toast({
@@ -95,15 +122,17 @@ export function NotificationsGroup() {
           <span className="min-w-0">
             Phone alerts
             <small>
-              {support === "ready"
-                ? "Failed runs, rejected requests, crashing browser slots, spend jumps and error spikes."
-                : PUSH_HINTS[support]}
+              {support !== "ready"
+                ? PUSH_HINTS[support]
+                : state === "stopped"
+                  ? PUSH_HINTS.stopped
+                  : "Failed runs, rejected requests, crashing browser slots, spend jumps and error spikes."}
             </small>
           </span>
           {support === "ready" ? (
             <Switch
               label="Phone alerts"
-              checked={on}
+              checked={state === "on"}
               busy={busy}
               onCheckedChange={(next) => void toggle(next)}
             />

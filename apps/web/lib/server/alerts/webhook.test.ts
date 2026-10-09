@@ -1,3 +1,4 @@
+import { internalWebHosts } from "@mastertutor/contracts";
 import { METRIC } from "@mastertutor/contracts/telemetry";
 import { installTestTelemetry, type TestTelemetry } from "@mastertutor/telemetry/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ const post = (body: string, headers: Record<string, string> = {}) =>
   new Request("http://web:3000/api/alerts/webhook", {
     method: "POST",
     headers: {
+      host: "web:3000",
       authorization: `Bearer ${SECRET}`,
       "content-type": "application/json",
       ...headers,
@@ -20,6 +22,7 @@ function deps({ secret = SECRET as string | undefined, created = true } = {}) {
   const delivered: string[] = [];
   const value: WebhookDeps = {
     secret,
+    internalHosts: internalWebHosts("10.9.8"),
     record: async (rule) => {
       recorded.push(rule);
       return { id: "11111111-1111-4111-8111-111111111111", workspaceId: "w", created };
@@ -44,16 +47,40 @@ describe("POST /api/alerts/webhook (spec §13.2)", () => {
     expect((await handleAlertWebhook(d, post('{"rule":"run_failed"}'))).status).toBe(404);
   });
 
-  it("does not exist through Traefik: forwarded requests are 404 before auth (Review Focus 4)", async () => {
+  it("does not exist except on web's internal authority: public Hosts are 404 before auth (Review Focus 4)", async () => {
     const { deps: d, recorded } = deps();
-    for (const header of ["x-forwarded-for", "x-forwarded-host"]) {
-      const response = await handleAlertWebhook(
-        d,
-        post('{"rule":"run_failed"}', { [header]: "203.0.113.9" }),
-      );
-      expect(response.status).toBe(404);
+    for (const host of [
+      "notes.example.org",
+      "localhost:18080",
+      "obs.localhost:18080",
+      "172.30.231.11:3000",
+    ]) {
+      const response = await handleAlertWebhook(d, post('{"rule":"run_failed"}', { host }));
+      expect(response.status, host).toBe(404);
     }
     expect(recorded).toEqual([]);
+  });
+
+  it("accepts both internal Hosts: web:3000 and web's cdp address", async () => {
+    const { deps: d, recorded } = deps();
+    for (const host of ["web:3000", "10.9.8.11:3000"])
+      expect((await handleAlertWebhook(d, post('{"rule":"run_failed"}', { host }))).status).toBe(
+        202,
+      );
+    expect(recorded).toEqual(["run_failed", "run_failed"]);
+  });
+
+  it("accepts the forwarded headers Next itself adds to every request (review C-1)", async () => {
+    const { deps: d, recorded } = deps();
+    const response = await handleAlertWebhook(
+      d,
+      post('{"rule":"run_failed"}', {
+        "x-forwarded-for": "172.30.0.5",
+        "x-forwarded-host": "web:3000",
+      }),
+    );
+    expect(response.status).toBe(202);
+    expect(recorded).toEqual(["run_failed"]);
   });
 
   it("refuses a wrong bearer, a big body and an unknown rule or extra field", async () => {
@@ -86,6 +113,7 @@ describe("POST /api/alerts/webhook (spec §13.2)", () => {
   it("answers 409 when there is no workspace to hold the alert yet", async () => {
     const d: WebhookDeps = {
       secret: SECRET,
+      internalHosts: internalWebHosts("10.9.8"),
       record: async () => null,
       onRecorded: () => undefined,
     };

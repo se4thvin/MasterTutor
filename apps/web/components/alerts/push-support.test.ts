@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PUSH_HINTS, base64UrlToBytes, pushSupport } from "./push-support.ts";
+import { PUSH_HINTS, base64UrlToBytes, phoneAlertState, pushSupport } from "./push-support.ts";
 
 const ready = {
   secureContext: true,
@@ -39,5 +39,51 @@ describe("base64UrlToBytes", () => {
     const raw = Buffer.alloc(65, 0xfb);
     raw[0] = 4;
     expect(Buffer.from(base64UrlToBytes(raw.toString("base64url")))).toEqual(raw);
+  });
+});
+
+describe("phoneAlertState (review I-3)", () => {
+  const sub = () => {
+    const calls: string[] = [];
+    return {
+      calls,
+      value: {
+        endpoint: "https://web.push.apple.com/a",
+        unsubscribe: async () => (calls.push("unsubscribe"), true),
+      },
+    };
+  };
+
+  it("is off without a browser subscription, and on while the server holds it", async () => {
+    expect(await phoneAlertState({ subscription: null, registered: async () => true })).toBe("off");
+    const held = sub();
+    expect(await phoneAlertState({ subscription: held.value, registered: async () => true })).toBe(
+      "on",
+    );
+    expect(held.calls).toEqual([]);
+  });
+
+  it("says stopped and drops the dead subscription once a push service removed it (404/410)", async () => {
+    const dropped = sub();
+    expect(
+      await phoneAlertState({ subscription: dropped.value, registered: async () => false }),
+    ).toBe("stopped");
+    expect(dropped.calls).toEqual(["unsubscribe"]);
+    expect(PUSH_HINTS.stopped).toBe(
+      "Phone alerts stopped on this device. Turn them on again to keep getting them.",
+    );
+  });
+
+  it("does nothing destructive when the server can't be asked", async () => {
+    const unknown = sub();
+    expect(
+      await phoneAlertState({
+        subscription: unknown.value,
+        registered: async () => {
+          throw new TypeError("offline");
+        },
+      }),
+    ).toBe("on");
+    expect(unknown.calls).toEqual([]);
   });
 });

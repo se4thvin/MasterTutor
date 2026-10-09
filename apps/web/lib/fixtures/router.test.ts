@@ -277,6 +277,9 @@ describe("fixture alerts", () => {
     const listed = await api.alerts.list({ limit: 10, cursor: null });
     expect(listed.items.map((a) => a.label)).toEqual(["A run failed"]);
     expect(await api.alerts.pushConfig({})).toEqual({ available: false, publicKey: null });
+    expect(await api.alerts.pushStatus({ endpoint: "https://web.push.apple.com/x" })).toEqual({
+      registered: false,
+    });
     await expect(
       api.alerts.subscribe({
         endpoint: "https://web.push.apple.com/abc",

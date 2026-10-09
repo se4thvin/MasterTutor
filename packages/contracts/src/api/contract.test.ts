@@ -30,7 +30,15 @@ describe("apiContract", () => {
       settings: ["get", "setKillSwitch", "update", "usage"],
       assets: ["url"],
       benchmarks: ["create", "grade", "list", "runs", "start"],
-      alerts: ["acknowledge", "active", "list", "pushConfig", "subscribe", "unsubscribe"],
+      alerts: [
+        "acknowledge",
+        "active",
+        "list",
+        "pushConfig",
+        "pushStatus",
+        "subscribe",
+        "unsubscribe",
+      ],
     });
   });
 });

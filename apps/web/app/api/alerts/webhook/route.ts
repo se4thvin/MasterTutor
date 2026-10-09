@@ -1,4 +1,4 @@
-import { ALERT_DEDUPE_MINUTES } from "@mastertutor/contracts";
+import { ALERT_DEDUPE_MINUTES, internalWebHosts } from "@mastertutor/contracts";
 import {
   deletePushSubscriptionByEndpoint,
   onlyWorkspaceId,
@@ -23,6 +23,7 @@ export async function POST(request: Request): Promise<Response> {
   return handleAlertWebhook(
     {
       secret: env.ALERT_WEBHOOK_SECRET,
+      internalHosts: internalWebHosts(env.CDP_SUBNET_PREFIX),
       record: async (rule) => {
         const db = getDb().db;
         const workspaceId = await onlyWorkspaceId(db);
