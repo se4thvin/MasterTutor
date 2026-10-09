@@ -17,3 +17,9 @@ Ruling: Context bookkeeping belongs beside transcript items, not in model-visibl
 Ruling: Canonicalize budget/usage/plan using existing contract schemas before stringifying, preserving D37 byte-identical replay after jsonb reorders keys.
 Ruling: The worker's existing gated-clock test raced timer registration and retained aborted sleepers. Remove aborted sleepers and await registration before firing; preserve its original assertions and timeouts.
 Transient unit failures: at 32 workers, PDF caption verification and OCR budget tests timed out; at 8 workers, docling caption escaping/fallback/second rendering and JPEG 2000 decoding timed out. Full two-worker rerun passed unchanged. No timeout, retry or assertion was relaxed.
+
+Task 1 commit: `53419480`.
+Task 2 RED: 17 new source-inference/boundary assertions failed against the original create DTO and form; two further trailing-dot localhost cases failed before normalization.
+Task 2 GREEN: 1,836 agent/web/contracts unit tests; 122 URL/DTO/form/network boundary tests after the final localhost fix; 37 server-create and llm-mock context integration tests. Includes goal-URL → allowed origin → first-turn vault alias, all modes, deduplication, origin cap, credential URLs and private IPv4/IPv6/encoded literals. Typecheck/lint passed.
+Ruling: `/new` uses the client form plus `runs.create` RPC, not a separate server action. Both form and service already parse CreateRunInput; the schema is the shared creation boundary. URL hints remain verbatim in the goal. No source DTO/table duplication or migration.
+Ruling: Move existing private-literal rules to browser-safe contracts, and reuse them from navigation and source validation. DNS resolution/rebinding and slot egress remain enforced by the existing network boundary. Add a P1.7 note identifying the new owner for the future VM net-policy move.

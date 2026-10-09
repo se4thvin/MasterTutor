@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ApprovalRequest } from "../approval.ts";
 import { Budget, Plan, Usage } from "../budget.ts";
-import { MAX_USER_DOWNLOADS_PER_RUN } from "../constants.ts";
+import { MAX_ALLOWED_ORIGINS, MAX_USER_DOWNLOADS_PER_RUN } from "../constants.ts";
 import {
   ApprovalKind,
   ApprovalMode,
@@ -26,6 +26,7 @@ import { MAX_BLOCK_CHARS } from "../markdown.ts";
 import { NoteBlock } from "../note.ts";
 import { RunError } from "../run.ts";
 import { secretValueProblem } from "../vault.ts";
+import { goalSourceUrls } from "../source-url.ts";
 import {
   Alias,
   FolderName,
@@ -84,7 +85,7 @@ export const autoModeNeedsOrigins = (input: {
 export const CreateRunInput = z
   .object({
     goal: z.string().trim().min(1).max(4_000),
-    allowedOrigins: z.array(OriginInput).max(50).default([]),
+    allowedOrigins: z.array(OriginInput).max(MAX_ALLOWED_ORIGINS).default([]),
     budget: Budget.optional(),
     targetFolderId: Uuid.nullable().default(null),
     approvalMode: ApprovalMode.default("ask"),
@@ -93,6 +94,34 @@ export const CreateRunInput = z
     /** Guard rollout: Shadow records only during the default rollout. */
     observerMode: ObserverMode.default("shadow"),
     observerShadowAcknowledged: z.literal(true).optional(),
+  })
+  .transform((input, ctx) => {
+    let sources: string[];
+    try {
+      sources = goalSourceUrls(input.goal);
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        path: ["goal"],
+        message: "The goal contains an invalid or private source URL",
+      });
+      return z.NEVER;
+    }
+    const origins = z
+      .array(Origin)
+      .max(MAX_ALLOWED_ORIGINS)
+      .safeParse([
+        ...new Set([...input.allowedOrigins, ...sources.map((url) => new URL(url).origin)]),
+      ]);
+    if (!origins.success) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["allowedOrigins"],
+        message: "Too many allowed origins",
+      });
+      return z.NEVER;
+    }
+    return { ...input, allowedOrigins: origins.data };
   })
   .refine(bypassNeedsAcknowledgement, BYPASS_UNACKNOWLEDGED)
   .refine(autoModeNeedsOrigins, {

@@ -16,7 +16,7 @@ describe("startUrl", () => {
   });
   it("starts a goal-only run on the neutral blank page", () => {
     expect(startUrl("Find a good intro to Rust lifetimes", [])).toBe("about:blank");
-    // A URL in the goal is not a source until it is allowed: still the blank page.
+    // Existing runs without inferred origins still start blank; new runs infer them at creation.
     expect(startUrl("Compare https://a.example/x with others", [])).toBe(NEUTRAL_START_URL);
   });
 });

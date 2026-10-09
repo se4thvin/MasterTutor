@@ -1,5 +1,6 @@
 import {
-  autoModeNeedsOrigins,
+  SourceUrl,
+  MAX_ALLOWED_ORIGINS,
   CreateRunInput,
   DEFAULT_BUDGET,
   toOrigin,
@@ -24,7 +25,9 @@ export function parseSource(input: string): SourceChip | null {
   if (!trimmed) return null;
   let url: URL;
   try {
-    url = new URL(SCHEME.test(trimmed) ? trimmed : `https://${trimmed}`);
+    const parsed = SourceUrl.safeParse(SCHEME.test(trimmed) ? trimmed : `https://${trimmed}`);
+    if (!parsed.success) return null;
+    url = new URL(parsed.data);
   } catch {
     return null;
   }
@@ -74,7 +77,7 @@ export interface TaskDraft {
 }
 
 const GOAL_MAX = 4_000;
-const ORIGINS_MAX = 50;
+const ORIGINS_MAX = MAX_ALLOWED_ORIGINS;
 
 /** Sources are optional hints: a goal alone starts a run, and the agent finds its own sources. */
 /** A refusal, and the field it belongs to (the goal unless said otherwise). */
@@ -96,11 +99,6 @@ export function buildCreateRunInput(draft: TaskDraft): CreateRunInput | DraftErr
     ...new Set([...draft.sources.map((s) => s.origin), ...draft.domains].flatMap(originVariants)),
   ];
   if (origins.length > ORIGINS_MAX) return { error: "Too many allowed domains (50 at most)." };
-  if (!autoModeNeedsOrigins({ approvalMode: draft.approvalMode, allowedOrigins: origins }))
-    return {
-      error: "Auto mode needs an allowed domain. Add one, or choose Ask me.",
-      field: "domains",
-    };
   const bypass = draft.approvalMode === "bypass";
   // D44: bypass is an explicit opt-in; the server refuses it without the acknowledgement too.
   if (bypass && !draft.bypassAcknowledged) {
@@ -115,7 +113,17 @@ export function buildCreateRunInput(draft: TaskDraft): CreateRunInput | DraftErr
     approvalMode: draft.approvalMode,
     ...(bypass ? { bypassAcknowledged: true } : {}),
   });
-  return parsed.success ? parsed.data : { error: "Check the task details and try again." };
+  if (parsed.success) return parsed.data;
+  if (
+    parsed.error.issues.some(
+      (issue) => issue.message === "Auto mode needs at least one allowed origin",
+    )
+  )
+    return {
+      error: "Auto mode needs an allowed domain. Add one, or choose Ask me.",
+      field: "domains",
+    };
+  return { error: "Check the task details and try again." };
 }
 
 /** Copy for a failed runs.create. Server messages are never shown (they may echo input). */

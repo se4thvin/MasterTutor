@@ -104,3 +104,23 @@ describe("turn context (D56)", () => {
     expect(last).not.toContain(canary);
   });
 });
+
+describe("goal source initialization", () => {
+  it("a goal URL allows its origin and announces its vault alias on the first model turn", async () => {
+    const { CreateRunInput } = await import("@mastertutor/contracts");
+    const { startUrl } = await import("./start-url.ts");
+    const input = CreateRunInput.parse({
+      goal: `${origin}/zybook/course/chapter/4/section/4\n\nTake notes on this page`,
+    });
+    expect(input.allowedOrigins).toEqual([origin]);
+    const h = await setup([done()], {
+      allowedOrigins: input.allowedOrigins,
+      hooks: vaultHooks(vault),
+    });
+    h.browser.url = startUrl(input.goal, input.allowedOrigins);
+    h.browser.signIn = true;
+    expect(await drive(h.loop)).toEqual({ kind: "completed" });
+    expect(occurrences(mock.requestsFor(h.name)[0]?.body.input)).toBe(1);
+    expect(JSON.stringify(mock.requestsFor(h.name))).not.toContain(canary);
+  });
+});

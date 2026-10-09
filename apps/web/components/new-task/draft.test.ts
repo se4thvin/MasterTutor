@@ -161,3 +161,22 @@ describe("buildCreateRunInput never throws (M3)", () => {
     expect(buildCreateRunInput(bad)).toEqual({ error: "Check the task details and try again." });
   });
 });
+
+describe("goal source URLs", () => {
+  it("lets auto mode start with a URL in the goal and no source chips", () => {
+    expect(
+      buildCreateRunInput(
+        draft({
+          goal: "https://learn.zybooks.com/zybook/course\nTake notes",
+          approvalMode: "auto_within_allowlist",
+        }),
+      ),
+    ).toMatchObject({ allowedOrigins: ["https://learn.zybooks.com"] });
+  });
+  it("rejects private sources through the same rules as goal sources", () => {
+    expect(parseSource("http://127.0.0.1/private")).toBeNull();
+    expect(
+      buildCreateRunInput(draft({ goal: "Take notes http://127.0.0.1/private" })),
+    ).toHaveProperty("error");
+  });
+});
