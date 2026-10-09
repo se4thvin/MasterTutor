@@ -5,6 +5,7 @@ import { AnimatedItem, AnimatedList } from "@/components/bits/animated-list.tsx"
 import { ThoughtLine } from "@/components/bits/thought-line.tsx";
 import { IconButton } from "@/components/ui/button.tsx";
 import { Icon } from "@/components/ui/icon.tsx";
+import { LiquidGlass } from "@/components/ui/liquid-glass.tsx";
 import { Sheet } from "@/components/ui/sheet.tsx";
 import {
   peekLine,
@@ -102,11 +103,15 @@ function ThreadList(p: ThreadProps) {
   );
 }
 
-/** The thread as a pane beside the browser (or under it at tablet width); hideable. */
+/**
+ * The thread as a pane beside the browser (or under it at tablet width); hideable. The pane is
+ * Liquid Glass (controls layer); the conversation inside it sits on a solid surface (HIG: content
+ * is never glass).
+ */
 export function ThreadPane({ id, onHide, ...p }: ThreadProps & { id: string; onHide(): void }) {
   const titleId = useId();
   return (
-    <aside id={id} className="thread glass" aria-labelledby={titleId} data-qa-obstacle>
+    <LiquidGlass as="aside" id={id} className="thread" aria-labelledby={titleId} data-qa-obstacle>
       <div className="thread-head">
         <h2 id={titleId} className="thread-title">
           Thread
@@ -122,7 +127,7 @@ export function ThreadPane({ id, onHide, ...p }: ThreadProps & { id: string; onH
       </div>
       <ThreadList {...p} />
       <MessageComposer disabled={!p.canMessage} onSend={p.onSend} />
-    </aside>
+    </LiquidGlass>
   );
 }
 
@@ -135,23 +140,25 @@ export function ThreadSheet({
   const line = untrustedText(peekLine(p.items, p.thinking), 120);
   return (
     <>
-      <button
-        type="button"
-        className="thread-peek glass"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={`Open thread: ${line}`}
-        onClick={() => onOpenChange(true)}
-      >
-        <span className="thread-peek-glyph" aria-hidden="true">
-          <Icon name="thread" size="sm" />
-        </span>
-        <span className="thread-peek-text">
-          <bdi>{line}</bdi>
-          <span className="thread-peek-summary">{p.summary}</span>
-        </span>
-        <Icon name="chevronRight" size="sm" />
-      </button>
+      <LiquidGlass className="thread-peek-glass">
+        <button
+          type="button"
+          className="thread-peek"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label={`Open thread: ${line}`}
+          onClick={() => onOpenChange(true)}
+        >
+          <span className="thread-peek-glyph" aria-hidden="true">
+            <Icon name="thread" size="sm" />
+          </span>
+          <span className="thread-peek-text">
+            <bdi>{line}</bdi>
+            <span className="thread-peek-summary">{p.summary}</span>
+          </span>
+          <Icon name="chevronRight" size="sm" />
+        </button>
+      </LiquidGlass>
       <Sheet open={open} onOpenChange={onOpenChange} title="Thread">
         <ThreadList
           {...p}
