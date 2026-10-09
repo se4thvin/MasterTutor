@@ -1,3 +1,4 @@
+import { windowPageOutputs } from "./page-output-window.ts";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import { resolveGarageRef, type TranscriptEntry } from "./transcript.ts";
@@ -115,7 +116,7 @@ export function buildModelInput(
     if (slot.kind === "message") messages += 1;
     return url;
   });
-  return mapImages(items, (url, slot) =>
+  return mapImages(windowPageOutputs(items), (url, slot) =>
     slot.index >= total - keep &&
     (slot.kind === "output" || slot.messageIndex >= messages - MESSAGE_IMAGE_WINDOW)
       ? url

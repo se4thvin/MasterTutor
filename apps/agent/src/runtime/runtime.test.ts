@@ -6,14 +6,14 @@ import { ControlHeld, Interrupted, interruptionOf } from "./errors.ts";
 import { Latch } from "./latch.ts";
 
 describe("runtime config", () => {
-  it("matches spec §5 and accepts overrides", () => {
+  it("uses the bounded compaction budget and accepts overrides", () => {
     expect(DEFAULT_RUNTIME_CONFIG).toMatchObject({
       heartbeatMs: 10_000,
       leaseMs: 30_000,
       sweepMs: 30_000,
       idleSleepMs: 60_000,
       slotPollMs: 500,
-      compactionInputTokens: 200_000,
+      compactionInputTokens: 64_000,
       fallbackAfter5xx: 3,
       downloadsDir: "/downloads",
     });

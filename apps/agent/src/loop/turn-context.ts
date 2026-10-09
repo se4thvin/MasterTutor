@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { Budget, Usage, Plan, Origin, type WaitReason } from "@mastertutor/contracts";
 import { budgetExceeded } from "../guardrails/budget.ts";
@@ -10,8 +11,18 @@ import type { TranscriptEntry } from "./transcript.ts";
 export const TurnContextCheckpoint = z.object({
   facts: z.record(z.string(), z.string()),
   redirectedOrigins: z.array(Origin).default([]),
+  repetition: z
+    .object({
+      pageHash: z.string(),
+      actionHash: z.string().nullable(),
+      count: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 export type TurnContextCheckpoint = z.infer<typeof TurnContextCheckpoint>;
+
+export const INEFFECTIVE_ACTION_NOTE =
+  "Executor: the same action with the same arguments had no effect three times in a row. The page hash is unchanged; try something else.";
 
 /** One path for run facts (D56). Only the vault can describe credentials; no values enter here. */
 export class TurnContext {
@@ -19,13 +30,40 @@ export class TurnContext {
   #facts: Record<string, string> = {};
   #signIn: { origin: string; usable: boolean } | null = null;
   #redirectedOrigins = new Set<string>();
+  #repetition: TurnContextCheckpoint["repetition"];
+  #acceptedRepetition: TurnContextCheckpoint["repetition"];
+  #ineffective = false;
 
   constructor(history: readonly TranscriptEntry[]) {
     for (const entry of history) {
       if (!entry.turnContext) continue;
       this.#announced = entry.turnContext.facts;
       this.#redirectedOrigins = new Set(entry.turnContext.redirectedOrigins);
+      this.#repetition = this.#acceptedRepetition = entry.turnContext.repetition;
     }
+  }
+
+  /** Compare completed attempts with the following observation, never the pre-action screen.
+   * Only hashes enter checkpoints. Derive from accepted state so aborted decides keep their note.
+   */
+  observeActions(signatures: readonly string[], pageIdentity: string): void {
+    const pageHash = createHash("sha256").update(pageIdentity).digest("hex");
+    const previous = this.#acceptedRepetition;
+    let actionHash: string | null = previous?.actionHash ?? null;
+    let count = previous?.count ?? 0;
+    this.#ineffective = false;
+    if (previous?.pageHash !== pageHash || signatures.length === 0) {
+      actionHash = null;
+      count = 0;
+    } else {
+      for (const signature of signatures) {
+        const next = createHash("sha256").update(signature).digest("hex");
+        count = next === actionHash ? count + 1 : 1;
+        actionHash = next;
+        if (count === 3) this.#ineffective = true;
+      }
+    }
+    this.#repetition = { pageHash, actionHash, count };
   }
 
   async refresh(
@@ -72,7 +110,10 @@ export class TurnContext {
           .map((key) => key.slice(7))
           .join(", ")}`,
       );
-    return changed.length === 0 ? [] : [`Executor: run context\n${changed.join("\n\n")}`];
+    return [
+      ...(changed.length === 0 ? [] : [`Executor: run context\n${changed.join("\n\n")}`]),
+      ...(this.#ineffective ? [INEFFECTIVE_ACTION_NOTE] : []),
+    ];
   }
 
   /** A saved login is system-held data, not something to ask a person for (D56). */
@@ -94,12 +135,18 @@ export class TurnContext {
   }
 
   checkpoint(): TurnContextCheckpoint {
-    return { facts: { ...this.#facts }, redirectedOrigins: [...this.#redirectedOrigins] };
+    return {
+      facts: { ...this.#facts },
+      redirectedOrigins: [...this.#redirectedOrigins],
+      ...(this.#repetition ? { repetition: this.#repetition } : {}),
+    };
   }
 
   /** Advance only after the input was committed, so an aborted turn does not lose a delta. */
   accept(): void {
     this.#announced = { ...this.#facts };
+    this.#acceptedRepetition = this.#repetition;
+    this.#ineffective = false;
   }
 }
 

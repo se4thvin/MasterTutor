@@ -53,6 +53,7 @@ export const ATTR = {
   decideRetries: "mt.model.decide_retries",
   tokensInput: "mt.model.tokens.input",
   tokensCached: "mt.model.tokens.cached",
+  tokensCachedRatio: "mt.model.tokens.cached_ratio",
   tokensOutput: "mt.model.tokens.output",
   costUsd: "mt.model.cost_usd",
   tokenType: "mt.model.token_type",
@@ -174,6 +175,7 @@ export interface AttributeValues {
   "mt.model.decide_retries": number;
   "mt.model.tokens.input": number;
   "mt.model.tokens.cached": number;
+  "mt.model.tokens.cached_ratio": number;
   "mt.model.tokens.output": number;
   "mt.model.cost_usd": number;
   "mt.model.token_type": TokenType;

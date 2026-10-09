@@ -598,7 +598,7 @@ describe("RunLoop (spec §5.3)", () => {
       },
     ]);
     expect(await drive(human.loop)).toEqual({ kind: "waiting", reason: "takeover" });
-    const stuck = await setup([click(), click(), click(), done()]);
+    const stuck = await setup([click(), click(), click(), click(), done()]);
     expect(await drive(stuck.loop)).toEqual({ kind: "waiting", reason: "takeover" });
     expect(await status(stuck.run.id)).toMatchObject({ waitReason: "takeover" });
   });
@@ -629,8 +629,8 @@ describe("RunLoop (spec §5.3)", () => {
     expect(browser.functionRuns).toEqual([]);
   });
 
-  it("compacts above 200K input tokens and continues from the seed", async () => {
-    const big = await setup([{ ...click(), usage: { input: 210_000 } }, done()]);
+  it("compacts above 64K input tokens and continues from the seed", async () => {
+    const big = await setup([{ ...click(), usage: { input: 64_001 } }, done()]);
     expect(await drive(big.loop)).toEqual({ kind: "completed" });
     const requests = mock.requestsFor(big.name);
     expect(requests.some((r) => r.body.text?.format?.name === "compaction_summary")).toBe(true);
