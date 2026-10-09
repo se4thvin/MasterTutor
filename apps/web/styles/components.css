@@ -810,6 +810,8 @@
     }
   }
   .scheck-box {
+    /* Animated by a spring on the main thread (D28): its own layer keeps each frame off layout and paint. */
+    will-change: transform;
     position: relative;
     display: grid;
     place-items: center;
@@ -825,6 +827,7 @@
     box-shadow: inset 0 0 0 2px var(--label-3);
   }
   .scheck-fill {
+    will-change: transform;
     position: absolute;
     inset: 0;
     border-radius: inherit;
@@ -832,13 +835,20 @@
   }
   .scheck-tick {
     position: relative;
+    display: block;
     width: 70%;
     height: 70%;
-    fill: none;
-    stroke: var(--bg);
-    stroke-width: 2.6;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    will-change: transform, opacity;
+    & svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      fill: none;
+      stroke: var(--bg);
+      stroke-width: 2.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
   }
   .scheck-label {
     position: relative;

@@ -218,6 +218,9 @@
       0 0 0 0.03125rem var(--hairline),
       var(--e2);
     transform-origin: 50% 40%;
+    /* It scales on takeover (D28): the hint keeps its layer and raster scale, so the transition
+       never repaints the frame as it starts or ends. */
+    will-change: scale;
     transition-property: scale;
     transition-duration: var(--motion-spring-dur);
     transition-timing-function: var(--motion-spring);
@@ -559,6 +562,10 @@
        Visibility stays visible for the whole fade, so the exit still plays. */
     visibility: hidden;
     opacity: 0;
+    /* It slides and fades in (D28): a layer of its own, so the frame beneath never repaints as the
+       transition promotes and drops one. Its glass no longer blurs (only .lglass does), so the
+       backdrop filter no longer gives it that layer. */
+    will-change: translate, opacity;
     transition-property: translate, opacity, visibility;
     transition-duration: var(--motion-spring-dur), var(--motion-dur-base), var(--motion-dur-base);
     transition-timing-function:
