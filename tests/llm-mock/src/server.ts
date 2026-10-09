@@ -12,7 +12,7 @@ export interface LlmMock {
   setScenarios(list: readonly Scenario[]): void;
   /** One scenario's requests, or one run's when `nonce` is given (scenarioGoal). */
   requestsFor(name: string, nonce?: string): RecordedRequest[];
-  /** Answers structured Responses calls with json_schema `name` (OCR, filing) with `answer(body)`. */
+  /** Answers structured Responses calls with json_schema `name` (OCR, filing, run title) with `answer(body)`. */
   setStructured(name: string, answer: (body: MockRequestBody) => unknown): void;
   close(): Promise<void>;
 }
@@ -307,10 +307,11 @@ export async function startLlmMock(
     return images > 1 ? "Computer tool cannot use multiple image inputs." : null;
   };
 
-  /** Structured Responses calls (OCR, filing) carry no scenario tag; they route on text.format.name. */
+  /** Structured Responses calls (OCR, filing, run title) carry no scenario tag; they route on text.format.name. */
   const structured = new Map<string, (body: MockRequestBody) => unknown>([
     ["ocr_text", () => ({ markdown: "" })],
     ["filing_decision", () => ({ path: ["Inbox"], createLeaf: true })],
+    ["run_title", () => ({ title: "Mock run title" })],
   ]);
 
   const refuse = (

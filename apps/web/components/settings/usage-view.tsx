@@ -1,5 +1,6 @@
 "use client";
 
+import { RUN_TITLE_MAX, untrustedText } from "@mastertutor/contracts";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -111,7 +112,9 @@ export function UsageView() {
                   {data.perRun.map((r) => (
                     <tr key={r.runId}>
                       <td>
-                        <Link href={`/runs/${r.runId}`}>{r.goal}</Link>
+                        <Link href={`/runs/${r.runId}`}>
+                          <bdi>{untrustedText(r.title, RUN_TITLE_MAX)}</bdi>
+                        </Link>
                       </td>
                       <td>{r.status}</td>
                       <td>{r.steps}</td>

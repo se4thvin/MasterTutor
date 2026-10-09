@@ -27,6 +27,8 @@ import { ModelCaller } from "../llm/caller.ts";
 import { NUDGE } from "../llm/instructions.ts";
 import { FORBIDDEN_RESPONSE_FIELDS } from "../llm/openai.ts";
 import { createOpenAIModelClient } from "../llm/client.ts";
+import { createOpenAI } from "../llm/openai.ts";
+import { createRunTitler, type RunTitle, type RunTitler } from "../llm/run-title.ts";
 import { instantClock } from "../runtime/clock.ts";
 import { runtimeConfig } from "../runtime/config.ts";
 import { ControlHeld, Interrupted } from "../runtime/errors.ts";
@@ -112,6 +114,7 @@ async function setup(
     hooks?: Partial<RunHooks>;
     leaseExpired?: () => boolean;
     allowedOrigins?: string[];
+    titler?: RunTitler;
   } = {},
 ) {
   const name = `s${++counter}`;
@@ -139,6 +142,7 @@ async function setup(
     browser,
     hooks: withHooks(options.hooks),
     ...(options.leaseExpired ? { leaseExpired: options.leaseExpired } : {}),
+    ...(options.titler ? { titler: options.titler } : {}),
     clock: instantClock(),
     config: runtimeConfig(),
     log,
@@ -2024,5 +2028,78 @@ describe("tool profiles reach the model (Phase 10)", () => {
     const { name, loop } = await setup([done()]);
     await drive(loop);
     expect((mock.requestsFor(name)[0]!.body as { tools?: unknown[] }).tools).toHaveLength(7);
+  });
+});
+
+describe("the run title (generated off the step path)", () => {
+  /** The real titler against llm-mock; `pending` lets a test wait for its answer deterministically. */
+  function mockTitler() {
+    const real = createRunTitler(createOpenAI({ apiKey: "k", baseURL: `${mock.url}/v1` }));
+    const calls: Array<Promise<RunTitle>> = [];
+    const titler: RunTitler = {
+      generate: (run) => {
+        const call = real.generate(run);
+        calls.push(call);
+        return call;
+      },
+    };
+    return { titler, calls };
+  }
+  const titleEvents = async (runId: string) =>
+    (await owner.db.select().from(runEvents).where(eq(runEvents.runId, runId)))
+      .map((row) => row.payload)
+      .filter((event) => event.type === "title");
+  const stepSpend = async (runId: string) =>
+    (await owner.db.select().from(runSteps).where(eq(runSteps.runId, runId))).reduce(
+      (sum, step) => sum + (step.usage?.usd ?? 0),
+      0,
+    );
+
+  it("stores the title once, streams it, and charges it to the run's usage", async () => {
+    const { titler, calls } = mockTitler();
+    const { run, loop } = await setup([click(), done()], { titler });
+    expect(calls).toHaveLength(1);
+    await calls[0];
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    const row = await status(run.id);
+    expect(row?.title).toBe("Mock run title");
+    expect(await titleEvents(run.id)).toEqual([{ type: "title", title: "Mock run title" }]);
+    const titleRequest = mock.requests.filter((r) => r.body.text?.format?.name === "run_title");
+    expect(titleRequest.at(-1)?.body).toMatchObject({ model: MODELS.runTitle, store: false });
+    // The title's spend is on the run (and so its budget) but on no step.
+    const spent = await stepSpend(run.id);
+    expect(row!.usage.usd).toBeGreaterThan(spent);
+    expect(row!.usage.steps).toBe(
+      (await phases(run.id)).filter((p) => p.startsWith("decide")).length,
+    );
+  });
+
+  it("never replaces a stored title, and asks nothing once a run has one", async () => {
+    const { titler, calls } = mockTitler();
+    const { run, loop, reload } = await setup([done()], { titler });
+    await calls[0];
+    // Another writer got there first (a reclaimed run's earlier worker): the title is written once.
+    await owner.db.update(runs).set({ title: "Kept title" }).where(eq(runs.id, run.id));
+    expect(await drive(loop)).toEqual({ kind: "completed" });
+    expect((await status(run.id))?.title).toBe("Kept title");
+    expect(await titleEvents(run.id)).toEqual([]);
+    await reload();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the fallback silently when the title model fails, and the run goes on", async () => {
+    mock.setStructured("run_title", () => ({ title: "x".repeat(200) }));
+    try {
+      const { titler, calls } = mockTitler();
+      const { run, loop } = await setup([click(), done()], { titler });
+      await expect(calls[0]).rejects.toThrow();
+      expect(await drive(loop)).toEqual({ kind: "completed" });
+      const row = await status(run.id);
+      expect(row?.title).toBeNull();
+      expect(await titleEvents(run.id)).toEqual([]);
+      expect(row!.usage.usd).toBeCloseTo(await stepSpend(run.id), 6);
+    } finally {
+      mock.setStructured("run_title", () => ({ title: "Mock run title" }));
+    }
   });
 });

@@ -24,6 +24,7 @@ import type { SlotPool } from "../slots/pool.ts";
 import { renewLeases, type ClaimedRun } from "./claim.ts";
 import type { RunHooks, UserControlResult } from "./hooks.ts";
 import type { AttachedBrowser, ConnectBrowser } from "./loop-browser.ts";
+import type { RunTitler } from "../llm/run-title.ts";
 import { RunLoop, type StepOutcome } from "./run-loop.ts";
 import { isTerminal, readRunControl, snapshotOf } from "./run-state.ts";
 import { startUrl } from "./start-url.ts";
@@ -42,6 +43,7 @@ export interface WorkerDeps {
   config: RuntimeConfig;
   log: Log;
   connect: ConnectBrowser;
+  titler?: RunTitler;
 }
 
 const CONTINUE: StepOutcome = { kind: "continue" };
@@ -248,6 +250,7 @@ export class RunWorker {
         config: this.#deps.config,
         log: this.#deps.log,
         leaseExpired: () => this.#guard.expired,
+        titler: this.#deps.titler,
       },
       snapshotOf(run),
     );
