@@ -52,7 +52,7 @@ interface UserMessage {
   pickedUpAt: string | null;
 }
 /** A person changed the run's approval mode mid-run (run-mode). */
-export interface ModeChange {
+interface ModeChange {
   eventId: string;
   from: ApprovalMode;
   to: ApprovalMode;

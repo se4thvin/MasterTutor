@@ -222,7 +222,7 @@ export function thoughtParts(summary: string): { title: string | null; paragraph
 }
 
 /** The time of day, as the viewer reads it ("2:31 PM"). */
-export function wallClock(at: string): string {
+function wallClock(at: string): string {
   return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
