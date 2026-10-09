@@ -68,9 +68,13 @@ const slotsIdle = async (owner: DbHandle) =>
   (await owner.db.select().from(browserSlots).where(eq(browserSlots.state, "idle"))).length ===
   BEHAVIOUR_SLOTS.length;
 
+import { createGuardReviewer } from "../../apps/agent/src/guardrails/observer/reviewer.ts";
+import { createStepGuardFactory } from "../../apps/agent/src/guardrails/observer/guard.ts";
+
 export async function startBehaviourAgent(
   options: {
     scenarios?: Scenario[];
+    guard?: boolean;
     config?: Partial<RuntimeConfig>;
     clock?: Clock;
     /**
@@ -107,6 +111,9 @@ export async function startBehaviourAgent(
       db: agentDb,
       storage,
       model: createOpenAIModelClient(openai),
+      ...(options.guard
+        ? { guards: createStepGuardFactory({ reviewer: createGuardReviewer(openai) }) }
+        : {}),
       hooks: {
         // The fixture site stands in for a site with a saved sign-in: its pages carry password
         // fields, which without one pause the run (sign-in rule). OTHER has none.

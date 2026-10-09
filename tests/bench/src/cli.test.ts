@@ -226,6 +226,7 @@ describe("records", () => {
         name: "fixtures/activities@computer_use:auto_within_allowlist#abcd1234",
         toolProfile: "computer_use",
         approvalMode: "auto_within_allowlist",
+        observerMode: "shadow",
         attempt: 1,
         benchmarkRunId: null,
         runId: null,
@@ -453,4 +454,26 @@ describe("bench regrade (I5)", () => {
     });
     expect(() => parseCli(["regrade"], () => [])).toThrow(UsageError);
   });
+});
+it("defaults every suite to shadow, with explicit enforce available", () => {
+  const options = (argv: string[]) => {
+    const command = parseCli(argv, () => []);
+    if (command.kind !== "run" && command.kind !== "baseline") throw new Error("expected a run");
+    return command.options;
+  };
+  expect(
+    options(["run", "--suite", "zybooks", "--approval-mode", "bypass", "--acknowledge-bypass"]),
+  ).toMatchObject({ observerMode: "shadow" });
+  expect(options(["run", "--suite", "fixtures"])).toMatchObject({ observerMode: "shadow" });
+  expect(options(["run", "--suite", "fixtures", "--observer-mode", "shadow"])).toMatchObject({
+    observerMode: "shadow",
+  });
+});
+
+it("validates an explicit Observer rollout", () => {
+  const command = parseCli(["run", "--suite", "fixtures", "--observer-mode", "enforce"], () => []);
+  expect(command).toMatchObject({ options: { observerMode: "enforce" } });
+  expect(() =>
+    parseCli(["run", "--suite", "fixtures", "--observer-mode", "unsafe"], () => []),
+  ).toThrow("--observer-mode");
 });

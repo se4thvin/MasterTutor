@@ -38,3 +38,10 @@ describe("guard_reviews (spec §6.7)", () => {
     expect(await loadGuardLedger(agent.db, runId)).toEqual({ consecutive: 2, total: 3 });
   });
 });
+
+it("defaults new database runs to shadow", async () => {
+  const { workspaceId } = await seedMember(owner.db);
+  const runId = await seedRun(owner.db, { workspaceId });
+  const [run] = await owner.sql`select observer_mode from runs where id = ${runId}`;
+  expect(run?.observer_mode).toBe("shadow");
+});

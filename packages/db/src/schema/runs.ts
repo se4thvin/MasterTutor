@@ -84,7 +84,7 @@ export const runs = pgTable(
     liveViewerId: text("live_viewer_id"),
     approvalMode: approvalModeEnum("approval_mode").notNull().default("ask"),
     /** Guard rollout (D52, spec §6.8): shadow records only. */
-    observerMode: observerModeEnum("observer_mode").notNull().default("enforce"),
+    observerMode: observerModeEnum("observer_mode").notNull().default("shadow"),
     toolProfile: toolProfileEnum("tool_profile").notNull().default("browser_use"),
     model: text("model").notNull().default(MODELS.agentPrimary),
     previousResponseId: text("previous_response_id"),

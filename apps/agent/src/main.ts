@@ -16,6 +16,9 @@ import { createOpenAIModelClient } from "./llm/client.ts";
 import { createOpenAI } from "./llm/openai.ts";
 import { createRunTitler } from "./llm/run-title.ts";
 import { composeRunHooks } from "./loop/hooks.ts";
+import { createGuardReviewer } from "./guardrails/observer/reviewer.ts";
+import { createStepGuardFactory } from "./guardrails/observer/guard.ts";
+import { assertGuardWired } from "./boot-checks.ts";
 import { Supervisor } from "./loop/supervisor.ts";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime/config.ts";
 import { slotCdpBaseUrl } from "./slots/probe.ts";
@@ -79,7 +82,12 @@ try {
   process.exit(1);
 }
 
+// D52: one Guard factory per process; every run gets its own StepGuard (ledger restored from DB).
+const guards = createStepGuardFactory({ reviewer: createGuardReviewer(openai) });
+assertGuardWired({ guards });
+
 const supervisor = new Supervisor({
+  guards,
   db: database,
   storage,
   model: createOpenAIModelClient(openai),

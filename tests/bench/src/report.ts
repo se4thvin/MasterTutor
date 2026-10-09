@@ -1,5 +1,10 @@
 import { basename, dirname } from "node:path";
-import { stepScreenshotPath, type ApprovalMode, type ToolProfile } from "@mastertutor/contracts";
+import {
+  stepScreenshotPath,
+  type ApprovalMode,
+  type ObserverMode,
+  type ToolProfile,
+} from "@mastertutor/contracts";
 import type { Failure, WatchSummary } from "./classify.ts";
 import type { SectionOutcome, Verdict } from "./criteria.ts";
 import type { StackName, SuiteId } from "./types.ts";
@@ -9,6 +14,7 @@ export interface BenchmarkResult {
   name: string;
   toolProfile: ToolProfile;
   approvalMode: ApprovalMode;
+  observerMode: ObserverMode;
   attempt: number;
   benchmarkRunId: string | null;
   runId: string | null;
@@ -157,7 +163,7 @@ function record(r: SuiteRunResult, x: BenchmarkResult): string[] {
     `### ${x.name} (attempt ${x.attempt})`,
     "",
     `- Outcome: **${x.outcome}**${x.error ? ` (${x.error})` : ""}`,
-    `- Approval mode: ${x.approvalMode}; track: ${x.toolProfile}`,
+    `- Approval mode: ${x.approvalMode}; observer: ${x.observerMode ?? "unknown"}; track: ${x.toolProfile}`,
     `- Run: ${x.runId === null ? "none" : `\`${x.runId}\` (${r.baseUrl}/runs/${x.runId})`}; benchmark run: ${x.benchmarkRunId ?? "none"}`,
     `- Verify runs: ${x.verifyRunIds.map((v) => `\`${v}\``).join(", ") || "none"}`,
     `- Verdict: ${x.verdict?.summary ?? "none"}`,

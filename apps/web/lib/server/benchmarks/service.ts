@@ -11,6 +11,7 @@ import {
   type ListBenchmarkRunsInput,
   type RunSummary,
   type StartBenchmarkResult,
+  type ObserverMode,
 } from "@mastertutor/contracts";
 import { createLogger } from "@mastertutor/contracts/server";
 import { benchmarkRuns, benchmarks, runEvents, runs, type Database } from "@mastertutor/db";
@@ -105,6 +106,7 @@ export async function startBenchmark(
   scope: BenchmarkScope,
   benchmarkId: string,
   create: CreateRunFn = createRun,
+  observerMode?: ObserverMode,
 ): Promise<StartBenchmarkResult> {
   return db.transaction(async (tx) => {
     const [benchmark] = await tx
@@ -115,6 +117,7 @@ export async function startBenchmark(
     const bypass = benchmark.approvalMode === "bypass";
     const runInput = CreateRunInput.parse({
       goal: benchmark.task,
+      ...(observerMode ? { observerMode } : {}),
       allowedOrigins: benchmark.allowedOrigins,
       budget: benchmark.budget,
       targetFolderId: null,

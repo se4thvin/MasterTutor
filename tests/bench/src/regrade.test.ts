@@ -68,6 +68,7 @@ function writeRecord(takeovers = 0): string {
     name: "fixtures/readings@browser_use:auto_within_allowlist#abcd1234",
     toolProfile: "browser_use",
     approvalMode: "auto_within_allowlist",
+    observerMode: "shadow",
     attempt: 1,
     benchmarkRunId: null,
     runId: MAIN,

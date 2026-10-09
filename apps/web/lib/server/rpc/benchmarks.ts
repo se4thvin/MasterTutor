@@ -38,7 +38,13 @@ export function createBenchmarkProcedures(deps: { db(): DbHandle }) {
     start: scoped.benchmarks.start.handler(({ context, input }) => {
       const scope: BenchmarkScope = { workspaceId: context.workspaceId, actor: context.actor };
       return served(() =>
-        startBenchmark(context.db.db, scope, input.benchmarkId).catch(mapBenchmarkError),
+        startBenchmark(
+          context.db.db,
+          scope,
+          input.benchmarkId,
+          undefined,
+          input.observerMode,
+        ).catch(mapBenchmarkError),
       );
     }),
     runs: scoped.benchmarks.runs.handler(async ({ context, input }) => ({

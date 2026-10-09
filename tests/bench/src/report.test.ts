@@ -17,6 +17,7 @@ const result: BenchmarkResult = {
   name: "zybooks/reading-1@computer_use:bypass#abc12345",
   toolProfile: "computer_use",
   approvalMode: "bypass",
+  observerMode: "shadow",
   attempt: 1,
   benchmarkRunId: "55555555-5555-4555-8555-555555555555",
   runId: RUN,
