@@ -22,6 +22,13 @@ export interface MaskSources {
   /** `text` with every registered secret value replaced by SECRET_REDACTION; `text` itself when none occurs. */
   redact(text: string): string;
   /**
+   * True when `text` shows a registered secret distinctive enough that the match cannot be
+   * ordinary text (a PIN or a plain-word password reads like any number or word). Only this may
+   * withhold a whole screenshot; `redact` stays exact for every secret. Optional: without it,
+   * every redactable match counts.
+   */
+  showsSecret?(text: string): boolean;
+  /**
    * Frames holding vault-filled nodes, by CDP frame id and the document (loaderId) filled, whatever
    * session registered them (N2): a frame whose CDP session was replaced still counts as filled
    * while it shows that document. Optional: no fills, no frames.
@@ -160,6 +167,18 @@ export async function provablyNotShown(cdp: CDPSession, backendNodeId: number): 
   }
 }
 
+/**
+ * True while a field the vault filled may still be on screen. A filled node that is provably
+ * detached or hidden (an in-page sign-in removed or hid its form, with no navigation) counts as
+ * gone, exactly like one whose document a navigation replaced (F8): R-E5 keeps the agent sighted
+ * after login.
+ */
+export async function hasShownFilledNode(cdp: CDPSession, sources: MaskSources): Promise<boolean> {
+  for (const backendNodeId of sources.nodeIds(cdp))
+    if (!(await provablyNotShown(cdp, backendNodeId))) return true;
+  return false;
+}
+
 export async function collectMaskBoxes(
   session: BrowserSession,
   sources: MaskSources,
@@ -287,9 +306,11 @@ export async function hasFilledOutOfProcessFrame(
 type AxText = { name?: { value?: unknown }; value?: { value?: unknown } };
 
 function hasSecretText(nodes: readonly AxText[], sources: MaskSources): boolean {
+  const shows = (value: string) =>
+    sources.showsSecret ? sources.showsSecret(value) : containsSecret(sources, value);
   return nodes.some((node) =>
     [node.name?.value, node.value?.value].some(
-      (value) => typeof value === "string" && containsSecret(sources, value),
+      (value) => typeof value === "string" && shows(value),
     ),
   );
 }

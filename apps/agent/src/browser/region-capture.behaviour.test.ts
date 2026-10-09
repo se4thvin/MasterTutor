@@ -40,6 +40,26 @@ describe("captureMaskedRegion", () => {
       false,
     );
   });
+  it("captures beside a cross-origin frame once the vault-filled field has left the page (R-E5, no navigation)", async () => {
+    const worlds = await session.worlds();
+    const objectId = await worlds.evaluateHandle(
+      "(() => { const f = document.createElement('input'); document.body.append(f); return f; })()",
+    );
+    const cdp = await session.cdp();
+    const { node } = await cdp.send("DOM.describeNode", { objectId: objectId! });
+    await worlds.evaluateHandle("document.body.lastElementChild.remove()");
+    const filled: MaskSources = { ...vault, nodeIds: () => [node.backendNodeId] };
+    const png = await captureMaskedRegion(
+      session,
+      filled,
+      { clip: { x: 0, y: 0, width: 400, height: 200 }, scale: 1 },
+      signal,
+    );
+    expect(png).not.toBeNull();
+    expect(await regionIsBlack(Buffer.from(png!), { x: 10, y: 10, width: 100, height: 100 })).toBe(
+      false,
+    );
+  });
   it("withholds only regions that overlap a cross-origin frame while vault material is registered", async () => {
     expect(
       await captureMaskedRegion(

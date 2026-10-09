@@ -34,7 +34,14 @@ describe("syncRunQueries (delight X6, I3)", () => {
     expect(qc.getQueryState(listKey)?.isInvalidated).toBe(true);
   });
 
-  it("does nothing for a batch without a status event", () => {
+  it("invalidates the lists when the run's title arrives, so they show it", () => {
+    const qc = seeded();
+    syncRunQueries(qc, RECORDED_RUN_ID, [rec({ type: "title", title: "Week 2 notes" })]);
+    expect(qc.getQueryData<RunDetail>(getKey)?.status).toBe("running");
+    expect(qc.getQueryState(listKey)?.isInvalidated).toBe(true);
+  });
+
+  it("does nothing for a batch without a status or title event", () => {
     const qc = seeded();
     syncRunQueries(qc, RECORDED_RUN_ID, [rec({ type: "user_message", text: "hi" })]);
     expect(qc.getQueryState(listKey)?.isInvalidated).toBe(false);

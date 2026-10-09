@@ -128,8 +128,10 @@ describe("runs.* on the live router (Task 0A)", () => {
       created = await client().runs.create({ goal: "Find a good intro to Rust lifetimes" });
     });
     expect(decodeNotify("run_queued", payload)).toEqual({ runId: created!.id });
+    // The run starts at once under no stored title: the agent writes the generated one later.
     expect(await runRow(created!.id)).toMatchObject({
       goal: "Find a good intro to Rust lifetimes",
+      title: null,
       status: "queued",
       approvalMode: "ask",
       allowedOrigins: [],
@@ -209,6 +211,40 @@ describe("runs.* on the live router (Task 0A)", () => {
     });
     const mine = await client().runs.list({ limit: 100 });
     expect(mine.items.some((r) => ids.includes(r.id))).toBe(false);
+  });
+
+  it("shows the stored title, else the fallback from the goal (no backfill), in list and get", async () => {
+    const member = await seedMember(owner.db);
+    const lister = { id: member.userId, name: "T", email: `${member.userId}@example.test` };
+    const [titled, untitled] = await owner.db
+      .insert(runs)
+      .values([
+        {
+          workspaceId: member.workspaceId,
+          goal: "https://learn.example.edu/course/4/section/4?sig=AbC123\nmore",
+          title: "Notes on two's complement",
+          allowedOrigins: [],
+          createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, 1)),
+        },
+        {
+          workspaceId: member.workspaceId,
+          goal: "https://learn.example.edu/course/4/section/4?sig=AbC123\nmore",
+          allowedOrigins: [],
+          createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, 0)),
+        },
+      ])
+      .returning({ id: runs.id });
+    const listed = await client(lister).runs.list({});
+    expect(listed.items.map((r) => r.title)).toEqual([
+      "Notes on two's complement",
+      "learn.example.edu",
+    ]);
+    expect((await client(lister).runs.get({ runId: untitled!.id })).title).toBe(
+      "learn.example.edu",
+    );
+    expect((await client(lister).runs.get({ runId: titled!.id })).title).toBe(
+      "Notes on two's complement",
+    );
   });
 
   it("gets a run with its pending approvals and last event id, and hides other workspaces", async () => {

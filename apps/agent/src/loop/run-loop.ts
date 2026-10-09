@@ -49,6 +49,7 @@ import {
   type PendingCall,
 } from "../llm/items.ts";
 import { addUsage, usageDelta } from "../llm/pricing.ts";
+import type { RunTitle, RunTitler } from "../llm/run-title.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { RuntimeConfig } from "../runtime/config.ts";
 import { ContextOverflow, ControlHeld, Interrupted, interruptionOf } from "../runtime/errors.ts";
@@ -92,6 +93,7 @@ import {
   readWakeRequest,
   signInNeeded,
   signInPausedOrigins,
+  storeRunTitle,
   type RunSnapshot,
 } from "./run-state.ts";
 import type { StepCommit, StepRecord, StepStore, Transition } from "./step-store.ts";
@@ -125,6 +127,8 @@ export interface RunLoopDeps {
   log: Log;
   /** True once the worker's local lease deadline has passed: no model call after it (I2). */
   leaseExpired?: () => boolean;
+  /** Generates the run's title off the step path; without it the fallback title stays. */
+  titler?: RunTitler;
 }
 
 /** What running one call did: its result, and whether the run must wait for the user. */
@@ -231,6 +235,8 @@ export class RunLoop {
   #history: TranscriptEntry[] = [];
   /** Recent screenshots as data URLs, by storage key, so a request never re-reads them (M5). */
   readonly #images = new Map<string, string>();
+  /** A generated title that arrived and waits for the next step boundary to be committed. */
+  #title: RunTitle | null = null;
 
   private constructor(
     deps: RunLoopDeps,
@@ -261,6 +267,7 @@ export class RunLoop {
       else if (!awaitingItem) loop.#results.set(call.callId, notRun(call, RESTARTED));
     }
     for (const decision of loop.#pending?.decided ?? []) loop.#applyDecision(decision);
+    if (run.title === null) loop.#requestTitle();
     return loop;
   }
 
@@ -298,7 +305,8 @@ export class RunLoop {
   }
 
   /** Seam 1 (spec §7.3): each phase is one mt.step span, the root of its trace (spec §7.2). */
-  step(signal: AbortSignal): Promise<StepOutcome> {
+  async step(signal: AbortSignal): Promise<StepOutcome> {
+    if (this.#title) await this.#commitTitle(this.#title);
     const phase = this.#next;
     return instrument(
       SPAN.step,
@@ -327,6 +335,39 @@ export class RunLoop {
   }
 
   /* ---------------------------------- helpers ---------------------------------- */
+
+  /**
+   * Asks for the title in parallel with the run, never on its path: the run starts under the
+   * fallback title, and a failure or timeout leaves that in place (logged, never retried here).
+   */
+  #requestTitle(): void {
+    const titler = this.#deps.titler;
+    if (!titler) return;
+    void titler.generate(this.#run).then(
+      (title) => {
+        this.#title = title;
+      },
+      (error: unknown) =>
+        this.#deps.log.warn(
+          { runId: this.#run.id, errName: error instanceof Error ? error.name : "unknown" },
+          "run title failed; the fallback title stays",
+        ),
+    );
+  }
+
+  /** At a step boundary: the title is written once and its cost joins the run's usage and budget. */
+  async #commitTitle(title: RunTitle): Promise<void> {
+    this.#title = null;
+    this.#run = {
+      ...this.#run,
+      title: title.title,
+      usage: addUsage(this.#run.usage, title.usage),
+    };
+    await this.#deps.store.commit({
+      run: { usage: this.#run.usage },
+      extra: (tx) => storeRunTitle(tx, this.#run.id, title.title),
+    });
+  }
 
   #tick(): Usage {
     const now = this.#deps.clock.now();

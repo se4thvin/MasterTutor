@@ -165,6 +165,29 @@ describe("model screenshots (spec §9, §12 masking tests)", () => {
     expect((await captureModelScreenshot(s, filled, signal)).dropped).toBe(true);
   });
 
+  it.each(["removes", "hides"] as const)(
+    "a secret-holding run stays sighted after an in-page sign-in %s the filled field (R-E5, no navigation)",
+    async (how) => {
+      // A single-page app signs in without a navigation: the filled node stays registered for the
+      // document, but nothing secret is on screen, so the model must get the real page.
+      const s = await open("/masking-xorigin.html");
+      await s.page.waitForSelector("iframe");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const id = await plainNode(s);
+      const filled: MaskSources = { ...secrets(["zz-vault-pass-77"]), nodeIds: () => [id] };
+      await s.page.evaluate((mode) => {
+        const field = document.getElementById("plain")!;
+        if (mode === "removes") field.remove();
+        else field.style.display = "none";
+      }, how);
+      const shot = await captureModelScreenshot(s, filled, signal);
+      expect(shot.withheld).toBeNull();
+      expect(shot.dropped).toBe(false);
+      const { channels } = await sharp(shot.png).stats();
+      expect(channels.some((channel) => channel.max > 0)).toBe(true);
+    },
+  );
+
   async function openOopif(): Promise<BrowserSession> {
     const s = await open("/masking-oopif.html");
     await expect

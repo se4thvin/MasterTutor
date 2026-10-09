@@ -8,6 +8,7 @@ import {
   drawMasks,
   hasCrossOriginFrames,
   hasFilledOutOfProcessFrame,
+  hasShownFilledNode,
   sameBoxes,
   type Box,
   type MaskSources,
@@ -34,6 +35,11 @@ export const WITHHELD = {
   moved: "a secret field moved while it was taken",
   unreadable: "it could not be checked for saved secrets",
   navigating: "the page kept navigating while it was taken",
+  crossOriginFrame:
+    "a field filled from the vault is on screen beside an embedded frame from another site, which cannot be masked",
+  filledFrame: "a field filled from the vault sits inside an embedded frame that cannot be masked",
+  unlocatable: "a field filled from the vault could not be located on the page",
+  secretText: "a saved secret shows as text on the page",
 } as const;
 
 /**
@@ -226,13 +232,17 @@ export async function captureModelScreenshot(
     layout = await session.layout();
     // While vault-filled fields are on this page, inputs inside cross-origin frames cannot be
     // boxed from this target, so any such frame makes the screenshot undeliverable (R-E5).
-    if (sources.nodeIds(await session.cdp()).length > 0 && (await hasCrossOriginFrames(session))) {
-      return drop();
+    if (
+      (await hasShownFilledNode(await session.cdp(), sources)) &&
+      (await hasCrossOriginFrames(session))
+    ) {
+      return drop(WITHHELD.crossOriginFrame);
     }
     // A field the vault filled inside an out-of-process frame cannot be boxed from here either.
-    if (await hasFilledOutOfProcessFrame(session, sources, signal)) return drop();
+    if (await hasFilledOutOfProcessFrame(session, sources, signal))
+      return drop(WITHHELD.filledFrame);
     const before = await collectMaskBoxes(session, sources);
-    if (before.unverifiable > 0) return drop();
+    if (before.unverifiable > 0) return drop(WITHHELD.unlocatable);
     session.guard.assertAgent(signal);
     const data = await captureFrame(session, signal);
     if (data === null) {
@@ -241,7 +251,7 @@ export async function captureModelScreenshot(
       continue;
     }
     const after = await collectMaskBoxes(session, sources);
-    if (after.unverifiable > 0) return drop();
+    if (after.unverifiable > 0) return drop(WITHHELD.unlocatable);
     if (!sameBoxes(before.boxes, after.boxes)) {
       retake = WITHHELD.moved;
       continue;
@@ -258,7 +268,7 @@ export async function captureModelScreenshot(
     ) {
       continue;
     }
-    if (await containsSecretText(session, sources, signal)) return drop();
+    if (await containsSecretText(session, sources, signal)) return drop(WITHHELD.secretText);
     const shot = await screened(
       await finalize(raw, layout, after.boxes),
       sources,

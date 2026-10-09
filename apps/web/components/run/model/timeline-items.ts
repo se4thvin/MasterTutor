@@ -1,4 +1,4 @@
-import { POLICY_DECIDER, compareEventIds } from "@mastertutor/contracts";
+import { POLICY_DECIDER, compareEventIds, untrustedText } from "@mastertutor/contracts";
 import type { StatusMarkStatus } from "@/lib/status.ts";
 import { requestSummary } from "./approval-copy.ts";
 import { errorLine } from "./copy.ts";
@@ -10,7 +10,6 @@ import {
   type RunModel,
   type StepRow,
 } from "./run-model.ts";
-import { untrustedText } from "./untrusted-text.ts";
 
 /** A chat message is shown whole up to this many characters. */
 const MAX_MESSAGE = 2_000;

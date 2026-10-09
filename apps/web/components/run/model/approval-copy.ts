@@ -1,6 +1,6 @@
 import type { ApprovalRequest, ComputerAction } from "@mastertutor/contracts";
 import { hostAndPath, pageHost } from "./copy.ts";
-import { untrustedText } from "./untrusted-text.ts";
+import { untrustedText } from "@mastertutor/contracts";
 
 /** Page-derived labels are untrusted (spec §5.5): cleaned and capped. */
 export const MAX_LABEL = 120;

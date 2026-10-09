@@ -30,6 +30,7 @@ const shot = (seq: number) => `runs/${RECORDED_RUN_ID}/steps/${seq}-r${seq}k7.pn
 const DETAIL = {
   id: RECORDED_RUN_ID,
   goal: `Week 2 of the course: every lecture, figure and table. Skip the quizzes.\n\nSources:\n- ${COURSE}`,
+  title: "Week 2 lectures, figures and tables",
   status: "running",
   waitReason: null,
   controller: "agent",
