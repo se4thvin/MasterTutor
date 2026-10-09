@@ -21,6 +21,15 @@ async function openReplay(page: Page) {
     await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
   });
   await row.click();
+  // The chosen row may glide into view inside the list: wait until the list stands still.
+  await page.waitForFunction(
+    () =>
+      new Promise<boolean>((done) => {
+        const list = document.querySelector(".alist-list");
+        const before = list?.scrollTop ?? 0;
+        setTimeout(() => done((list?.scrollTop ?? 0) === before), 150);
+      }),
+  );
   if (isPhone(page)) {
     await page.keyboard.press("Escape");
     // The tap that chose the row leaves the pointer where the frame's shield now sits (Pip in the
@@ -28,10 +37,11 @@ async function openReplay(page: Page) {
     await page.mouse.move(0, 0);
     // Wait for the sheet to unmount: until then its scroll lock hides #main's scrollbar.
     await page.getByRole("dialog", { name: "Thread" }).waitFor({ state: "detached" });
-    // Closing the sheet returns focus to the peek bar below the frame, which scrolls the page;
-    // check the frame where a viewer sees it, not under the sticky toolbar.
-    await page.locator("#main").evaluate((main) => main.scrollTo({ top: 0 }));
   }
+  // Reaching the row may scroll the page (the sheet's focus return at phone width, the click's
+  // own scroll-into-view where the pane sits under the frame); check the frame where a viewer
+  // sees it, not under the sticky toolbar.
+  await page.locator("#main").evaluate((main) => main.scrollTo({ top: 0 }));
 }
 
 /** Every run-view state in fixture mode (F3 QA, D22), shared by run-qa.spec.ts and visual.spec.ts. */
@@ -97,6 +107,8 @@ export const RUN_SCENARIOS: readonly RunScenario[] = [
       await emit(page, [
         rec({ type: "status", status: "waiting", waitReason: "otp", reason: null }),
       ]);
+      // The code box is a lazily loaded chunk: the screen is set once it shows.
+      await expect(page.getByText("Enter the code sent to you").first()).toBeAttached();
     },
   },
   {

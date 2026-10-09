@@ -1479,6 +1479,9 @@
     overflow: auto;
     border-radius: inherit;
     overscroll-behavior: contain;
+    /* The thread pins itself to its end (thread-body.tsx): the browser's own scroll anchoring
+       would move it when an entry above resizes, and read as the reader scrolling away. */
+    overflow-anchor: none;
     list-style: none;
     scrollbar-width: thin;
     .sheet & {

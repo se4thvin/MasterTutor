@@ -39,10 +39,15 @@ function ThreadList(p: ThreadProps) {
   const selected = selectedRowSeq(p.items, p.replaySeq, clickedSeq);
   // Opens at the newest entry and stays there until the reader scrolls back through the history.
   const pinned = useRef(true);
+  /** Where the last pin left the list: its own scroll event is not the reader scrolling away. */
+  const pinnedTop = useRef<number | null>(null);
   useEffect(() => {
     const list = listRef.current;
     if (!list) return undefined;
     const track = () => {
+      // A pin's scroll event can arrive after the list grew again (a lazily loaded entry): only
+      // the reader moving the list decides whether it stays pinned.
+      if (list.scrollTop === pinnedTop.current) return;
       pinned.current = list.scrollHeight - list.scrollTop - list.clientHeight < PINNED_PX;
     };
     list.addEventListener("scroll", track, { passive: true });
@@ -52,14 +57,17 @@ function ThreadList(p: ThreadProps) {
     const list = listRef.current;
     if (!list || p.replaySeq !== null) return undefined;
     const pin = () => {
-      if (pinned.current) list.scrollTop = list.scrollHeight;
+      if (!pinned.current) return;
+      list.scrollTop = list.scrollHeight;
+      pinnedTop.current = list.scrollTop;
     };
     pin();
-    // The tail can grow after it mounts (the lazily loaded code box): keep the end in view.
-    const tail = list.lastElementChild;
-    if (!tail) return undefined;
+    // Entries can grow after they mount (the lazily loaded code box, web fonts reflowing the
+    // text), and the list itself can change height with the window: either keeps the end in
+    // view while the reader is there.
     const observer = new ResizeObserver(pin);
-    observer.observe(tail);
+    observer.observe(list);
+    for (const entry of list.children) observer.observe(entry);
     return () => observer.disconnect();
   }, [p.items.length, p.otp, p.thinking, p.replaySeq]);
   useEffect(() => {
