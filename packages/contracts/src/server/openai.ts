@@ -9,6 +9,8 @@ import { zodTextFormat } from "openai/helpers/zod";
 import type {
   Response,
   ResponseCreateParamsNonStreaming,
+  ResponseCreateParamsStreaming,
+  ResponseOutputItem,
   ResponseInput,
 } from "openai/resources/responses/responses";
 import { z } from "zod";
@@ -20,6 +22,7 @@ export { zodResponsesFunction, zodTextFormat } from "openai/helpers/zod";
 export type {
   ResponseCreateParamsNonStreaming,
   ResponseInputItem,
+  ResponseOutputItem,
   Tool as ResponsesTool,
 } from "openai/resources/responses/responses";
 
@@ -34,6 +37,8 @@ export const FORBIDDEN_RESPONSE_FIELDS = [
   "safety_identifier",
   "conversation",
   "background",
+  // Amended D52: all supported Observer models refuse in_memory; omit the option entirely.
+  "prompt_cache_retention",
 ] as const;
 
 export type StatelessResponseParams = Omit<
@@ -49,6 +54,11 @@ export function statelessParams(
   for (const field of FORBIDDEN_RESPONSE_FIELDS) delete copy[field];
   return { ...(copy as StatelessResponseParams), store: false };
 }
+
+export type StreamEvent =
+  | { type: "text"; delta: string }
+  | { type: "item"; item: ResponseOutputItem }
+  | { type: "completed"; model: string; tokens: TokenCounts };
 
 export interface TokenCounts {
   input: number;
@@ -110,6 +120,10 @@ export interface Transcript {
 export interface StatelessOpenAI extends EmbeddingsClient {
   responses: {
     create(params: StatelessResponseParams, options: { signal: AbortSignal }): Promise<Response>;
+    stream(
+      params: StatelessResponseParams,
+      options: { signal: AbortSignal },
+    ): AsyncIterable<StreamEvent>;
     /** A structured answer validated by `schema` (OCR, filing). Throws when it does not parse. */
     parse<S extends z.ZodType>(
       request: StructuredRequest<S>,
@@ -172,6 +186,36 @@ export function createOpenAI(options: {
   return {
     responses: {
       create,
+      async *stream(params, requestOptions) {
+        const events = await client.responses.create(
+          { ...statelessParams(params), stream: true } as ResponseCreateParamsStreaming,
+          { signal: requestOptions.signal },
+        );
+        let completed = false;
+        for await (const event of events) {
+          switch (event.type) {
+            case "response.output_text.delta":
+              yield { type: "text", delta: event.delta };
+              break;
+            case "response.output_item.done":
+              yield { type: "item", item: event.item };
+              break;
+            case "response.completed":
+              completed = true;
+              yield {
+                type: "completed",
+                model: event.response.model,
+                tokens: tokensOf(event.response),
+              };
+              break;
+            case "response.failed":
+            case "response.incomplete":
+            case "error":
+              throw new Error(`stream ended with ${event.type}`);
+          }
+        }
+        if (!completed) throw new Error("stream ended without completion");
+      },
       async parse(request, requestOptions) {
         const response = await create(
           {

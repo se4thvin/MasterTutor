@@ -1,3 +1,4 @@
+import { streamFrames } from "./stream.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { hashEmbedding } from "@mastertutor/contracts/testing";
@@ -243,7 +244,7 @@ export async function startLlmMock(
     }
     const input = usage.input ?? 1_000;
     const out = usage.output ?? 100;
-    send(response, 200, {
+    const payload = {
       id,
       object: "response",
       created_at: Math.floor(Date.now() / 1000),
@@ -269,7 +270,13 @@ export async function startLlmMock(
         output_tokens_details: { reasoning_tokens: 0 },
         total_tokens: input + out,
       },
-    });
+    };
+    if (body.stream === true) {
+      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+      response.end(streamFrames(payload));
+      return;
+    }
+    send(response, 200, payload);
   };
 
   /**
