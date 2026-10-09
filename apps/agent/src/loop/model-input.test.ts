@@ -1,3 +1,4 @@
+import { wrapUntrusted } from "@mastertutor/contracts";
 import { describe, expect, it } from "vitest";
 import { TINY_PNG } from "../testing/fake-loop-browser.ts";
 import { createMemoryStorage } from "../testing/memory-storage.ts";
@@ -197,5 +198,65 @@ describe("rehydrateImages", () => {
     expect(text).not.toContain("garage:");
     expect(JSON.stringify(items[1])).toContain(SCREENSHOT_OMITTED);
     expect((items[2] as { output: { image_url: string } }).output.image_url).toBe(BLANK_SCREENSHOT);
+  });
+});
+
+describe("read_page window", () => {
+  it("keeps two latest results verbatim and older stubs byte-stable across turns and reloads", () => {
+    const history: TranscriptEntry[] = [];
+    const outputs: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const text = wrapUntrusted(
+        "https://example.com",
+        JSON.stringify({
+          url: "https://example.com/" + i,
+          hash: String(i).repeat(64),
+          text: "PAGE".repeat(1000),
+        }),
+      );
+      outputs.push(text);
+      history.push(
+        entry("out", {
+          type: "function_call",
+          name: "read_page",
+          call_id: "p" + i,
+          arguments: "{}",
+        }),
+        entry("in", { type: "function_call_output", call_id: "p" + i, output: text }),
+      );
+    }
+    const first = buildModelInput(history.slice(0, 6), []);
+    const next = buildModelInput(history, []);
+    expect(next[1]).toEqual(first[1]);
+    expect(JSON.stringify(next[1])).toContain("page text elided:");
+    expect(JSON.stringify(next[1])).toContain("https://example.com/0");
+    expect((next[5] as { output: string }).output).toBe(outputs[2]);
+    expect((next[7] as { output: string }).output).toBe(outputs[3]);
+    expect(buildModelInput(JSON.parse(JSON.stringify(history)), [])).toEqual(next);
+    expect(history[1]!.item.output).toBe(outputs[0]);
+  });
+
+  it("never elides other tool results, unchanged responses, reasoning or user messages", () => {
+    const history = [entry("in", user("keep me")), entry("out", reasoning)];
+    for (let i = 0; i < 4; i++)
+      history.push(
+        entry("out", { type: "function_call", name: "capture", call_id: "p" + i, arguments: "{}" }),
+        entry("in", { type: "function_call_output", call_id: "p" + i, output: "keep result" }),
+      );
+    for (let i = 0; i < 4; i++)
+      history.push(
+        entry("out", {
+          type: "function_call",
+          name: "read_page",
+          call_id: "u" + i,
+          arguments: "{}",
+        }),
+        entry("in", {
+          type: "function_call_output",
+          call_id: "u" + i,
+          output: JSON.stringify({ unchanged: true }),
+        }),
+      );
+    expect(buildModelInput(history, [])).toEqual(history.map((e) => e.item));
   });
 });
