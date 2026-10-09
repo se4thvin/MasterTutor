@@ -58,10 +58,6 @@
   /* Agent cursor over remote web content: dark arrow, white outline, in either theme. */
   --cursor: #111111;
   --cursor-outline: #ffffff;
-  /* 3D hero art palette (run 16). components/hero only. */
-  --hero-aqua: #e4f5f3;
-  --hero-aqua-deep: #a9dcd8;
-  --hero-bondi: #1f8f96;
   /* Folder tiles (FolderFloat): a light blue manila, Apple-folder tinted; ink meets AA on the flap. */
   --folder-back: #74aeeb;
   --folder-front: #8fc1f3;

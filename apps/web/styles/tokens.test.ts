@@ -127,9 +127,9 @@ describe("SpringCheck ring", () => {
 });
 
 describe("F3/F5 art tokens", () => {
-  it("defines the agent cursor, hero palette and PiP layer once, in the light block", () => {
+  it("defines the agent cursor and PiP layer once, in the light block", () => {
     const light = blockAfter("/* light */");
-    for (const name of ["cursor", "cursor-outline", "hero-aqua", "hero-aqua-deep", "hero-bondi"]) {
+    for (const name of ["cursor", "cursor-outline"]) {
       expect(light[name], name).toMatch(/^#[0-9a-f]{6}$/);
     }
     expect(Number(light["z-pip"])).toBeLessThan(Number(light["z-scrim"]));

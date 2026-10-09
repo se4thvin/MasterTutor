@@ -196,6 +196,19 @@ export const MOTIONS: readonly Motion[] = [
     durationMs: 1500,
   },
   {
+    // Pip blends idle → celebrating in its canvas: no layout or paint in its subtree (D28).
+    id: "pip-state-blend",
+    files: [],
+    scope: '[data-qa="pip-single"]',
+    open: async (page) => {
+      await page.goto("/design/mascot?only=idle&pip=live");
+      await page.locator(".pip").waitFor();
+      await page.waitForTimeout(1_500);
+    },
+    trigger: async (page) => page.getByRole("button", { name: "Celebrating", exact: true }).click(),
+    durationMs: 900,
+  },
+  {
     id: "press-feedback",
     files: [],
     scope: "main",
