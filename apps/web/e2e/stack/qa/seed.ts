@@ -480,15 +480,6 @@ const BLOCKS: readonly {
     markdown: String.raw`$$B_n = -\sum_{k=0}^{n-1} \binom{n}{k} \frac{B_k}{n-k+1}$$`,
   },
   {
-    note: SEED.notes.verified,
-    position: "a7",
-    type: "commentary",
-    origin: "model",
-    anchor: "null",
-    verified: false,
-    markdown: "Summary: the Notes contain what is often called the first published algorithm.",
-  },
-  {
     note: SEED.notes.review,
     position: "a0",
     type: "paragraph",

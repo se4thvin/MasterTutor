@@ -14,7 +14,6 @@ export const TOOL_NAMES = [
   "fill_credential",
   "use_passkey",
   "video",
-  "annotate",
 ] as const;
 export const ToolName = z.enum(TOOL_NAMES);
 export type ToolName = z.infer<typeof ToolName>;

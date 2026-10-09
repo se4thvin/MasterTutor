@@ -104,15 +104,7 @@ export const BLOCK_TYPES = [
 export const BlockType = z.enum(BLOCK_TYPES);
 export type BlockType = z.infer<typeof BlockType>;
 
-export const BLOCK_ORIGINS = [
-  "dom",
-  "pdf",
-  "captions",
-  "asr",
-  "ocr_model",
-  "model",
-  "user",
-] as const;
+export const BLOCK_ORIGINS = ["dom", "pdf", "captions", "asr", "ocr_model", "user"] as const;
 export const BlockOrigin = z.enum(BLOCK_ORIGINS);
 export type BlockOrigin = z.infer<typeof BlockOrigin>;
 
@@ -174,10 +166,6 @@ export type WakeReason = z.infer<typeof WakeReason>;
 export const BENCHMARK_OUTCOMES = ["pending", "passed", "partial", "failed", "error"] as const;
 export const BenchmarkOutcome = z.enum(BENCHMARK_OUTCOMES);
 export type BenchmarkOutcome = z.infer<typeof BenchmarkOutcome>;
-
-export const ANNOTATE_KINDS = ["summary", "commentary", "heading"] as const;
-export const AnnotateKind = z.enum(ANNOTATE_KINDS);
-export type AnnotateKind = z.infer<typeof AnnotateKind>;
 
 export const VIDEO_OPS = ["captions", "chapters", "keyframes", "transcribe"] as const;
 export const VideoOp = z.enum(VIDEO_OPS);

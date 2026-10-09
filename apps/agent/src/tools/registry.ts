@@ -15,7 +15,7 @@ import { ToolError, type ApprovalContext, type RegisteredTool, type ToolContext 
 
 export interface ToolRun {
   output: string;
-  /** True when the tool wrote note blocks (capture, annotate, video), which counts as progress. */
+  /** True when the tool wrote note blocks (capture, video), which counts as progress. */
   notesChanged: boolean;
   /** True when the tool answered with an error: the loop discards its staged step writes. */
   failed: boolean;

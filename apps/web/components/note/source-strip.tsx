@@ -10,8 +10,8 @@ import { safePageUrl } from "@/lib/notes/provenance.ts";
 import { AssetImage } from "./asset-image.tsx";
 
 export function SourceStrip({ detail }: { detail: NoteDetail }) {
-  const verified = detail.blocks.filter((b) => b.verified && b.origin !== "model").length;
-  const captured = detail.blocks.filter((b) => b.origin !== "model").length;
+  const verified = detail.blocks.filter((b) => b.verified && b.origin !== "user").length;
+  const captured = detail.blocks.filter((b) => b.origin !== "user").length;
   return (
     <div className="srcstrip">
       {detail.sources.map((s) => {

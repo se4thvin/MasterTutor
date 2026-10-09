@@ -135,7 +135,7 @@ export async function persistCapture(
   });
 }
 
-/** The writer's and asset store's refusals as typed tool errors (capture and annotate share it). */
+/** The writer's and asset store's refusals as typed tool errors. */
 export async function asToolErrors<T>(work: () => Promise<T>): Promise<T> {
   try {
     return await work();

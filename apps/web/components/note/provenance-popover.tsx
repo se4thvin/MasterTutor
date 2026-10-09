@@ -88,7 +88,7 @@ export function ProvenancePopover({
                 Edit block
               </Button>
             ) : null}
-            {block.origin !== "model" ? (
+            {block.origin !== "user" ? (
               <Button
                 onClick={() => {
                   onOpenChange(false);

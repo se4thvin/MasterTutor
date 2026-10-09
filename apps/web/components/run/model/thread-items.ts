@@ -127,7 +127,6 @@ const VERBS: Readonly<Record<string, string>> = {
   fill_credential: "Fill",
   use_passkey: "Passkey",
   video: "Video",
-  annotate: "Note",
 };
 
 const GLYPHS: Readonly<Record<string, IconName>> = {
@@ -136,7 +135,6 @@ const GLYPHS: Readonly<Record<string, IconName>> = {
   fill_credential: "password",
   use_passkey: "passkey",
   video: "video",
-  annotate: "edit",
 };
 
 /** What an action card shows beside its verb: the kind of input, else the tool. */

@@ -77,13 +77,6 @@ function BlockContent({ block }: { block: NoteBlock }) {
           </div>
         </div>
       );
-    case "commentary":
-      return (
-        <aside className="blk-commentary" aria-label="Agent's note">
-          <span className="eyebrow">Agent's note</span>
-          <BlockMarkdown markdown={block.markdown} />
-        </aside>
-      );
     default:
       return (
         <div
