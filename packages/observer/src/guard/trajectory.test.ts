@@ -70,3 +70,18 @@ describe("the trajectory (spec §6.9)", () => {
     expect(t.digest({ goal: "g", mode: "ask", allowedOrigins: [] }).entries).toHaveLength(50);
   });
 });
+
+it("does not count watcher verdicts as periodic triggered turns", () => {
+  const t = new Trajectory();
+  const event: RunEvent = {
+    type: "guard",
+    verdict: "allow",
+    category: "other",
+    stage: "screen",
+    rollout: "shadow",
+    applied: false,
+    items: 0,
+    flows: 0,
+  };
+  for (let i = 0; i < 10; i++) expect(t.add([event]).reviewDue).toBe(false);
+});

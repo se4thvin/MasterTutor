@@ -127,6 +127,13 @@
       "when": 1791569400679,
       "tag": "0017_guard_shadow_default",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791570479158,
+      "tag": "0018_guard_checkpoint",
+      "breakpoints": true
     }
   ]
 }

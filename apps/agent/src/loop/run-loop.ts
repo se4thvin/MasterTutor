@@ -12,6 +12,8 @@ import type { EgressContext } from "../guardrails/policy.ts";
 import { randomUUID } from "node:crypto";
 import {
   type ApprovalMode,
+  type GuardTurnState,
+  EMPTY_USAGE,
   GUARD_BLOCKED_NOTE,
   OBSERVER_DECIDER,
   type Decider,
@@ -289,6 +291,7 @@ export class RunLoop {
   #title: RunTitle | null = null;
   readonly #provenance: ProvenanceStore;
   #guard: StepGuard | null = null;
+  #guardTurn: GuardTurnState | null = null;
 
   private constructor(
     deps: RunLoopDeps,
@@ -319,13 +322,17 @@ export class RunLoop {
       : null;
 
     if (loop.#guard)
-      deps.store.onCommitted((events) => {
-        loop.#guard!.updateContext(loop.#run.approvalMode, loop.#run.allowedOrigins);
-        loop.#guard!.ingest(events);
-      });
+      deps.store.onCommitted(
+        () => loop.#guard!.startWatcher(),
+        (events) => {
+          loop.#guard!.updateContext(loop.#run.approvalMode, loop.#run.allowedOrigins);
+          return loop.#guard!.stage(events);
+        },
+      );
 
     loop.#calls = unansweredCalls(transcript);
     loop.#pending = await loadPendingApproval(deps.db, run.id);
+    loop.#guardTurn = loop.#pending?.guardTurn ?? null;
     loop.#lastInputTokens = await lastInputTokens(deps.db, run.id);
     loop.#signInPaused = await signInPausedOrigins(deps.db, run.id);
     // While a risky item waits for approval its calls have not run yet; anything else unanswered
@@ -386,16 +393,6 @@ export class RunLoop {
     const pending = this.#pending;
     if (pending) {
       const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
-      if (decision && decision.status !== "pending" && decision.decidedBy)
-        this.#guard?.ingest([
-          {
-            type: "approval_resolved",
-            approvalId: pending.approvalId,
-            status: decision.status,
-            decidedBy: decision.decidedBy,
-          },
-        ]);
-
       if (decision && decision.status !== "pending") return true;
     }
     if (waitReason === "otp" && (await hasUnusedOtpCode(this.#deps.db, this.#run.id))) return true;
@@ -417,6 +414,15 @@ export class RunLoop {
     if (this.#title) await this.#commitTitle(this.#title);
     await this.#commitWatcher();
     const phase = this.#next;
+    // A hold received during a person's wait must precede the resumed batch too.
+    if (phase !== "observe" && this.#observation) {
+      const hold = this.#guard?.takeHold();
+      if (hold)
+        return this.#ask(this.#hold(hold.verdict, hold.category, hold.rationale), {
+          callIds: [],
+          item: null,
+        });
+    }
     return instrument(
       SPAN.step,
       { [ATTR.runId]: this.#run.id, [ATTR.stepPhase]: phase },
@@ -428,6 +434,19 @@ export class RunLoop {
       },
       { expected: interruptionOf },
     );
+  }
+
+  /** Worker release owns the watcher while its lease still permits accounting writes. */
+  async releaseGuard(): Promise<void> {
+    this.#guard?.stopWatcher();
+    await this.#guard?.settled?.();
+    await this.#commitWatcher();
+    if (this.#guard) await this.#deps.store.commit({});
+  }
+
+  /** The old worker may not checkpoint after lease loss. */
+  stopGuard(): void {
+    this.#guard?.stopWatcher(true);
   }
 
   /** The watcher's spend and verdict event, committed at a step boundary like the title. */
@@ -558,8 +577,8 @@ export class RunLoop {
   }
 
   /** True when an earlier action of the same batch was refused, so this one can never run. */
-  #unreachable(item: RiskyItem): boolean {
-    if (item.index === null) return false;
+  #unreachable(item: { callId: string | null; index: number | null }): boolean {
+    if (item.index === null || item.callId === null) return false;
     for (let index = 0; index < item.index; index++) {
       if (this.#decided.get(actionItem(item.callId, index))?.approved === false) return true;
     }
@@ -893,6 +912,7 @@ export class RunLoop {
     this.#notes = [];
     this.#results.clear();
     this.#decided.clear();
+    this.#guardTurn = null;
     this.#calls = parsed.calls;
     if (this.#calls.length > 0) {
       this.#next = "approve";
@@ -1078,7 +1098,13 @@ export class RunLoop {
         (s) => !this.#decided.has(s.item) && !(s.callId !== null && this.#results.has(s.callId)),
       )
       .map((s) => ({ ...s, policy: policy.get(s.item) ?? null }));
-    const guard = await this.#guardReview(open, signal);
+    const guard = this.#guardTurn ? this.#deferredGuard() : await this.#guardReview(open, signal);
+    if (guard && !guard.limit && this.#guardTurn === null)
+      this.#guardTurn = {
+        outcomes: [...guard.outcomes].map(([item, outcome]) => ({ item, ...outcome })),
+        ledgerBefore: guard.ledgerBefore ?? null,
+        blocked: 0,
+      };
     if (guard?.limit) {
       await this.#commitGuard(guard, [], []);
       return this.#ask(this.#hold("escalate", "denial_limit", ""), { callIds: [], item: null });
@@ -1095,8 +1121,7 @@ export class RunLoop {
       const riskyItem = byItem.get(s.item) ?? null;
       const outcome = guard?.outcomes.get(s.item);
       if (!riskyItem && !outcome) continue;
-      if (riskyItem && (this.#unreachable(riskyItem) || this.#results.has(riskyItem.callId)))
-        continue;
+      if (this.#unreachable(s) || (s.callId !== null && this.#results.has(s.callId))) continue;
       const base: PolicyDecision = riskyItem ? policy.get(s.item)! : "approved";
       const final = strictest(base, outcome?.effect ?? "none");
       // The Guard caused or shares this outcome: the person sees its warning (an observer card).
@@ -1122,9 +1147,12 @@ export class RunLoop {
         decidedAt: Date.now(),
       });
     }
+    if (this.#guardTurn)
+      this.#guardTurn.blocked += observerRows.filter((row) => row.status === "denied").length;
     if (guard)
       this.#guard?.recordApplied(guard, {
-        blocked: observerRows.filter((row) => row.status === "denied").length,
+        blocked:
+          this.#guardTurn?.blocked ?? observerRows.filter((row) => row.status === "denied").length,
         asked: ask?.request.kind === "observer",
       });
     const wrote = await this.#commitGuard(guard, policyRows, observerRows);
@@ -1142,6 +1170,32 @@ export class RunLoop {
       });
     this.#next = "act";
     return CONTINUE;
+  }
+
+  #deferredGuard(): GuardTurnResult {
+    const turn = this.#guardTurn!;
+    const first = turn.outcomes[0];
+    return {
+      outcomes: new Map(turn.outcomes.map(({ item, ...outcome }) => [item, outcome])),
+      ...(turn.ledgerBefore ? { ledgerBefore: turn.ledgerBefore } : {}),
+      event: null,
+      review: first
+        ? {
+            stage: "rules",
+            verdict: first.verdict,
+            category: first.category,
+            rollout: this.#guard!.rollout,
+            applied: false,
+            input: null,
+            latencyMs: 0,
+            usd: 0,
+            consecutive: 0,
+            total: 0,
+          }
+        : null,
+      usage: EMPTY_USAGE,
+      limit: false,
+    };
   }
 
   /** The Guard's review of what is open, its spend charged to the run (spec §6.5). */
@@ -1256,6 +1310,7 @@ export class RunLoop {
     const approvalId = randomUUID();
     const result: ApproveStepResult = {
       approvalId,
+      guardTurn: this.#guardTurn,
       callIds: scope.callIds,
       item: scope.item,
       target: scope.target ?? null,
@@ -1385,6 +1440,14 @@ export class RunLoop {
         };
       };
       const run = await this.#deps.browser.runComputer(call.actions, signal, gate);
+      if (
+        run.notes.length === 0 &&
+        run.handOver === null &&
+        call.actions
+          .slice(0, run.executed)
+          .some((a) => ["click", "double_click", "type", "keypress"].includes(a.type))
+      )
+        this.#guard?.recordActuation(this.#obs().origin);
       // Refused because the page could not be guarded: only a person's approval lets it run, so
       // the policy (auto or bypass) must not approve the retry again (m10).
       if (run.notes.some((note) => UNGUARDED_REFUSALS.includes(note))) this.#personNext = true;
@@ -1980,6 +2043,33 @@ export class RunLoop {
       });
       this.#next = "decide";
       return CONTINUE;
+    }
+    if (
+      pending.request.kind === "observer" &&
+      pending.request.category === "guard_unavailable" &&
+      this.#guardTurn
+    ) {
+      const unavailable = this.#guardTurn.outcomes.filter(
+        (o) => o.category === "guard_unavailable",
+      );
+      if (decision.status === "approved")
+        this.#guardTurn.outcomes = this.#guardTurn.outcomes.filter(
+          (o) => o.category !== "guard_unavailable",
+        );
+      else {
+        for (const outcome of unavailable)
+          this.#applyDecision({
+            item: outcome.item,
+            approved: false,
+            note: DENIED,
+            kind: "observer",
+            label: null,
+            target: null,
+            context: null,
+            decidedBy: decision.decidedBy,
+            decidedAt: decision.decidedAt?.getTime() ?? Date.now(),
+          });
+      }
     }
     if (pending.item !== null) {
       this.#applyDecision({

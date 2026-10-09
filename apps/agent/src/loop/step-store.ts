@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   TERMINAL_RUN_STATUSES,
   type Budget,
+  type GuardState,
   type Plan,
   type RunError,
   type RunEvent,
@@ -148,10 +149,16 @@ export class StepStore {
     );
   }
 
-  /** The Guard's trajectory watcher (spec §6.9): told each committed step's events, in order. */
-  onCommitted(listener: (events: readonly RunEvent[]) => void): void {
+  /** The observer stages only metadata inside the transaction, then starts work after commit. */
+  onCommitted(
+    listener: (events: readonly RunEvent[]) => void,
+    checkpoint?: (events: readonly RunEvent[]) => GuardState,
+  ): void {
     this.#onCommitted = listener;
+    this.#observerStage = checkpoint ?? null;
   }
+
+  #observerStage: ((events: readonly RunEvent[]) => GuardState) | null = null;
 
   nextSeq(): number {
     return this.#seq++;
@@ -352,6 +359,11 @@ export class StepStore {
         });
       events.push(...(commit.events ?? []));
       await commit.extra?.(tx);
+      if (this.#observerStage)
+        await tx
+          .update(runs)
+          .set({ guardState: this.#observerStage(events) })
+          .where(eq(runs.id, run.id));
       await emitRunEvents(tx, run.id, events);
       return events;
     });

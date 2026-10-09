@@ -1,3 +1,5 @@
+import { GuardState } from "@mastertutor/contracts";
+import { runs } from "../schema/runs.ts";
 import type {
   GuardCategory,
   GuardInput,
@@ -51,4 +53,10 @@ export async function loadGuardInputs(db: DbLike, runId: string): Promise<GuardI
     .where(eq(guardReviews.runId, runId))
     .orderBy(asc(guardReviews.createdAt));
   return rows.flatMap((row) => (row.input ? [row.input] : []));
+}
+
+/** Invalid checkpoints fail the worker closed instead of silently dropping protection. */
+export async function loadGuardState(db: DbLike, runId: string): Promise<GuardState | null> {
+  const [row] = await db.select({ state: runs.guardState }).from(runs).where(eq(runs.id, runId));
+  return row?.state ? GuardState.parse(row.state) : null;
 }

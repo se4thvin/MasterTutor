@@ -149,6 +149,7 @@ export class RunWorker {
   }
 
   #loseLease(): void {
+    this.#loop?.stopGuard();
     this.#stop = "lease_lost";
     this.#abort.abort(new Interrupted("lease_lost"));
     this.#latch.open();
@@ -460,6 +461,7 @@ export class RunWorker {
   async #release(options: { transition?: Transition; wake?: boolean }): Promise<void> {
     const { pool, config, log } = this.#deps;
     const slotName = this.#claim.slotName;
+    await this.#loop?.releaseGuard();
     const storage =
       options.transition?.to === "failed"
         ? null

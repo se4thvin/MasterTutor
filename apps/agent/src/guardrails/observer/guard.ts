@@ -4,9 +4,10 @@ import {
   POST_INJECTION_STEPS,
   type GuardInput,
   type GuardVerdict,
+  GuardState,
 } from "@mastertutor/contracts";
 import { ATTR, SPAN } from "@mastertutor/contracts/telemetry";
-import { loadGuardLedger } from "@mastertutor/db";
+import { loadGuardLedger, loadGuardState } from "@mastertutor/db";
 import { RedactionTripped, assertRedacted } from "@mastertutor/observer";
 import {
   DenialLedger,
@@ -36,24 +37,33 @@ const NOTHING: GuardTurnResult = {
   usage: EMPTY_USAGE,
   limit: false,
 };
-const ACTUATIONS = new Set(["click", "type", "keypress", "submit"]);
 
 export function createStepGuard(options: {
   run: RunSnapshot;
   reviewer: GuardReviewer;
   redact(text: string): string;
   ledger: LedgerState;
+  state?: GuardState;
 }): StepGuard {
   const { run, reviewer, redact } = options;
   const rollout = run.observerMode;
-  let ledger = new DenialLedger(options.ledger);
-  const beforeReview = new WeakMap<GuardTurnResult, LedgerState>();
-  const actuated = new Set<string>();
-  const initialOrigins = run.allowedOrigins.length;
-  let turns = 0;
-  let injectionAt: number | null = null;
-  let injectionSignals = 0;
-  const watcher = new TrajectoryWatcher({ run, reviewer, redact });
+  let ledger = new DenialLedger(options.state?.ledger ?? options.ledger);
+  const actuated = new Set(options.state?.actuatedOrigins ?? []);
+  const initialOrigins = options.state?.initialOrigins ?? run.allowedOrigins.length;
+  let turns = options.state?.turns ?? 0;
+  let injectionAt: number | null = options.state?.injectionAt ?? null;
+  let injectionSignals = options.state?.injectionSignals ?? 0;
+  const watcher = new TrajectoryWatcher({ run, reviewer, redact, state: options.state });
+  const checkpoint = (): GuardState =>
+    GuardState.parse({
+      turns,
+      initialOrigins,
+      injectionAt,
+      injectionSignals,
+      actuatedOrigins: [...actuated],
+      ledger: ledger.state,
+      ...watcher.state,
+    });
 
   const row = (
     verdict: GuardVerdict,
@@ -74,6 +84,15 @@ export function createStepGuard(options: {
 
   return {
     rollout,
+    stage(events) {
+      watcher.stage(events);
+      return checkpoint();
+    },
+    startWatcher: () => watcher.start(),
+    stopWatcher: (abortCurrent) => watcher.stop(abortCurrent),
+    recordActuation(origin) {
+      if (origin !== null) actuated.add(origin);
+    },
     updateContext: (mode, origins) => watcher.updateContext(mode, origins),
     review(turn, signal) {
       return instrument(
@@ -124,8 +143,6 @@ export function createStepGuard(options: {
               ),
             };
           }
-          if (turn.pageOrigin !== null && reviewed.some((r) => ACTUATIONS.has(r.draft.actionClass)))
-            actuated.add(turn.pageOrigin);
           const flows = reviewed.filter((r) => r.draft.sent?.provenance === "other_origin").length;
           const items = Math.min(reviewed.length, GUARD_LIMITS.items);
 
@@ -185,6 +202,7 @@ export function createStepGuard(options: {
               },
             });
             // Nothing leaves the process if the exact-match redactor would change one character.
+            assertRedacted(input.goal, redact);
             assertRedacted(JSON.stringify(input), redact);
             outcome = await reviewer.review(input, signal);
             failure = outcome.failure;
@@ -230,6 +248,7 @@ export function createStepGuard(options: {
           });
           const result: GuardTurnResult = {
             outcomes,
+            ledgerBefore: previous,
             event: {
               type: "guard",
               verdict: verdict.verdict,
@@ -244,15 +263,13 @@ export function createStepGuard(options: {
             usage: outcome.usage,
             limit: false,
           };
-          beforeReview.set(result, previous);
           return result;
         },
       );
     },
     recordApplied(result, applied) {
-      const previous = beforeReview.get(result);
+      const previous = result.ledgerBefore;
       if (!previous) return;
-      beforeReview.delete(result);
       ledger = new DenialLedger(previous);
       ledger.recordTurn(applied.blocked);
       if (result.review)
@@ -282,6 +299,7 @@ export function createStepGuardFactory(deps: { reviewer: GuardReviewer }): StepG
         reviewer: deps.reviewer,
         redact,
         ledger: await loadGuardLedger(db, run.id),
+        state: (await loadGuardState(db, run.id)) ?? undefined,
       });
     },
   };

@@ -182,3 +182,26 @@ it("counts only observer blocks actually applied by the loop", async () => {
   g.recordApplied(result, { blocked: 0, asked: false });
   expect(result.review).toMatchObject({ consecutive: 0, total: 0, applied: false });
 });
+
+it("reviews the same off-allowlist origin again after a block", async () => {
+  const inputs: GuardInput[] = [];
+  const g = guard({ verdict: "block" }, { inputs });
+  await g.review(turn(), signal());
+  const retry = await g.review(turn(), signal());
+  expect(inputs).toHaveLength(2);
+  expect(retry.outcomes.get("c1#0")?.effect).toBe("deny");
+});
+
+it("trips on an exact secret containing JSON escapes before serializing the goal", async () => {
+  const inputs: GuardInput[] = [];
+  const secret = 'canary"quoted';
+  const g = createStepGuard({
+    run: { ...RUN, goal: `Take notes ${secret}` },
+    reviewer: fakeReviewer({ verdict: "allow" }, inputs),
+    redact: (t) => t.replaceAll(secret, "[secret]"),
+    ledger: { consecutive: 0, total: 0 },
+  });
+  const result = await g.review(turn(), signal());
+  expect(inputs).toEqual([]);
+  expect(result.outcomes.get("c1#0")?.category).toBe("guard_unavailable");
+});

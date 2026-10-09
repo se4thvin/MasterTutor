@@ -1,9 +1,6 @@
-import { GUARD_ESCALATION } from "@mastertutor/contracts";
+import { GUARD_ESCALATION, type GuardLedgerState } from "@mastertutor/contracts";
 
-export interface LedgerState {
-  consecutive: number;
-  total: number;
-}
+export type LedgerState = GuardLedgerState;
 
 /**
  * Deny-and-continue has a budget (GD §2.4, Claude Code's thresholds): after 3 turns in a row with

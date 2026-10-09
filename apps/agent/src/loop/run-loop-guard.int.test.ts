@@ -1,3 +1,4 @@
+import type { MockTurn } from "../../../../tests/llm-mock/src/scenario.ts";
 import { describe, expect, it } from "vitest";
 import { GUARD_BLOCKED_NOTE } from "@mastertutor/contracts";
 import { createOpenAI } from "../llm/openai.ts";
@@ -355,4 +356,179 @@ it("charges an asynchronous review that finishes while the run completes", async
       (e) => e.type === "guard" && e.items === 0 && e.stage === "review",
     ),
   ).toBe(true);
+});
+
+const batch = (): MockTurn => ({
+  outputs: [
+    {
+      type: "computer",
+      actions: [
+        { type: "click", x: 10, y: 20, button: "left" },
+        { type: "click", x: 12, y: 20, button: "left" },
+      ],
+    },
+  ],
+});
+const screens = () =>
+  h.mock.requests.filter(
+    (r) =>
+      (r.body.text as { format?: { name?: string } } | undefined)?.format?.name === "guard_screen",
+  ).length;
+
+it("retains the later block across an earlier policy card and restart without re-review", async () => {
+  answer("review", {
+    verdict: "block",
+    category: "goal_drift",
+    itemKeys: ["i2"],
+    rationale: "Later blocked.",
+  });
+  const s = await h.setup([batch(), done()], {
+    approvalMode: "ask",
+    observerMode: "enforce",
+    guards: guards(),
+  });
+  riskyAt(s.browser, 10, 12);
+  const before = screens();
+  expect(await drive(s.loop)).toEqual({ kind: "waiting", reason: "approval" });
+  await decideApproval(s.run.id, "approved");
+  answer("allow");
+  const restored = await s.reload();
+  await restored.resume(new AbortController().signal);
+  expect(await drive(restored)).toEqual({ kind: "waiting", reason: "approval" });
+  expect((await approvalRows(s.run.id)).find((r) => r.status === "pending")?.request).toMatchObject(
+    { kind: "observer", verdict: "block", rationale: "Later blocked." },
+  );
+  expect(screens() - before).toBe(1);
+});
+
+it("asks one outage card for a multi-action turn and preserves its override across restart", async () => {
+  h.mock.setStructured("guard_screen", () => {
+    throw new Error("batch outage");
+  });
+  const s = await h.setup([batch(), done()], {
+    approvalMode: "bypass",
+    observerMode: "enforce",
+    guards: guards(),
+  });
+  riskyAt(s.browser, 10, 12);
+  expect(await drive(s.loop)).toEqual({ kind: "waiting", reason: "approval" });
+  await decideApproval(s.run.id, "approved");
+  const restored = await s.reload();
+  await restored.resume(new AbortController().signal);
+  const outcome = await drive(restored);
+  expect(h.mock.failures.splice(0)).toEqual(["mock error: batch outage"]);
+  expect(outcome.kind).toBe("completed");
+  expect((await approvalRows(s.run.id)).filter((r) => r.kind === "observer")).toHaveLength(1);
+  expect(s.browser.executed).toHaveLength(2);
+});
+
+it("counts a human denial once through the worker hasNews then resume sequence", async () => {
+  answer("allow");
+  const s = await h.setup([click(), click(12), done()], {
+    approvalMode: "ask",
+    observerMode: "enforce",
+    guards: guards(),
+  });
+  riskyAt(s.browser, 10, 12);
+  expect(await driveGuard(s.loop)).toEqual({ kind: "waiting", reason: "approval" });
+  await decideApproval(s.run.id, "denied");
+  expect(await s.loop.hasNews("approval")).toBe(true);
+  await s.loop.resume(new AbortController().signal);
+  expect(await driveGuard(s.loop)).toEqual({ kind: "waiting", reason: "approval" });
+  expect((await approvalRows(s.run.id)).find((r) => r.status === "pending")?.kind).toBe(
+    "risky_click",
+  );
+  expect(
+    (await h.events(s.run.id, "guard")).filter((e) => e.type === "guard" && e.items === 0),
+  ).toHaveLength(0);
+});
+
+it("restores elevated risk after a detector has aged out of the recent window", async () => {
+  answer("allow");
+  const s = await h.setup([click(), done()], {
+    approvalMode: "bypass",
+    observerMode: "enforce",
+    guards: guards(),
+  });
+  const g = liveGuards.get(s.run.id)!;
+  const errors = Array.from({ length: 5 }, () => ({
+    type: "error" as const,
+    code: "test",
+    message: "Untrusted",
+  }));
+  g.ingest(errors);
+  await g.settled?.();
+  g.ingest(
+    Array.from({ length: 220 }, (_, seq) => ({
+      type: "step",
+      seq,
+      phase: "act",
+      state: "done",
+      caption: null,
+      url: "http://site.fixtures.test/",
+      screenshotKey: null,
+      action: { tool: "computer", summary: "Untrusted summary", point: null },
+    })),
+  );
+  await s.loop.step(new AbortController().signal);
+  const restored = await s.reload();
+  const before = screens();
+  expect((await drive(restored)).kind).toBe("completed");
+  expect(screens() - before).toBe(1);
+});
+
+it("restores the post-injection window without replaying its previous review", async () => {
+  answer("allow");
+  const first: MockTurn = {
+    outputs: [
+      {
+        type: "computer",
+        actions: [{ type: "click", x: 10, y: 20, button: "left" }],
+        safetyChecks: [{ id: "sc1", code: "malicious_instructions", message: "Untrusted prose" }],
+      },
+    ],
+  };
+  const s = await h.setup([first, click(12), done()], {
+    approvalMode: "bypass",
+    observerMode: "enforce",
+    guards: guards(),
+  });
+  expect(await drive(s.loop)).toEqual({ kind: "waiting", reason: "approval" });
+  await decideApproval(s.run.id, "denied");
+  const restored = await s.reload();
+  const before = screens();
+  await restored.resume(new AbortController().signal);
+  expect((await drive(restored)).kind).toBe("completed");
+  expect(screens() - before).toBe(1);
+});
+
+it("restores a watcher hold received during an approval wait before any action runs", async () => {
+  answer("allow");
+  const s = await h.setup([click(), done()], {
+    approvalMode: "ask",
+    observerMode: "enforce",
+    guards: guards(),
+  });
+  riskyAt(s.browser, 10);
+  expect(await drive(s.loop)).toEqual({ kind: "waiting", reason: "approval" });
+  answer("review", {
+    verdict: "block",
+    category: "goal_drift",
+    itemKeys: [],
+    rationale: "Hold after waiting.",
+  });
+  const g = liveGuards.get(s.run.id)!;
+  g.ingest(
+    Array.from({ length: 5 }, () => ({ type: "error", code: "test", message: "untrusted" })),
+  );
+  await g.settled?.();
+  await s.loop.releaseGuard();
+  const restored = await s.reload();
+  await decideApproval(s.run.id, "approved");
+  await restored.resume(new AbortController().signal);
+  expect(await drive(restored)).toEqual({ kind: "waiting", reason: "approval" });
+  expect((await approvalRows(s.run.id)).find((r) => r.status === "pending")?.request).toMatchObject(
+    { kind: "observer", subject: null, rationale: "Hold after waiting." },
+  );
+  expect(s.browser.executed).toEqual([]);
 });

@@ -1,7 +1,6 @@
 import type {
   ApprovalRequest,
   ApprovalMode,
-  GuardCategory,
   ObserverMode,
   RunEvent,
   Usage,
@@ -9,6 +8,7 @@ import type {
   FunctionToolName,
   PolicyDecision,
   RiskLevel,
+  GuardState,
 } from "@mastertutor/contracts";
 import type { TargetDescription } from "../../browser/page-helpers.ts";
 import type { ProvenanceLabel } from "../provenance.ts";
@@ -43,16 +43,11 @@ export interface TurnFacts {
 }
 
 import type { GuardReviewRow, Database } from "@mastertutor/db";
-import type { GuardEffect, LedgerState } from "@mastertutor/observer/guard";
+import type { LedgerState } from "@mastertutor/observer/guard";
 import type { RunSnapshot } from "../../loop/run-state.ts";
 
-export interface GuardItemOutcome {
-  effect: Exclude<GuardEffect, "none">;
-  verdict: "escalate" | "block";
-  category: GuardCategory;
-  /** Model output, cleaned: for the person's card only, never the agent or telemetry. */
-  rationale: string;
-}
+export type { GuardItemOutcome, GuardHold } from "@mastertutor/contracts";
+import type { GuardItemOutcome, GuardHold } from "@mastertutor/contracts";
 export type GuardEvent = Extract<RunEvent, { type: "guard" }>;
 
 export interface GuardTurnRequest {
@@ -67,6 +62,7 @@ export interface GuardTurnRequest {
 export interface GuardTurnResult {
   /** Items whose decision the Guard changes (enforce only), by loop item key. */
   outcomes: ReadonlyMap<string, GuardItemOutcome>;
+  ledgerBefore?: LedgerState;
   event: GuardEvent | null;
   review: Omit<GuardReviewRow, "runId" | "stepSeq"> | null;
   usage: Usage;
@@ -74,15 +70,14 @@ export interface GuardTurnResult {
   limit: boolean;
 }
 
-export interface GuardHold {
-  verdict: "escalate" | "block";
-  category: GuardCategory;
-  rationale: string;
-}
-
 /** The Guard for one run (spec §6). Injected through RunLoopDeps.guards; tests may omit it. */
 export interface StepGuard {
   readonly rollout: ObserverMode;
+  /** Pure metadata staging inside a step transaction; asynchronous calls start only after commit. */
+  stage(events: readonly RunEvent[]): GuardState;
+  startWatcher(): void;
+  stopWatcher(abortCurrent?: boolean): void;
+  recordActuation(origin: string | null): void;
   updateContext(mode: ApprovalMode, allowedOrigins: readonly string[]): void;
   review(turn: GuardTurnRequest, signal: AbortSignal): Promise<GuardTurnResult>;
   /** Reconcile proposed outcomes with decisions the loop actually applied. */

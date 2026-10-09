@@ -10,6 +10,7 @@ import {
   type TrajectoryDigest,
   type TrajectoryEntry,
   type WatcherSignal,
+  type TrajectoryState,
 } from "@mastertutor/contracts";
 
 const DIGEST_ENTRIES = 50;
@@ -56,6 +57,25 @@ export class Trajectory {
   #guardReviews = 0;
   #riskLevel: RiskLevel = "normal";
 
+  constructor(state?: TrajectoryState) {
+    if (state) {
+      this.#entries = [...state.entries];
+      this.#flows = [...state.flows];
+      for (const signal of state.fired) this.#fired.add(signal);
+      this.#guardReviews = state.guardReviews;
+      if (this.#fired.size) this.#riskLevel = "elevated";
+    }
+  }
+
+  get state(): TrajectoryState {
+    return {
+      entries: [...this.#entries],
+      flows: [...this.#flows],
+      fired: [...this.#fired],
+      guardReviews: this.#guardReviews,
+    };
+  }
+
   get riskLevel(): RiskLevel {
     return this.#riskLevel;
   }
@@ -63,7 +83,7 @@ export class Trajectory {
   add(events: readonly RunEvent[]): { signals: WatcherSignal[]; reviewDue: boolean } {
     let periodic = false;
     for (const event of events) {
-      if (event.type === "guard") {
+      if (event.type === "guard" && event.items > 0) {
         this.#flows = [...this.#flows, event.flows].slice(-WATCHER_RULES.egressFlows.window);
         this.#guardReviews += 1;
         if (this.#guardReviews % WATCHER_REVIEW_EVERY === 0) periodic = true;
