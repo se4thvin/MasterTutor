@@ -241,4 +241,50 @@ export const DASHBOARDS: readonly DashboardSpec[] = [
       { title: "Slow or failed traces", kind: "table", query: slowOrFailedTraces },
     ],
   },
+  {
+    title: "MasterTutor · Observer",
+    description:
+      "Guard and watcher verdicts, failures, overrides, Observer spend and review latency (D52).",
+    panels: [
+      {
+        title: "Verdicts",
+        kind: "bar",
+        query: promql(
+          increase(METRIC.observerVerdicts, [ATTR.observerVerdict, ATTR.observerRollout], "1h"),
+        ),
+      },
+      {
+        title: "Categories",
+        kind: "bar",
+        query: promql(increase(METRIC.observerVerdicts, [ATTR.observerCategory], "24h")),
+      },
+      {
+        title: "Failures",
+        kind: "bar",
+        query: promql(
+          increase(METRIC.observerFailures, [ATTR.observerRole, ATTR.observerOutcome], "1h"),
+        ),
+      },
+      {
+        title: "Overrides",
+        kind: "metric",
+        query: promql(increase(METRIC.observerOverrides, [], "24h")),
+      },
+      {
+        title: "Observer spend (USD)",
+        kind: "bar",
+        query: promql(increase(METRIC.observerSpend, [ATTR.observerRole], "24h")),
+      },
+      {
+        title: "Spend by purpose (USD)",
+        kind: "bar",
+        query: promql(increase(METRIC.spendUsd, [ATTR.spendPurpose], "24h")),
+      },
+      {
+        title: "Review p95 by stage (ms)",
+        kind: "line",
+        query: promql(spanQuantile(0.95, SPAN.observerReview, [ATTR.observerStage])),
+      },
+    ],
+  },
 ];

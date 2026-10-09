@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { ALERT_RULES } from "@mastertutor/contracts";
-import { LOG_STREAMS } from "@mastertutor/contracts/telemetry";
+import { LOG_STREAMS, METRIC, ATTR } from "@mastertutor/contracts/telemetry";
 import { TestContainers } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -75,6 +75,13 @@ describe("upsertAlerts against the pinned image", () => {
       [[1, now]],
       now,
     );
+    // A Shadow block must never page the owner (D52).
+    await ingestCounter(
+      METRIC.observerVerdicts.name,
+      { [ATTR.observerVerdict]: "block", [ATTR.observerRollout]: "shadow" },
+      [[1, now]],
+      now,
+    );
     // Rules are evaluated once a minute; wait for two rounds at most.
     const deadline = Date.now() + 150_000;
     while (deliveries.length < 3 && Date.now() < deadline)
@@ -86,6 +93,41 @@ describe("upsertAlerts against the pinned image", () => {
       '{"rule":"run_failed"}',
     ]);
     expect(deliveries.every((d) => d.authorization === `Bearer ${SECRET}`)).toBe(true);
+  }, 180_000);
+
+  it("delivers enforced Observer blocks and three failures, with authenticated webhooks", async () => {
+    const now = nowNanos();
+    await ingestCounter(
+      METRIC.observerVerdicts.name,
+      { [ATTR.observerVerdict]: "block", [ATTR.observerRollout]: "enforce" },
+      [[1, now]],
+      now,
+    );
+    await ingestCounter(
+      METRIC.observerFailures.name,
+      { [ATTR.observerRole]: "guard", [ATTR.observerOutcome]: "invalid" },
+      [
+        [1, now - 2_000_000_000n],
+        [2, now - 1_000_000_000n],
+        [3, now],
+      ],
+      now - 2_000_000_000n,
+    );
+    const bodies = () => deliveries.map((d) => d.body);
+    const deadline = Date.now() + 150_000;
+    while (
+      (!bodies().includes('{"rule":"observer_escalation"}') ||
+        !bodies().includes('{"rule":"observer_failure"}')) &&
+      Date.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(bodies()).toContain('{"rule":"observer_escalation"}');
+    expect(bodies()).toContain('{"rule":"observer_failure"}');
+    expect(
+      deliveries
+        .filter((d) => d.body.includes("observer_"))
+        .every((d) => d.authorization === `Bearer ${SECRET}`),
+    ).toBe(true);
   }, 180_000);
 
   it("counts events, not series: a steady old counter is 0, a grown one its growth, a new one its value", async () => {
