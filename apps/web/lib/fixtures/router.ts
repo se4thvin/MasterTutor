@@ -559,5 +559,6 @@ export const fixtureRouter = os.router({
       });
     }),
     unsubscribe: os.alerts.unsubscribe.handler(() => ({ ok: true as const })),
+    pushStatus: os.alerts.pushStatus.handler(() => ({ registered: false })),
   },
 });

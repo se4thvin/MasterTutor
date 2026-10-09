@@ -144,6 +144,24 @@ export async function deletePushSubscription(
     );
 }
 
+/** Whether this user's browser subscription is still held (a 404/410 from its push service drops it). */
+export async function isPushSubscribed(
+  db: Database,
+  input: { userId: string; endpoint: string },
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: pushSubscriptions.id })
+    .from(pushSubscriptions)
+    .where(
+      and(
+        eq(pushSubscriptions.userId, input.userId),
+        eq(pushSubscriptions.endpoint, input.endpoint),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
 /** A push service answered 404/410: the subscription is gone for good. */
 export async function deletePushSubscriptionByEndpoint(
   db: Database,

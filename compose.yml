@@ -141,6 +141,8 @@ services:
       S3_BUCKET: mastertutor
       S3_ACCESS_KEY_ID: ${S3_WEB_ACCESS_KEY_ID:?set S3_WEB_ACCESS_KEY_ID}
       S3_SECRET_ACCESS_KEY: ${S3_WEB_SECRET_ACCESS_KEY:?set S3_WEB_SECRET_ACCESS_KEY}
+      # Its cdp address (<prefix>.11) is the Host Traefik's ForwardAuth calls carry (D50 I-1).
+      CDP_SUBNET_PREFIX: ${CDP_SUBNET_PREFIX:-172.30.231}
     healthcheck:
       <<: *node-health
       test:

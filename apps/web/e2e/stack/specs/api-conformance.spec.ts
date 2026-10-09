@@ -55,6 +55,7 @@ const PROBES: ReadonlyArray<readonly [string, unknown, Expectation]> = [
   ["alerts/pushConfig", {}, "ok"],
   // Idempotent: turning off a subscription that is not there is ok.
   ["alerts/unsubscribe", { endpoint: "https://web.push.apple.com/probe" }, "ok"],
+  ["alerts/pushStatus", { endpoint: "https://web.push.apple.com/probe" }, "ok"],
 ];
 /** Writes that create something; the create test below cleans up after each. */
 const CREATES: Record<string, unknown> = {

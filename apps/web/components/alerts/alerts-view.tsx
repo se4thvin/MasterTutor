@@ -1,6 +1,6 @@
 "use client";
 
-import { OBSERVABILITY_ENTER_PATH, type AlertView } from "@mastertutor/contracts";
+import { OBSERVABILITY_APP_PATH, type AlertView } from "@mastertutor/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useToast } from "@/components/toast/toast-provider.tsx";
@@ -72,9 +72,9 @@ export function AlertsView() {
           title="Alerts"
           lede="When runs fail, requests are rejected, browser slots crash, spend jumps or errors spike."
         />
-        {/* A plain link: /observability is OpenObserve behind ForwardAuth, not an app route (spec §12). */}
+        {/* A plain link: /observability hands the owner to OpenObserve on obs.<app host> (D50 I-2). */}
         <nav className="group" aria-label="Dashboards">
-          <a className="row row-link" href={OBSERVABILITY_ENTER_PATH}>
+          <a className="row row-link" href={OBSERVABILITY_APP_PATH}>
             <span>
               <Icon name="usage" /> Open dashboards
             </span>

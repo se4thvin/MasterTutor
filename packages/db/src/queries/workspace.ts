@@ -1,7 +1,7 @@
 import { DEFAULT_CONCURRENCY, type MemberRole } from "@mastertutor/contracts";
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gt, sql } from "drizzle-orm";
 import type { Database } from "../client.ts";
-import { settings, user, workspaceMembers, workspaces } from "../schema/index.ts";
+import { session, settings, user, workspaceMembers, workspaces } from "../schema/index.ts";
 
 export async function hasAnyUser(db: Database): Promise<boolean> {
   const rows = await db.select({ id: user.id }).from(user).limit(1);
@@ -82,4 +82,24 @@ export async function memberRoleOf(db: Database, userId: string): Promise<Member
 /** The workspace a signed-in user belongs to, or null (D4: one workspace in v1). */
 export async function workspaceIdOf(db: Database, userId: string): Promise<string | null> {
   return (await memberRoleOf(db, userId))?.workspaceId ?? null;
+}
+
+/**
+ * The workspace owner, still signed in somewhere (D50 /observability): signing out everywhere or
+ * losing the owner role ends dashboard access at the next request.
+ */
+export async function isSignedInOwner(db: Database, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .innerJoin(session, eq(session.userId, workspaceMembers.userId))
+    .where(
+      and(
+        eq(workspaceMembers.userId, userId),
+        eq(workspaceMembers.role, "owner"),
+        gt(session.expiresAt, sql`now()`),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
 }

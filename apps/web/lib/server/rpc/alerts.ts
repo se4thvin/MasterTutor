@@ -4,6 +4,7 @@ import {
   acknowledgeAlert,
   activeAlerts,
   deletePushSubscription,
+  isPushSubscribed,
   listAlerts,
   savePushSubscription,
   type DbHandle,
@@ -50,6 +51,12 @@ export function createAlertProcedures(deps: { db(): DbHandle; push(): PushConfig
       });
       return { ok: true as const };
     }),
+    pushStatus: owner.alerts.pushStatus.handler(async ({ context, input }) => ({
+      registered: await isPushSubscribed(context.db.db, {
+        userId: context.actor,
+        endpoint: input.endpoint,
+      }),
+    })),
     unsubscribe: owner.alerts.unsubscribe.handler(async ({ context, input }) => {
       await deletePushSubscription(context.db.db, {
         userId: context.actor,

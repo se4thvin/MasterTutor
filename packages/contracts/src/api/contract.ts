@@ -5,6 +5,7 @@ import {
   AlertView,
   PushConfig,
   PushEndpointRef,
+  PushStatus,
   PushSubscriptionInput,
 } from "../alerts.ts";
 import { ApprovalDecisionInput } from "../approval.ts";
@@ -131,6 +132,7 @@ export const apiContract = {
     pushConfig: oc.input(Empty).output(PushConfig),
     subscribe: oc.input(PushSubscriptionInput).output(Ok),
     unsubscribe: oc.input(PushEndpointRef).output(Ok),
+    pushStatus: oc.input(PushEndpointRef).output(PushStatus),
   },
 };
 export type ApiContract = typeof apiContract;
