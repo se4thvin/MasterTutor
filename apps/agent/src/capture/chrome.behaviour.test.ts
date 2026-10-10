@@ -4,6 +4,7 @@ import { noteBlocks, notes, sources } from "@mastertutor/db";
 import { FIXTURES } from "../testing/browser-harness.ts";
 import { startCaptureEnv, type CaptureEnv } from "../testing/capture-env.ts";
 import { seedRun } from "../testing/notes.ts";
+import { positionOrder } from "../notes/positions.ts";
 import { createCaptureTool } from "./capture-tool.ts";
 import { pageExtract } from "./page/extract.ts";
 import { captureWorlds } from "./worlds.ts";
@@ -19,6 +20,49 @@ afterAll(async () => {
 const page = { kind: null, scope: "page" as const, selector: null };
 
 describe("generic platform chrome (F6)", () => {
+  it("drops repeated banners in sibling interactive widgets and stores prose verbatim in order", async () => {
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/widgets.html`, signal);
+    const before = await env.session.page.content();
+    const worlds = await captureWorlds(env.session);
+    const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    const prose = [
+      "A bit has two possible values: 0 and 1.",
+      "Select the value represented by an enabled switch.",
+      "Two bits represent four values, in order: 00, 01, 10, 11.",
+      "A repeated theorem is still content.",
+      "Enter the two-bit representation of three.",
+      "A repeated theorem is still content.",
+      "Each additional bit doubles the number of possible values.",
+    ];
+    for (const field of [extract.markdown, extract.sourceText, extract.pageText]) {
+      expect(field).not.toContain("Due: 09/04/2026, 11:59 PM CDT");
+      expect(field).not.toContain("This assignment's due date has passed.");
+      let after = 0;
+      for (const text of prose) {
+        const at = field.indexOf(text, after);
+        expect(at).toBeGreaterThanOrEqual(after);
+        after = at + text.length;
+      }
+    }
+    expect(await env.session.page.content()).toBe(before);
+    const ctx = env.context(await seedRun(env.db.db));
+    const result = await createCaptureTool(env.services).run(ctx, page);
+    await env.commit(ctx);
+    const stored = await env.db.db
+      .select()
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, result.noteId))
+      .orderBy(positionOrder);
+    expect(stored.map((block) => block.markdown).join("\n")).not.toContain("due date has passed");
+    const text = stored.map((block) => block.markdown).join("\n");
+    let after = 0;
+    for (const passage of prose) {
+      const at = text.indexOf(passage, after);
+      expect(at).toBeGreaterThanOrEqual(after);
+      after = at + passage.length;
+    }
+  });
+
   it("excludes semantic and repeated exterior chrome from blocks and coverage without editing prose", async () => {
     await env.session.goto(`${FIXTURES}/capture/platform-chrome/lesson.html`, signal);
     const before = await env.session.page.content();
@@ -85,10 +129,39 @@ describe("generic platform chrome (F6)", () => {
     });
   });
 
+  it("refuses same-document overviews with headings and short per-link scores without storing rows", async () => {
+    const run = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/overview.html`, signal);
+    const ctx = env.context(run);
+    await expect(createCaptureTool(env.services).run(ctx, page)).rejects.toMatchObject({
+      code: "navigation_only",
+    });
+    await env.commit(ctx);
+    expect(await env.db.db.select().from(notes).where(eq(notes.runId, run.runId))).toEqual([]);
+    expect(
+      await env.db.db.select().from(sources).where(eq(sources.workspaceId, run.workspaceId)),
+    ).toEqual([]);
+  });
+
+  it("recognizes same-origin directories without list markup", async () => {
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/overview.html`, signal);
+    await env.session.page.setContent(
+      '<main><h1>Contents</h1><h2>Chapters</h2><div><a href="/first">First chapter</a> 100%</div><div><a href="/second">Second chapter</a> 50%</div></main>',
+    );
+    const ctx = env.context(await seedRun(env.db.db));
+    await expect(createCaptureTool(env.services).run(ctx, page)).rejects.toMatchObject({
+      code: "navigation_only",
+    });
+  });
+
   it("keeps short lessons, instructional lists, article link lists and activity prompts", async () => {
     for (const html of [
       "<main><h1>Bit</h1><p>A bit is 0 or 1.</p></main>",
       '<main><h1>Procedure</h1><ol><li>Read the <a href="/word">word</a>.</li><li>Count ones.</li></ol></main>',
+      '<main><h1>Procedure</h1><ol><li>Read the <a href="/word">word</a>.</li><li>Count the <a href="/bits">bits</a>.</li></ol></main>',
+      '<main><h1>Lesson</h1><p>A bit is 0 or 1.</p><ul><li><a href="/first">First chapter</a> 100%</li><li><a href="/second">Second chapter</a> 50%</li></ul></main>',
+      '<main><h1>Further reading</h1><ul><li><a href="https://one.example/paper">First paper</a> 2026</li><li><a href="https://two.example/paper">Second paper</a> 2025</li></ul></main>',
+      '<main><h1>References</h1><ul><li><a href="/first">First paper</a><p>This paper explains how the representation of a bit changes between different physical devices, with examples and experimental results.</p></li><li><a href="/second">Second paper</a> 2025</li></ul></main>',
       '<article><h1>References</h1><ul><li><a href="/paper">Original paper</a></li></ul></article>',
       '<main><h1>Exercise</h1><form><label>Choose the even parity bit.</label><input type="radio"><label>0</label><input type="radio"><label>1</label></form></main>',
     ]) {
