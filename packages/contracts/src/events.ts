@@ -1,3 +1,4 @@
+import { CaptureBrief, CaptureQuestion } from "./capture-intent.ts";
 import { z } from "zod";
 import { ApprovalRequest, PersonDecider } from "./approval.ts";
 import { Budget, Usage } from "./budget.ts";
@@ -57,11 +58,23 @@ export const RUN_EVENT_TYPES = [
   "model_fallback",
   "title",
   "guard",
+  "capture_brief",
+  "capture_asked",
+  "capture_answered",
+  "capture_selected",
 ] as const;
 export type RunEventType = (typeof RUN_EVENT_TYPES)[number];
 
 /** Stored in run_events.payload and streamed over SSE (spec §6). */
 export const RunEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("capture_brief"), brief: CaptureBrief }),
+  z.object({ type: z.literal("capture_asked"), question: CaptureQuestion }),
+  z.object({ type: z.literal("capture_answered"), brief: CaptureBrief, by: PersonDecider }),
+  z.object({
+    type: z.literal("capture_selected"),
+    kept: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  }),
   z.object({
     type: z.literal("status"),
     status: RunStatus,

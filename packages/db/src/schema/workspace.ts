@@ -1,4 +1,9 @@
-import { DEFAULT_BUDGET, DEFAULT_CONCURRENCY, type Budget } from "@mastertutor/contracts";
+import {
+  DEFAULT_BUDGET,
+  DEFAULT_CONCURRENCY,
+  type CaptureBrief,
+  type Budget,
+} from "@mastertutor/contracts";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -7,6 +12,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   unique,
   uuid,
@@ -60,4 +66,18 @@ export const settings = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [check("settings_concurrency_positive", sql`${t.concurrency} >= 1`)],
+);
+
+/** Person-authored defaults, never source text or secrets. */
+export const capturePreferences = pgTable(
+  "capture_preferences",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    domain: text("domain").notNull(),
+    brief: jsonb("brief").$type<CaptureBrief>().notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.domain] })],
 );

@@ -134,6 +134,13 @@
       "when": 1791570479158,
       "tag": "0018_guard_checkpoint",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791595813535,
+      "tag": "0019_intent_capture",
+      "breakpoints": true
     }
   ]
 }

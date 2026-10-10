@@ -66,3 +66,6 @@ GRANT SELECT ON observer.runs, observer.run_goals, observer.run_steps, observer.
 GRANT SELECT, INSERT, UPDATE, DELETE ON observer.copilot_threads, observer.copilot_items,
   observer.copilot_results, observer.copilot_spend TO observer_role;
 ALTER ROLE observer_role SET statement_timeout = '3s';
+
+-- D57: only a person through web can save site preferences; the worker reads defaults.
+REVOKE INSERT, UPDATE, DELETE ON capture_preferences FROM agent_role;

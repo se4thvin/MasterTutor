@@ -1,4 +1,6 @@
 import {
+  type CaptureBrief,
+  type CaptureQuestion,
   DEFAULT_BUDGET,
   EMPTY_USAGE,
   MODELS,
@@ -92,6 +94,8 @@ export const runs = pgTable(
     model: text("model").notNull().default(MODELS.agentPrimary),
     previousResponseId: text("previous_response_id"),
     plan: jsonb("plan").$type<Plan>(),
+    captureBrief: jsonb("capture_brief").$type<CaptureBrief>(),
+    captureQuestion: jsonb("capture_question").$type<CaptureQuestion>(),
     budget: jsonb("budget").$type<Budget>().notNull().default(jsonbDefault(DEFAULT_BUDGET)),
     usage: jsonb("usage").$type<Usage>().notNull().default(jsonbDefault(EMPTY_USAGE)),
     allowedOrigins: text("allowed_origins").array().notNull(),
