@@ -159,3 +159,30 @@ it("redacts a person-edited scope note before turn context or checkpoints see it
     ),
   ).not.toContain(marker);
 });
+
+it("presents the brief as system-owned selection on every turn and after compaction", async () => {
+  mock.setStructured("capture_intent", () => ({ brief, ambiguous: false }));
+  const h = await setup(
+    [
+      {
+        outputs: [
+          {
+            type: "computer",
+            actions: [{ type: "scroll", x: 100, y: 100, scroll_y: 500, scroll_x: 0 }],
+          },
+        ],
+        usage: { input: 210_000 },
+      },
+      done(),
+    ],
+    { hooks: hooks() },
+  );
+  expect(await drive(h.loop)).toEqual({ kind: "completed" });
+  for (const request of mock.requestsFor(h.name)) {
+    const input = JSON.stringify(request.body.input);
+    expect(input).toContain("Capture brief (what the system will keep)");
+    expect(input).toContain("The system applies this brief");
+    expect(input).toContain("whole sections or pages");
+    expect(input).not.toContain("capture kept categories verbatim, exclude skipped categories");
+  }
+});

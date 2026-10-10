@@ -1,7 +1,7 @@
 import type { ComputerAction, ReadPageElement } from "@mastertutor/contracts";
 import type { Locator } from "playwright-core";
 import { createLogger } from "@mastertutor/contracts/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OTHER, SITE, SLOT_CDP } from "../../../../tests/behaviour/constants.ts";
 import { focusTarget, hitTest } from "../browser/hit-test.ts";
 import { NO_MASK_SOURCES } from "../browser/masking.ts";
@@ -1485,4 +1485,36 @@ describe("what a click records for grading (bench I1, I3)", () => {
       target.ancestors.some((a) => a.startsWith("PARTICIPATION ACTIVITY 1.1.1: Warm-up")),
     ).toBe(true);
   });
+});
+
+it("refuses DevTools and view-source without dispatching keys, even with an active address bar", async () => {
+  const { s, executor } = await setup();
+  const pressed = vi.spyOn(s.page.keyboard, "press");
+  try {
+    for (const keys of [
+      ["F12"],
+      ["CTRL", "SHIFT", "I"],
+      ["CTRL", "SHIFT", "J"],
+      ["CTRL", "SHIFT", "C"],
+      ["CTRL", "SHIFT", "K"],
+      ["CTRL", "U"],
+      ["c", "shift", "Control"],
+      [" control ", "u"],
+    ]) {
+      for (const active of [false, true]) {
+        if (active) executor.omnibox.open();
+        else executor.omnibox.cancel();
+        expect(await executor.execute({ type: "keypress", keys }, signal)).toMatch(
+          /DevTools.*capture the page.*system selects content/,
+        );
+        expect(executor.omnibox.active).toBe(active);
+      }
+    }
+    expect(pressed).not.toHaveBeenCalled();
+    executor.omnibox.cancel();
+    expect(await executor.execute({ type: "keypress", keys: ["TAB"] }, signal)).toBeNull();
+    expect(pressed).toHaveBeenCalledWith("Tab");
+  } finally {
+    pressed.mockRestore();
+  }
 });

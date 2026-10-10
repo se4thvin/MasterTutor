@@ -208,7 +208,7 @@ async function extractIn(
           ? "This page only contains navigation; open a lesson or document to capture"
           : code === "no_selection"
             ? "Nothing is selected"
-            : "No element matches the selector",
+            : 'No element matches the selector; capture with scope:"page" instead and the system selects content from the brief, verbatim.',
       );
     throw error;
   }
