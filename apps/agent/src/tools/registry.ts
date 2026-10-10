@@ -107,6 +107,8 @@ export class ToolRegistry {
     } catch (error) {
       if (interruptionOf(error) !== null || ctx.signal.aborted) throw error;
       if (error instanceof ToolError) {
+        // Capture calls may run out between billed windows. The loop owns the budget pause.
+        if (error.code === "capture_budget") throw error;
         span.set({ [ATTR.toolOutcome]: "tool_error" });
         span.fail(error.code);
         return {

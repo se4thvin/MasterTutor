@@ -1,5 +1,7 @@
 import type {
   AlertView,
+  CaptureBrief,
+  SitePreference,
   FolderView,
   NoteBlock,
   NoteSummary,
@@ -26,6 +28,8 @@ export interface FixtureState {
   vault: VaultItemView[];
   audit: VaultAuditView[];
   settings: SettingsView;
+  capturePreferences: SitePreference[];
+  runCapture: Record<string, { brief: CaptureBrief }>;
   runs: RunSummary[];
   /** What runs.create was given that RunSummary does not carry, by run id. */
   runScope: Record<string, { allowedOrigins: string[]; targetFolderId: string | null }>;

@@ -21,6 +21,7 @@ describe("apiContract", () => {
         "resume",
         "sendMessage",
         "setApprovalMode",
+        "setCaptureBrief",
         "steps",
         "submitOtp",
         "takeControl",
@@ -28,7 +29,14 @@ describe("apiContract", () => {
       notes: ["delete", "export", "get", "list", "markVerified", "move", "search", "updateBlock"],
       folders: ["create", "delete", "move", "rename", "tree"],
       vault: ["audit", "create", "delete", "forgetSession", "list", "removeSecret", "setSecret"],
-      settings: ["get", "setKillSwitch", "update", "usage"],
+      settings: [
+        "capturePreferences",
+        "get",
+        "setCapturePreference",
+        "setKillSwitch",
+        "update",
+        "usage",
+      ],
       assets: ["url"],
       benchmarks: ["create", "grade", "list", "runs", "start"],
       alerts: [

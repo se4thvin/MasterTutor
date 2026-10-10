@@ -53,6 +53,14 @@ const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
   ["runs/resume", { runId: MISSING }, "not_found"],
   ["runs/sendMessage", { runId: MISSING, text: "probe" }, "not_found"],
   ["runs/setApprovalMode", { runId: MISSING, mode: "ask" }, "not_found"],
+  [
+    "runs/setCaptureBrief",
+    {
+      runId: MISSING,
+      brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "Reading only" },
+    },
+    "not_found",
+  ],
   ["runs/decideApproval", { approvalId: MISSING, decision: "denied" }, "not_found"],
   ["runs/submitOtp", { runId: MISSING, code: "123456" }, "not_found"],
   ["runs/takeControl", { runId: MISSING }, "not_found"],
@@ -78,6 +86,16 @@ const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
   ["vault/forgetSession", { alias: "no-such-alias", origin: "https://probe.example" }, "ok"],
   ["vault/audit", { limit: 1 }, "ok"],
   ["settings/get", {}, "ok"],
+  ["settings/capturePreferences", {}, "ok"],
+  [
+    "settings/setCapturePreference",
+    {
+      url: "https://capture-probe.example",
+      // The inventory harness has no agent. Nonempty scope is covered by the real vault screen test.
+      brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "" },
+    },
+    "ok",
+  ],
   ["settings/usage", { from: "2026-10-01", to: "2026-10-05" }, "ok"],
   ["assets/url", { assetId: MISSING }, "not_found"],
   ["benchmarks/list", {}, "ok"],

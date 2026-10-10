@@ -1,3 +1,4 @@
+import { selectCaptureBlocks } from "../capture/selection.ts";
 import { VideoArgs, VideoResult } from "@mastertutor/contracts";
 import { noteBlocks } from "@mastertutor/db";
 import { and, eq } from "drizzle-orm";
@@ -25,12 +26,17 @@ const inRange = (t: number, range: { start: number; end: number }) =>
 
 /** spec §8 `video`. Chapter titles are page text, so the result is wrapped as untrusted (S6). */
 export function createVideoTool(services: LibraryServices): Tool<VideoArgs, VideoResult> {
-  const append = (ctx: ToolContext, video: VideoContext, blocks: TimedBlockDraft[]) =>
-    services.writer.appendTimedBlocks(writeContext(ctx), {
-      noteId: video.noteId,
-      sourceId: video.sourceId,
-      blocks,
-    });
+  const append = async (
+    ctx: ToolContext,
+    video: VideoContext,
+    blocks: TimedBlockDraft[],
+    selected = false,
+  ) => {
+    const kept = selected ? blocks : await selectCaptureBlocks(services, ctx, blocks);
+    if (!kept.length && services.selection) return [];
+    const source = await video.ensureSource();
+    return services.writer.appendTimedBlocks(writeContext(ctx), { ...source, blocks: kept });
+  };
 
   async function keyframes(
     ctx: ToolContext,
@@ -38,14 +44,18 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
     range: { start: number; end: number },
   ): Promise<VideoResult> {
     const sampled = await sampleKeyframes({ ...ctx, ocr: services.localOcr }, video.worlds, range);
-    const blocks: TimedBlockDraft[] = [];
     let screened = 0;
+    const candidates = [];
     for (const frame of sampled.frames) {
-      // On a secret-holding run, pixels are screened locally before they are stored (A-M1).
       if (!(await pixelsAreClean(services.localOcr, ctx.mask, frame.png, ctx.signal))) {
         screened++;
         continue;
       }
+      candidates.push({ type: "keyframe" as const, markdown: "Keyframe", frame });
+    }
+    const kept = await selectCaptureBlocks(services, ctx, candidates);
+    const blocks: TimedBlockDraft[] = [];
+    for (const { frame } of kept) {
       const asset = await services.assets.put(
         ctx.workspaceId,
         { bytes: frame.png, mime: "image/png", width: null, height: null, sourceUrl: null },
@@ -65,17 +75,17 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
     const unseen = sampled.drm || sampled.unplayable ? Math.max(1, sampled.sampled) : 0;
     const lost = sampled.withheld + sampled.missed + screened + unseen;
     const prior = typeof video.meta.mediaLost === "number" ? video.meta.mediaLost : 0;
-    services.writer.stageSourceMeta(writeContext(ctx), video.sourceId, {
+    video.stageMeta({
       drm: sampled.drm,
       ...(sampled.unplayable ? { playback: "failed" } : {}),
       figuresWithheld: sampled.withheld + screened,
       ...(lost > 0 ? { mediaLost: prior + lost } : {}),
     });
-    const blockIds = await append(ctx, video, blocks);
+    const blockIds = await append(ctx, video, blocks, true);
     return {
       op: "keyframes",
       blockIds,
-      kept: blocks.length,
+      kept: blockIds.length,
       dropped: sampled.dropped,
       drm: sampled.drm,
     };
@@ -106,23 +116,26 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
         try {
           switch (args.op) {
             case "chapters": {
-              const existing = await services.db
-                .select({ anchor: noteBlocks.anchor })
-                .from(noteBlocks)
-                .where(
-                  and(
-                    eq(noteBlocks.noteId, video.noteId),
-                    eq(noteBlocks.sourceId, video.sourceId),
-                    eq(noteBlocks.type, "heading"),
-                  ),
-                );
+              const existing =
+                video.noteId && video.sourceId
+                  ? await services.db
+                      .select({ anchor: noteBlocks.anchor })
+                      .from(noteBlocks)
+                      .where(
+                        and(
+                          eq(noteBlocks.noteId, video.noteId),
+                          eq(noteBlocks.sourceId, video.sourceId),
+                          eq(noteBlocks.type, "heading"),
+                        ),
+                      )
+                  : [];
               const starts = new Set(
                 existing.flatMap((row) =>
                   typeof row.anchor?.tStart === "number" ? [row.anchor.tStart] : [],
                 ),
               );
               await append(ctx, video, chapterBlocks(chapters, starts, bound));
-              services.writer.stageSourceMeta(w, video.sourceId, { chapters });
+              video.stageMeta({ chapters });
               return { op: "chapters", chapters };
             }
             case "captions": {
@@ -136,7 +149,7 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
                 // verified, and transcribe stays refused for this captioned video (final I4, D4).
                 const lost = capture.kind !== "none";
                 const prior = typeof video.meta.mediaLost === "number" ? video.meta.mediaLost : 0;
-                services.writer.stageSourceMeta(w, video.sourceId, {
+                video.stageMeta({
                   captions: {
                     segments: 0,
                     language: null,
@@ -159,7 +172,7 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
                 transcriptBlocks(groupSegments(selected, boundaries), origin, !track.autoGenerated),
               );
               const language = track.language?.slice(0, 16) ?? null;
-              services.writer.stageSourceMeta(w, video.sourceId, {
+              video.stageMeta({
                 captions: {
                   segments: selected.length,
                   language,
@@ -206,7 +219,7 @@ export function createVideoTool(services: LibraryServices): Tool<VideoArgs, Vide
             }
           }
         } finally {
-          services.writer.stageQuality(w, video.noteId, null);
+          if (video.noteId) services.writer.stageQuality(w, video.noteId, null);
         }
       } catch (error) {
         if (error instanceof NoteWriteError) throw new ToolError(error.code, error.message);

@@ -346,6 +346,27 @@ export async function startLlmMock(
   }
 
   const structured = new Map<string, (body: MockRequestBody) => unknown>([
+    [
+      "capture_intent",
+      () => ({
+        brief: {
+          keep: ["reading_text", "definitions", "figures", "tables", "worked_examples"],
+          skip: ["due_dates", "scores", "navigation", "platform_chrome"],
+          scopeNote: "Capture source material",
+        },
+        ambiguous: false,
+      }),
+    ],
+    [
+      "capture_selection",
+      (body) => {
+        const input = body.input as Array<{ content: string }>;
+        const text = input[0]?.content ?? "";
+        const json = text.slice(text.indexOf("\n") + 1, text.lastIndexOf("\n"));
+        const data = JSON.parse(json) as { blocks: Array<{ id: string }> };
+        return { ids: data.blocks.map((block) => block.id) };
+      },
+    ],
     ["ocr_text", () => ({ markdown: "" })],
     ["filing_decision", () => ({ path: ["Inbox"], createLeaf: true })],
     ["run_title", () => ({ title: "Mock run title" })],

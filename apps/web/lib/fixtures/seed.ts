@@ -649,6 +649,8 @@ export function createSeed(): FixtureState {
     },
     runs: runs(),
     runScope: {},
+    runCapture: {},
+    capturePreferences: [],
     decidedApprovals: [],
     // One past alert for the Alerts list; acknowledged, so no banner shows by default.
     alerts: [

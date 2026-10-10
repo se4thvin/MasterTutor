@@ -290,3 +290,34 @@ describe("fixture alerts", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
+
+describe("D57 fixture preferences", () => {
+  it("persists edited run scope and saves isolated site defaults", async () => {
+    const a = client();
+    const b = client();
+    const run = await a.api.runs.create({
+      goal: "Read the lesson",
+      allowedOrigins: ["https://a.github.io"],
+      approvalMode: "bypass",
+      bypassAcknowledged: true,
+      targetFolderId: null,
+      budget: { maxSteps: 20, maxUsd: 1, maxActiveMinutes: 10 },
+    });
+    const brief = {
+      keep: ["reading_text" as const],
+      skip: ["due_dates" as const],
+      scopeNote: "Keep definitions too",
+    };
+    await a.api.runs.setCaptureBrief({ runId: run.id, brief });
+    expect((await a.api.runs.get({ runId: run.id })).captureBrief).toEqual(brief);
+    expect((await a.api.settings.capturePreferences({})).items).toEqual([
+      { domain: "a.github.io", brief },
+    ]);
+    await a.api.settings.setCapturePreference({
+      url: "https://sub.a.github.io",
+      brief: { ...brief, scopeNote: "Edited" },
+    });
+    expect((await a.api.settings.capturePreferences({})).items).toHaveLength(1);
+    expect((await b.api.settings.capturePreferences({})).items).toEqual([]);
+  });
+});

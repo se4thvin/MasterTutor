@@ -266,6 +266,9 @@ export class RunWorker {
       },
       snapshotOf(run),
     );
+    const scopeWait = await this.#loop.prepareCapture(this.#abort.signal);
+    if (scopeWait) return scopeWait;
+    if (run.captureQuestion) await this.#loop.resume(this.#abort.signal);
     const state = await this.#deps.hooks.sessionStore.load(run);
     const removeRestore = state ? await browser.applyStorage(state) : null;
     const target = run.currentUrl ?? startUrl(run.goal, run.allowedOrigins);

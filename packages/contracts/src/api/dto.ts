@@ -1,3 +1,4 @@
+import { CaptureBrief, CaptureQuestion } from "../capture-intent.ts";
 import { z } from "zod";
 import { ApprovalRequest } from "../approval.ts";
 import { Budget, Plan, Usage } from "../budget.ts";
@@ -211,6 +212,8 @@ export const StoredDownloadView = z.object({
 export type StoredDownloadView = z.infer<typeof StoredDownloadView>;
 
 export const RunDetail = RunSummary.extend({
+  captureBrief: CaptureBrief.nullable().optional(),
+  captureQuestion: CaptureQuestion.nullable().optional(),
   plan: Plan.nullable(),
   allowedOrigins: z.array(Origin),
   currentUrl: z.string().nullable(),

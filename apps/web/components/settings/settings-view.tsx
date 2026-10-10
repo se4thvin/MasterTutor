@@ -12,8 +12,16 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Crumbs, Toolbar } from "@/components/ui/toolbar.tsx";
 import { orpc } from "@/lib/api/client.ts";
 import { useSignOut } from "@/components/shell/use-sign-out.ts";
+import { Suspense } from "react";
+import { lazyComponent } from "@/lib/hooks/lazy-component.ts";
+import { ChunkBoundary } from "@/components/ui/chunk-boundary.tsx";
 import { DefaultsForm } from "./defaults-form.tsx";
 import { KillSwitchRow } from "./kill-switch-row.tsx";
+
+const { Component: CapturePreferences } = lazyComponent(() =>
+  import("./capture-preferences.tsx").then((mod) => mod.CapturePreferences),
+);
+const ignoreFailure = () => undefined;
 
 export function SettingsView() {
   const signOut = useSignOut();
@@ -56,6 +64,12 @@ export function SettingsView() {
                 settings={data}
               />
             </div>
+
+            <ChunkBoundary what="capture preferences" onFailed={ignoreFailure}>
+              <Suspense fallback={null}>
+                <CapturePreferences />
+              </Suspense>
+            </ChunkBoundary>
 
             <h2 className="t-title3 group-title">Agent</h2>
             <div className="group">

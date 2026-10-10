@@ -7,6 +7,8 @@ import {
   type ApprovalStatus,
   type Budget,
   type Controller,
+  type CaptureBrief,
+  type CaptureQuestion,
   type RunDetail,
   type RunEventRecord,
   type RunStatus,
@@ -101,6 +103,8 @@ export interface RunModel {
   usage: Usage;
   budget: Budget;
   noteId: string | null;
+  captureBrief: CaptureBrief | null;
+  captureQuestion: CaptureQuestion | null;
   createdAt: string;
   steps: StepRow[];
   approvals: PendingApproval[];
@@ -217,6 +221,8 @@ export function initRunModel(detail: RunDetail, views: RunStepView[]): RunModel 
   return {
     runId: detail.id,
     title: detail.title,
+    captureBrief: detail.captureBrief ?? null,
+    captureQuestion: detail.captureQuestion ?? null,
     status: detail.status,
     waitReason: detail.waitReason,
     controller: detail.controller,
@@ -399,6 +405,13 @@ export function applyRunEvent(model: RunModel, record: RunEventRecord): RunModel
     case "title":
       return { ...m, title: e.title };
     // Guard rows and cards are Track U's (U1); until then the event only advances the cursor.
+    case "capture_brief":
+      return { ...m, captureBrief: e.brief };
+    case "capture_asked":
+      return { ...m, captureQuestion: e.question };
+    case "capture_answered":
+      return { ...m, captureBrief: e.brief, captureQuestion: null };
+    case "capture_selected":
     case "guard":
       return m;
   }
@@ -415,6 +428,8 @@ export function syncRunModel(model: RunModel, detail: RunDetail): RunModel {
   return {
     ...model,
     title: detail.title,
+    captureBrief: detail.captureBrief ?? null,
+    captureQuestion: detail.captureQuestion ?? null,
     status: detail.status,
     waitReason: detail.waitReason,
     controller: detail.controller,

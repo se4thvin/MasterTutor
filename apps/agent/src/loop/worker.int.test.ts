@@ -1,3 +1,5 @@
+import { initializeCaptureIntent } from "./capture-intent.ts";
+import { requireCaptureBudget } from "../capture/model-budget.ts";
 import { createStepGuard } from "../guardrails/observer/guard.ts";
 import type { StepGuardFactory } from "../guardrails/observer/types.ts";
 import { existsSync } from "node:fs";
@@ -1596,5 +1598,84 @@ describe("human wait slot retention (D56)", () => {
     await waitFor(async () => time.pending() === 1, { label: "idle timer registered" });
     time.advance(60_000);
     await until(run.id, (r) => r.status === "sleeping" && r.slotName === null, "normal idle limit");
+  });
+});
+
+it("holds capture scope before the worker's initial navigation", async () => {
+  const brief = {
+    keep: ["reading_text"] as "reading_text"[],
+    skip: ["due_dates"] as "due_dates"[],
+    scopeNote: "",
+  };
+  // Keep the person-only wait observable; the default instant clock sleeps it immediately.
+  const { clock } = gatedClock();
+  await start(
+    {
+      hooks: {
+        prepareCapture: (run, step, signal, redact) =>
+          initializeCaptureIntent(
+            owner.db,
+            { derive: async () => ({ brief, ambiguous: true }) },
+            run,
+            step,
+            signal,
+            redact,
+          ),
+      },
+    },
+    clock,
+  );
+  const h = await queue([done]);
+  await until(h.run.id, (r) => r.status === "waiting", "scope wait");
+  expect(h.browser.navigations).toEqual([]);
+  expect((await row(h.run.id)).captureQuestion).not.toBeNull();
+});
+
+it("keeps an initialization budget wait nonterminal and retries after a person's extension", async () => {
+  const brief = { keep: ["reading_text"] as "reading_text"[], skip: [], scopeNote: "" };
+  const { clock } = gatedClock();
+  let first = true;
+  await start(
+    {
+      hooks: {
+        prepareCapture: (run, step, signal, redact) =>
+          initializeCaptureIntent(
+            owner.db,
+            {
+              derive: async () => {
+                if (first) {
+                  first = false;
+                  step.addUsage({ ...EMPTY_USAGE, usd: 4.9999 });
+                }
+                requireCaptureBudget(step, 500, 1000);
+                return { brief, ambiguous: false };
+              },
+            },
+            run,
+            step,
+            signal,
+            redact,
+          ),
+      },
+    },
+    clock,
+  );
+  const h = await queue([done]);
+  await until(h.run.id, (r) => r.status === "waiting", "initialization budget wait");
+  expect(h.browser.navigations).toEqual([]);
+  expect(await row(h.run.id)).toMatchObject({
+    captureBrief: null,
+    usage: { usd: 4.9999 },
+    error: null,
+  });
+  expect(
+    (await owner.db.select().from(approvals).where(eq(approvals.runId, h.run.id)))[0]?.kind,
+  ).toBe("budget");
+  await approve(h.run.id);
+  await until(h.run.id, (r) => r.status === "completed", "completion after budget extension");
+  expect(await row(h.run.id)).toMatchObject({
+    captureBrief: brief,
+    budget: { maxUsd: 7.5 },
+    error: null,
   });
 });

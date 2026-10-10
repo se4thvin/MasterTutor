@@ -33,3 +33,4 @@ export * from "./pricing.ts";
 export * from "./private-address.ts";
 export * from "./source-url.ts";
 export * from "./observer-query.ts";
+export * from "./capture-intent.ts";

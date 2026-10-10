@@ -269,3 +269,29 @@ describe("video tool (B4 done-when: the YouTube fixture produces a chaptered not
     });
   });
 });
+
+it("D57 does not create a video note when the brief keeps no extracted blocks", async () => {
+  const scope = await open("watch.html?v=fakevid0001");
+  await env.db.db
+    .update(runs)
+    .set({
+      captureBrief: { keep: ["reading_text"], skip: ["navigation"], scopeNote: "Reading only" },
+    })
+    .where(eq(runs.id, scope.runId));
+  const previous = env.services.selection;
+  env.services.selection = { select: async () => [] };
+  try {
+    await op(scope, { op: "chapters", range: null });
+    const uploads = env.storage.objects.size;
+    expect(await op(scope, { op: "keyframes", range: null })).toMatchObject({
+      kept: 0,
+      blockIds: [],
+    });
+    expect(env.storage.objects.size).toBe(uploads);
+    expect(await env.db.db.select().from(notes).where(eq(notes.runId, scope.runId))).toHaveLength(
+      0,
+    );
+  } finally {
+    env.services.selection = previous;
+  }
+});

@@ -315,6 +315,17 @@ export default defineConfig(
     },
   },
   {
+    // The fixture RPC router executes on the server, behind the guarded fixture API entry.
+    // It uses the same server contracts (including site identity) as the live RPC router.
+    files: ["apps/web/lib/fixtures/router.ts"],
+    rules: {
+      "no-restricted-imports": webImports([THREE_BAN, LUCIDE_BAN], {
+        server: true,
+        fixtures: false,
+      }),
+    },
+  },
+  {
     // Fixture-capable API entry points retain their server import permission.
     files: ["apps/web/app/api/rpc/*/route.ts", "apps/web/app/api/assets/*/route.ts"],
     rules: {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   fallbackRunTitle,
+  type CaptureBrief,
   CAPTURED_ORIGINS,
   EMPTY_USAGE,
   MODELS,
@@ -14,6 +15,7 @@ import {
   type RunSummary,
   type VaultAuditView,
 } from "@mastertutor/contracts";
+import { siteKey } from "@mastertutor/contracts/server";
 import { buildNoteArchive, noteAssetIds } from "@mastertutor/contracts/export";
 import { ORPCError, implement } from "@orpc/server";
 import { canCreateFolder, canMoveFolder, descendantIds, folderPath } from "../folders/tree.ts";
@@ -121,8 +123,26 @@ function appendAudit(
   });
 }
 
+function saveCapturePreference(state: FixtureState, domain: string, brief: CaptureBrief) {
+  const existing = state.capturePreferences.find((p) => p.domain === domain);
+  if (existing) existing.brief = brief;
+  else state.capturePreferences.push({ domain, brief });
+}
+
 export const fixtureRouter = os.router({
   runs: {
+    setCaptureBrief: os.runs.setCaptureBrief.handler(({ input, context }) => {
+      const state = stateFor(context.ns);
+      unfinishedRun(state, input.runId);
+      state.runCapture[input.runId] = { brief: input.brief };
+      const origins =
+        input.runId === RECORDED_RUN_ID
+          ? recordedDetail().allowedOrigins
+          : (state.runScope[input.runId]?.allowedOrigins ?? []);
+      for (const domain of new Set(origins.map(siteKey)))
+        saveCapturePreference(state, domain, input.brief);
+      return { ok: true as const };
+    }),
     create: os.runs.create.handler(({ input, context }): RunSummary => {
       const state = stateFor(context.ns);
       if (state.settings.killSwitch)
@@ -161,13 +181,16 @@ export const fixtureRouter = os.router({
       return paginate(runs, input);
     }),
     get: os.runs.get.handler(({ input, context }): RunDetail => {
-      if (input.runId === RECORDED_RUN_ID) return recordedDetail();
       const state = stateFor(context.ns);
+      const capture = state.runCapture[input.runId];
+      const captureState = { captureBrief: capture?.brief ?? null, captureQuestion: null };
+      if (input.runId === RECORDED_RUN_ID) return { ...recordedDetail(), ...captureState };
       const run = state.runs.find((r) => r.id === input.runId);
       if (!run) throw notFound("Run");
       const scope = state.runScope[run.id];
       return {
         ...run,
+        ...captureState,
         plan: null,
         allowedOrigins: scope?.allowedOrigins ?? [],
         currentUrl: null,
@@ -502,6 +525,23 @@ export const fixtureRouter = os.router({
     ),
   },
   settings: {
+    capturePreferences: os.settings.capturePreferences.handler(({ context }) => ({
+      items: [...stateFor(context.ns).capturePreferences].sort((a, b) =>
+        a.domain.localeCompare(b.domain),
+      ),
+    })),
+    setCapturePreference: os.settings.setCapturePreference.handler(({ input, context }) => {
+      let domain: string;
+      try {
+        domain = siteKey(input.url);
+      } catch {
+        throw new ORPCError("BAD_REQUEST", {
+          message: "Enter an http(s) site without credentials.",
+        });
+      }
+      saveCapturePreference(stateFor(context.ns), domain, input.brief);
+      return { ok: true as const };
+    }),
     get: os.settings.get.handler(({ context }) => ({ ...stateFor(context.ns).settings })),
     update: os.settings.update.handler(({ input, context }) => {
       const state = stateFor(context.ns);
