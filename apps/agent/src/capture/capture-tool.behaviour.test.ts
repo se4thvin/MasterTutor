@@ -273,7 +273,11 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
         selector: "#missing",
         kind: null,
       }),
-    ).rejects.toMatchObject({ name: "ToolError", code: "selector_not_found" });
+    ).rejects.toMatchObject({
+      name: "ToolError",
+      code: "selector_not_found",
+      message: expect.stringMatching(/capture with scope:"page".*system selects content/),
+    });
   });
 
   it("transcribes opaque canvas pages with the vision model as needs_review", async () => {
