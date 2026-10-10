@@ -18,6 +18,10 @@ export const CAPTURE_CATEGORIES = [
 export const CaptureCategory = /* @__PURE__ */ z.enum(CAPTURE_CATEGORIES);
 export type CaptureCategory = z.infer<typeof CaptureCategory>;
 export const CAPTURE_SCOPE_NOTE_MAX = 500;
+export const ScopeScreenInput = /* @__PURE__ */ z.strictObject({
+  workspaceId: Uuid,
+  text: z.string().max(CAPTURE_SCOPE_NOTE_MAX),
+});
 const shape = {
   keep: z.array(CaptureCategory).max(CAPTURE_CATEGORIES.length),
   skip: z.array(CaptureCategory).max(CAPTURE_CATEGORIES.length),

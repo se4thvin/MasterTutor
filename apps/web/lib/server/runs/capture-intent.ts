@@ -18,6 +18,7 @@ import {
 import { and, asc, eq, sql } from "drizzle-orm";
 import { ServiceError } from "../service-error.ts";
 import type { RunScope } from "./create-run.ts";
+import { screenCaptureScope } from "../vault/scope-screen.ts";
 
 async function savePreference(tx: DbTx, workspaceId: string, domain: string, brief: CaptureBrief) {
   await tx
@@ -43,9 +44,11 @@ export async function setCapturePreference(
   db: Database,
   scope: RunScope,
   raw: unknown,
+  screen: (workspaceId: string, text: string) => Promise<void> = screenCaptureScope,
 ): Promise<void> {
   PersonDecider.parse(scope.actor);
   const input = SetCapturePreferenceInput.parse(raw);
+  await screen(scope.workspaceId, input.brief.scopeNote);
   let domain: string;
   try {
     domain = siteKey(input.url);
@@ -59,6 +62,7 @@ export async function setCaptureBrief(
   db: Database,
   scope: RunScope,
   raw: SetCaptureBriefInput,
+  screen: (workspaceId: string, text: string) => Promise<void> = screenCaptureScope,
 ): Promise<void> {
   const by = PersonDecider.parse(scope.actor);
   const input = SetCaptureBriefInput.parse(raw);
@@ -71,6 +75,7 @@ export async function setCaptureBrief(
     if (!run) throw new ServiceError("not_found", "That run doesn't exist.");
     if ((TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status))
       throw new ServiceError("conflict", "This run has finished.");
+    await screen(scope.workspaceId, input.brief.scopeNote);
     const domains = run.captureQuestion?.domains ?? [...new Set(run.allowedOrigins.map(siteKey))];
     const resume =
       run.captureQuestion &&

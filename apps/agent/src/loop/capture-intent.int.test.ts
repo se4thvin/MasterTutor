@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { PersonDecider } from "@mastertutor/contracts";
 import { capturePreferences, runs, runTranscript } from "@mastertutor/db";
 import { eq } from "drizzle-orm";
@@ -11,6 +11,10 @@ import {
 } from "../../../web/lib/server/runs/capture-intent.ts";
 import { setRunApprovalMode, resumeRun } from "../../../web/lib/server/runs/service.ts";
 import { done, drive, mock, owner, setup, status } from "./testing/loop-harness.ts";
+// These lifecycle tests have no vault; the dedicated scope test uses the real vault service.
+vi.mock("../../../web/lib/server/vault/scope-screen.ts", () => ({
+  screenCaptureScope: async () => {},
+}));
 const signal = () => new AbortController().signal;
 const brief = {
   keep: ["reading_text", "figures"] as ("reading_text" | "figures")[],

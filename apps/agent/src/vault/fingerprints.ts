@@ -19,6 +19,8 @@ export interface FilledNodes {
 }
 
 export interface SecretFingerprints {
+  /** Register a value for local screening without a browser fill. Keeps keyed digests only. */
+  rememberSecret(runId: string, secret: string): void;
   /** Records filled elements to mask; `secret` is null for usernames and one-time codes (deviation 7). */
   remember(
     runId: string,
@@ -295,6 +297,13 @@ export function createSecretFingerprints(): SecretFingerprints {
   };
 
   return {
+    rememberSecret(runId, secret) {
+      if (isScannableSecret(secret)) {
+        const run = entry(runId);
+        register(run, secret);
+        run.version++;
+      }
+    },
     remember(runId, { filled, secret, code }) {
       const run = entry(runId);
       for (const backendNodeId of filled.backendNodeIds)

@@ -120,6 +120,7 @@ export const AgentEnv = z.object({
   BROWSER_SLOTS: SlotList,
   AGENT_TEST_MODE: Flag,
   AGENT_HEALTH_PORT: z.coerce.number().int().min(1).max(65_535).default(8787),
+  OBSERVER_INTERNAL_TOKEN: Secret.optional(),
   /** How long a graceful stop waits for slot restarts; keep it below compose stop_grace_period. */
   AGENT_SHUTDOWN_DRAIN_MS: z.coerce.number().int().min(0).max(60_000).default(5_000),
 });
