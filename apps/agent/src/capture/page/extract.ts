@@ -530,13 +530,36 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     const hasNavigation = [...liveRoot.querySelectorAll(directory)].some((el) => lib.visible(el));
     // This document is detached, so checkVisibility/walkRendered cannot read it. The
     // clone already filtered hidden nodes, fields, icon glyphs and chrome on the live page.
+    const textWithoutLinks = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+      if (node instanceof Element && node.matches(links)) return "";
+      return [...node.childNodes].map(textWithoutLinks).join("");
+    };
+    const MAX_LINK_METADATA_CHARS = 80;
+    const navigationRows = new Set<Element>();
+    const directoryLinks = new Set<Element>();
+    for (const row of out.body.querySelectorAll("li, [role=listitem], div, section, p")) {
+      const anchors = row.querySelectorAll("a[href]");
+      const anchor = anchors[0];
+      if (anchors.length !== 1 || !anchor || row.querySelector(substantive)) continue;
+      const target = abs(anchor.getAttribute("href"), ["http:", "https:"]);
+      if (!target || new URL(target).origin !== location.origin) continue;
+      const metadata = squash(textWithoutLinks(row));
+      // Scores, dates and badges can be bare text or paragraphs. Sentences and longer
+      // descriptions are source content, even when they sit beside a same-origin link.
+      if (metadata.length > MAX_LINK_METADATA_CHARS || /[.!?](?:\s|$)/.test(metadata)) continue;
+      navigationRows.add(row);
+      directoryLinks.add(anchor);
+    }
+    const hasLinkDirectory = directoryLinks.size >= 2;
     const isNavigationRow = (el: Element) =>
-      el.matches("li, [role=listitem]") &&
-      el.querySelector(links) !== null &&
-      ![...el.childNodes].some(
-        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
-      ) &&
-      !el.querySelector(substantive);
+      (hasLinkDirectory && navigationRows.has(el)) ||
+      (el.matches("li, [role=listitem]") &&
+        el.querySelector(links) !== null &&
+        ![...el.childNodes].some(
+          (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+        ) &&
+        !el.querySelector(substantive));
     const prose = (node: Node): string => {
       if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
       if (
@@ -547,7 +570,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       return [...node.childNodes].map(prose).join("");
     };
     if (
-      hasNavigation &&
+      (hasNavigation || hasLinkDirectory) &&
       !prose(out.body).trim() &&
       !out.body.querySelector(`article, ${contentObjects}`)
     )

@@ -129,10 +129,39 @@ describe("generic platform chrome (F6)", () => {
     });
   });
 
+  it("refuses same-document overviews with headings and short per-link scores without storing rows", async () => {
+    const run = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/overview.html`, signal);
+    const ctx = env.context(run);
+    await expect(createCaptureTool(env.services).run(ctx, page)).rejects.toMatchObject({
+      code: "navigation_only",
+    });
+    await env.commit(ctx);
+    expect(await env.db.db.select().from(notes).where(eq(notes.runId, run.runId))).toEqual([]);
+    expect(
+      await env.db.db.select().from(sources).where(eq(sources.workspaceId, run.workspaceId)),
+    ).toEqual([]);
+  });
+
+  it("recognizes same-origin directories without list markup", async () => {
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/overview.html`, signal);
+    await env.session.page.setContent(
+      '<main><h1>Contents</h1><h2>Chapters</h2><div><a href="/first">First chapter</a> 100%</div><div><a href="/second">Second chapter</a> 50%</div></main>',
+    );
+    const ctx = env.context(await seedRun(env.db.db));
+    await expect(createCaptureTool(env.services).run(ctx, page)).rejects.toMatchObject({
+      code: "navigation_only",
+    });
+  });
+
   it("keeps short lessons, instructional lists, article link lists and activity prompts", async () => {
     for (const html of [
       "<main><h1>Bit</h1><p>A bit is 0 or 1.</p></main>",
       '<main><h1>Procedure</h1><ol><li>Read the <a href="/word">word</a>.</li><li>Count ones.</li></ol></main>',
+      '<main><h1>Procedure</h1><ol><li>Read the <a href="/word">word</a>.</li><li>Count the <a href="/bits">bits</a>.</li></ol></main>',
+      '<main><h1>Lesson</h1><p>A bit is 0 or 1.</p><ul><li><a href="/first">First chapter</a> 100%</li><li><a href="/second">Second chapter</a> 50%</li></ul></main>',
+      '<main><h1>Further reading</h1><ul><li><a href="https://one.example/paper">First paper</a> 2026</li><li><a href="https://two.example/paper">Second paper</a> 2025</li></ul></main>',
+      '<main><h1>References</h1><ul><li><a href="/first">First paper</a><p>This paper explains how the representation of a bit changes between different physical devices, with examples and experimental results.</p></li><li><a href="/second">Second paper</a> 2025</li></ul></main>',
       '<article><h1>References</h1><ul><li><a href="/paper">Original paper</a></li></ul></article>',
       '<main><h1>Exercise</h1><form><label>Choose the even parity bit.</label><input type="radio"><label>0</label><input type="radio"><label>1</label></form></main>',
     ]) {
