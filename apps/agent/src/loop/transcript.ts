@@ -12,6 +12,11 @@ export const GARAGE_REF = "garage:";
 export const TranscriptEntry = z.object({
   dir: z.enum(["in", "out"]),
   turnContext: TurnContextCheckpoint.optional(),
+  /** Digest of the latest model-visible screenshot; avoids repeating identical message images. */
+  screenshotSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   item: z.record(z.string(), z.unknown()),
   responseId: z.string().nullable(),
   userEventId: z.string().nullable(),

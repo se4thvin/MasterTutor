@@ -1,7 +1,7 @@
 import { windowPageOutputs } from "./page-output-window.ts";
 import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
-import { resolveGarageRef, type TranscriptEntry } from "./transcript.ts";
+import { inJsonbOrder, resolveGarageRef, type TranscriptEntry } from "./transcript.ts";
 
 /** Only the newest screenshots go to the model as images (openai-data-policy.md rule 4). */
 export const SCREENSHOT_WINDOW = 3;
@@ -95,6 +95,23 @@ function mapImages(
   });
 }
 
+/** One source of truth for both replay windows and their compaction frontier. */
+function windowInputItems(items: readonly Loose[], keep = SCREENSHOT_WINDOW): Loose[] {
+  let total = 0;
+  let messages = 0;
+  mapImages(items, (url, slot) => {
+    total += 1;
+    if (slot.kind === "message") messages += 1;
+    return url;
+  });
+  return mapImages(windowPageOutputs(items), (url, slot) =>
+    slot.index >= total - keep &&
+    (slot.kind === "output" || slot.messageIndex >= messages - MESSAGE_IMAGE_WINDOW)
+      ? url
+      : null,
+  );
+}
+
 /**
  * The stateless model input (D37): the current context from run_transcript, in order (reasoning
  * items included, so encrypted reasoning is replayed), then this turn's pending items. Pure.
@@ -109,19 +126,7 @@ export function buildModelInput(
     ...(pending as unknown as Loose[]),
   ];
   assertPaired(items);
-  let total = 0;
-  let messages = 0;
-  mapImages(items, (url, slot) => {
-    total += 1;
-    if (slot.kind === "message") messages += 1;
-    return url;
-  });
-  return mapImages(windowPageOutputs(items), (url, slot) =>
-    slot.index >= total - keep &&
-    (slot.kind === "output" || slot.messageIndex >= messages - MESSAGE_IMAGE_WINDOW)
-      ? url
-      : null,
-  ) as unknown as ResponseInputItem[];
+  return inJsonbOrder(windowInputItems(items, keep)) as unknown as ResponseInputItem[];
 }
 
 /**
@@ -153,9 +158,30 @@ export async function rehydrateImages(
       }),
   );
   for (const key of cache.keys()) if (!keys.has(key)) cache.delete(key);
-  return mapImages(loose, (url) => {
-    if (!url.startsWith("garage:")) return url;
-    const key = resolveGarageRef(runId, url);
-    return (key && cache.get(key)) ?? null;
-  }) as unknown as ResponseInputItem[];
+  return inJsonbOrder(
+    mapImages(loose, (url) => {
+      if (!url.startsWith("garage:")) return url;
+      const key = resolveGarageRef(runId, url);
+      return (key && cache.get(key)) ?? null;
+    }),
+  ) as unknown as ResponseInputItem[];
+}
+
+/** A privacy/size window must never silently rewrite a prefix already sent to the model.
+ * Compare just the historical part, ignoring unanswered calls; the normal builder still
+ * validates pairing. A change requires a fresh compaction seed before the next decide.
+ */
+export function inputWindowExpired(
+  entries: readonly TranscriptEntry[],
+  pending: readonly ResponseInputItem[],
+): boolean {
+  const history = contextEntries(entries).map((entry) => entry.item);
+  return (
+    JSON.stringify(inJsonbOrder(windowInputItems(history))) !==
+    JSON.stringify(
+      inJsonbOrder(
+        windowInputItems([...history, ...(pending as unknown as Loose[])]).slice(0, history.length),
+      ),
+    )
+  );
 }

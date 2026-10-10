@@ -9,7 +9,7 @@ import type {
 } from "../guardrails/observer/types.ts";
 import { ProvenanceStore } from "../guardrails/provenance.ts";
 import type { EgressContext } from "../guardrails/policy.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   type ApprovalMode,
   type GuardTurnState,
@@ -114,7 +114,7 @@ import {
 } from "./compaction.ts";
 import type { RunHooks } from "./hooks.ts";
 import type { LoopBrowser, Observation } from "./loop-browser.ts";
-import { buildModelInput, rehydrateImages } from "./model-input.ts";
+import { buildModelInput, inputWindowExpired, rehydrateImages } from "./model-input.ts";
 import {
   lastInputTokens,
   readRunControl,
@@ -752,7 +752,13 @@ export class RunLoop {
       ...userTexts,
       this.#pageHeader(obs),
     ];
-    const needsImage = this.#firstTurn || !this.#calls.some((call) => call.kind === "computer");
+    const lastScreenshot = this.#history.findLast(
+      (entry) => entry.screenshotSha256,
+    )?.screenshotSha256;
+    const identical =
+      lastScreenshot === createHash("sha256").update(obs.screenshot.png).digest("hex");
+    const needsImage =
+      this.#firstTurn || (!identical && !this.#calls.some((call) => call.kind === "computer"));
     items.push(userMessage(texts, needsImage ? shot : null));
     return { items, carried: [...notes, ...this.#notes, ...userTexts] };
   }
@@ -797,7 +803,10 @@ export class RunLoop {
           userEventId: dir === "in" ? cursor : null,
           ...(mark ? { mark } : {}),
           ...(dir === "in" && mark !== "compaction" && index === items.length - 1
-            ? { turnContext: this.#turnContext.checkpoint() }
+            ? {
+                turnContext: this.#turnContext.checkpoint(),
+                screenshotSha256: createHash("sha256").update(obs.screenshot.png).digest("hex"),
+              }
             : {}),
         });
     };
@@ -859,12 +868,17 @@ export class RunLoop {
       instructions: agentInstructions(this.#run.toolProfile),
       toolProfile: this.#run.toolProfile,
       input,
+      promptCacheKey: createHash("sha256").update(`decide:${runId}`).digest("hex"),
       format: "agent_turn" as const,
     });
     const obtain = async (): Promise<ModelCall> => {
       // Stateless (D37): the whole context is rebuilt from run_transcript for every request.
       const context = await this.#rehydrate(buildModelInput(history, pending));
-      if (history.length > 0 && this.#lastInputTokens > config.compactionInputTokens) {
+      if (
+        history.length > 0 &&
+        (this.#lastInputTokens > config.compactionInputTokens ||
+          inputWindowExpired(history, pending))
+      ) {
         compacted = true;
         try {
           input = await this.#rehydrate(
