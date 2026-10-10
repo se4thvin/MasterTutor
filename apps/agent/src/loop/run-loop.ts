@@ -1,3 +1,4 @@
+import { captureState } from "./capture-intent.ts";
 import { strictest } from "@mastertutor/observer/guard";
 import { recordObserverOverride } from "@mastertutor/telemetry/record";
 import type {
@@ -405,6 +406,11 @@ export class RunLoop {
    * wait (I1).
    */
   async hasNews(waitReason: WaitReason | null = null): Promise<boolean> {
+    if (this.#run.captureQuestion) {
+      const state = await captureState(this.#deps.db, this.#run.id);
+      if (state && !state.question) return true;
+      return false;
+    }
     const pending = this.#pending;
     if (pending) {
       const decision = await loadApprovalDecision(this.#deps.db, pending.approvalId);
@@ -425,7 +431,49 @@ export class RunLoop {
   }
 
   /** Seam 1 (spec §7.3): each phase is one mt.step span, the root of its trace (spec §7.2). */
+  async prepareCapture(signal: AbortSignal): Promise<StepOutcome | null> {
+    const step = new StepCollector({ usdLeft: this.#run.budget.maxUsd - this.#run.usage.usd });
+    const mask = this.#deps.hooks.maskSources(this.#run.id);
+    let state;
+    try {
+      state = await this.#deps.hooks.prepareCapture(
+        { ...this.#run, goal: mask.redact(this.#run.goal) },
+        step,
+        signal,
+        (text) => mask.redact(text),
+      );
+    } catch (error) {
+      this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
+      await this.#deps.store.commit({ run: { usage: this.#run.usage } });
+      throw error;
+    }
+    if (!state) return null;
+    this.#run = {
+      ...this.#run,
+      captureBrief: state.brief,
+      captureQuestion: state.question,
+      usage: addUsage(this.#run.usage, step.usage),
+    };
+    if (step.events.length || step.usage.usd > 0)
+      await this.#deps.store.commit({ ...step.commitParts(), run: { usage: this.#run.usage } });
+    if (!state.question) return null;
+    await this.#deps.store.commit({
+      transition: {
+        from: ["running", "waiting"],
+        to: "waiting",
+        waitReason: "approval",
+        reason: "capture_scope",
+      },
+      run: { consumeWake: await readWakeRequest(this.#deps.db, this.#run.id) },
+    });
+    this.#control = { ...this.#control, waitReason: "approval" };
+    this.markIdle();
+    return { kind: "waiting", reason: "approval" };
+  }
+
   async step(signal: AbortSignal): Promise<StepOutcome> {
+    const scopeWait = await this.prepareCapture(signal);
+    if (scopeWait) return scopeWait;
     if (this.#title) await this.#commitTitle(this.#title);
     await this.#commitWatcher();
     const phase = this.#next;
@@ -782,7 +830,13 @@ export class RunLoop {
       ),
       `${obs.url}#${obs.domHash}@${obs.scroll.x},${obs.scroll.y}`,
     );
-    await this.#turnContext.refresh({ ...this.#run }, obs.origin, this.#control, hooks);
+    await this.#turnContext.refresh({ ...this.#run }, obs.origin, this.#control, {
+      ...hooks,
+      promptContext: async (run, origin) =>
+        (await hooks.promptContext(run, origin)).map((text) =>
+          hooks.maskSources(runId).redact(text),
+        ),
+    });
     const extra = this.#turnContext.messages();
     const userTexts = messages.map((message) => `Message from the user: ${message.text}`);
     const { items: pending, carried } = this.#buildInput(obs, userTexts, extra);
@@ -1924,6 +1978,8 @@ export class RunLoop {
 
   /** Called after a wake (or a restore with a pending approval). Never replays blindly (spec §5.4). */
   async resume(signal: AbortSignal): Promise<StepOutcome> {
+    const scopeWait = await this.prepareCapture(signal);
+    if (scopeWait) return scopeWait;
     this.#loops.reset();
     const pending = this.#pending;
     if (!pending) {

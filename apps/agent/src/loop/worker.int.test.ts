@@ -1,3 +1,4 @@
+import { initializeCaptureIntent } from "./capture-intent.ts";
 import { createStepGuard } from "../guardrails/observer/guard.ts";
 import type { StepGuardFactory } from "../guardrails/observer/types.ts";
 import { existsSync } from "node:fs";
@@ -1597,4 +1598,29 @@ describe("human wait slot retention (D56)", () => {
     time.advance(60_000);
     await until(run.id, (r) => r.status === "sleeping" && r.slotName === null, "normal idle limit");
   });
+});
+
+it("holds capture scope before the worker's initial navigation", async () => {
+  const brief = {
+    keep: ["reading_text"] as "reading_text"[],
+    skip: ["due_dates"] as "due_dates"[],
+    scopeNote: "",
+  };
+  await start({
+    hooks: {
+      prepareCapture: (run, step, signal, redact) =>
+        initializeCaptureIntent(
+          owner.db,
+          { derive: async () => ({ brief, ambiguous: true }) },
+          run,
+          step,
+          signal,
+          redact,
+        ),
+    },
+  });
+  const h = await queue([done]);
+  await until(h.run.id, (r) => r.status === "waiting", "scope wait");
+  expect(h.browser.navigations).toEqual([]);
+  expect((await row(h.run.id)).captureQuestion).not.toBeNull();
 });

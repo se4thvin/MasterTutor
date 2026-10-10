@@ -1,3 +1,5 @@
+import { createIntentModel, type IntentModel } from "./capture/intent-model.ts";
+import { initializeCaptureIntent, preferencesFor } from "./loop/capture-intent.ts";
 import type { Database } from "@mastertutor/db";
 import type { Storage } from "@mastertutor/storage";
 import { createCaptureTool } from "./capture/capture-tool.ts";
@@ -33,6 +35,7 @@ export interface LibraryDeps {
 
 /** Everything capture, video, PDF and filing need; built once per agent process. */
 export interface LibraryServices {
+  intent?: IntentModel;
   db: Database;
   writer: NoteWriter;
   assets: AssetStore;
@@ -54,6 +57,7 @@ export interface LibraryServices {
 
 export function createLibraryServices(deps: LibraryDeps): LibraryServices {
   return {
+    intent: createIntentModel(deps.openai),
     db: deps.db,
     writer: new NoteWriter({ db: deps.db, embedder: createEmbedder(deps.openai, deps.log) }),
     assets: createAssetStore({ db: deps.db, storage: deps.storage }),
@@ -72,6 +76,14 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 /** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through composeRunHooks. */
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
   return {
+    prepareCapture: services.intent
+      ? (run, step, signal, redact) =>
+          initializeCaptureIntent(services.db, services.intent!, run, step, signal, redact)
+      : async () => null,
+    promptContext: async (run) => {
+      const preferences = await preferencesFor(services.db, run);
+      return preferences.length ? [`Capture site preferences: ${JSON.stringify(preferences)}`] : [];
+    },
     functionTools: [register(createCaptureTool(services)), register(createVideoTool(services))],
     // Caption tracks the player fetched stay readable for the video tool (preflight Q5).
     responseLog: isTimedtextUrl,

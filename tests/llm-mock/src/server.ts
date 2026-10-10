@@ -346,6 +346,17 @@ export async function startLlmMock(
   }
 
   const structured = new Map<string, (body: MockRequestBody) => unknown>([
+    [
+      "capture_intent",
+      () => ({
+        brief: {
+          keep: ["reading_text", "definitions", "figures", "tables", "worked_examples"],
+          skip: ["due_dates", "scores", "navigation", "platform_chrome"],
+          scopeNote: "Capture source material",
+        },
+        ambiguous: false,
+      }),
+    ],
     ["ocr_text", () => ({ markdown: "" })],
     ["filing_decision", () => ({ path: ["Inbox"], createLeaf: true })],
     ["run_title", () => ({ title: "Mock run title" })],

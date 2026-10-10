@@ -123,6 +123,7 @@ function appendAudit(
 
 export const fixtureRouter = os.router({
   runs: {
+    setCaptureBrief: os.runs.setCaptureBrief.handler(() => notImplemented()),
     create: os.runs.create.handler(({ input, context }): RunSummary => {
       const state = stateFor(context.ns);
       if (state.settings.killSwitch)
@@ -502,6 +503,8 @@ export const fixtureRouter = os.router({
     ),
   },
   settings: {
+    capturePreferences: os.settings.capturePreferences.handler(() => ({ items: [] })),
+    setCapturePreference: os.settings.setCapturePreference.handler(() => notImplemented()),
     get: os.settings.get.handler(({ context }) => ({ ...stateFor(context.ns).settings })),
     update: os.settings.update.handler(({ input, context }) => {
       const state = stateFor(context.ns);

@@ -1,3 +1,4 @@
+import type { CaptureState } from "./capture-intent.ts";
 import type { CDPSession } from "playwright-core";
 import { NO_MASK_SOURCES, type MaskSources } from "../browser/masking.ts";
 import type { BrowserSession } from "../browser/session.ts";
@@ -44,6 +45,12 @@ export interface ReleasedSlot {
 
 /** Extension points later phases implement; B1 ships safe defaults. */
 export interface RunHooks {
+  prepareCapture(
+    run: RunSnapshot,
+    step: StepWriter,
+    signal: AbortSignal,
+    redact: (text: string) => string,
+  ): Promise<CaptureState | null>;
   /**
    * Runs before `completed` commits; its step writes join that commit. `{ok:false}` keeps running.
    * `signal` is the step's: a kill interrupts the hook's model and embedding calls.
@@ -78,6 +85,7 @@ export interface RunHooks {
 }
 
 export const DEFAULT_HOOKS: RunHooks = {
+  prepareCapture: async () => null,
   onComplete: async () => ({ ok: true }),
   responseLog: null,
   sessionStore: NO_SESSION_STORE,

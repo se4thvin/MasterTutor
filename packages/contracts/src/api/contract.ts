@@ -1,3 +1,8 @@
+import {
+  SetCaptureBriefInput,
+  SitePreference,
+  SetCapturePreferenceInput,
+} from "../capture-intent.ts";
 import { oc } from "@orpc/contract";
 import { z } from "zod";
 import {
@@ -70,6 +75,7 @@ const Empty = z.object({});
 /** Contract-first oRPC router (spec §6). web implements it; the UI and tests consume it. */
 export const apiContract = {
   runs: {
+    setCaptureBrief: oc.input(SetCaptureBriefInput).output(Ok),
     create: oc.input(CreateRunInput).output(RunSummary),
     list: oc.input(ListRunsInput).output(Page(RunSummary)),
     get: oc.input(RunRef).output(RunDetail),
@@ -111,6 +117,8 @@ export const apiContract = {
     audit: oc.input(PageInput).output(Page(VaultAuditView)),
   },
   settings: {
+    capturePreferences: oc.input(Empty).output(z.object({ items: z.array(SitePreference) })),
+    setCapturePreference: oc.input(SetCapturePreferenceInput).output(Ok),
     get: oc.input(Empty).output(SettingsView),
     update: oc.input(UpdateSettingsInput).output(SettingsView),
     setKillSwitch: oc.input(SetKillSwitchInput).output(SettingsView),
