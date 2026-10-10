@@ -141,6 +141,13 @@
       "when": 1791595813535,
       "tag": "0019_intent_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791597934101,
+      "tag": "0020_capture_confirmed_at",
+      "breakpoints": true
     }
   ]
 }

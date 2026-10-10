@@ -67,5 +67,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON observer.copilot_threads, observer.copil
   observer.copilot_results, observer.copilot_spend TO observer_role;
 ALTER ROLE observer_role SET statement_timeout = '3s';
 
--- D57: only a person through web can save site preferences; the worker reads defaults.
-REVOKE INSERT, UPDATE, DELETE ON capture_preferences FROM agent_role;
+-- D57: the worker remembers only a person-confirmed scope when later source sites appear.
+-- It may upsert defaults, never delete them; web remains the person editing boundary.
+REVOKE DELETE ON capture_preferences FROM agent_role;

@@ -18,6 +18,14 @@ const PROBES: ReadonlyArray<readonly [string, unknown, Expectation]> = [
   ["runs/resume", { runId: MISSING }, "not_found"],
   ["runs/sendMessage", { runId: MISSING, text: "probe" }, "not_found"],
   ["runs/setApprovalMode", { runId: MISSING, mode: "ask" }, "not_found"],
+  [
+    "runs/setCaptureBrief",
+    {
+      runId: MISSING,
+      brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "Reading only" },
+    },
+    "not_found",
+  ],
   ["runs/decideApproval", { approvalId: MISSING, decision: "denied" }, "not_found"],
   ["runs/submitOtp", { runId: MISSING, code: "123456" }, "not_found"],
   ["runs/takeControl", { runId: MISSING }, "not_found"],
@@ -43,6 +51,15 @@ const PROBES: ReadonlyArray<readonly [string, unknown, Expectation]> = [
   ["vault/forgetSession", { alias: "no-such-alias", origin: "https://probe.example" }, "ok"],
   ["vault/audit", { limit: 1 }, "ok"],
   ["settings/get", {}, "ok"],
+  ["settings/capturePreferences", {}, "ok"],
+  [
+    "settings/setCapturePreference",
+    {
+      url: "https://capture-probe.example",
+      brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "Reading only" },
+    },
+    "ok",
+  ],
   ["settings/setKillSwitch", { on: false }, "ok"],
   ["settings/usage", { from: today, to: today }, "ok"],
   ["assets/url", { assetId: MISSING }, "not_found"],

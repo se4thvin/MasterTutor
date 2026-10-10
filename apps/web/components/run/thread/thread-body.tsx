@@ -17,6 +17,7 @@ export interface ThreadProps {
   thinking: ThinkingState | null;
   /** The OTP card; the view renders it in the stage when the thread is a sheet. */
   otp: ReactNode;
+  capture?: ReactNode;
   replaySeq: number | null;
   onReplay(seq: number): void;
   /** Moves focus to the approval sheet (the thread's approval card never decides itself). */
@@ -69,7 +70,7 @@ function ThreadList(p: ThreadProps) {
     observer.observe(list);
     for (const entry of list.children) observer.observe(entry);
     return () => observer.disconnect();
-  }, [p.items.length, p.otp, p.thinking, p.replaySeq]);
+  }, [p.items.length, p.otp, p.capture, p.thinking, p.replaySeq]);
   useEffect(() => {
     const list = listRef.current;
     const row = selected === null ? null : list?.querySelector<HTMLElement>("[data-selected]");
@@ -106,6 +107,11 @@ function ThreadList(p: ThreadProps) {
             since={p.thinking.since}
             until={p.thinking.until}
           />
+        </AnimatedItem>
+      ) : null}
+      {p.capture ? (
+        <AnimatedItem className="th-item" data-side="agent" data-kind="capture">
+          {p.capture}
         </AnimatedItem>
       ) : null}
       {p.otp ? (

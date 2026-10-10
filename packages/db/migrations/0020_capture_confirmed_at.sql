@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ADD COLUMN "capture_confirmed_at" timestamp with time zone;

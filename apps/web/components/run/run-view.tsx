@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApprovalDecisionInput, ApprovalMode } from "@mastertutor/contracts";
+import type { ApprovalDecisionInput, ApprovalMode, CaptureBrief } from "@mastertutor/contracts";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RunPip, useRunPip } from "@/components/mascot/run-pip.tsx";
 import { useToast } from "@/components/toast/toast-provider.tsx";
@@ -43,6 +43,14 @@ import { useRun } from "./stream/use-run.ts";
 import { ThreadPane, ThreadSheet } from "./thread/thread-panel.tsx";
 import { BudgetMeters } from "./timeline/budget-meters.tsx";
 import { useTakeover } from "./use-takeover.ts";
+
+// Scope controls are conditional on a persisted brief/question, off the first load (D43).
+const { Component: CaptureQuestionCard } = lazyComponent(() =>
+  import("@/components/capture/run-capture-scope.tsx").then((mod) => mod.CaptureQuestionCard),
+);
+const { Component: RunCaptureBrief } = lazyComponent(() =>
+  import("@/components/capture/run-capture-scope.tsx").then((mod) => mod.RunCaptureBrief),
+);
 
 /** The OTP card is rare (a site asked for a code): off the run page's first load. */
 /**
@@ -303,12 +311,30 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
   // While the pane is open its ThoughtLine speaks while the agent thinks; the caption would repeat
   // it. Every other state (control, pause, CAPTCHA, stuck, acting) is the caption's to announce (final I1).
   const userHasControl = inControl(view.controller, takeover);
+  const saveCaptureBrief = async (brief: CaptureBrief) => {
+    await api.runs.setCaptureBrief({ runId, brief });
+    resync();
+  };
   const thread = {
     runId,
     items,
     summary: summaryLabel(view),
     thinking,
     otp: pane ? otp : null,
+    capture:
+      view.captureBrief && !view.captureQuestion ? (
+        <ChunkBoundary what="the capture brief" onFailed={ignoreFailure}>
+          <Suspense fallback={null}>
+            {" "}
+            <RunCaptureBrief
+              key={JSON.stringify(view.captureBrief)}
+              brief={view.captureBrief}
+              editable={!isTerminal(view.status)}
+              onSave={saveCaptureBrief}
+            />
+          </Suspense>
+        </ChunkBoundary>
+      ) : null,
     replaySeq,
     onReplay: (seq: number) => {
       setPlaying(false);
@@ -390,6 +416,25 @@ export function RunView({ runId, viewerId }: { runId: string; viewerId: string |
           pip={<RunPip state={pipState} onPoke={() => sendPip({ type: "poke" })} />}
         />
         <section className="run-stage" aria-label="Agent browser">
+          {view.captureBrief && view.captureQuestion && !isTerminal(view.status) ? (
+            <ChunkBoundary what="capture scope" onFailed={ignoreFailure}>
+              <Suspense
+                fallback={
+                  <div role="status" className="group group-pad">
+                    Loading capture choices…
+                  </div>
+                }
+              >
+                {" "}
+                <CaptureQuestionCard
+                  key={JSON.stringify([view.captureBrief, view.captureQuestion])}
+                  brief={view.captureBrief}
+                  question={view.captureQuestion}
+                  onSave={saveCaptureBrief}
+                />
+              </Suspense>
+            </ChunkBoundary>
+          ) : null}
           <BrowserFrame
             runId={runId}
             model={view}

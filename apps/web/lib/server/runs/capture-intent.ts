@@ -82,6 +82,7 @@ export async function setCaptureBrief(
       .set({
         ...(resume ? { status: "running" as const, waitReason: null } : {}),
         captureBrief: input.brief,
+        captureConfirmedAt: sql`clock_timestamp()`,
         captureQuestion: null,
         wakeRequestedAt: sql`now()`,
       })

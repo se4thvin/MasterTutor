@@ -1,3 +1,4 @@
+import { redactBrief } from "./brief.ts";
 import { requireCaptureBudget } from "./model-budget.ts";
 import {
   CaptureBrief,
@@ -97,10 +98,7 @@ export async function selectCaptureBlocks<T extends { type: BlockType; markdown:
     .where(and(eq(runs.id, ctx.runId), eq(runs.workspaceId, ctx.workspaceId)));
   if (!row?.brief || row.question)
     throw new ToolError("capture_scope", "Choose capture scope before saving content.");
-  const brief = CaptureBrief.parse({
-    ...row.brief,
-    scopeNote: ctx.mask.redact(row.brief.scopeNote),
-  });
+  const brief = redactBrief(CaptureBrief.parse(row.brief), (text) => ctx.mask.redact(text));
   const kept = await selectBlocks(services.selection, brief, blocks, {
     step: ctx.step,
     signal: ctx.signal,

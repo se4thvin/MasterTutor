@@ -78,10 +78,19 @@ export function createLibraryServices(deps: LibraryDeps): LibraryServices {
 
 /** What B2/B4/B5 plug into the run loop, merged with B3 and B6 through composeRunHooks. */
 export function libraryHooks(services: LibraryServices): Partial<RunHooks> {
+  const captureSites = new Map<string, string>();
   return {
     prepareCapture: services.intent
       ? (run, step, signal, redact) =>
-          initializeCaptureIntent(services.db, services.intent!, run, step, signal, redact)
+          initializeCaptureIntent(
+            services.db,
+            services.intent!,
+            run,
+            step,
+            signal,
+            redact,
+            captureSites,
+          )
       : async () => null,
     promptContext: async (run) => {
       const preferences = await preferencesFor(services.db, run);

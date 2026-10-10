@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { PersonDecider } from "@mastertutor/contracts";
-import { capturePreferences, runs } from "@mastertutor/db";
+import { capturePreferences, runs, runTranscript } from "@mastertutor/db";
 import { eq } from "drizzle-orm";
 import { createOpenAI } from "../llm/openai.ts";
 import { createIntentModel } from "../capture/intent-model.ts";
@@ -92,4 +92,66 @@ it("reuses saved scope without asking and explicit goals override it", async () 
       { runId: foreign[0]!.id, brief },
     ),
   ).rejects.toMatchObject({ code: "not_found" });
+});
+
+it("saves an up-front answer when a source site becomes known later, without overwriting newer Settings edits", async () => {
+  mock.setStructured("capture_intent", () => ({ brief, ambiguous: true }));
+  const h = await setup([done()], { hooks: hooks() });
+  await owner.db
+    .delete(capturePreferences)
+    .where(eq(capturePreferences.workspaceId, h.run.workspaceId));
+  await owner.db.update(runs).set({ allowedOrigins: [] }).where(eq(runs.id, h.run.id));
+  const first = await h.reload();
+  expect(await first.step(signal())).toEqual({ kind: "waiting", reason: "approval" });
+  await setCaptureBrief(
+    owner.db,
+    { workspaceId: h.run.workspaceId, actor },
+    { runId: h.run.id, brief },
+  );
+  expect((await listCapturePreferences(owner.db, h.run.workspaceId)).items).toEqual([]);
+  await owner.db
+    .update(runs)
+    .set({ allowedOrigins: ["https://late.example.edu"] })
+    .where(eq(runs.id, h.run.id));
+  const restored = await h.reload();
+  expect(await restored.resume(signal())).toEqual({ kind: "continue" });
+  expect((await listCapturePreferences(owner.db, h.run.workspaceId)).items).toEqual([
+    { domain: "example.edu", brief },
+  ]);
+  await owner.db
+    .update(capturePreferences)
+    .set({
+      brief: { ...brief, scopeNote: "Newer Settings choice" },
+      updatedAt: new Date(Date.now() + 1000),
+    })
+    .where(eq(capturePreferences.workspaceId, h.run.workspaceId));
+  await restored.step(signal());
+  expect(
+    (await listCapturePreferences(owner.db, h.run.workspaceId)).items[0]?.brief.scopeNote,
+  ).toBe("Newer Settings choice");
+});
+
+it("redacts a person-edited scope note before turn context or checkpoints see it", async () => {
+  const { NO_MASK_SOURCES } = await import("../browser/masking.ts");
+  const marker = "private-scope-marker";
+  const h = await setup([done()], {
+    hooks: {
+      ...hooks(),
+      maskSources: () => ({
+        ...NO_MASK_SOURCES,
+        redact: (text) => text.replaceAll(marker, "[masked]"),
+      }),
+    },
+  });
+  await owner.db
+    .update(runs)
+    .set({ captureBrief: { ...brief, scopeNote: marker }, captureQuestion: null })
+    .where(eq(runs.id, h.run.id));
+  expect(await drive(await h.reload())).toEqual({ kind: "completed" });
+  expect(JSON.stringify(mock.requestsFor(h.name).map((r) => r.body.input))).not.toContain(marker);
+  expect(
+    JSON.stringify(
+      await owner.db.select().from(runTranscript).where(eq(runTranscript.runId, h.run.id)),
+    ),
+  ).not.toContain(marker);
 });

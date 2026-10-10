@@ -1,3 +1,4 @@
+import { redactBrief } from "../capture/brief.ts";
 import { captureState } from "./capture-intent.ts";
 import { strictest } from "@mastertutor/observer/guard";
 import { recordObserverOverride } from "@mastertutor/telemetry/record";
@@ -454,8 +455,11 @@ export class RunLoop {
       captureQuestion: state.question,
       usage: addUsage(this.#run.usage, step.usage),
     };
-    if (step.events.length || step.usage.usd > 0)
-      await this.#deps.store.commit({ ...step.commitParts(), run: { usage: this.#run.usage } });
+    const parts = step.commitParts();
+    if (parts.extra || step.events.length || step.usage.usd > 0) {
+      await this.#deps.store.commit({ ...parts, run: { usage: this.#run.usage } });
+      await step.afterCommitted(this.#deps.log);
+    }
     if (!state.question) return null;
     await this.#deps.store.commit({
       transition: {
@@ -830,7 +834,13 @@ export class RunLoop {
       ),
       `${obs.url}#${obs.domHash}@${obs.scroll.x},${obs.scroll.y}`,
     );
-    await this.#turnContext.refresh({ ...this.#run }, obs.origin, this.#control, {
+    const contextRun = {
+      ...this.#run,
+      captureBrief: this.#run.captureBrief
+        ? redactBrief(this.#run.captureBrief, (text) => hooks.maskSources(runId).redact(text))
+        : null,
+    };
+    await this.#turnContext.refresh(contextRun, obs.origin, this.#control, {
       ...hooks,
       promptContext: async (run, origin) =>
         (await hooks.promptContext(run, origin)).map((text) =>

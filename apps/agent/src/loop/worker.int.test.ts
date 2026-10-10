@@ -1606,19 +1606,24 @@ it("holds capture scope before the worker's initial navigation", async () => {
     skip: ["due_dates"] as "due_dates"[],
     scopeNote: "",
   };
-  await start({
-    hooks: {
-      prepareCapture: (run, step, signal, redact) =>
-        initializeCaptureIntent(
-          owner.db,
-          { derive: async () => ({ brief, ambiguous: true }) },
-          run,
-          step,
-          signal,
-          redact,
-        ),
+  // Keep the person-only wait observable; the default instant clock sleeps it immediately.
+  const { clock } = gatedClock();
+  await start(
+    {
+      hooks: {
+        prepareCapture: (run, step, signal, redact) =>
+          initializeCaptureIntent(
+            owner.db,
+            { derive: async () => ({ brief, ambiguous: true }) },
+            run,
+            step,
+            signal,
+            redact,
+          ),
+      },
     },
-  });
+    clock,
+  );
   const h = await queue([done]);
   await until(h.run.id, (r) => r.status === "waiting", "scope wait");
   expect(h.browser.navigations).toEqual([]);
