@@ -91,7 +91,8 @@ const PROBES: ReadonlyArray<readonly [string, unknown, "ok" | "not_found"]> = [
     "settings/setCapturePreference",
     {
       url: "https://capture-probe.example",
-      brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "Reading only" },
+      // The inventory harness has no agent. Nonempty scope is covered by the real vault screen test.
+      brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "" },
     },
     "ok",
   ],
