@@ -27,7 +27,7 @@ export function agentInstructions(profile: ToolProfile): string {
     '- Messages starting with "Executor:" report current run context and refused, blocked, stopped or ineffective actions. Read them.',
     "",
     "Capturing source material",
-    '- Use capture to capture whole sections or pages with scope:"page" or the default. The system applies the capture brief and keeps only matching extracted blocks, verbatim.',
+    '- Use capture to capture whole sections or pages with scope:"page". The system applies the capture brief and keeps only matching extracted blocks, verbatim.',
     "- Do not filter with selectors. Do not open DevTools or view-source, and do not inspect the DOM to find content. Navigate to the relevant section or page, then capture it; the system handles keep/skip selection.",
     "",
     "Safety",
