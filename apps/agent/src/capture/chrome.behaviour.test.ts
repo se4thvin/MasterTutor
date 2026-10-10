@@ -4,6 +4,7 @@ import { noteBlocks, notes, sources } from "@mastertutor/db";
 import { FIXTURES } from "../testing/browser-harness.ts";
 import { startCaptureEnv, type CaptureEnv } from "../testing/capture-env.ts";
 import { seedRun } from "../testing/notes.ts";
+import { positionOrder } from "../notes/positions.ts";
 import { createCaptureTool } from "./capture-tool.ts";
 import { pageExtract } from "./page/extract.ts";
 import { captureWorlds } from "./worlds.ts";
@@ -19,6 +20,49 @@ afterAll(async () => {
 const page = { kind: null, scope: "page" as const, selector: null };
 
 describe("generic platform chrome (F6)", () => {
+  it("drops repeated banners in sibling interactive widgets and stores prose verbatim in order", async () => {
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/widgets.html`, signal);
+    const before = await env.session.page.content();
+    const worlds = await captureWorlds(env.session);
+    const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    const prose = [
+      "A bit has two possible values: 0 and 1.",
+      "Select the value represented by an enabled switch.",
+      "Two bits represent four values, in order: 00, 01, 10, 11.",
+      "A repeated theorem is still content.",
+      "Enter the two-bit representation of three.",
+      "A repeated theorem is still content.",
+      "Each additional bit doubles the number of possible values.",
+    ];
+    for (const field of [extract.markdown, extract.sourceText, extract.pageText]) {
+      expect(field).not.toContain("Due: 09/04/2026, 11:59 PM CDT");
+      expect(field).not.toContain("This assignment's due date has passed.");
+      let after = 0;
+      for (const text of prose) {
+        const at = field.indexOf(text, after);
+        expect(at).toBeGreaterThanOrEqual(after);
+        after = at + text.length;
+      }
+    }
+    expect(await env.session.page.content()).toBe(before);
+    const ctx = env.context(await seedRun(env.db.db));
+    const result = await createCaptureTool(env.services).run(ctx, page);
+    await env.commit(ctx);
+    const stored = await env.db.db
+      .select()
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, result.noteId))
+      .orderBy(positionOrder);
+    expect(stored.map((block) => block.markdown).join("\n")).not.toContain("due date has passed");
+    const text = stored.map((block) => block.markdown).join("\n");
+    let after = 0;
+    for (const passage of prose) {
+      const at = text.indexOf(passage, after);
+      expect(at).toBeGreaterThanOrEqual(after);
+      after = at + passage.length;
+    }
+  });
+
   it("excludes semantic and repeated exterior chrome from blocks and coverage without editing prose", async () => {
     await env.session.goto(`${FIXTURES}/capture/platform-chrome/lesson.html`, signal);
     const before = await env.session.page.content();

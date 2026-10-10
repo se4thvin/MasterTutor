@@ -245,6 +245,45 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     );
     for (const el of candidates) if (shared.has(signature(el))) repeatedChrome.add(el);
   }
+  // Role-free banners can repeat inside sibling widgets rather than outside the lesson.
+  // Compare whole text blocks across distinct siblings that each hold a visible control;
+  // repetition in one widget or in ordinary prose is not enough. Use text only, not classes.
+  const controls = "button, input:not([type=hidden]), [role=button]";
+  const interactive = new WeakMap<Element, boolean>();
+  const hasControl = (el: Element): boolean => {
+    const cached = interactive.get(el);
+    if (cached !== undefined) return cached;
+    const value = [...el.querySelectorAll(controls)].some((control) => lib.visible(control));
+    interactive.set(el, value);
+    return value;
+  };
+  const widgetBlocks = new Map<Element, Map<string, Map<Element, Element[]>>>();
+  for (const el of document.querySelectorAll(repeatBlocks)) {
+    if (
+      !lib.visible(el) ||
+      el.querySelector(`${repeatBlocks}, ${mainSelector}, ${substantive}, ${controls}`)
+    )
+      continue;
+    const text = renderedText(el);
+    // A repeated question/list marker is structure, not a standalone text block.
+    if (!text || /^(?:\d+|[a-zA-Z])[.)]$/.test(text)) continue;
+    for (let widget: Element | null = el.parentElement; widget; widget = widget.parentElement) {
+      if (widget.matches(mainSelector) || widget === document.body) break;
+      const parent = widget.parentElement;
+      if (!parent || !hasControl(widget)) continue;
+      let texts = widgetBlocks.get(parent);
+      if (!texts) widgetBlocks.set(parent, (texts = new Map()));
+      let siblings = texts.get(text);
+      if (!siblings) texts.set(text, (siblings = new Map()));
+      let blocks = siblings.get(widget);
+      if (!blocks) siblings.set(widget, (blocks = []));
+      blocks.push(el);
+    }
+  }
+  for (const texts of widgetBlocks.values())
+    for (const siblings of texts.values())
+      if (siblings.size >= 2)
+        for (const blocks of siblings.values()) for (const el of blocks) repeatedChrome.add(el);
   const isChrome = (el: Element) => lib.isChrome(el) || repeatedChrome.has(el);
 
   const structure = finder.analyse(liveRoot);
