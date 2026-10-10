@@ -51,6 +51,7 @@ import type { Storage } from "@mastertutor/storage";
 import type { ResponseInputItem } from "../llm/openai.ts";
 import { inRunScope } from "../browser/navigation-scope.ts";
 import type { TargetDescription } from "../browser/page-helpers.ts";
+import { ToolError } from "../tools/types.ts";
 import { budgetExceeded, extendBudget } from "../guardrails/budget.ts";
 import { LoopDetector } from "../guardrails/loop-detector.ts";
 import { shownModelText } from "../guardrails/shown-text.ts";
@@ -349,7 +350,10 @@ export class RunLoop {
     loop.#signInPaused = await signInPausedOrigins(deps.db, run.id);
     // While a risky item waits for approval its calls have not run yet; anything else unanswered
     // either finished (its act row holds the result) or is answered without being re-run.
-    const awaitingItem = loop.#pending !== null && loop.#pending.item !== null;
+    const awaitingItem =
+      loop.#pending !== null &&
+      (loop.#pending.item !== null ||
+        (loop.#pending.request.kind === "budget" && loop.#pending.callIds.length > 0));
     for (const call of loop.#calls) {
       const done = await loadActResult(deps.db, run.id, call.callId);
       if (done) {
@@ -433,6 +437,9 @@ export class RunLoop {
 
   /** Seam 1 (spec §7.3): each phase is one mt.step span, the root of its trace (spec §7.2). */
   async prepareCapture(signal: AbortSignal): Promise<StepOutcome | null> {
+    // Resolve an initialization budget card before trying the still-unaffordable call again.
+    if (this.#pending?.request.kind === "budget" && !this.#run.captureBrief)
+      return this.resume(signal);
     const step = new StepCollector({ usdLeft: this.#run.budget.maxUsd - this.#run.usage.usd });
     const mask = this.#deps.hooks.maskSources(this.#run.id);
     let state;
@@ -446,6 +453,11 @@ export class RunLoop {
     } catch (error) {
       this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
       await this.#deps.store.commit({ run: { usage: this.#run.usage } });
+      if (error instanceof ToolError && error.code === "capture_budget")
+        return this.#ask(
+          { kind: "budget", exceeded: "usd", usage: this.#run.usage, budget: this.#run.budget },
+          { callIds: [], item: null, personOnly: true },
+        );
       throw error;
     }
     if (!state) return null;
@@ -1452,7 +1464,6 @@ export class RunLoop {
       personOnly?: boolean;
     },
   ): Promise<StepOutcome> {
-    const obs = this.#obs();
     const seq = this.#deps.store.nextSeq();
     const approvalId = randomUUID();
     const result: ApproveStepResult = {
@@ -1462,8 +1473,8 @@ export class RunLoop {
       item: scope.item,
       target: scope.target ?? null,
       context: scope.context ?? null,
-      url: obs.url,
-      domHash: obs.domHash,
+      url: request.kind === "budget" ? (this.#observation?.url ?? "about:blank") : this.#obs().url,
+      domHash: request.kind === "budget" ? (this.#observation?.domHash ?? "") : this.#obs().domHash,
       decided: [...this.#decided.values()],
       personOnly: scope.personOnly ?? false,
     };
@@ -1722,6 +1733,20 @@ export class RunLoop {
         await this.#discard(step);
         // What the tool already spent (OCR, embeddings…) is charged even though it was cut short (M7).
         this.#run = { ...this.#run, usage: addUsage(this.#run.usage, step.usage) };
+        if (error instanceof ToolError && error.code === "capture_budget") {
+          await store.commit({
+            steps: [{ seq, phase: "act", state: "aborted", action }],
+            run: { usage: this.#run.usage },
+          });
+          return this.#ask(
+            { kind: "budget", exceeded: "usd", usage: this.#run.usage, budget: this.#run.budget },
+            {
+              callIds: this.#calls.filter((c) => !this.#results.has(c.callId)).map((c) => c.callId),
+              item: null,
+              personOnly: true,
+            },
+          );
+        }
         if (interruptionOf(error) === null && !signal.aborted) throw error;
         this.#results.set(call.callId, notRun(call, INTERRUPTED));
         this.#answerRest(NOT_STARTED);
@@ -1986,9 +2011,61 @@ export class RunLoop {
 
   /* ------------------------------ waits and control ------------------------------ */
 
+  /** Budget decisions need no browser work until the person has extended the cap. */
+  async #resumeBudget(
+    pending: PendingApproval,
+    decision: NonNullable<Awaited<ReturnType<typeof loadApprovalDecision>>>,
+    signal: AbortSignal,
+  ): Promise<StepOutcome> {
+    this.#pending = null;
+    const approved = decision.status === "approved" || decision.status === "edited";
+    const approveStep: StepRecord = {
+      seq: pending.stepSeq,
+      phase: "approve",
+      state: approved ? "done" : "skipped",
+      result: pending,
+    };
+    if (!approved) {
+      await this.#deps.store.commit({
+        steps: [approveStep],
+        run: { usage: this.#tick() },
+        transition: {
+          from: ["waiting", "running"],
+          to: "cancelled",
+          waitReason: null,
+          reason: "budget",
+          error: null,
+        },
+      });
+      return { kind: "cancelled" };
+    }
+    if (decision.edit?.budgetChoice === "finish_now") {
+      await this.#deps.store.commit({ steps: [approveStep], transition: TO_RUNNING });
+      return this.#complete(signal);
+    }
+    this.#run = { ...this.#run, budget: extendBudget(this.#run.budget) };
+    const instruction = decision.edit?.instruction;
+    if (instruction) this.#notes.push(`Message from the user: ${instruction}`);
+    await this.#deps.store.commit({
+      steps: [approveStep],
+      transition: TO_RUNNING,
+      run: { usage: this.#tick(), budget: this.#run.budget },
+      events: [{ type: "budget", usage: this.#run.usage, budget: this.#run.budget }],
+    });
+    // Only initialization has no page yet. Existing budget waits keep their normal decide phase;
+    // an interrupted capture instead keeps its call and the results of earlier calls.
+    if (pending.domHash !== "" || pending.callIds.length > 0) {
+      const captured = await this.#capture(signal);
+      await this.#deps.store.commit(captured.commit);
+      this.#next = pending.callIds.length > 0 ? "act" : "decide";
+    } else this.#next = "observe";
+    return CONTINUE;
+  }
+
   /** Called after a wake (or a restore with a pending approval). Never replays blindly (spec §5.4). */
   async resume(signal: AbortSignal): Promise<StepOutcome> {
-    const scopeWait = await this.prepareCapture(signal);
+    const scopeWait =
+      this.#pending?.request.kind === "budget" ? null : await this.prepareCapture(signal);
     if (scopeWait) return scopeWait;
     this.#loops.reset();
     const pending = this.#pending;
@@ -2028,6 +2105,7 @@ export class RunLoop {
       });
       return { kind: "waiting", reason: "approval" };
     }
+    if (pending.request.kind === "budget") return this.#resumeBudget(pending, decision, signal);
     const { obs, step } = await this.#capture(signal);
     this.#pending = null;
     const instruction = decision.edit?.instruction ?? null;
@@ -2054,41 +2132,6 @@ export class RunLoop {
         ? pending.request.subject
         : pending.request;
     if (pending.request.kind === "observer" && approved) recordObserverOverride();
-
-    if (request.kind === "budget") {
-      if (!approved) {
-        await this.#deps.store.commit({
-          ...base,
-          steps: [step, approveStep("skipped")],
-          transition: {
-            from: ["waiting", "running"],
-            to: "cancelled",
-            waitReason: null,
-            reason: "budget",
-            error: null,
-          },
-        });
-        return { kind: "cancelled" };
-      }
-      if (decision.edit?.budgetChoice === "finish_now") {
-        await this.#deps.store.commit({
-          ...base,
-          steps: [step, approveStep("done")],
-          transition: TO_RUNNING,
-        });
-        return this.#complete(signal);
-      }
-      this.#run = { ...this.#run, budget: extendBudget(this.#run.budget) };
-      if (instruction) this.#notes.push(`Message from the user: ${instruction}`);
-      await this.#deps.store.commit({
-        steps: [step, approveStep("done")],
-        transition: TO_RUNNING,
-        run: { ...base.run, budget: this.#run.budget },
-        events: [{ type: "budget", usage: this.#run.usage, budget: this.#run.budget }],
-      });
-      this.#next = "decide";
-      return CONTINUE;
-    }
 
     if (request.kind === "download" && pending.item === null) {
       await this.#deps.store.commit({

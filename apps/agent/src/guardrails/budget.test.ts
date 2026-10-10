@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { budgetExceeded, extendBudget } from "./budget.ts";
 
 describe("budgets", () => {
+  it("extends a sub-cent initialization budget to a positive spendable cap", () => {
+    expect(extendBudget({ ...DEFAULT_BUDGET, maxUsd: 0.0001 }).maxUsd).toBe(0.01);
+  });
   it("reports the first exceeded limit and never fails on its own", () => {
     expect(budgetExceeded(EMPTY_USAGE, DEFAULT_BUDGET)).toBeNull();
     expect(budgetExceeded({ ...EMPTY_USAGE, steps: 150 }, DEFAULT_BUDGET)).toBe("steps");

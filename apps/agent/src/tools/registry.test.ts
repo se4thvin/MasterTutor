@@ -34,6 +34,19 @@ const fakeReadPage = (run: () => Promise<ReadPageResult>) =>
   register({ name: "read_page", args: ReadPageArgs, result: ReadPageResult, untrusted: true, run });
 
 describe("ToolRegistry", () => {
+  it("propagates capture budget exhaustion to the loop's person-only budget pause", async () => {
+    const registry = new ToolRegistry(
+      [
+        fakeReadPage(async () => {
+          throw new ToolError("capture_budget", "Extend the budget to continue.");
+        }),
+      ],
+      log,
+    );
+    await expect(registry.run("read_page", readArgs, ctx())).rejects.toMatchObject({
+      code: "capture_budget",
+    });
+  });
   it("returns a ToolError's code and message to the model and marks the run failed (B2 seam)", async () => {
     const registry = new ToolRegistry(
       [

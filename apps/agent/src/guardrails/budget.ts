@@ -11,7 +11,7 @@ export function budgetExceeded(usage: Usage, budget: Budget): "steps" | "usd" | 
 export function extendBudget(budget: Budget): Budget {
   return {
     maxSteps: Math.min(10_000, Math.ceil(budget.maxSteps * 1.5)),
-    maxUsd: Math.min(1_000, Math.round(budget.maxUsd * 1.5 * 100) / 100),
+    maxUsd: Math.min(1_000, Math.max(0.01, Math.round(budget.maxUsd * 1.5 * 100) / 100)),
     maxActiveMinutes: Math.min(24 * 60, Math.ceil(budget.maxActiveMinutes * 1.5)),
   };
 }
