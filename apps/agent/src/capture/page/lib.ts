@@ -37,7 +37,14 @@ export function pageInstallLib(): void {
   const MATH_SELECTOR = "math, .katex, .katex-display, mjx-container, .MathJax, .MathJax_Display";
   const BLOCK_SELECTOR =
     "p, li, h1, h2, h3, h4, h5, h6, pre, blockquote, table, figure, figcaption, dt, dd";
-  const CHROME_ROLES = new Set(["navigation", "banner", "contentinfo", "search"]);
+  const CHROME_ROLES = new Set([
+    "navigation",
+    "banner",
+    "contentinfo",
+    "search",
+    "alert",
+    "status",
+  ]);
   const SVG_ELEMENTS = new Set([
     "svg",
     "g",
@@ -213,7 +220,9 @@ export function pageInstallLib(): void {
   };
   const isChrome = (el: Element): boolean => {
     const role = el.getAttribute("role");
-    if (role && CHROME_ROLES.has(role)) return true;
+    if (role?.split(/\s+/).some((token) => CHROME_ROLES.has(token))) return true;
+    const live = el.getAttribute("aria-live");
+    if (live === "polite" || live === "assertive") return true;
     if (el.tagName === "NAV") return true;
     if (el.tagName === "HEADER" || el.tagName === "FOOTER")
       return el.parentElement?.closest("article, aside, main, nav, section") == null;

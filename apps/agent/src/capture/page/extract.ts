@@ -157,7 +157,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       text.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
     const walk = (node: Node): string => {
       if (node.nodeType === Node.TEXT_NODE) return escape(node.textContent ?? "");
-      if (!(node instanceof Element) || !lib.visible(node)) return "";
+      if (!(node instanceof Element) || !lib.visible(node) || isChrome(node)) return "";
       const inner = [...node.childNodes].map(walk).join("");
       if (!allowed.has(node.tagName)) return inner;
       const tag = node.tagName.toLowerCase();
@@ -221,6 +221,32 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     liveRoot = document.body;
   }
 
+  // Responsive platform banners often have no landmark role. Compare whole leaf blocks
+  // with identical rendered blocks outside every main/article landmark. Never match inline
+  // words or deduplicate repetition wholly inside the lesson. No live DOM is changed.
+  const mainSelector = "main, [role=main], article";
+  const repeatBlocks = "p, div, section";
+  const contentObjects = `table, pre, blockquote, figure, img, svg, canvas, iframe, ${lib.MATH_SELECTOR}`;
+  const substantive = `h1, h2, h3, h4, h5, h6, ul, ol, ${contentObjects}`;
+  const repeatedChrome = new Set<Element>();
+  if (document.querySelector(mainSelector)) {
+    const candidates = [...document.querySelectorAll(repeatBlocks)].filter(
+      (el) =>
+        lib.visible(el) && !el.querySelector(`${repeatBlocks}, ${mainSelector}, ${substantive}`),
+    );
+    const signature = (el: Element) => `${el.tagName}\n${renderedText(el)}`;
+    const outside = new Set(
+      candidates.filter((el) => !el.closest(mainSelector) && renderedText(el)).map(signature),
+    );
+    const shared = new Set(
+      candidates
+        .filter((el) => el.closest(mainSelector) && renderedText(el) && outside.has(signature(el)))
+        .map(signature),
+    );
+    for (const el of candidates) if (shared.has(signature(el))) repeatedChrome.add(el);
+  }
+  const isChrome = (el: Element) => lib.isChrome(el) || repeatedChrome.has(el);
+
   const structure = finder.analyse(liveRoot);
   const scoped = options.scope !== "page";
   /** App UI above the main heading; only a whole-page capture leaves it out. */
@@ -277,7 +303,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       for (const child of [...node.childNodes]) cloneInto(child, parent);
       return;
     }
-    if (excluded.has(node)) return;
+    if (excluded.has(node) || isChrome(node)) return;
     const tag = node.tagName;
     if (node.matches(lib.MATH_SELECTOR)) {
       parent.appendChild(out.importNode(node, true));
@@ -457,6 +483,38 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     cloneInto(liveRoot, out.body);
   }
 
+  if (options.scope === "page") {
+    // A heading and a directory of links/controls is navigation, not a lesson. Article
+    // semantics and source media protect reference lists and image-only documents.
+    const links = "a[href], [role=link], button, [role=button]";
+    const directory = `nav, [role=navigation], ul a[href], ol a[href], [role=list] [role=link]`;
+    const hasNavigation = [...liveRoot.querySelectorAll(directory)].some((el) => lib.visible(el));
+    // This document is detached, so checkVisibility/walkRendered cannot read it. The
+    // clone already filtered hidden nodes, fields, icon glyphs and chrome on the live page.
+    const isNavigationRow = (el: Element) =>
+      el.matches("li, [role=listitem]") &&
+      el.querySelector(links) !== null &&
+      ![...el.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      ) &&
+      !el.querySelector(substantive);
+    const prose = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+      if (
+        node instanceof Element &&
+        (node.matches(`h1, h2, h3, h4, h5, h6, ${links}`) || isNavigationRow(node))
+      )
+        return "";
+      return [...node.childNodes].map(prose).join("");
+    };
+    if (
+      hasNavigation &&
+      !prose(out.body).trim() &&
+      !out.body.querySelector(`article, ${contentObjects}`)
+    )
+      throw new Error("navigation_only");
+  }
+
   const looseOptions = {
     contentSelector: "body",
     removeLowScoring: false,
@@ -519,8 +577,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     const inMainContent = (el: Element) => {
       if (el.closest("aside, [role=complementary], [class*=logo i], [id*=logo i]")) return false;
       if (hasMain && !el.closest(MAIN)) return false;
-      for (let at: Element | null = el; at; at = at.parentElement)
-        if (lib.isChrome(at)) return false;
+      for (let at: Element | null = el; at; at = at.parentElement) if (isChrome(at)) return false;
       return true;
     };
     for (const h1 of document.querySelectorAll("h1")) {
@@ -562,6 +619,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
     range,
     (_node, text) => rootParts.push(text),
     () => rootParts.push("\n"),
+    isChrome,
   );
   const sourceText = tidy(rootParts);
   let pageText = sourceText;
@@ -575,7 +633,7 @@ export function pageExtract(options: ExtractOptions): PageExtract {
       null,
       (_node, text) => pageParts.push(text),
       () => pageParts.push("\n"),
-      (el) => lib.isChrome(el) || structure.drawings.has(el),
+      (el) => isChrome(el) || structure.drawings.has(el),
     );
     pageText = tidy(pageParts);
     const excludedParts: string[] = [];
@@ -585,13 +643,13 @@ export function pageExtract(options: ExtractOptions): PageExtract {
         null,
         (_node, text) => excludedParts.push(text),
         () => excludedParts.push("\n"),
-        lib.isChrome,
+        isChrome,
       );
     excludedText = tidy(excludedParts);
   }
   // Anchors are located in the whole scope (the body for a page), not only in Defuddle's root:
   // the note keeps blocks from anywhere on the page.
-  globalThis.__mtCapture = { root: liveRoot, range, frames: frameElements };
+  globalThis.__mtCapture = { root: liveRoot, range, frames: frameElements, chrome: repeatedChrome };
   const texScope: ParentNode = scoped ? liveRoot : document;
   const mathTex = [
     ...texScope.querySelectorAll(
