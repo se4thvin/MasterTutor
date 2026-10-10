@@ -33,7 +33,7 @@ async function capture(path: string, args: Args = page, mask?: MaskSources) {
   const blocks = await env.db.db
     .select()
     .from(noteBlocks)
-    .where(eq(noteBlocks.noteId, result.noteId))
+    .where(eq(noteBlocks.noteId, result.noteId!))
     .orderBy(sql`${noteBlocks.position} collate "C"`);
   const [source] = await env.db.db
     .select()
@@ -54,7 +54,7 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
         rootCoverage: expect.any(Number),
         mediaLost: 0,
       });
-      const [note] = await env.db.db.select().from(notes).where(eq(notes.id, result.noteId));
+      const [note] = await env.db.db.select().from(notes).where(eq(notes.id, result.noteId!));
       expect(note).toMatchObject({ fidelity: "verified" });
     },
   );
@@ -203,7 +203,7 @@ describe("capture tool (B2 done-when: ≥ 98% page coverage on fixtures)", () =>
       const blocks = await env.db.db
         .select()
         .from(noteBlocks)
-        .where(eq(noteBlocks.noteId, expanded.noteId))
+        .where(eq(noteBlocks.noteId, expanded.noteId!))
         .orderBy(sql`${noteBlocks.position} collate "C"`);
       captures.push({ section, partial, full, expanded, again, blocks });
     }

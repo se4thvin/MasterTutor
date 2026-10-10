@@ -723,9 +723,22 @@ export function pageExtract(options: ExtractOptions): PageExtract {
 
   const meta = (selector: string) =>
     document.querySelector<HTMLMetaElement>(selector)?.content?.trim() || null;
+  // SPAs often leave the platform's title behind after changing lessons. Use the visible
+  // content heading, never a header/logo or sidebar heading, before document metadata.
+  const heading = ["h1", "h2", "h3"].flatMap((tag) =>
+    [...document.querySelectorAll(`main ${tag}, [role="main"] ${tag}, article ${tag}`)]
+      .filter(
+        (el) =>
+          lib.visible(el) &&
+          !el.closest('header, nav, aside, [role="navigation"]') &&
+          !isChrome(el),
+      )
+      .map(renderedText)
+      .filter(Boolean),
+  )[0];
   return {
     engine,
-    title: (result?.title || document.title || location.href).trim(),
+    title: (heading || result?.title || document.title || location.href).trim(),
     description:
       result?.description?.trim() ||
       meta('meta[name="description"]') ||

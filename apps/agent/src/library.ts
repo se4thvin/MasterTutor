@@ -1,3 +1,4 @@
+import { createSelectionModel, type SelectionModel } from "./capture/selection.ts";
 import { createIntentModel, type IntentModel } from "./capture/intent-model.ts";
 import { initializeCaptureIntent, preferencesFor } from "./loop/capture-intent.ts";
 import type { Database } from "@mastertutor/db";
@@ -36,6 +37,7 @@ export interface LibraryDeps {
 /** Everything capture, video, PDF and filing need; built once per agent process. */
 export interface LibraryServices {
   intent?: IntentModel;
+  selection?: SelectionModel;
   db: Database;
   writer: NoteWriter;
   assets: AssetStore;
@@ -58,6 +60,7 @@ export interface LibraryServices {
 export function createLibraryServices(deps: LibraryDeps): LibraryServices {
   return {
     intent: createIntentModel(deps.openai),
+    selection: createSelectionModel(deps.openai),
     db: deps.db,
     writer: new NoteWriter({ db: deps.db, embedder: createEmbedder(deps.openai, deps.log) }),
     assets: createAssetStore({ db: deps.db, storage: deps.storage }),

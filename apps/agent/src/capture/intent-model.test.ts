@@ -36,3 +36,26 @@ it("derives strict bounded intent and charges billed invalid replies", async () 
   expect(step.usage.inputTokens).toBe(100);
   expect(step.usage.usd).toBeGreaterThan(0);
 });
+
+it("does not derive intent beyond the run's remaining budget", async () => {
+  let calls = 0;
+  const model = createIntentModel({
+    responses: {
+      parse: async () => {
+        calls++;
+        return {
+          parsed: { brief: { keep: ["reading_text"], skip: [], scopeNote: "" }, ambiguous: false },
+          model: "gpt-6-luna",
+          tokens: { input: 1, cached: 0, output: 1 },
+        };
+      },
+    },
+  } as unknown as StatelessOpenAI);
+  await expect(
+    model.derive("Reading notes", [], {
+      step: new StepCollector({ usdLeft: 0 }),
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow();
+  expect(calls).toBe(0);
+});

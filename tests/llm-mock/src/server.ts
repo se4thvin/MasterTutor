@@ -357,6 +357,16 @@ export async function startLlmMock(
         ambiguous: false,
       }),
     ],
+    [
+      "capture_selection",
+      (body) => {
+        const input = body.input as Array<{ content: string }>;
+        const text = input[0]?.content ?? "";
+        const json = text.slice(text.indexOf("\n") + 1, text.lastIndexOf("\n"));
+        const data = JSON.parse(json) as { blocks: Array<{ id: string }> };
+        return { ids: data.blocks.map((block) => block.id) };
+      },
+    ],
     ["ocr_text", () => ({ markdown: "" })],
     ["filing_decision", () => ({ path: ["Inbox"], createLeaf: true })],
     ["run_title", () => ({ title: "Mock run title" })],

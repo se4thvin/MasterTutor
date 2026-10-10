@@ -1,3 +1,4 @@
+import { requireCaptureBudget } from "./model-budget.ts";
 import { CaptureIntent, MODELS, type SitePreference } from "@mastertutor/contracts";
 import type { StatelessOpenAI } from "../llm/openai.ts";
 import { billedUsageOf, usageDelta } from "../llm/pricing.ts";
@@ -14,6 +15,11 @@ export interface IntentModel {
 export function createIntentModel(openai: Pick<StatelessOpenAI, "responses">): IntentModel {
   return {
     async derive(goal, preferences, { step, signal }) {
+      requireCaptureBudget(
+        step,
+        Math.min(goal.length, 8000) + JSON.stringify(preferences).length,
+        1000,
+      );
       const reply = await openai.responses
         .parse(
           {
