@@ -121,6 +121,8 @@ export async function getRun(db: Database, scope: RunScope, runId: string): Prom
   return {
     ...runSummaryOf(row),
     plan: row.plan ?? null,
+    captureBrief: row.captureBrief ?? null,
+    captureQuestion: row.captureQuestion ?? null,
     allowedOrigins: row.allowedOrigins,
     currentUrl: row.currentUrl,
     slotName: row.slotName,

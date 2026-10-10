@@ -363,3 +363,37 @@ describe("run-mode: mode changes and message delivery", () => {
     ]);
   });
 });
+
+describe("D57 capture scope", () => {
+  const brief = {
+    keep: ["reading_text" as const],
+    skip: ["due_dates" as const],
+    scopeNote: "Lesson only",
+  };
+  const question = { question: "What should I keep in your notes?", domains: ["example.edu"] };
+  it("folds one scope question independently of approvals, then clears it only on the person's answer", () => {
+    let model = initRunModel(
+      recordedDetail({ captureBrief: brief, captureQuestion: question, approvalMode: "bypass" }),
+      [],
+    );
+    expect(model.captureBrief).toEqual(brief);
+    model = applyRunEvent(model, rec({ type: "capture_asked", question }));
+    expect(model.captureQuestion).toEqual(question);
+    expect(model.approvals).toEqual([]);
+    model = applyRunEvent(
+      model,
+      rec({ type: "capture_brief", brief: { ...brief, scopeNote: "Changed" } }),
+    );
+    expect(model.captureQuestion).toEqual(question);
+    model = applyRunEvent(
+      model,
+      rec({ type: "capture_answered", brief, by: PersonDecider.parse("person-1") }),
+    );
+    expect(model.captureQuestion).toBeNull();
+    expect(model.captureBrief).toEqual(brief);
+    expect(
+      syncRunModel(model, recordedDetail({ captureBrief: brief, captureQuestion: question }))
+        .captureQuestion,
+    ).toEqual(question);
+  });
+});

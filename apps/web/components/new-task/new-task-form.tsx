@@ -131,8 +131,8 @@ export function NewTaskForm({ viewerId }: { viewerId: string }) {
             Take notes on<span className="period">…</span>
           </h1>
           <p className="nt-lede">
-            Add a source, or just the goal and I&apos;ll find one. I work in my own browser, capture
-            faithfully, and ask before anything consequential.
+            Add a source, or just the goal and I&apos;ll find one. I capture source text unchanged.
+            If the scope is unclear, I ask once before browsing.
           </p>
           <div className="nt-composer">
             <label className="sr-only" htmlFor={goalId}>

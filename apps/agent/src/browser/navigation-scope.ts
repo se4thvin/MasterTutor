@@ -1,4 +1,5 @@
-import { getDomain } from "tldts";
+import { registrableDomain } from "@mastertutor/contracts/server";
+export { registrableDomain } from "@mastertutor/contracts/server";
 
 /**
  * Which top-level documents a run may open without asking (D51). The private-range network policy
@@ -13,9 +14,6 @@ import { getDomain } from "tldts";
  * 3. While a sign-in flow the person approved is open (sign-in-flow.ts): any https origin, so the
  *    site can send the sign-in through its identity provider. Bounded by that flow, never kept.
  */
-export function registrableDomain(hostname: string): string | null {
-  return getDomain(hostname, { allowPrivateDomains: true }) ?? null;
-}
 
 function parse(origin: string): URL | null {
   try {

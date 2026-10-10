@@ -1,3 +1,4 @@
+import { Uuid } from "@mastertutor/contracts";
 import { createDb, type DbHandle, noteBlocks, objectDeletions, sources } from "@mastertutor/db";
 import { startTestDatabase, type TestDatabase } from "@mastertutor/db/testing";
 import { eq, sql } from "drizzle-orm";
@@ -65,7 +66,7 @@ async function setup() {
     const ctx = context();
     const result = await persistCapture(services, ctx, input);
     await commitStep(h.db, scope.runId, ctx.step);
-    return result;
+    return { ...result, noteId: Uuid.parse(result.noteId) };
   };
   return { scope, services, context, capture };
 }
@@ -159,4 +160,27 @@ describe("capture reconciliation", () => {
     expect(rows.map((b) => b.markdown)).toEqual(["My writing", "Replacement"]);
     expect(rows[0]?.id).toBe(first.blockIds[0]);
   });
+});
+
+it("D57 empty selection writes only counts, no note, source or snapshot", async () => {
+  const { runs, notes } = await import("@mastertutor/db");
+  const { scope, services, context } = await setup();
+  await h.db
+    .update(runs)
+    .set({ captureBrief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "" } })
+    .where(eq(runs.id, scope.runId));
+  services.selection = { select: async () => [] };
+  const ctx = context();
+  const result = await persistCapture(services, ctx, {
+    ...draft([block("Due: tomorrow", 1)]),
+    lede: "Due: tomorrow",
+  });
+  expect(result).toMatchObject({ noteId: null, blockIds: [], kept: 0, skipped: 1 });
+  await commitStep(h.db, scope.runId, ctx.step);
+  expect(await h.db.select().from(notes).where(eq(notes.workspaceId, scope.workspaceId))).toEqual(
+    [],
+  );
+  expect(
+    await h.db.select().from(sources).where(eq(sources.workspaceId, scope.workspaceId)),
+  ).toEqual([]);
 });

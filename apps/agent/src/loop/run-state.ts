@@ -1,4 +1,6 @@
 import {
+  type CaptureBrief,
+  type CaptureQuestion,
   TERMINAL_RUN_STATUSES,
   type ApprovalMode,
   type Budget,
@@ -15,6 +17,8 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { RunRecord } from "./claim.ts";
 
 export interface RunSnapshot {
+  captureBrief?: CaptureBrief | null;
+  captureQuestion?: CaptureQuestion | null;
   id: string;
   workspaceId: string;
   goal: string;
@@ -37,6 +41,8 @@ export function snapshotOf(row: RunRecord): RunSnapshot {
     id: row.id,
     workspaceId: row.workspaceId,
     goal: row.goal,
+    captureBrief: row.captureBrief ?? null,
+    captureQuestion: row.captureQuestion ?? null,
     title: row.title ?? null,
     model: row.model,
     approvalMode: row.approvalMode,

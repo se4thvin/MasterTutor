@@ -95,7 +95,9 @@ export const CaptureArgs = z
   });
 export type CaptureArgs = z.infer<typeof CaptureArgs>;
 export const CaptureResult = z.object({
-  noteId: Uuid,
+  noteId: Uuid.nullable(),
+  kept: z.number().int().nonnegative().optional(),
+  skipped: z.number().int().nonnegative().optional(),
   blockIds: z.array(Uuid),
   coverage: z.number().min(0).max(1),
   fidelity: Fidelity,

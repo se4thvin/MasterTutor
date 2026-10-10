@@ -16,6 +16,20 @@ const id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 describe("RunEvent", () => {
   it("covers every spec event type plus model_fallback", () => {
     const samples: Record<RunEventType, unknown> = {
+      capture_brief: {
+        type: "capture_brief",
+        brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "" },
+      },
+      capture_asked: {
+        type: "capture_asked",
+        question: { question: "What should I save?", domains: ["example.com"] },
+      },
+      capture_answered: {
+        type: "capture_answered",
+        brief: { keep: ["reading_text"], skip: ["due_dates"], scopeNote: "" },
+        by: "user-1",
+      },
+      capture_selected: { type: "capture_selected", kept: 2, skipped: 1 },
       status: { type: "status", status: "waiting", waitReason: "approval", reason: null },
       step: {
         type: "step",

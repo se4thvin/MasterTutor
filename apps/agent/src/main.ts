@@ -24,6 +24,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "./runtime/config.ts";
 import { slotCdpBaseUrl } from "./slots/probe.ts";
 import { createVault, vaultHooks } from "./vault/index.ts";
 import { takeVaultKeys } from "./vault/key-env.ts";
+import { startScopeScreenServer } from "./vault/scope-screen.ts";
 
 // S2: the private key lives in the vault's key pair only; nothing else can read it from the env.
 const { keys: vaultKeys, env } = await takeVaultKeys(parseEnv(AgentEnv, process.env), process.env);
@@ -125,6 +126,14 @@ const health = await startHealthServer({
     ),
   }),
 });
+const scopeScreen = env.OBSERVER_INTERNAL_TOKEN
+  ? await startScopeScreenServer({
+      db: database.db,
+      keys: vaultKeys,
+      token: env.OBSERVER_INTERNAL_TOKEN,
+      port: 8788,
+    })
+  : null;
 // B6: sign-out or removal from the workspace closes that person's open live views.
 const stopLiveRevocation = await startLiveRevocation({
   db: database,
@@ -137,6 +146,7 @@ async function shutdown(signal: string): Promise<void> {
   // Running runs go to sleep with a wake; the supervisor closes the database handle it owns.
   await supervisor.stop();
   await health.close();
+  await scopeScreen?.close();
   // D50: what is still queued leaves before the process does (at most 3 s).
   await getTelemetry().shutdown(3_000);
   process.exit(0);

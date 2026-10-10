@@ -1,3 +1,4 @@
+import { listCapturePreferences, setCapturePreference } from "../runs/capture-intent.ts";
 import type { DbHandle } from "@mastertutor/db";
 import { served } from "../service-error.ts";
 import { getSettings, setKillSwitch, updateSettings, usageReport } from "../settings/service.ts";
@@ -7,6 +8,15 @@ import { workspaceScoped } from "./workspace-scope.ts";
 export function createSettingsProcedures(deps: { db(): DbHandle }) {
   const scoped = workspaceScoped(deps.db);
   return {
+    capturePreferences: scoped.settings.capturePreferences.handler(({ context }) =>
+      served(() => listCapturePreferences(context.db.db, context.workspaceId)),
+    ),
+    setCapturePreference: scoped.settings.setCapturePreference.handler(
+      async ({ context, input }) => {
+        await served(() => setCapturePreference(context.db.db, context, input));
+        return { ok: true as const };
+      },
+    ),
     get: scoped.settings.get.handler(({ context }) =>
       served(() => getSettings(context.db.db, context.workspaceId)),
     ),

@@ -1,3 +1,4 @@
+import { setCaptureBrief } from "../runs/capture-intent.ts";
 import type { DbHandle } from "@mastertutor/db";
 import { createRun, type RunScope } from "../runs/create-run.ts";
 import {
@@ -25,6 +26,10 @@ const scopeOf = (context: RunScope): RunScope => ({
 export function createRunProcedures(deps: { db(): DbHandle }) {
   const scoped = workspaceScoped(deps.db);
   return {
+    setCaptureBrief: scoped.runs.setCaptureBrief.handler(async ({ context, input }) => {
+      await served(() => setCaptureBrief(context.db.db, scopeOf(context), input));
+      return { ok: true as const };
+    }),
     create: scoped.runs.create.handler(({ context, input }) =>
       served(() => createRun(context.db.db, scopeOf(context), input)),
     ),

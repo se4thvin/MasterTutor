@@ -51,7 +51,7 @@ describe("generic platform chrome (F6)", () => {
     const stored = await env.db.db
       .select()
       .from(noteBlocks)
-      .where(eq(noteBlocks.noteId, result.noteId))
+      .where(eq(noteBlocks.noteId, result.noteId!))
       .orderBy(positionOrder);
     expect(stored.map((block) => block.markdown).join("\n")).not.toContain("due date has passed");
     const text = stored.map((block) => block.markdown).join("\n");
@@ -94,7 +94,7 @@ describe("generic platform chrome (F6)", () => {
     const stored = await env.db.db
       .select()
       .from(noteBlocks)
-      .where(eq(noteBlocks.noteId, result.noteId));
+      .where(eq(noteBlocks.noteId, result.noteId!));
     for (const text of [
       "Even parity adds a bit so the total number of ones is even.",
       "Due: is also an ordinary word in a lesson; this sentence stays verbatim.",
@@ -172,4 +172,86 @@ describe("generic platform chrome (F6)", () => {
       expect(extract.markdown).toBeTruthy();
     }
   });
+});
+
+it("D57 keeps run-5 prose verbatim, skips due banners and the scored overview; F10 uses main heading", async () => {
+  const { runs } = await import("@mastertutor/db");
+  const { createSelectionModel } = await import("./selection.ts");
+  const { createOpenAI } = await import("../llm/openai.ts");
+  const { startLlmMock } = await import("../../../../tests/llm-mock/src/server.ts");
+  const mock = await startLlmMock();
+  const previous = env.services.selection;
+  try {
+    mock.setStructured("capture_selection", (body) => {
+      const raw = JSON.stringify(body.input);
+      if (raw.includes("148/148")) return { ids: [] };
+      const input = body.input as Array<{ content: string }>;
+      const data = JSON.parse(
+        input[0]!.content.replace(/^[\s\S]*?\n/, "").replace(/\n<\/untrusted_page_content>$/, ""),
+      ) as { blocks: Array<{ id: string; preview: string }> };
+      return {
+        ids: data.blocks
+          .filter((b) => !b.preview.includes("Due:") && !b.preview.includes("due date has passed"))
+          .map((b) => b.id)
+          .reverse(),
+      };
+    });
+    env.services.selection = createSelectionModel(
+      createOpenAI({ apiKey: "mock", baseURL: `${mock.url}/v1` }),
+    );
+    const scope = await seedRun(env.db.db);
+    await env.db.db
+      .update(runs)
+      .set({
+        captureBrief: {
+          keep: ["reading_text", "activities"],
+          skip: ["due_dates", "scores", "navigation"],
+          scopeNote: "Readings only",
+        },
+      })
+      .where(eq(runs.id, scope.runId));
+    await env.session.goto(`${FIXTURES}/capture/intent-capture.html`, signal);
+    const ctx = env.context(scope);
+    const result = await createCaptureTool(env.services).run(ctx, page);
+    await env.commit(ctx);
+    const stored = await env.db.db
+      .select()
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, result.noteId!));
+    const text = stored
+      .sort((a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0))
+      .map((b) => b.markdown)
+      .join("\n");
+    const prose = [
+      "A bit has two possible values: 0 and 1.",
+      "Two bits represent four values, in order: 00, 01, 10, 11.",
+      "Each additional bit doubles the number of possible values.",
+    ];
+    expect(stored.map((b) => b.markdown)).toEqual(expect.arrayContaining(prose));
+    expect(text.indexOf(prose[0]!)).toBeLessThan(text.indexOf(prose[1]!));
+    expect(text).not.toContain("Due:");
+    expect(text).not.toContain("due date has passed");
+    expect(
+      (await env.db.db.select().from(notes).where(eq(notes.id, result.noteId!)))[0]?.title,
+    ).toBe("1.4 Binary values");
+    await env.session.goto(`${FIXTURES}/capture/intent-capture.html?overview`, signal);
+    const empty = await createCaptureTool(env.services).run(env.context(scope), page);
+    expect(empty.noteId).toBeNull();
+    expect(empty.blockIds).toEqual([]);
+    expect(await env.db.db.select().from(notes).where(eq(notes.runId, scope.runId))).toHaveLength(
+      1,
+    );
+    expect(mock.requests.every((r) => r.body.store === false)).toBe(true);
+  } finally {
+    env.services.selection = previous;
+    await mock.close();
+  }
+});
+
+it("F10 prefers a visible main heading over a stale SPA title", async () => {
+  await env.session.goto(`${FIXTURES}/capture/intent-capture.html`, signal);
+  const worlds = await captureWorlds(env.session);
+  expect((await worlds.call(pageExtract, [{ scope: "page", selector: null }])).title).toBe(
+    "1.4 Binary values",
+  );
 });

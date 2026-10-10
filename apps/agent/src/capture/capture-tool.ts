@@ -1,3 +1,4 @@
+import { selectCaptureBlocks } from "./selection.ts";
 import { randomUUID } from "node:crypto";
 import {
   CAPTURED_ORIGINS,
@@ -77,6 +78,18 @@ export async function persistCapture(
       draft.meta,
       draft.blocks.map((block) => [block.markdown, block.anchor]),
     ]);
+    const originalCount = draft.blocks.length;
+    const blocks = await selectCaptureBlocks(services, ctx, draft.blocks);
+    if (services.selection && blocks.length === 0)
+      return {
+        noteId: null,
+        blockIds: [],
+        coverage: draft.coverage,
+        fidelity: captureFidelity({ ...draft, blocks }),
+        kept: 0,
+        skipped: originalCount,
+      };
+    draft = { ...draft, blocks, lede: services.selection ? null : draft.lede };
     const noteId = await services.writer.ensureNote(w, {
       title: draft.title,
       lede: draft.lede,
@@ -131,7 +144,14 @@ export async function persistCapture(
     });
     services.writer.stageQuality(w, noteId, draft.coverage);
     if (draft.snapshot) await uploadSnapshot(services.storage, ctx.step, keys, draft.snapshot);
-    return { noteId, blockIds, coverage: draft.coverage, fidelity };
+    return {
+      noteId,
+      blockIds,
+      coverage: draft.coverage,
+      fidelity,
+      kept: blocks.length,
+      skipped: originalCount - blocks.length,
+    };
   });
 }
 

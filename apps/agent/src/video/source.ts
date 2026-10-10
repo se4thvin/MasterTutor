@@ -1,3 +1,5 @@
+import { notes, sources } from "@mastertutor/db";
+import { and, eq, sql } from "drizzle-orm";
 import type { IsolatedWorlds } from "../browser/isolated-world.ts";
 import type { LibraryServices } from "../library.ts";
 import { writeContext } from "../notes/note-writer.ts";
@@ -6,8 +8,10 @@ import { pageVideoReveal, pageVideoState, pageYoutubeData } from "./page/player.
 
 export interface VideoContext {
   worlds: IsolatedWorlds;
-  noteId: string;
-  sourceId: string;
+  noteId: string | null;
+  sourceId: string | null;
+  ensureSource(): Promise<{ noteId: string; sourceId: string }>;
+  stageMeta(patch: Record<string, unknown>): void;
   url: string;
   /** The content's length in seconds, or null when unknown (never an ad's length, B4 review I8). */
   duration: number | null;
@@ -48,44 +52,71 @@ export async function openVideoContext(
   const w = writeContext(ctx);
   const page = ctx.session.page;
   const title = (await page.title()) || page.url();
-  const lede = await page
-    .locator('meta[name="description"]')
-    .first()
-    .getAttribute("content", { timeout: 500 })
-    .catch(() => null);
-  const noteId = await services.writer.ensureNote(w, {
-    title,
-    lede,
-    document: { kind: "youtube", url: page.url() },
-  });
   const url = page.url();
-  const existing = await services.writer.findSource(w.scope, noteId, "youtube", url);
-  if (existing)
-    return {
-      worlds,
-      noteId,
-      sourceId: existing.sourceId,
-      url,
-      duration,
-      ad,
-      meta: existing.meta,
-    };
-  const canonical = await page
-    .locator('link[rel="canonical"]')
-    .first()
-    .getAttribute("href", { timeout: 500 })
-    .catch(() => null);
-  const sourceId = services.writer.stageSource(w, {
-    noteId,
-    kind: "youtube",
+  const [existing] = await services.db
+    .select({ noteId: notes.id, sourceId: sources.id, meta: sources.meta })
+    .from(notes)
+    .innerJoin(sources, sql`${sources.meta}->>'noteId' = ${notes.id}::text`)
+    .where(
+      and(
+        eq(notes.runId, ctx.runId),
+        eq(notes.workspaceId, ctx.workspaceId),
+        eq(sources.workspaceId, ctx.workspaceId),
+        eq(sources.kind, "youtube"),
+        eq(sources.url, url),
+      ),
+    )
+    .limit(1);
+  const video: VideoContext = {
+    worlds,
     url,
-    canonicalUrl: canonical && /^https?:/.test(canonical) ? canonical : null,
-    title,
-    faviconAssetId: null,
-    mhtmlKey: null,
-    screenshotKey: null,
-    snapshotSha256: null,
-    meta: duration === null ? {} : { duration },
-  });
-  return { worlds, noteId, sourceId, url, duration, ad, meta: {} };
+    duration,
+    ad,
+    noteId: existing?.noteId ?? null,
+    sourceId: existing?.sourceId ?? null,
+    meta: existing?.meta ?? {},
+    async ensureSource() {
+      if (video.noteId && video.sourceId) return { noteId: video.noteId, sourceId: video.sourceId };
+      const lede = services.selection
+        ? null
+        : await page
+            .locator('meta[name="description"]')
+            .first()
+            .getAttribute("content", { timeout: 500 })
+            .catch(() => null);
+      const noteId = await services.writer.ensureNote(w, {
+        title,
+        lede,
+        document: { kind: "youtube", url },
+      });
+      const canonical = await page
+        .locator('link[rel="canonical"]')
+        .first()
+        .getAttribute("href", { timeout: 500 })
+        .catch(() => null);
+      const sourceId = services.writer.stageSource(w, {
+        noteId,
+        kind: "youtube",
+        url,
+        canonicalUrl: canonical && /^https?:/.test(canonical) ? canonical : null,
+        title,
+        faviconAssetId: null,
+        mhtmlKey: null,
+        screenshotKey: null,
+        snapshotSha256: null,
+        meta: { ...video.meta, ...(duration === null ? {} : { duration }) },
+      });
+      video.noteId = noteId;
+      video.sourceId = sourceId;
+      return { noteId, sourceId };
+    },
+    stageMeta(patch) {
+      video.meta = { ...video.meta, ...patch };
+      if (video.sourceId) services.writer.stageSourceMeta(w, video.sourceId, patch);
+    },
+  };
+  // Production creates the source only after selection keeps a block. Legacy extraction fakes
+  // have no selector and retain their original eager lifecycle.
+  if (!services.selection) await video.ensureSource();
+  return video;
 }

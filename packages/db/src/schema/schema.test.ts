@@ -36,6 +36,7 @@ describe("schema", () => {
       "public.benchmarks",
       "public.browser_sessions",
       "public.browser_slots",
+      "public.capture_preferences",
       "public.downloads",
       "public.folders",
       "public.guard_reviews",
