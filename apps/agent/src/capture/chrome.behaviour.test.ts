@@ -1,0 +1,102 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { noteBlocks, notes, sources } from "@mastertutor/db";
+import { FIXTURES } from "../testing/browser-harness.ts";
+import { startCaptureEnv, type CaptureEnv } from "../testing/capture-env.ts";
+import { seedRun } from "../testing/notes.ts";
+import { createCaptureTool } from "./capture-tool.ts";
+import { pageExtract } from "./page/extract.ts";
+import { captureWorlds } from "./worlds.ts";
+
+let env: CaptureEnv;
+const signal = new AbortController().signal;
+beforeAll(async () => {
+  env = await startCaptureEnv();
+}, 300_000);
+afterAll(async () => {
+  await env?.stop();
+});
+const page = { kind: null, scope: "page" as const, selector: null };
+
+describe("generic platform chrome (F6)", () => {
+  it("excludes semantic and repeated exterior chrome from blocks and coverage without editing prose", async () => {
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/lesson.html`, signal);
+    const before = await env.session.page.content();
+    const worlds = await captureWorlds(env.session);
+    const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+    for (const field of [extract.markdown, extract.sourceText, extract.pageText]) {
+      for (const chrome of [
+        "Due: 03/14/2031",
+        "This assignment's due date has passed.",
+        "Course dashboard",
+        "Submission window closed.",
+        "Progress: 100%",
+        "Last saved just now.",
+        "Session expires soon.",
+      ])
+        expect(field).not.toContain(chrome);
+      expect(field).toContain("Even parity adds a bit so the total number of ones is even.");
+      expect(field).toContain(
+        "Due: is also an ordinary word in a lesson; this sentence stays verbatim.",
+      );
+      expect(field.split("A repeated theorem is still content.").length - 1).toBe(2);
+    }
+    expect(await env.session.page.content()).toBe(before);
+    const ctx = env.context(await seedRun(env.db.db));
+    const result = await createCaptureTool(env.services).run(ctx, page);
+    expect(result.fidelity).toBe("verified");
+    expect(result.coverage).toBeGreaterThanOrEqual(0.98);
+    await env.commit(ctx);
+    const stored = await env.db.db
+      .select()
+      .from(noteBlocks)
+      .where(eq(noteBlocks.noteId, result.noteId));
+    for (const text of [
+      "Even parity adds a bit so the total number of ones is even.",
+      "Due: is also an ordinary word in a lesson; this sentence stays verbatim.",
+    ])
+      expect(stored.some((block) => block.markdown === text)).toBe(true);
+    expect(
+      stored.filter((block) => block.markdown === "A repeated theorem is still content."),
+    ).toHaveLength(2);
+  });
+
+  it("refuses navigation-only capture before creating a note or source", async () => {
+    const run = await seedRun(env.db.db);
+    await env.session.goto(`${FIXTURES}/capture/platform-chrome/assignments.html`, signal);
+    const ctx = env.context(run);
+    await expect(createCaptureTool(env.services).run(ctx, page)).rejects.toMatchObject({
+      code: "navigation_only",
+    });
+    await env.commit(ctx);
+    expect(await env.db.db.select().from(notes).where(eq(notes.runId, run.runId))).toEqual([]);
+    expect(
+      await env.db.db.select().from(sources).where(eq(sources.workspaceId, run.workspaceId)),
+    ).toEqual([]);
+  });
+
+  it("recognizes link directories with unannotated row badges", async () => {
+    await env.session.page.setContent(
+      '<main><h1>Index</h1><ul><li><a href="/first">First</a><span>P</span></li><li><a href="/second">Second</a><span>P</span></li></ul></main>',
+    );
+    const ctx = env.context(await seedRun(env.db.db));
+    await expect(createCaptureTool(env.services).run(ctx, page)).rejects.toMatchObject({
+      code: "navigation_only",
+    });
+  });
+
+  it("keeps short lessons, instructional lists, article link lists and activity prompts", async () => {
+    for (const html of [
+      "<main><h1>Bit</h1><p>A bit is 0 or 1.</p></main>",
+      '<main><h1>Procedure</h1><ol><li>Read the <a href="/word">word</a>.</li><li>Count ones.</li></ol></main>',
+      '<article><h1>References</h1><ul><li><a href="/paper">Original paper</a></li></ul></article>',
+      '<main><h1>Exercise</h1><form><label>Choose the even parity bit.</label><input type="radio"><label>0</label><input type="radio"><label>1</label></form></main>',
+    ]) {
+      await env.session.page.setContent(html);
+      const worlds = await captureWorlds(env.session);
+      const extract = await worlds.call(pageExtract, [{ scope: "page", selector: null }]);
+      expect(extract.sourceText).toBeTruthy();
+      expect(extract.markdown).toBeTruthy();
+    }
+  });
+});

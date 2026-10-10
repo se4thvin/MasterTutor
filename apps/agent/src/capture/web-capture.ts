@@ -198,13 +198,17 @@ async function extractIn(
   try {
     extract = await worlds.call(pageExtract, [scope], frameId);
   } catch (error) {
-    const code = /selector_not_found|no_selection/.exec(
+    const code = /selector_not_found|no_selection|navigation_only/.exec(
       error instanceof PageScriptError ? error.message : "",
     )?.[0];
     if (code)
       throw new ToolError(
         code,
-        code === "no_selection" ? "Nothing is selected" : "No element matches the selector",
+        code === "navigation_only"
+          ? "This page only contains navigation; open a lesson or document to capture"
+          : code === "no_selection"
+            ? "Nothing is selected"
+            : "No element matches the selector",
       );
     throw error;
   }
@@ -380,8 +384,10 @@ const OWNER_IN_SCOPE = `function () {
   if (!state || !lib) return true;
   // Composed containment: an owner inside a shadow root still belongs to its host's subtree.
   let inRoot = false;
-  for (let at = this; at; at = at.parentNode ?? (at instanceof ShadowRoot ? at.host : null))
+  for (let at = this; at; at = at.parentNode ?? (at instanceof ShadowRoot ? at.host : null)) {
+    if (at instanceof Element && (lib.isChrome(at) || state.chrome.has(at))) return false;
     if (at === state.root) { inRoot = true; break; }
+  }
   if (!inRoot) return false;
   if (state.range && !state.range.intersectsNode(this)) return false;
   return lib.visible(this);

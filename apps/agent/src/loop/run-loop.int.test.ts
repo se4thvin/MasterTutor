@@ -1153,7 +1153,12 @@ describe("RunLoop (spec §5.3)", () => {
     const last = JSON.stringify(mock.requestsFor(name).at(-1)?.body.input);
     const real = `data:image/png;base64,${browser.png.toString("base64")}`;
     expect(last.split(real).length - 1).toBe(3);
-    expect(last).toContain("[screenshot omitted]");
+    // Eviction starts a fresh context instead of rewriting a previously sent image.
+    expect(
+      mock.requestsFor(name).some((r) => r.body.text?.format?.name === "compaction_summary"),
+    ).toBe(true);
+    for (const request of mock.requestsFor(name))
+      expect(JSON.stringify(request.body.input).split(real).length - 1).toBeLessThanOrEqual(3);
   });
 
   it("sends a full run statelessly, anonymously and only to allowlisted endpoints (D38 guard)", async () => {

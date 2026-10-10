@@ -6,8 +6,8 @@ export const PAGE_OUTPUT_WINDOW = 2;
 const BULKY_OUTPUT_CHARS = 2_000;
 
 /** Only replay is elided: the stored transcript and captured notes remain verbatim (D54).
- * An output crosses the frontier once. Its stub depends only on its original bytes, so older
- * prefixes remain byte-identical on subsequent turns and after worker restore.
+ * A stub depends only on the original bytes. RunLoop starts a fresh compaction seed before
+ * this frontier changes any previously sent item; decides never silently rewrite history.
  */
 export function windowPageOutputs(items: readonly Item[]): Item[] {
   const reads = new Set<string>();

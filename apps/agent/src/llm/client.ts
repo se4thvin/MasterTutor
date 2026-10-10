@@ -11,6 +11,8 @@ import { agentTools } from "./tools.ts";
 /** One stateless request: the whole input is rebuilt from run_transcript every time (D37). */
 export interface ModelRequest {
   model: string;
+  /** Opaque cache routing hint, never a raw run identifier. No server-side state. */
+  promptCacheKey?: string;
   instructions: string;
   input: ResponseInputItem[];
   format: "agent_turn" | "compaction_summary";
@@ -47,6 +49,7 @@ export function createOpenAIModelClient(
           model: request.model,
           instructions: request.instructions,
           input: request.input,
+          ...(request.promptCacheKey ? { prompt_cache_key: request.promptCacheKey } : {}),
           // Reasoning carries across turns only as encrypted items we replay ourselves. The run
           // view shows the model's own summaries of it, never the hidden reasoning (fe-run-chat).
           include: ["reasoning.encrypted_content"],
