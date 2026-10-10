@@ -492,6 +492,15 @@ export class ComputerExecutor {
     signal: AbortSignal,
     approved: boolean,
   ): Promise<string | null> {
+    const shortcut = normalizeCombo(keys);
+    if (
+      ["F12", "CTRL+SHIFT+I", "CTRL+SHIFT+J", "CTRL+SHIFT+C", "CTRL+SHIFT+K", "CTRL+U"].includes(
+        shortcut,
+      )
+    )
+      return this.#refuse(
+        "DevTools and view-source aren't available; capture the page and the system selects content.",
+      );
     if (this.omnibox.active) {
       const combo = normalizeCombo(keys);
       if (combo === "ENTER") {
