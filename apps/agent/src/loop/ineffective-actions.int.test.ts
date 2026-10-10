@@ -22,8 +22,11 @@ describe("ineffective repetition (F3, D56)", () => {
   it("still hands over if the agent ignores the correction", async () => {
     const s = await setup([click(), click(), click(), click(), done()]);
     expect(await drive(s.loop)).toEqual({ kind: "waiting", reason: "takeover" });
-    expect(mock.requestsFor(s.name)).toHaveLength(4);
-    expect(notes(mock.requestsFor(s.name)[3]!.body.input)).toBe(1);
+    const decides = mock
+      .requestsFor(s.name)
+      .filter((r) => r.body.text?.format?.name === "agent_turn");
+    expect(decides).toHaveLength(4);
+    expect(notes(decides[3]!.body.input)).toBe(1);
   });
 
   it("carries the correction verbatim through compaction", async () => {

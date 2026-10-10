@@ -51,7 +51,9 @@ declare global {
   var __mtLib: MtLib | undefined;
   var __mtStructure: MtStructure | undefined;
   var __mtClosedRoots: WeakMap<Element, ShadowRoot> | undefined;
-  var __mtCapture: { root: Element; range: Range | null; frames: Element[] } | undefined;
+  var __mtCapture:
+    | { root: Element; range: Range | null; frames: Element[]; chrome: ReadonlySet<Element> }
+    | undefined;
 }
 
 export interface PageMedia {
